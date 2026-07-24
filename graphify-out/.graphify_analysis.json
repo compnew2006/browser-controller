@@ -652,41 +652,8 @@
       "why": "connects across different repos/directories; peripheral node `Security Policy` unexpectedly reaches hub `Real Browser MCP`"
     }
   ],
-  "questions": [
-    {
-      "type": "bridge_node",
-      "question": "Why does `DaemonClient` connect `IPC Daemon Config` to `Tab Concurrency Lock`?",
-      "why": "High betweenness centrality (0.027) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `ExtensionBridge` connect `Extension Bridge Logic` to `IPC Daemon Config`?",
-      "why": "High betweenness centrality (0.018) - this node is a cross-community bridge."
-    },
-    {
-      "type": "verify_inferred",
-      "question": "Are the 22 inferred relationships involving `dispatch()` (e.g. with `handleClick()` and `handleClickByText()`) actually correct?",
-      "why": "`dispatch()` has 22 INFERRED edges - model-reasoned connections that need verification."
-    },
-    {
-      "type": "isolated_nodes",
-      "question": "What connects `Quick Setup`, `Cursor`, `Claude Code` to the rest of the system?",
-      "why": "188 weakly-connected nodes found - possible documentation gaps or missing edges."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Browser Tool Definitions` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.09994155464640561 - nodes in this community are weakly interconnected."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `Extension Background Service` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.10105580693815988 - nodes in this community are weakly interconnected."
-    },
-    {
-      "type": "low_cohesion",
-      "question": "Should `IPC Daemon Config` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.08416389811738649 - nodes in this community are weakly interconnected."
-    }
-  ]
+  "tokens": {
+    "input": 0,
+    "output": 0
+  }
 }

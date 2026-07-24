@@ -655,12 +655,12 @@
   "questions": [
     {
       "type": "bridge_node",
-      "question": "Why does `DaemonClient` connect `Daemon IPC Configuration` to `TabLockMap`?",
+      "question": "Why does `DaemonClient` connect `IPC Daemon Config` to `Tab Concurrency Lock`?",
       "why": "High betweenness centrality (0.027) - this node is a cross-community bridge."
     },
     {
       "type": "bridge_node",
-      "question": "Why does `ExtensionBridge` connect `Extension Bridge Client` to `Daemon IPC Configuration`?",
+      "question": "Why does `ExtensionBridge` connect `Extension Bridge Logic` to `IPC Daemon Config`?",
       "why": "High betweenness centrality (0.018) - this node is a cross-community bridge."
     },
     {
@@ -675,17 +675,17 @@
     },
     {
       "type": "low_cohesion",
-      "question": "Should `Browser Interaction Tools` be split into smaller, more focused modules?",
+      "question": "Should `Browser Tool Definitions` be split into smaller, more focused modules?",
       "why": "Cohesion score 0.09994155464640561 - nodes in this community are weakly interconnected."
     },
     {
       "type": "low_cohesion",
-      "question": "Should `background.js` be split into smaller, more focused modules?",
+      "question": "Should `Extension Background Service` be split into smaller, more focused modules?",
       "why": "Cohesion score 0.10105580693815988 - nodes in this community are weakly interconnected."
     },
     {
       "type": "low_cohesion",
-      "question": "Should `Daemon IPC Configuration` be split into smaller, more focused modules?",
+      "question": "Should `IPC Daemon Config` be split into smaller, more focused modules?",
       "why": "Cohesion score 0.08416389811738649 - nodes in this community are weakly interconnected."
     }
   ]
