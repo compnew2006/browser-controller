@@ -13,7 +13,7 @@
   &nbsp;
   <a href="https://www.npmjs.com/package/real-browser-mcp"><img src="https://img.shields.io/badge/MCP_Server-CB3837?style=for-the-badge&logo=npm&logoColor=white" alt="MCP Server" /></a>
   &nbsp;
-  <a href="cursor://anysphere.cursor-deeplink/mcp/install?name=real-browser&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInJlYWwtYnJvd3Nlci1tY3AiXX0="><img src="https://img.shields.io/badge/Add_to_Cursor-6366f1?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJMMiA3bDEwIDUgMTAtNS0xMC01ek0yIDE3bDEwIDUgMTAtNS0xMC01LTEwIDV6TTIgMTJsMTAgNSAxMC01LTEwLTUtMTAgNXoiIGZpbGw9IndoaXRlIi8+PC9zdmc+" alt="Add to Cursor" /></a>
+  <a href="cursor://anysphere.cursor-deeplink/mcp/install?name=real-browser&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImJyb3dzZXItY29udHJvbGxlciJdfQ=="><img src="https://img.shields.io/badge/Add_to_Cursor-6366f1?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJMMiA3bDEwIDUgMTAtNS0xMC01ek0yIDE3bDEwIDUgMTAtNS0xMC01LTEwIDV6TTIgMTJsMTAgNSAxMC01LTEwLTUtMTAgNXoiIGZpbGw9IndoaXRlIi8+PC9zdmc+" alt="Add to Cursor" /></a>
   &nbsp;
   <a href="#-teach-your-agent"><img src="https://img.shields.io/badge/🧠_Agent_Rules-22c55e?style=for-the-badge" alt="Agent Rules" /></a>
 </p>
@@ -70,7 +70,7 @@ Three pieces, all on your machine. Nothing leaves localhost.
                   ▼                                                        ▼
   ┌─────────────────────────────┐   ┌─────────────────────────────────────────┐
   │  thin MCP client            │   │  thin MCP client                        │
-  │  (npx real-browser-mcp)     │   │  (npx real-browser-mcp)                 │
+  │  (npx browser-controller)   │   │  (npx browser-controller)               │
   │  - speaks MCP over stdio    │   │  - spawns daemon if not running         │
   │  - forwards calls to daemon │   │  - gets its own sessionId               │
   └──────────────┬──────────────┘   └────────────────────┬───────────────────┘
@@ -92,7 +92,7 @@ Three pieces, all on your machine. Nothing leaves localhost.
   └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key idea:** the first time any agent runs, `npx real-browser-mcp` spawns a background **daemon** that owns port 7225 and the extension connection. Every subsequent agent (even from a different MCP client) connects to that same daemon over a local IPC socket and gets its own `sessionId`. The extension sees one stable connection and routes each call to the exact tab the caller specified.
+**Key idea:** the first time any agent runs, `npx browser-controller` spawns a background **daemon** that owns port 7225 and the extension connection. Every subsequent agent (even from a different MCP client) connects to that same daemon over a local IPC socket and gets its own `sessionId`. The extension sees one stable connection and routes each call to the exact tab the caller specified.
 
 ---
 
@@ -104,7 +104,7 @@ Two parts: the **MCP server** (runs on your machine, talks to your AI agent) and
 
 **Cursor (one click):**
 
-[<img src="https://cursor.com/deeplink/mcp-install-dark.svg" alt="Install in Cursor" height="32" />](cursor://anysphere.cursor-deeplink/mcp/install?name=real-browser&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInJlYWwtYnJvd3Nlci1tY3AiXX0=)
+[<img src="https://cursor.com/deeplink/mcp-install-dark.svg" alt="Install in Cursor" height="32" />](cursor://anysphere.cursor-deeplink/mcp/install?name=real-browser&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImJyb3dzZXItY29udHJvbGxlciJdfQ==)
 
 Or add manually in Cursor Settings > MCP > "Add new MCP server":
 
@@ -113,11 +113,36 @@ Or add manually in Cursor Settings > MCP > "Add new MCP server":
   "mcpServers": {
     "real-browser": {
       "command": "npx",
-      "args": ["-y", "real-browser-mcp"]
+      "args": ["-y", "browser-controller"]
     }
   }
 }
 ```
+
+<details>
+<summary><b>Name your agent (shows in the popup)</b></summary>
+
+By default the daemon names each connection after its parent IDE ("Cursor",
+"Claude", …). To override — e.g. when several agents share one IDE, or to label
+them by project — pass `--agent <name>` in the args. It takes priority over
+every auto-detection:
+
+```json
+{
+  "mcpServers": {
+    "real-browser": {
+      "command": "npx",
+      "args": ["-y", "browser-controller", "--agent", "My Project Agent"]
+    }
+  }
+}
+```
+
+The name appears in the popup's **Connected Agents** list. (You can also set the
+`MCP_AGENT_NAME` env var — equivalent.) Reconnecting with the same name replaces
+the old entry, so IDE restarts don't pile up duplicates.
+
+</details>
 
 <details>
 <summary>Claude Desktop, Windsurf, or other MCP clients</summary>
@@ -131,7 +156,7 @@ Or add manually in Cursor Settings > MCP > "Add new MCP server":
 ```json
 {
   "mcpServers": {
-    "real-browser": { "command": "npx", "args": ["-y", "real-browser-mcp"] }
+    "real-browser": { "command": "npx", "args": ["-y", "browser-controller"] }
   }
 }
 ```
@@ -204,7 +229,10 @@ The v2 model is **tab-first**: the agent always says *which* tab to act on. It n
 3. Both work in parallel. Each agent's calls serialize against its own tab; the two tabs never interfere.
 4. When done: `browser_tabs { action: "unlock", tabId: 10 }`.
 
-The popup shows which session owns each locked tab, and there's an **Unlock All** button if an agent crashes mid-lock.
+The popup is your control panel for all of this:
+- **Open Tabs** — every open tab with a per-tab dropdown to pin it to a specific agent, or unpin it.
+- **Connected Agents** — each connected agent with its name, session id, uptime, and a ✕ to disconnect it immediately (clears a zombie that the heartbeat hasn't reaped yet).
+- **Tab Locks** + **Unlock All** — the current lock map, with a one-click release if an agent crashed mid-lock.
 
 ### Things to know
 
@@ -222,7 +250,7 @@ The popup shows which session owns each locked tab, and there's an **Unlock All*
 The agent can use all 22 tools out of the box, but it works better when it knows the **tab-first** workflow. Run one command to install the rules:
 
 ```bash
-npx real-browser-mcp --setup cursor
+npx browser-controller --setup cursor
 ```
 
 This installs:
@@ -235,7 +263,7 @@ After that, type `/check-browser` in any chat. Or just say "check the result in 
 <summary>Claude Code setup</summary>
 
 ```bash
-npx real-browser-mcp --setup claude
+npx browser-controller --setup claude
 ```
 
 Adds an `AGENTS.md` to your project root. Claude Code auto-discovers it.
@@ -344,10 +372,10 @@ Run two daemons on different ports by setting `WS_PORT` per client:
 {
   "mcpServers": {
     "browser-work": {
-      "command": "npx", "args": ["-y", "real-browser-mcp"]
+      "command": "npx", "args": ["-y", "browser-controller"]
     },
     "browser-personal": {
-      "command": "npx", "args": ["-y", "real-browser-mcp"],
+      "command": "npx", "args": ["-y", "browser-controller"],
       "env": { "WS_PORT": "9333" }
     }
   }
@@ -378,7 +406,7 @@ real-browser-mcp/
 │   ├── background.js        Service worker: tab resolution, per-tab mutex, locks
 │   ├── lib/tab-concurrency.js  Pure, unit-tested mutex + lock primitives
 │   ├── content.js          Console capture
-│   └── popup/              Status, token field, tab-lock viewer, Unlock All
+│   └── popup/              Status, Open Tabs (pin/unpin), Connected Agents (disconnect), tab-lock viewer
 ├── agent-config/        Pre-built configs for Cursor + Claude Code
 │   ├── cursor/              Rules and commands
 │   ├── skills/              Browser automation skill

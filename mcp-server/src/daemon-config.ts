@@ -21,8 +21,12 @@ import crypto from 'node:crypto';
 export const DEFAULT_WS_PORT = parseInt(process.env.WS_PORT || '7225', 10);
 export const DEFAULT_WS_HOST = process.env.WS_HOST || '127.0.0.1';
 
-/** Directory under the user's home where daemon state lives. */
-export const STATE_DIR = path.join(os.homedir(), '.browser-controller');
+/**
+ * Directory under the user's home where daemon state lives (token, socket,
+ * daemon.json, daemon.log). Override with BC_STATE_DIR for isolated tests so
+ * the suite never touches the real ~/.browser-controller.
+ */
+export const STATE_DIR = process.env.BC_STATE_DIR || path.join(os.homedir(), '.browser-controller');
 
 /** Local IPC socket the daemon listens on (thin clients connect here). */
 export const IPC_SOCKET_PATH =
@@ -40,13 +44,15 @@ export const TOKEN_FILE = path.join(STATE_DIR, 'token.json');
 
 export type IpcClientMessage =
   | { kind: 'hello'; token: string; agentName?: string }
-  | { kind: 'call'; id: string; tool: string; params: Record<string, unknown> };
+  | { kind: 'call'; id: string; tool: string; params: Record<string, unknown> }
+  | { kind: 'pong' }; // heartbeat reply — daemon evicts a silent client after 3 missed pings
 
 export type IpcDaemonMessage =
   | { kind: 'welcome'; sessionId: string; ok: true }
   | { kind: 'denied'; reason: string; ok: false }
   | { kind: 'result'; id: string; success: boolean; result?: unknown; error?: string }
-  | { kind: 'status'; connectionState: string; connectedSince: number | null };
+  | { kind: 'status'; connectionState: string; connectedSince: number | null }
+  | { kind: 'ping' }; // heartbeat probe — client must reply with { kind: 'pong' }
 
 /**
  * Message the daemon forwards to the extension. `sessionId` is included so the

@@ -43,6 +43,22 @@ export interface ToolDefinition {
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
   handler: (host: ToolHost, params: Record<string, unknown>) => Promise<ToolResult>;
+  /**
+   * Whether re-running this tool with the same params has no side effects.
+   * Drives the bridge's retry-on-timeout policy. Default `false` — a click must
+   * never fire twice. Tools that only read (snapshot/screenshot/text/find/
+   * console/network) opt in here, NOT in a separate string set that can drift.
+   *
+   * NOTE: `browser_console`/`browser_network` mutate state when `clear:true`,
+   * so they are `false` despite "looking" like reads.
+   */
+  idempotent?: boolean;
+  /**
+   * Per-tool transport timeout in ms (bridge → extension round-trip). Falls
+   * back to the bridge default (30s) when omitted. Co-located with `idempotent`
+   * so the tool registry is the single source of transport policy.
+   */
+  timeoutMs?: number;
 }
 
 export function textResult(text: string): ToolResult {

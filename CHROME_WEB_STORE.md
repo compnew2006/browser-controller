@@ -48,7 +48,7 @@ PRIVACY:
 REQUIREMENTS:
 • An MCP-compatible AI editor (Cursor, Claude Code, Windsurf, Cline, etc.)
 • Node.js 18+ for the MCP server component
-• Run: npx real-browser-mcp to start the server
+• Run: npx browser-controller to start the server
 
 ## Category
 Developer Tools

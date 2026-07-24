@@ -129,6 +129,66 @@
       letter-spacing: 0.5px;
       margin: 12px 0 4px;
     }
+    .tabs-list {
+      margin-top: 6px;
+      padding: 6px;
+      background: #1c1c1e;
+      border-radius: 6px;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+    .tab-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 2px;
+      border-bottom: 1px solid #27272a;
+    }
+    .tab-row:last-child { border-bottom: none; }
+    .tab-title {
+      flex: 1;
+      min-width: 0;
+      font-size: 11px;
+      color: #d4d4d8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tab-title.active { color: #667eea; font-weight: 600; }
+    .tab-pin {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      flex-shrink: 0;
+    }
+    .tab-pin select {
+      background: #0f0f0f;
+      border: 1px solid #27272a;
+      border-radius: 4px;
+      color: #a1a1aa;
+      padding: 2px 4px;
+      font: 10px/1.4 system-ui, sans-serif;
+      max-width: 90px;
+      outline: none;
+    }
+    .icon-btn {
+      background: none;
+      border: none;
+      color: #71717a;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 3px;
+      line-height: 1;
+    }
+    .icon-btn:hover { color: #ef4444; }
+    .icon-btn.unpin:hover { color: #f59e0b; }
+    .agent-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 0;
+    }
+    .agent-row .who { flex: 1; }
     /* draggable resize handle (bottom-LEFT corner).
        Chrome anchors an extension popup to the top-right toolbar icon, so the
        LEFT edge is the one that actually moves when the document width changes.
@@ -166,6 +226,9 @@
     <label>Auth Token (auto-paired; paste only to override)</label>
     <input type="password" id="token" placeholder="auto-fetched from daemon" autocomplete="off">
   </div>
+
+  <div class="section-title">Open Tabs</div>
+  <div class="tabs-list" id="openTabs"><div class="empty">none</div></div>
 
   <div class="section-title">Connected Agents</div>
   <div class="locks" id="agents"><div class="empty">none</div></div>

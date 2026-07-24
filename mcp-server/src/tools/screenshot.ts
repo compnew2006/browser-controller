@@ -10,6 +10,8 @@ export const screenshotTool: ToolDefinition = {
     format: z.enum(['png', 'jpeg']).optional().default('png'),
     quality: z.number().min(0).max(100).optional().default(80).describe('JPEG quality (ignored for PNG)'),
   }),
+  // Read-only: safe to retry.
+  idempotent: true,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_screenshot', params) as {
       success: boolean;

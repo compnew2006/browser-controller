@@ -46,7 +46,16 @@ interface IpcClient {
   connectedAt: number;
   /** in-flight calls keyed by the client-local id the client sent. */
   pending: Map<string, { tool: string; daemonCallId: string }>;
+  /** Missed heartbeat pongs — daemon evicts at HEARTBEAT_MAX_MISSED. */
+  missedPongs: number;
 }
+
+/** Heartbeat cadence for IPC clients. Without this, half-open sockets (IDE
+ *  killed without a graceful FIN) linger in `clients` for minutes until the OS
+ *  finally delivers `close` — which is what produced the "14 zombie agents"
+ *  symptom in the popup. Override via env for tests (fast eviction). */
+const HEARTBEAT_INTERVAL_MS = parseInt(process.env.BC_HEARTBEAT_MS || '15000', 10);
+const HEARTBEAT_MAX_MISSED = parseInt(process.env.BC_HEARTBEAT_MAX_MISSED || '3', 10);
 
 class Daemon {
   private bridge: ExtensionBridge;
@@ -57,6 +66,8 @@ class Daemon {
   private sessionIdCounter = 0;
   private token: string;
   private startedAt = Date.now();
+  /** Heartbeat timer — evicts half-open IPC sockets (see startHeartbeat). */
+  private heartbeatTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     this.token = loadOrCreateToken().token;
@@ -80,6 +91,10 @@ class Daemon {
 
     // 2) IPC server for thin MCP clients.
     this.ipcServer = this.createIpcServer();
+
+    // 2b) heartbeat: evict half-open IPC sockets so the popup's "Connected
+    //     Agents" list doesn't accumulate zombies from killed IDE processes.
+    this.heartbeatTimer = this.startHeartbeat();
 
     // 3) write daemon info so thin clients can find / healthcheck us.
     this.writeDaemonInfo();
@@ -135,6 +150,10 @@ class Daemon {
     };
 
     socket.setEncoding('utf8');
+    // Enable TCP keepalive so the kernel surfaces half-open sockets faster
+    // (e.g. IDE killed mid-session). This complements the application-level
+    // heartbeat below.
+    socket.setKeepAlive(true, 30_000);
     socket.on('data', (chunk: string) => {
       buf += chunk;
       let nl: number;
@@ -162,17 +181,36 @@ class Daemon {
             return;
           }
           authed = true;
+          const name = msg.agentName || 'agent';
+          // Dedup by agentName: when an IDE respawns the MCP client (Cursor does
+          // this on every reload), the old socket may not have delivered `close`
+          // yet. Without this, N restarts produce N zombie rows with the same
+          // name in the popup. Replace the stale entry rather than accumulating.
+          for (const [existingSocket, existing] of this.clients) {
+            if (existing.agentName === name) {
+              console.error(`[${SERVER_NAME}] replacing stale client ${existing.sessionId} (${name})`);
+              existingSocket.destroy();
+              this.clients.delete(existingSocket);
+            }
+          }
           client = {
             socket,
             sessionId: `s${++this.sessionIdCounter}`,
-            agentName: msg.agentName || 'agent',
+            agentName: name,
             connectedAt: Date.now(),
             pending: new Map(),
+            missedPongs: 0,
           };
           this.clients.set(socket, client);
           safeSend({ kind: 'welcome', sessionId: client.sessionId, ok: true });
           console.error(`[${SERVER_NAME}] client connected: ${client.sessionId} (${client.agentName})`);
           return;
+        }
+
+        // Heartbeat reply — reset the miss counter. No further action.
+        if (msg.kind === 'pong' && client) {
+          client.missedPongs = 0;
+          continue;
         }
 
         if (msg.kind === 'call' && client) {
@@ -198,6 +236,31 @@ class Daemon {
     socket.on('error', () => {
       // logged via close; swallow to avoid uncaught
     });
+  }
+
+  /**
+   * Heartbeat loop: every HEARTBEAT_INTERVAL_MS, ping every IPC client and
+   * count missed pongs. A client that hasn't replied HEARTBEAT_MAX_MISSED times
+   * in a row is treated as dead (half-open socket — e.g. IDE killed without a
+   * graceful FIN) and evicted. `socket.destroy()` fires the existing `close`
+   * cleanup, so we don't duplicate the teardown logic.
+   */
+  private startHeartbeat(): NodeJS.Timeout {
+    return setInterval(() => {
+      for (const [socket, client] of this.clients) {
+        client.missedPongs++;
+        if (client.missedPongs >= HEARTBEAT_MAX_MISSED) {
+          console.error(`[${SERVER_NAME}] evicting dead client ${client.sessionId} (${client.agentName}) — ${client.missedPongs} missed pongs`);
+          socket.destroy();
+          continue;
+        }
+        try {
+          socket.write(JSON.stringify({ kind: 'ping' }) + '\n');
+        } catch {
+          // write failure → close will fire
+        }
+      }
+    }, HEARTBEAT_INTERVAL_MS);
   }
 
   private checkToken(presented: string): boolean {
@@ -248,6 +311,19 @@ class Daemon {
     if (path === '/pair') {
       return { token: this.token };
     }
+    if (path === '/kill') {
+      // Manual disconnect from the popup. GET because the bridge rejects
+      // non-GET methods (bridge.ts) and there's no reason to widen it.
+      const sid = url.searchParams.get('sessionId');
+      if (!sid) return { ok: false, error: 'sessionId query param required' };
+      const victim = Array.from(this.clients.values()).find((c) => c.sessionId === sid);
+      if (!victim) return { ok: false, error: 'session not found' };
+      // destroy() fires `close`, which runs the existing cleanup (fail in-flight
+      // calls, delete from the map) — no duplicated teardown.
+      console.error(`[${SERVER_NAME}] /kill evicting ${victim.sessionId} (${victim.agentName}) by popup request`);
+      victim.socket.destroy();
+      return { ok: true, killed: sid };
+    }
     if (path === '/status') {
       return {
         extension: { connected: this.bridge.isConnected(), since: null },
@@ -287,6 +363,10 @@ class Daemon {
   stop(): void {
     this.bridge.stop();
     this.ipcServer?.close();
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     this.clients.forEach((c) => c.socket.destroy());
     this.clients.clear();
     try {

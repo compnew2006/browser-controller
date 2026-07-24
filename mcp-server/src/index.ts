@@ -13,7 +13,7 @@
  * daemon, which is what lets two agents work in two tabs without fighting over
  * port 7225.
  */
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -25,8 +25,30 @@ if (setupIdx !== -1) {
   process.exit(0);
 }
 
+/**
+ * Parse `--agent <name>` (or `--agent=<name>`) from argv. This is the
+ * user-facing way to name the agent in the MCP config, e.g.
+ *   args: [".../index.js", "--agent", "Cursor"]
+ * Takes priority over every other detection path. Returns null if absent.
+ */
+function parseAgentArg(): string | null {
+  const args = process.argv;
+  // --agent <name>  (two tokens)
+  const idx = args.indexOf('--agent');
+  if (idx !== -1 && idx + 1 < args.length) {
+    const v = args[idx + 1].trim();
+    if (v) return v;
+  }
+  // --agent=<name>  (one token)
+  const eq = args.find((a) => a.startsWith('--agent='));
+  if (eq) {
+    const v = eq.slice('--agent='.length).trim();
+    if (v) return v;
+  }
+  return null;
+}
+
 import net from 'node:net';
-import os from 'node:os';
 import fs from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -34,6 +56,7 @@ import { allTools } from './tools/index.js';
 import {
   DAEMON_INFO_FILE,
   IPC_SOCKET_PATH,
+  STATE_DIR,
   readToken,
 } from './daemon-config.js';
 
@@ -137,6 +160,15 @@ class DaemonClient {
         console.error(`[${SERVER_NAME}] daemon denied: ${msg.reason}`);
         process.exit(1);
         break;
+      case 'ping':
+        // Heartbeat probe from the daemon — reply immediately or it will evict
+        // us as a zombie after 3 missed pongs (~45s).
+        try {
+          this.socket?.write(JSON.stringify({ kind: 'pong' }) + '\n');
+        } catch {
+          // socket gone — close handler will fire
+        }
+        break;
       case 'result': {
         const id = msg.id;
         if (!id) return;
@@ -204,8 +236,10 @@ function daemonLooksAlive(): boolean {
 
 /**
  * Best-effort detection of which MCP client launched us, so the popup can show
- * "Cursor" / "Claude Desktop" instead of an opaque id. Falls back to the parent
- * process name. Override explicitly with MCP_AGENT_NAME / BROWSER_CONTROLLER_AGENT_NAME.
+ * "Cursor" / "Claude Desktop" instead of the opaque session id or the bare
+ * "agent" fallback. Checks env vars first (cheap, deterministic), then the
+ * parent process name (catches the case where the IDE sets no marker env var).
+ * Override explicitly with MCP_AGENT_NAME / BROWSER_CONTROLLER_AGENT_NAME.
  */
 function deriveAgentName(): string {
   const env = process.env;
@@ -213,8 +247,21 @@ function deriveAgentName(): string {
   if (env.CLAUDE_DESKTOP || env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return 'Claude';
   if (env.WINDSURF_USER || env.WS_SURVEY_DATA) return 'Windsurf';
   if (env.CLINE_IDE) return 'Cline';
-  // fall back to the parent process name (ppid lookup is heavy; use env hint)
   if (env.TERM_PROGRAM) return env.TERM_PROGRAM;
+  // Env-based detection missed — inspect the parent process name. This catches
+  // launches where the IDE set no marker env var (the common cause of the bare
+  // "agent" label seen in the popup). ps is fast and always available on the
+  // daemon's host.
+  try {
+    const parent = execSync(`ps -p ${process.ppid} -o comm=`, { encoding: 'utf8' }).trim();
+    if (/cursor/i.test(parent)) return 'Cursor';
+    if (/claude/i.test(parent)) return 'Claude';
+    if (/windsurf/i.test(parent)) return 'Windsurf';
+    if (/cline/i.test(parent)) return 'Cline';
+    if (parent) return parent.split('/').pop() || parent; // last path segment of the binary
+  } catch {
+    // ps unavailable (non-Unix?) — fall through
+  }
   return 'agent';
 }
 
@@ -226,7 +273,10 @@ function spawnDaemon(): void {
     throw new Error(`Daemon entry not found at ${daemonEntry}. Run 'npm run build' first.`);
   }
   console.error(`[${SERVER_NAME}] starting daemon (detached)…`);
-  const logPath = join(os.homedir(), '.real-browser-mcp', 'daemon.log');
+  // Daemon log lives in STATE_DIR (~/.browser-controller) alongside the token
+  // and daemon.json. (Previously this wrote to ~/.real-browser-mcp/ — the old
+  // product name — splitting state across two directories.)
+  const logPath = join(STATE_DIR, 'daemon.log');
   try { fs.mkdirSync(dirname(logPath), { recursive: true }); } catch {}
   const out = fs.openSync(logPath, 'a');
   const child = spawn(process.execPath, [daemonEntry], {
@@ -270,9 +320,12 @@ async function main(): Promise<void> {
     await waitForDaemon();
   }
 
-  // 3) connect to daemon. Derive a human-readable agent name for the popup UI
-  //    (so the user can see "Cursor" / "Claude" instead of an opaque session id).
+  // 3) connect to daemon. Resolve a human-readable agent name for the popup UI.
+  //    Priority: --agent flag > env vars > parent-process detection > 'agent'.
+  //    The --agent flag is the documented user-facing way to set it in the MCP
+  //    config (args: [".../index.js", "--agent", "Cursor"]).
   const agentName =
+    parseAgentArg() ||
     process.env.MCP_AGENT_NAME ||
     process.env.BROWSER_CONTROLLER_AGENT_NAME ||
     deriveAgentName();

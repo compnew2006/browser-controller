@@ -10,8 +10,10 @@ export const textTool: ToolDefinition = {
     selector: z.string().optional().describe('CSS selector to scope text extraction'),
     maxLength: z.number().optional().default(50000).describe('Max text length to return'),
   }),
+  // Read-only: safe to retry on timeout. (Fixes prior wire-name drift — C1.)
+  idempotent: true,
   async handler(bridge, params) {
-    const result = await bridge.callTool('get_page_text', params);
+    const result = await bridge.callTool('browser_text', params);
     return textResult(JSON.stringify(result, null, 2));
   },
 };

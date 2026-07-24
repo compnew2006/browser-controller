@@ -8,9 +8,18 @@ const versionEl = document.getElementById('version');
 const locksEl = document.getElementById('locks');
 const unlockAllBtn = document.getElementById('unlockAll');
 const agentsEl = document.getElementById('agents');
+const openTabsEl = document.getElementById('openTabs');
 
 const manifest = chrome.runtime.getManifest();
 versionEl.textContent = `v${manifest.version}`;
+
+// Shared state: agents come from the daemon /status, tabs+locks come from the
+// background getStatus. Each panel needs the other's data to render its
+// controls (the Pin dropdown lists agents; the Disconnect rows know nothing
+// about tabs). Keep the latest snapshot of both so a re-render of either panel
+// has the full picture without waiting for the other poll to land.
+let lastAgents = [];      // [{sessionId, name, connectedAt}]
+let lastTabs = [];        // [{id, url, title, active, lockedBy}]
 
 // Daemon HTTP base (same port as the WebSocket). The popup talks to it to
 // auto-pair the token (no fs access in MV3) and to show connected agents.
@@ -41,31 +50,118 @@ async function autoPairToken() {
 async function refreshAgents() {
   try {
     const res = await fetch(`${daemonHttpBase()}/status`, { cache: 'no-store' });
-    if (!res.ok) { renderAgents([]); return; }
+    if (!res.ok) { setAgents([]); return; }
     const data = await res.json();
-    renderAgents(Array.isArray(data.agents) ? data.agents : []);
+    setAgents(Array.isArray(data.agents) ? data.agents : []);
   } catch {
-    renderAgents(null); // null = daemon down
+    setAgents(null); // null = daemon down
   }
 }
 
-function renderAgents(agents) {
-  if (agents === null) {
+function setAgents(agents) {
+  // null signals "daemon down" — keep an empty agent list (so the Pin dropdown
+  // has nothing to list) but render the unreachable banner in the agents panel.
+  lastAgentsDown = agents === null;
+  lastAgents = Array.isArray(agents) ? agents : [];
+  renderAgents();
+  // tabs depend on agents (the Pin dropdown lists them) — re-render too.
+  renderOpenTabs();
+}
+
+let lastAgentsDown = false;
+
+function renderAgents() {
+  if (lastAgentsDown) {
     agentsEl.innerHTML = '<div class="empty">daemon not reachable</div>';
     return;
   }
+  const agents = lastAgents;
   if (agents.length === 0) {
     agentsEl.innerHTML = '<div class="empty">none</div>';
     return;
   }
   agentsEl.innerHTML = agents
     .map((a) => {
-      const name = a.name || 'agent';
+      const name = escapeHtml(a.name || 'agent');
+      const sid = escapeHtml(a.sessionId || '');
       const ago = a.connectedAt ? Math.round((Date.now() - a.connectedAt) / 1000) : 0;
       const dur = ago < 60 ? `${ago}s` : `${Math.round(ago / 60)}m`;
-      return `<div class="row"><span class="tab">${escapeHtml(name)}</span><span class="who">${a.sessionId || ''} · ${dur}</span></div>`;
+      // data-sid carries the session id to the click handler (delegation).
+      return `<div class="agent-row">
+        <span class="tab">${name}</span>
+        <span class="who">${sid} · ${dur}</span>
+        <button class="icon-btn" data-action="disconnect" data-sid="${sid}" title="Disconnect this agent">✕</button>
+      </div>`;
     })
     .join('');
+}
+
+/**
+ * Kick a connected agent off the daemon immediately (don't wait ~45s for the
+ * heartbeat to evict it). Calls the daemon's GET /kill?sessionId=… endpoint.
+ */
+async function disconnectAgent(sessionId) {
+  try {
+    const res = await fetch(`${daemonHttpBase()}/kill?sessionId=${encodeURIComponent(sessionId)}`, { cache: 'no-store' });
+    const data = await res.json();
+    if (data && data.ok) {
+      addLog(`Disconnected ${sessionId}`, 'warn');
+      refreshAgents(); // immediately reflect the eviction
+    } else {
+      addLog(`Disconnect failed: ${data?.error || 'unknown'}`, 'err');
+    }
+  } catch (err) {
+    addLog(`Disconnect failed: daemon not reachable`, 'err');
+  }
+}
+
+/** Render the Open Tabs panel with a Pin dropdown per tab. */
+function renderOpenTabs() {
+  const tabs = lastTabs;
+  if (!tabs || tabs.length === 0) {
+    openTabsEl.innerHTML = '<div class="empty">none</div>';
+    return;
+  }
+  const agents = (lastAgents || []).filter(Boolean);
+  openTabsEl.innerHTML = tabs
+    .map((t) => {
+      const title = escapeHtml(t.title || t.url || `tab ${t.id}`);
+      const cls = t.active ? 'tab-title active' : 'tab-title';
+      const lockedBy = t.lockedBy;
+      if (lockedBy) {
+        // Locked: show owner + an unpin (✕) button. No dropdown.
+        const ownerName = agentLabelFor(lockedBy);
+        return `<div class="tab-row" data-tab="${t.id}">
+          <span class="${cls}" title="${escapeHtml(t.url || '')}">${title}</span>
+          <span class="tab-pin">
+            <span style="color:#667eea;font-size:10px;">🔒 ${escapeHtml(ownerName)}</span>
+            <button class="icon-btn unpin" data-action="unlockTab" data-tab="${t.id}" title="Unpin this tab">✕</button>
+          </span>
+        </div>`;
+      }
+      // Unlocked: dropdown of agents + Pin button. Preselect the placeholder.
+      const opts = ['<option value="">— free —</option>']
+        .concat(agents.map((a) => {
+          const label = escapeHtml(`${a.name || 'agent'} · ${a.sessionId}`);
+          const val = escapeHtml(a.sessionId);
+          return `<option value="${val}">${label}</option>`;
+        }))
+        .join('');
+      return `<div class="tab-row" data-tab="${t.id}">
+        <span class="${cls}" title="${escapeHtml(t.url || '')}">${title}</span>
+        <span class="tab-pin">
+          <select data-action="pickAgent" data-tab="${t.id}">${opts}</select>
+          <button class="icon-btn" data-action="lockTab" data-tab="${t.id}" title="Pin to selected agent" style="color:#667eea;">📌</button>
+        </span>
+      </div>`;
+    })
+    .join('');
+}
+
+/** Human label for a sessionId, falling back to the bare id. */
+function agentLabelFor(sessionId) {
+  const a = (lastAgents || []).find((x) => x.sessionId === sessionId);
+  return a ? `${a.name || 'agent'} · ${sessionId}` : sessionId;
 }
 
 function escapeHtml(s) {
@@ -101,17 +197,25 @@ function updateUI(state) {
 
   if (state.port) portInput.value = state.port;
 
-  // Tab locks (task 3.3)
+  // Tab locks (task 3.3) — kept as a flat list with Unlock All.
   const locks = Array.isArray(state.tabLocks) ? state.tabLocks : [];
   if (locks.length === 0) {
     locksEl.innerHTML = '<div class="empty">none</div>';
     unlockAllBtn.disabled = true;
   } else {
     locksEl.innerHTML = locks
-      .map((l) => `<div class="row"><span class="tab">tab ${l.tabId}</span><span class="who">${l.sessionId}</span></div>`)
+      .map((l) => {
+        const owner = agentLabelFor(l.sessionId);
+        return `<div class="row"><span class="tab">tab ${l.tabId}</span><span class="who">${escapeHtml(owner)}</span></div>`;
+      })
       .join('');
     unlockAllBtn.disabled = false;
   }
+
+  // Open Tabs panel (driven by the background getStatus payload). Cache so a
+  // later agents poll can re-render the Pin dropdowns with fresh agent names.
+  lastTabs = Array.isArray(state.tabs) ? state.tabs : [];
+  renderOpenTabs();
 }
 
 function addLog(text, level) {
@@ -124,21 +228,28 @@ function addLog(text, level) {
   while (logEl.children.length > 50) logEl.removeChild(logEl.firstChild);
 }
 
-chrome.runtime.sendMessage({ type: 'getStatus' }, (response) => {
-  if (response) {
+/** Fetch connection + tabs + locks state from the background worker. */
+function refreshStatus() {
+  chrome.runtime.sendMessage({ type: 'getStatus' }, (response) => {
+    if (chrome.runtime.lastError || !response) return;
     updateUI(response);
-    addLog(`Status: ${response.connectionState || 'unknown'}`, response.connectionState === 'connected' ? 'ok' : '');
-  }
-});
+  });
+}
+
+refreshStatus();
 
 // On open: auto-pair the token (so the WS carries ?token=) and start polling
-// the daemon for connected agents. The poll stops when the popup closes.
+// the daemon for connected agents AND the background for tabs/locks. Both
+// polls stop when the popup is hidden (closes) to avoid leaking timers.
 autoPairToken();
 refreshAgents();
 let agentsTimer = setInterval(refreshAgents, 2000);
-// popup unload: clear the poll so we don't leak timers across reopens
+let statusTimer = setInterval(refreshStatus, 2000);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') clearInterval(agentsTimer);
+  if (document.visibilityState === 'hidden') {
+    clearInterval(agentsTimer);
+    clearInterval(statusTimer);
+  }
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
@@ -182,6 +293,56 @@ unlockAllBtn.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'unlockAll' }, (resp) => {
     if (resp?.success) addLog('All tab locks released', 'warn');
   });
+});
+
+// Event delegation for the dynamic Open Tabs / Connected Agents panels.
+// Rows are re-rendered on every poll (innerHTML), so attaching listeners to
+// individual buttons would be lost — route all clicks through the document
+// and dispatch on data-action.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const action = btn.dataset.action;
+
+  if (action === 'disconnect') {
+    const sid = btn.dataset.sid;
+    if (sid) disconnectAgent(sid);
+    return;
+  }
+
+  if (action === 'lockTab') {
+    const tabId = Number(btn.dataset.tab);
+    // find this tab row's <select> to read the chosen agent
+    const row = btn.closest('.tab-row');
+    const select = row && row.querySelector('select[data-action="pickAgent"]');
+    const sessionId = select ? select.value : '';
+    if (!sessionId) {
+      addLog('Pick an agent first', 'warn');
+      return;
+    }
+    chrome.runtime.sendMessage({ type: 'lockTab', tabId, sessionId }, (resp) => {
+      if (resp?.success) {
+        addLog(`Pinned tab ${tabId} to ${agentLabelFor(sessionId)}`, 'ok');
+        refreshStatus();
+      } else {
+        addLog(`Pin failed: ${resp?.error || 'unknown'}`, 'err');
+      }
+    });
+    return;
+  }
+
+  if (action === 'unlockTab') {
+    const tabId = Number(btn.dataset.tab);
+    chrome.runtime.sendMessage({ type: 'unlockTab', tabId }, (resp) => {
+      if (resp?.success) {
+        addLog(`Unpinned tab ${tabId}`, 'warn');
+        refreshStatus();
+      } else {
+        addLog(`Unpin failed: ${resp?.error || 'unknown'}`, 'err');
+      }
+    });
+    return;
+  }
 });
 
 // --- Resizable popup -------------------------------------------------------

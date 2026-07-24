@@ -1,16 +1,16 @@
-# Graph Report - real-browser-mcp  (2026-07-25)
+# Graph Report - real-browser-mcp  (2026-07-24)
 
 ## Corpus Check
-- 56 files · ~73,202 words
+- 54 files · ~68,681 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 501 nodes · 791 edges · 34 communities (27 shown, 7 thin omitted)
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 34 edges (avg confidence: 0.56)
+- 461 nodes · 725 edges · 32 communities (25 shown, 7 thin omitted)
+- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 32 edges (avg confidence: 0.56)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `bcebfa9b`
+- Built from commit: `1ec502e3`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -45,8 +45,6 @@
 - dependencies
 - files
 - repository
-- daemon.test.ts
-- التغييرات (٥ ملفات)
 
 ## God Nodes (most connected - your core abstractions)
 1. `dispatch()` - 24 edges
@@ -58,7 +56,7 @@
 7. `real-browser-mcp` - 20 edges
 8. `ExtensionBridge` - 18 edges
 9. `safeExec()` - 16 edges
-10. `Daemon` - 15 edges
+10. `compilerOptions` - 15 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `Real Browser MCP` --references--> `Chrome Web Store Listing`  [EXTRACTED]
@@ -84,7 +82,7 @@
 - **Real Browser MCP Three-Piece Architecture** — mcp_server_daemon, chrome_extension, real_browser_mcp [EXTRACTED 0.95]
 - **Tab-First Page Interaction Tools** — browser_snapshot_tool, browser_click_tool, browser_navigate_tool, browser_tabs_tool, browser_evaluate_tool [EXTRACTED 0.90]
 
-## Communities (34 total, 7 thin omitted)
+## Communities (32 total, 7 thin omitted)
 
 ### Community 0 - "Browser Tool Definitions"
 Cohesion: 0.10
@@ -92,11 +90,11 @@ Nodes (32): clickTool, clickTextTool, consoleTool, dialogTool, dragTool, evaluat
 
 ### Community 1 - "Extension Background Service"
 Cohesion: 0.10
-Nodes (49): autoPairToken(), autoReSnapshot(), broadcastStatus(), buildStatusPayload(), connect(), consoleByTab, dispatch(), extractTabId() (+41 more)
+Nodes (51): autoPairToken(), autoReSnapshot(), broadcastStatus(), buildStatusPayload(), connect(), consoleByTab, dispatch(), extractTabId() (+43 more)
 
 ### Community 2 - "IPC Daemon Config"
-Cohesion: 0.07
-Nodes (24): tabLocksToJSON(), DAEMON_INFO_FILE, DEFAULT_WS_PORT, ExtensionRequest, IpcClientMessage, IpcDaemonMessage, loadOrCreateToken(), NOTE: `browser_evaluate` runs ARBITRARY user JS (can submit forms, click, (+16 more)
+Cohesion: 0.08
+Nodes (21): DAEMON_INFO_FILE, DEFAULT_WS_PORT, ExtensionRequest, IpcClientMessage, IpcDaemonMessage, loadOrCreateToken(), NOTE: `browser_evaluate` runs ARBITRARY user JS (can submit forms, click,, readToken() (+13 more)
 
 ### Community 3 - "Package Metadata"
 Cohesion: 0.12
@@ -115,8 +113,8 @@ Cohesion: 0.10
 Nodes (20): keywords, ai-agent, ai-coding, browser, browser-automation, browser-control, browser-controller, browser-use (+12 more)
 
 ### Community 7 - "Popup UI Logic"
-Cohesion: 0.09
-Nodes (32): addLog(), agentLabelFor(), agentsEl, agentsTimer, applySize(), autoPairToken(), daemonHttpBase(), detailEl (+24 more)
+Cohesion: 0.11
+Nodes (21): agentsEl, agentsTimer, applySize(), autoPairToken(), daemonHttpBase(), detailEl, dot, endDrag() (+13 more)
 
 ### Community 8 - "Documentation"
 Cohesion: 0.11
@@ -131,8 +129,8 @@ Cohesion: 0.09
 Nodes (21): compilerOptions, declaration, declarationMap, esModuleInterop, forceConsistentCasingInFileNames, lib, module, moduleResolution (+13 more)
 
 ### Community 11 - "Tab Concurrency Lock"
-Cohesion: 0.17
-Nodes (5): getOpenTabs(), handleTabs(), runOnTab(), TabLockMap, TabMutexMap
+Cohesion: 0.15
+Nodes (3): runOnTab(), TabLockMap, TabMutexMap
 
 ### Community 12 - "Smart Selector Utils"
 Cohesion: 0.23
@@ -178,33 +176,25 @@ Nodes (6): files, agent-config/, extension/, LICENSE, mcp-server/dist/, README.m
 Cohesion: 0.67
 Nodes (3): repository, type, url
 
-### Community 32 - "daemon.test.ts"
-Cohesion: 0.16
-Nodes (14): Client, __dirname, DIST_DAEMON, DIST_INDEX, fetchStatus(), httpGet(), killSession(), ROOT (+6 more)
-
-### Community 33 - "التغييرات (٥ ملفات)"
-Cohesion: 0.18
-Nodes (10): إصلاح الوكلاء الأشباح (Zombie) + اسم الوكيل + إدارة التبويبات من الـ Popup, التغييرات (٥ ملفات), السبب الجذري لكل عرض, ترتيب التنفيذ, نطاق الانفجار (blast radius) — من graphify Phase 4, ١. `mcp-server/src/daemon.ts` — نبضة الحياة + إزالة التكرار + `/kill`, ٢. `mcp-server/src/index.ts` — اسم وكيل أفضل + نبضة pong + سجل صحيح, ٣. `extension/background.js` — قفل/فتح من الـ popup + قائمة التبويبات (+2 more)
-
 ## Knowledge Gaps
-- **213 isolated node(s):** `__dirname`, `consoleByTab`, `networkByTab`, `fallbackByTab`, `lastSnapshotFingerprints` (+208 more)
+- **191 isolated node(s):** `consoleByTab`, `networkByTab`, `fallbackByTab`, `lastSnapshotFingerprints`, `tabMutex` (+186 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **7 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `TabLockMap` connect `Tab Concurrency Lock` to `Extension Background Service`, `IPC Daemon Config`?**
-  _High betweenness centrality (0.098) - this node is a cross-community bridge._
-- **Why does `updateUI()` connect `Popup UI Logic` to `Tab Concurrency Lock`?**
-  _High betweenness centrality (0.056) - this node is a cross-community bridge._
+- **Why does `DaemonClient` connect `IPC Daemon Config` to `Tab Concurrency Lock`?**
+  _High betweenness centrality (0.027) - this node is a cross-community bridge._
+- **Why does `ExtensionBridge` connect `Extension Bridge Logic` to `IPC Daemon Config`?**
+  _High betweenness centrality (0.017) - this node is a cross-community bridge._
 - **Are the 22 inferred relationships involving `dispatch()` (e.g. with `handleClick()` and `handleClickByText()`) actually correct?**
   _`dispatch()` has 22 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `__dirname`, `consoleByTab`, `networkByTab` to the rest of the system?**
-  _213 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `consoleByTab`, `networkByTab`, `fallbackByTab` to the rest of the system?**
+  _191 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Browser Tool Definitions` be split into smaller, more focused modules?**
   _Cohesion score 0.09994155464640561 - nodes in this community are weakly interconnected._
 - **Should `Extension Background Service` be split into smaller, more focused modules?**
-  _Cohesion score 0.10196078431372549 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.09796806966618288 - nodes in this community are weakly interconnected._
 - **Should `IPC Daemon Config` be split into smaller, more focused modules?**
-  _Cohesion score 0.070578231292517 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.08416389811738649 - nodes in this community are weakly interconnected._

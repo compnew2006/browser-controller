@@ -245,7 +245,7 @@ function getConnectionState() {
   return 'disconnected';
 }
 
-function buildStatusPayload(message) {
+function buildStatusPayload(message, tabs) {
   return {
     type: 'status',
     connectionState: getConnectionState(),
@@ -256,6 +256,10 @@ function buildStatusPayload(message) {
     lastError,
     activity: currentActivity,
     tabLocks: tabLocksToJSON(),
+    // Open-tab snapshot so the popup can render a Pin dropdown per tab without
+    // a second round-trip. undefined when the caller didn't fetch tabs (the
+    // popup treats missing the same as empty — see updateUI).
+    tabs: tabs || [],
     statusMessage: message || null,
   };
 }
@@ -264,8 +268,32 @@ function tabLocksToJSON() {
   return tabLocks.snapshot();
 }
 
-function broadcastStatus(message) {
-  chrome.runtime.sendMessage(buildStatusPayload(message)).catch(() => {});
+/**
+ * Open tabs in the current window, each annotated with its lock owner so the
+ * popup can show "Locked: {session}" and preselect it in the Pin dropdown.
+ * Mirrors the shape of the `browser_tabs list` tool result (handleTabs) so the
+ * popup and the agent-facing tool stay consistent.
+ */
+async function getOpenTabs() {
+  try {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    return tabs.map((t) => ({
+      id: t.id,
+      url: t.url,
+      title: t.title,
+      active: t.active,
+      lockedBy: tabLocks.owner(t.id) || null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function broadcastStatus(message) {
+  // Tabs are fetched first so the popup's "Open Tabs" panel stays in sync with
+  // lock changes (a lock op changes lockedBy, which the popup re-renders).
+  const tabs = await getOpenTabs();
+  chrome.runtime.sendMessage(buildStatusPayload(message, tabs)).catch(() => {});
 }
 
 // --- Message Router -------------------------------------------------------
@@ -1451,8 +1479,13 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     return false; // fire-and-forget; no response expected
   }
   if (msg.type === 'getStatus') {
-    respond(buildStatusPayload());
-    return false;
+    // Async: fetch tabs before responding so the popup gets a full snapshot
+    // (connection + locks + open tabs) in one message. Returning true signals
+    // Chrome we'll call respond() asynchronously.
+    getOpenTabs().then((tabs) => {
+      respond(buildStatusPayload(undefined, tabs));
+    });
+    return true; // async response
   }
   if (msg.type === 'setPort') {
     const p = parseInt(msg.port, 10);
@@ -1486,6 +1519,31 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     tabLocks.unlockAll();
     broadcastStatus('All tab locks cleared');
     respond({ success: true });
+    return false;
+  }
+  if (msg.type === 'lockTab') {
+    // { tabId, sessionId } — pin a specific tab to a specific agent from the
+    // popup. This is the user-facing counterpart to the agent-driven
+    // browser_tabs lock action; same primitive (tabLocks.lock).
+    if (msg.tabId == null || !msg.sessionId) {
+      respond({ success: false, error: 'tabId and sessionId required' });
+      return false;
+    }
+    tabLocks.lock(msg.tabId, msg.sessionId);
+    broadcastStatus(`Tab ${msg.tabId} pinned to ${msg.sessionId}`);
+    respond({ success: true });
+    return false;
+  }
+  if (msg.type === 'unlockTab') {
+    // { tabId } — release one tab's lock (vs unlockAll which clears all).
+    if (msg.tabId == null) {
+      respond({ success: false, error: 'tabId required' });
+      return false;
+    }
+    const was = tabLocks.owner(msg.tabId);
+    tabLocks.release(msg.tabId);
+    broadcastStatus(`Tab ${msg.tabId} unpinned (was ${was || '-'})`);
+    respond({ success: true, previousSession: was || null });
     return false;
   }
   return false; // unrecognized message — no async response promised
