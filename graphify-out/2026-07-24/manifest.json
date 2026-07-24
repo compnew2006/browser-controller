@@ -5,9 +5,9 @@
     "semantic_hash": ""
   },
   "extension/background.js": {
-    "mtime": 1784871013.748449,
-    "ast_hash": "b36679e69430869e7ecbddf83d952358",
-    "semantic_hash": "b36679e69430869e7ecbddf83d952358"
+    "mtime": 1784921571.846776,
+    "ast_hash": "7eac61150a7b8e81a16c0e0a3a01b2d5",
+    "semantic_hash": ""
   },
   "extension/content.js": {
     "mtime": 1784870980.2102876,
@@ -30,9 +30,9 @@
     "semantic_hash": "d07f265ddccd7b570ba6b2deb6f610a8"
   },
   "extension/utils/smart-selector.js": {
-    "mtime": 1784863521.0866969,
-    "ast_hash": "6b0593ae9ae9d5686ca699985d120880",
-    "semantic_hash": "6b0593ae9ae9d5686ca699985d120880"
+    "mtime": 1784921647.228319,
+    "ast_hash": "8492f96d037ea67dcf846916f2c476ea",
+    "semantic_hash": ""
   },
   "mcp-server/src/bridge.ts": {
     "mtime": 1784865704.2014072,
@@ -200,9 +200,9 @@
     "semantic_hash": "dbc403de00f3f820108054684070a0f1"
   },
   "tests/smart-selector.test.ts": {
-    "mtime": 1784863531.4195418,
-    "ast_hash": "cec239696c52961f72d5f0516a948a62",
-    "semantic_hash": "cec239696c52961f72d5f0516a948a62"
+    "mtime": 1784921690.0908873,
+    "ast_hash": "e8ac50331a4b05055f99130794b4e235",
+    "semantic_hash": ""
   },
   "tests/tab-concurrency.test.ts": {
     "mtime": 1784861997.9434884,
