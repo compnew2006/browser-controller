@@ -32,13 +32,27 @@
 
 ---
 
+## What this project solves
+
 You ship a fix. Your agent says "done, please verify."
 You alt-tab to Chrome, navigate to the page, log in, click around, find the bug.
 
 Your agent just wrote the code. It could also verify it.
 It already has your browser open right there. It just can't see it.
 
-Now it can.
+**Now it can.** Real Browser MCP gives any MCP-compatible AI agent (Cursor, Claude Desktop, Windsurf, …) direct control of the **browser you already have open** — your real sessions, your logins, your cookies. No headless browser, no fresh profile, no re-authentication.
+
+### What's new in v2 (multi-client)
+
+v1 was a single-client server: one agent, one active tab. If you switched tabs or ran two agents, they stepped on each other. **v2 is a multi-client daemon with explicit tab targeting:**
+
+- **Multiple agents at once.** Cursor can drive tab 10 while Claude drives tab 11 — both through one shared daemon, neither blocking the other.
+- **Tab targeting, not "the active tab."** Every action names a `tabId`. Move your mouse, switch tabs, watch YouTube — the agent keeps working on the tab you told it to. It never hijacks the page you're reading.
+- **Per-tab isolation.** Element refs, console logs, and network buffers are scoped per tab. A ref from tab 10 can never click something in tab 20.
+- **Per-tab concurrency.** Two actions on the *same* tab serialize (no races); actions on *different* tabs run in parallel.
+- **Tab locking.** An agent can claim a tab so others queue behind it instead of racing (`browser_tabs { action: "lock" }`).
+- **Authenticated WebSocket.** The extension↔daemon connection requires a token, so no other local process can silently drive your browser.
+- **No debugger banner.** `browser_evaluate` now runs in the page's MAIN world via `chrome.scripting` — no yellow "this tab is being debugged" banner.
 
 <p align="center">
   <img src="assets/preview.png" alt="Real Browser MCP" width="100%" />
@@ -46,12 +60,45 @@ Now it can.
 
 ---
 
+## How it works
+
+Three pieces, all on your machine. Nothing leaves localhost.
+
+```
+  Agent (Cursor / Claude / Windsurf)        ── other agents connect too ──┐
+                  │ stdio (MCP protocol)                                   │
+                  ▼                                                        ▼
+  ┌─────────────────────────────┐   ┌─────────────────────────────────────────┐
+  │  thin MCP client            │   │  thin MCP client                        │
+  │  (npx real-browser-mcp)     │   │  (npx real-browser-mcp)                 │
+  │  - speaks MCP over stdio    │   │  - spawns daemon if not running         │
+  │  - forwards calls to daemon │   │  - gets its own sessionId               │
+  └──────────────┬──────────────┘   └────────────────────┬───────────────────┘
+                 │ local IPC socket (AF_UNIX / named pipe, token-auth)     │
+                 ▼                                                          ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  DAEMON (single long-running process, owns port 7225)                     │
+  │  - multiplexes N clients → 1 extension                                    │
+  │  - tags every call with the client's sessionId                            │
+  │  - enforces per-tab mutex + tab-lock coordination                         │
+  └──────────────────────────────┬───────────────────────────────────────────┘
+                                 │ WebSocket ws://127.0.0.1:7225?token=…
+                                 ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  Chrome Extension (Manifest V3 service worker)                            │
+  │  - resolves the target tabId (never "the active tab" implicitly)          │
+  │  - serializes same-tab actions, parallelizes cross-tab actions            │
+  │  - executes click/type/snapshot/evaluate against the named tab            │
+  └──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key idea:** the first time any agent runs, `npx real-browser-mcp` spawns a background **daemon** that owns port 7225 and the extension connection. Every subsequent agent (even from a different MCP client) connects to that same daemon over a local IPC socket and gets its own `sessionId`. The extension sees one stable connection and routes each call to the exact tab the caller specified.
+
+---
+
 ## Quick Start
 
-Two parts:
-
-- **MCP server** - runs on your machine, talks to your AI agent
-- **Chrome extension** - sits in your browser, executes the commands
+Two parts: the **MCP server** (runs on your machine, talks to your AI agent) and the **Chrome extension** (sits in your browser, executes commands).
 
 ### 1. Add the MCP server
 
@@ -79,6 +126,16 @@ Or add manually in Cursor Settings > MCP > "Add new MCP server":
 
 **Windsurf:** Settings > MCP. Same config.
 
+**Multiple agents at once (v2):** just add the server in each client. They all share the one daemon automatically — no extra config.
+
+```json
+{
+  "mcpServers": {
+    "real-browser": { "command": "npx", "args": ["-y", "real-browser-mcp"] }
+  }
+}
+```
+
 Any MCP-compatible client works.
 
 </details>
@@ -98,36 +155,76 @@ git clone https://github.com/ofershap/real-browser-mcp.git
 
 Click the Real Browser MCP icon in your toolbar.
 
-Green dot = connected. Gray = waiting for server.
+Green dot = connected. Gray = waiting for the daemon.
 
-Done. Your agent can see your browser.
+### 3. Pair the extension with the daemon's auth token
+
+The daemon generates a secret token on first run. The extension must present it to connect.
+
+1. Run any browser command once (e.g. ask your agent to "list my browser tabs") — this starts the daemon and creates the token at `~/.real-browser-mcp/token.json`.
+2. Read it: `cat ~/.real-browser-mcp/token.json` (on Windows: `%USERPROFILE%\.real-browser-mcp\token.json`)
+3. Click the extension icon → paste the token into the **Auth Token** field.
+
+Green dot = you're connected. Your agent can now see your browser.
+
+> The token prevents any other local process from opening a WebSocket and driving your authenticated browser sessions. It's optional in the sense that the daemon will still start without it being set in the extension, but the extension **won't connect** until it matches.
 
 ---
 
-## How Others Compare
+## How to use it (steps)
 
-| | Real Browser MCP | Playwright MCP | Chrome DevTools MCP |
-|---|---|---|---|
-| Uses your existing browser | Yes | No, launches new | Partial, needs debug port |
-| Sessions and cookies | Already there | Fresh profile | Manual setup |
-| Works behind corporate SSO | Yes | No | Depends |
-| Setup | Extension + MCP config | Headless browser | Chrome with `--remote-debugging-port` |
+The v2 model is **tab-first**: the agent always says *which* tab to act on. It never assumes "the active tab."
+
+### Basic workflow
+
+1. **List tabs** to get a `tabId`:
+   ```
+   browser_tabs { action: "list" }
+   → [{ id: 15, url: "...", title: "...", active: true, lockedBy: null }, ...]
+   ```
+2. **Snapshot that tab** to see its structure and get element refs:
+   ```
+   browser_snapshot { tabId: 15 }
+   → { tree: [ { ref: "e3", role: "button", name: "Sign in" }, ... ] }
+   ```
+   Refs are valid **only for this tabId**. If you navigate or the DOM changes, re-snapshot.
+3. **Interact** using the ref and the same tabId:
+   ```
+   browser_click { tabId: 15, ref: "e3" }
+   browser_type  { tabId: 15, ref: "e5", text: "hello@example.com" }
+   browser_press_key { tabId: 15, key: "Enter" }
+   ```
+4. **Verify** — snapshot or read text again after the action.
+
+### Multi-agent coordination (two agents, two tabs)
+
+1. Agent A lists tabs, picks tab 10, optionally locks it: `browser_tabs { action: "lock", tabId: 10 }`
+2. Agent B lists tabs, picks tab 11, locks it: `browser_tabs { action: "lock", tabId: 11 }`
+3. Both work in parallel. Each agent's calls serialize against its own tab; the two tabs never interfere.
+4. When done: `browser_tabs { action: "unlock", tabId: 10 }`.
+
+The popup shows which session owns each locked tab, and there's an **Unlock All** button if an agent crashes mid-lock.
+
+### Things to know
+
+- **Forgot `tabId`?** You'll get a clear error: `tabId is required. Call browser_tabs list first.`
+- **Protected pages** (`chrome://`, the Web Store, devtools) can't be scripted — you'll get `Cannot access protected page (chrome://...)` instead of a silent hang.
+- **`browser_navigate`** is the one tool where `tabId` is optional (defaults to the active tab) — but for multi-agent safety, pass it explicitly.
+- **`browser_evaluate`** now runs in the page's MAIN world (no debugger banner, CSP-safe). It's powerful but **non-idempotent** — it won't be auto-retried on timeout.
 
 ---
 
 ## 🧠 Teach Your Agent
 
-The agent can use all 18 tools out of the box, but it works better when it knows _when_ and _how_ to chain them. A config file teaches the right workflow - snapshot first, then act, then verify.
-
-Run one command:
+The agent can use all 22 tools out of the box, but it works better when it knows the **tab-first** workflow. Run one command to install the rules:
 
 ```bash
 npx real-browser-mcp --setup cursor
 ```
 
 This installs:
-- `~/.cursor/rules/real-browser-mcp.mdc` - teaches the snapshot-first workflow, how to handle dropdowns, when to use screenshots vs snapshots
-- `~/.cursor/commands/check-browser.md` - adds `/check-browser` to your Cursor chat
+- `~/.cursor/rules/real-browser-mcp.mdc` — the tab-targeting workflow, dropdown handling, when to lock tabs
+- `~/.cursor/commands/check-browser.md` — adds `/check-browser` to your Cursor chat
 
 After that, type `/check-browser` in any chat. Or just say "check the result in my browser" and the agent knows what to do.
 
@@ -148,16 +245,16 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-18 tools. Grouped by purpose.
+22 tools. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional).
 
 **See**
 
 | Tool | What it does |
 |------|-------------|
-| `browser_snapshot` | Accessibility tree with element refs. Compact mode (default) returns only interactive elements |
-| `browser_screenshot` | Capture what's on screen |
+| `browser_snapshot` | Accessibility tree with element refs. Compact mode (default) returns only interactive elements. Traverses shadow DOM + iframes. |
+| `browser_screenshot` | Capture a tab as an image (activates the tab first to capture) |
 | `browser_text` | Extract raw text from page or element |
-| `browser_find` | Query elements by CSS selector |
+| `browser_find` | Query elements by natural language |
 
 **Interact**
 
@@ -171,22 +268,40 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 | `browser_hover` | Trigger tooltips and dropdowns |
 | `browser_select` | Pick from native `<select>` dropdowns |
 | `browser_wait` | Wait for elements to appear or disappear |
+| `browser_fill_form` | Fill multiple form fields in one call |
+| `browser_drag` | Drag element-to-element (uses CDP for reliability) |
+| `browser_upload_file` | Upload files through `<input type="file">` (uses CDP) |
 
 **Navigate**
 
 | Tool | What it does |
 |------|-------------|
-| `browser_navigate` | Go to a URL in the active tab |
-| `browser_tabs` | List, create, close, or focus tabs |
+| `browser_navigate` | Go to a URL in a tab (`tabId` optional, defaults to active) |
+| `browser_tabs` | List / create / close / focus / **lock** / **unlock** tabs |
 
-**Debug**
+**Debug & Advanced**
 
 | Tool | What it does |
 |------|-------------|
-| `browser_console` | Console output (log, warn, error) |
-| `browser_network` | XHR/fetch requests with status codes |
-| `browser_evaluate` | Run JavaScript via Chrome DevTools Protocol |
+| `browser_console` | Console output (log, warn, error) — per-tab, capped at 200 entries |
+| `browser_network` | XHR/fetch requests with status codes — per-tab |
+| `browser_evaluate` | Run JavaScript in the page's MAIN world (no banner, CSP-safe) |
 | `browser_handle_dialog` | Handle alert/confirm/prompt dialogs |
+| `browser_run_action` | Run a self-contained JS action object via CDP |
+
+---
+
+## How Others Compare
+
+| | Real Browser MCP | Playwright MCP | Chrome DevTools MCP |
+|---|---|---|---|
+| Uses your existing browser | Yes | No, launches new | Partial, needs debug port |
+| Sessions and cookies | Already there | Fresh profile | Manual setup |
+| Works behind corporate SSO | Yes | No | Depends |
+| Multiple agents, multiple tabs | Yes (v2) | No | No |
+| Tab-targeting (won't hijack active tab) | Yes (v2) | N/A | No |
+| Authenticated local connection | Yes (v2) | N/A | No |
+| Setup | Extension + MCP config | Headless browser | Chrome with `--remote-debugging-port` |
 
 ---
 
@@ -194,14 +309,33 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 | Env var | Default | What it does |
 |---------|---------|-------------|
-| `WS_PORT` | `7225` | WebSocket port for extension connection |
+| `WS_PORT` | `7225` | WebSocket port the daemon uses for the extension connection |
 
-Connection drops are handled automatically with exponential backoff (1s to 30s), ping/pong health checks every 10s, and per-tool timeouts (5s for clicks, 60s for navigation).
+### Daemon state files
+
+The daemon keeps everything in `~/.real-browser-mcp/` (Windows: `%USERPROFILE%\.real-browser-mcp\`):
+
+| File | Purpose |
+|------|---------|
+| `token.json` | Auth token the extension must present (mode `0600`) |
+| `daemon.sock` | The IPC socket thin clients connect to (AF_UNIX on mac/linux; named pipe on Windows) |
+| `daemon.json` | Daemon metadata (pid, port, start time) — used to detect a running daemon |
+| `daemon.log` | Daemon stdout/stderr when spawned by a client |
+
+To fully reset: stop your MCP clients, delete the folder, and the next run recreates it with a fresh token.
+
+### Reliability
+
+- The daemon is **auto-spawned** the first time any client runs and left running detached.
+- Connection drops use exponential backoff (1s → 30s), ping/pong health checks every 10s.
+- Per-tool timeouts (5s for clicks, 60s for navigation).
+- **Read-only tools** (snapshot, screenshot, text, find, console, network) are retried on timeout; **side-effecting tools** (click, type, navigate, evaluate) are **never** retried — a click can't fire twice.
+- If a previous daemon crashed while holding port 7225, the new one finds and evicts the stale PID (cross-platform: `lsof` on mac/linux, `Get-NetTCPConnection` on Windows).
 
 <details>
 <summary>Multiple Chrome profiles</summary>
 
-Run two server instances on different ports:
+Run two daemons on different ports by setting `WS_PORT` per client:
 
 ```json
 {
@@ -226,21 +360,27 @@ Update the port in each extension popup to match.
 <details>
 <summary><strong>Architecture</strong></summary>
 
-Everything stays on your machine. The extension connects to the MCP server via WebSocket on localhost. No cloud, no proxy, nothing leaves your browser.
+Everything stays on your machine. The extension connects to the daemon via an authenticated WebSocket on localhost; MCP clients connect to the daemon via a local IPC socket. No cloud, no proxy, nothing leaves your browser.
 
 ```
 real-browser-mcp/
 ├── mcp-server/          MCP server (npm package, TypeScript)
-│   └── src/tools/       One file per tool, registry pattern
+│   └── src/
+│       ├── daemon.ts        Single multi-client daemon (owns WS :7225)
+│       ├── daemon-config.ts IPC protocol, paths, auth token, idempotency set
+│       ├── index.ts         Thin stdio MCP client (spawns daemon, multiplexes)
+│       ├── bridge.ts        Extension WS server + cross-platform port probe
+│       └── tools/           One file per tool (22), registry pattern
 ├── extension/           Chrome extension (Manifest V3, plain JS)
-│   ├── background.js    Service worker, WebSocket client, tool handlers
-│   ├── content.js       Console capture
-│   └── popup/           Connection status UI
+│   ├── background.js        Service worker: tab resolution, per-tab mutex, locks
+│   ├── lib/tab-concurrency.js  Pure, unit-tested mutex + lock primitives
+│   ├── content.js          Console capture
+│   └── popup/              Status, token field, tab-lock viewer, Unlock All
 ├── agent-config/        Pre-built configs for Cursor + Claude Code
-│   ├── cursor/          Rules and commands
-│   ├── skills/          Browser automation skill
-│   └── setup.mjs        One-command installer
-└── tests/               Bridge + registry tests
+│   ├── cursor/              Rules and commands
+│   ├── skills/              Browser automation skill
+│   └── setup.mjs            One-command installer
+└── tests/               Bridge + registry + concurrency tests (45 passing)
 ```
 
 **Stack:** TypeScript (strict) · MCP SDK · WebSocket · Chrome Extension Manifest V3 · Vitest
@@ -259,12 +399,14 @@ npm test
 ```
 
 | Command | What it does |
-|---------|-------------|
-| `npm run build` | Compile TypeScript |
+|---------|---------|
+| `npm run build` | Compile TypeScript → `mcp-server/dist/` |
 | `npm run dev` | Watch mode |
-| `npm test` | Run tests |
+| `npm test` | Run the full test suite (45 tests) |
 | `npm run typecheck` | Type check without emitting |
 | `npm run setup:cursor` | Install Cursor rule + command |
+
+The test suite covers the WebSocket bridge (including token-auth rejection), the tool registry, and the per-tab concurrency primitives (same-tab serialization + cross-tab parallelism). The daemon's IPC auth and the WS token enforcement are also smoke-tested via the build artifacts in `mcp-server/dist/`.
 
 </details>
 
@@ -273,35 +415,49 @@ npm test
 <details>
 <summary>Does it work with my logged-in sessions?</summary>
 
-That's the whole point. The extension runs inside your actual Chrome - same cookies, same sessions, same local storage. No re-authentication needed.
+That's the whole point. The extension runs inside your actual Chrome — same cookies, same sessions, same local storage. No re-authentication needed.
 
 </details>
 
 <details>
 <summary>Does it send data anywhere?</summary>
 
-No. The MCP server and extension talk over WebSocket on localhost. Nothing leaves your machine. There's no analytics, no telemetry, no cloud component. [Privacy policy.](PRIVACY.md)
+No. The MCP clients, the daemon, and the extension all talk over localhost (IPC socket + WebSocket). Nothing leaves your machine. There's no analytics, no telemetry, no cloud component. [Privacy policy.](PRIVACY.md)
 
 </details>
 
 <details>
 <summary>Which AI clients work?</summary>
 
-Any MCP-compatible client. Cursor, Claude Desktop, Claude Code, Windsurf, Cline, and anything else that speaks the MCP protocol.
+Any MCP-compatible client. Cursor, Claude Desktop, Claude Code, Windsurf, Cline, and anything else that speaks the MCP protocol. v2 lets several of them run at once against the same daemon.
 
 </details>
 
 <details>
-<summary>Can I use it with multiple Chrome profiles?</summary>
+<summary>Can two agents really work at the same time without breaking each other?</summary>
 
-Yes. Run two MCP server instances on different ports. See [Configuration](#configuration) for the setup.
+Yes — that's the main v2 improvement. Each agent connects to the shared daemon, gets its own `sessionId`, and targets a specific `tabId`. Actions on the same tab serialize through a per-tab mutex; actions on different tabs run in parallel. Optionally an agent can `lock` a tab to claim exclusive access; other agents queue behind the lock rather than failing.
+
+</details>
+
+<details>
+<summary>What if the agent acts on the wrong tab?</summary>
+
+It can't — not silently. Every page-interaction tool requires a `tabId`, and if it's missing you get a clear `tabId is required` error. The agent can never accidentally act on the tab you happen to be looking at. (The one exception is `browser_navigate` without a `tabId`, which uses the active tab — but for multi-agent use you should always pass `tabId`.)
+
+</details>
+
+<details>
+<summary>Why is there an auth token?</summary>
+
+Without it, any local process on your machine could open a WebSocket to port 7225 and drive your authenticated browser sessions (your bank, your email, your company SSO). The daemon generates a secret token in `~/.real-browser-mcp/token.json` and the extension must present it to connect.
 
 </details>
 
 <details>
 <summary>How is this different from Playwright MCP or browser-use?</summary>
 
-They launch a new browser instance from scratch - no state, no cookies, no sessions. You have to replay the full login flow every time. This connects to the browser you already have open with everything already loaded.
+They launch a new browser instance from scratch — no state, no cookies, no sessions. You have to replay the full login flow every time. This connects to the browser you already have open with everything already loaded.
 
 </details>
 

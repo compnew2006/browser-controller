@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { textResult } from './types.js';
+import { requireTabId, textResult } from './types.js';
 
 export const findTool: ToolDefinition = {
   name: 'browser_find',
   description:
     'Find elements on the page using natural language (e.g. "login button", "search input"). Returns refs you can use with click/type.',
   inputSchema: z.object({
+    tabId: requireTabId(),
     query: z.string().describe('Natural language description of what to find'),
     limit: z.number().optional().default(10).describe('Max matches to return'),
   }),

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
-  if (window.__realBrowserMcpInjected) return;
-  window.__realBrowserMcpInjected = true;
+  if (window.__browserControllerInjected) return;
+  window.__browserControllerInjected = true;
 
   const orig = {
     log: console.log,

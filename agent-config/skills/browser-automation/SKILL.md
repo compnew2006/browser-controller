@@ -7,43 +7,55 @@ description: Control the user's real browser via Real Browser MCP. Use when aske
 
 Use this skill when you need to interact with the user's actual browser - clicking, typing, reading pages, taking screenshots, or navigating.
 
+## CRITICAL: Always target a tab explicitly (v2)
+
+This is a **multi-client** server — other agents may be using other tabs. You MUST pass `tabId` to every page-interaction tool; actions never hit "the active tab" implicitly.
+
+1. First call `browser_tabs` with `action: "list"` to discover tabs and get a `tabId`
+2. Pass that same `tabId` to `browser_snapshot`, `browser_click`, `browser_type`, etc.
+3. Refs from a snapshot are valid **only for the tabId that produced them** — never reuse a ref from tab 10 on tab 20
+4. If you need exclusive use of a tab, `browser_tabs { action: "lock", tabId }` first, then `unlock` when done
+
+If `tabId` is missing you'll get: *"tabId is required. Call browser_tabs list first."*
+
 ## Before You Start
 
-1. Verify the extension is connected: try `browser_tabs` with action "list" first
+1. Verify the extension is connected: `browser_tabs { action: "list" }` (returns the tab list)
 2. If disconnected, ask the user to check the extension icon (should show green "ON")
 3. Never close tabs you didn't create
 
 ## Reading Pages
 
-Start with `browser_snapshot` to get the accessibility tree. This gives you refs like "e12" that you use for interaction.
+`browser_snapshot { tabId }` returns the accessibility tree with refs like "e12" that you use for interaction.
 
-For large pages, scope with a CSS selector: `browser_snapshot` with `selector: "main"` or `selector: ".content"`.
+For large pages, scope with a selector: `browser_snapshot { tabId, selector: "main" }`.
 
-Use `browser_text` to extract raw text when you need the full content.
+Use `browser_text { tabId }` to extract raw text when you need full content.
 
 ## Interacting
 
-Always snapshot first, then use refs:
-- `browser_click` with `ref: "e12"` to click
-- `browser_type` with `ref: "e5"` and `text: "hello"` to type
-- `browser_press_key` with `key: "Enter"` to submit
-- `browser_scroll` with `direction: "down"` to scroll
+Always pass `tabId`, then use refs from that tab's snapshot:
+- `browser_click { tabId, ref: "e12" }`
+- `browser_type { tabId, ref: "e5", text: "hello" }`
+- `browser_press_key { tabId, key: "Enter" }`
+- `browser_scroll { tabId, direction: "down" }`
 
 ## Dynamic Content (SPAs, social media)
 
-1. `browser_scroll` down to load more content
-2. `browser_wait` with a selector for lazy-loaded elements
+1. `browser_scroll { tabId, direction: "down" }` to load more
+2. `browser_wait { tabId, selector }` for lazy-loaded elements
 3. Snapshot again after scrolling - refs are regenerated
-4. For virtual scroll containers (Twitter feeds, Reddit), pass the container's CSS selector to `browser_scroll`
+4. For virtual scroll containers (Twitter, Reddit), pass the container's CSS selector to `browser_scroll`
 
-## Debugging
+## Debugging (per-tab)
 
-- `browser_console` reads console.log/warn/error output
-- `browser_network` shows XHR/fetch requests with status codes
-- `browser_screenshot` captures what the user sees
+- `browser_console { tabId }` reads console output for that tab
+- `browser_network { tabId }` shows XHR/fetch requests for that tab
+- `browser_screenshot { tabId }` captures the tab (activates it first to capture)
 
 ## Common Mistakes
 
-- Using stale refs after navigation or scroll (always re-snapshot)
-- Trying to click elements in iframes (scope snapshot to the iframe)
-- Not waiting for page load after navigation
+- Forgetting `tabId` → "tabId is required" error
+- Using a ref from one tabId against a different tabId
+- Using stale refs after navigation/scroll (always re-snapshot)
+- Holding a tab lock too long (other agents queue behind you)

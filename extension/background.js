@@ -1,10 +1,31 @@
+/**
+ * Browser Controller — background service worker.
+ *
+ * v2 architecture (plan tasks 1.2–1.5, 2.1–2.5):
+ *   - Every page-interaction tool takes an explicit `tabId`. There is NO global
+ *     "active tab" concept on the dispatch path — the user can freely switch
+ *     tabs/move the mouse while an agent works. (1.2)
+ *   - Element refs are stored per-tab (refsByTab), so a ref from tab 10 can never
+ *     resolve against tab 20's DOM. (1.3)
+ *   - console/network buffers are per-tab (capped 200), persisted to
+ *     chrome.storage.session so they survive service-worker death. (1.4)
+ *   - browser_evaluate runs via chrome.scripting MAIN world — no debugger banner. (1.5)
+ *   - Per-tab mutex: only one tool runs against a given tab at a time; different
+ *     tabs run in parallel. (2.1)
+ *   - Per-agent sessionId + tab lock: browser_tabs lock claims a tab so other
+ *     agents queue behind it instead of racing. (2.2)
+ *   - Snapshot traverses shadow DOM + iframes. (2.4)
+ *   - safeExec turns "can't touch chrome:// pages" into a clear error. (2.5)
+ */
 const DEFAULT_WS_PORT = 7225;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const KEEPALIVE_ALARM = 'keepalive';
 const KEEPALIVE_INTERVAL_MIN = 0.4; // ~24s, under Chrome's 30s limit
+const PER_TAB_CAP = 200;
 
 let wsPort = DEFAULT_WS_PORT;
+let wsToken = ''; // auth token (3.1); appended as ?token=
 let ws = null;
 let isConnected = false;
 let reconnectAttempts = 0;
@@ -12,29 +33,53 @@ let reconnectTimeout = null;
 let nextRetryMs = 0;
 let connectedSince = null;
 let lastError = null;
-let consoleMessages = [];
-let networkRequests = [];
-let currentActivity = null;
-let activeTabId = null;
-let pendingDialog = null;
 
-// --- Connection Management ---
+import { TabMutexMap, TabLockMap, runOnTab as runOnTabLib } from './lib/tab-concurrency.js';
+import { PAGE_FALLBACK_FN, PAGE_RESOLVE_FALLBACK_FN } from './utils/smart-selector.js';
+
+// --- Per-tab state (tasks 1.3, 1.4) ---------------------------------------
+// Map<tabId, Array<{level,text,timestamp,url}>> and Map<tabId, Array<req>>
+// Kept in chrome.storage.session so a service-worker restart doesn't wipe them.
+const consoleByTab = new Map();
+const networkByTab = new Map();
+/**
+ * Smart-selector fallbacks (plan tasks 2–4). Map<tabId, Map<ref, fallback>>.
+ * Populated at snapshot time; consumed by click/type when a ref no longer
+ * resolves. Never sent to the agent — it keeps payloads token-cheap.
+ */
+const fallbackByTab = new Map();
+let currentActivity = null; // tool currently running (single overlay label source)
+
+// --- Per-tab mutex (task 2.1) + per-agent tab locks (task 2.2) ------------
+// Pure, unit-tested primitives in lib/tab-concurrency.js.
+const tabMutex = new TabMutexMap();
+const tabLocks = new TabLockMap();
+
+// --- Connection Management ------------------------------------------------
 
 async function initConnection() {
   try {
-    const stored = await chrome.storage.local.get('wsPort');
+    const stored = await chrome.storage.local.get(['wsPort', 'wsToken']);
     if (stored.wsPort) wsPort = stored.wsPort;
+    if (stored.wsToken) wsToken = stored.wsToken;
   } catch {}
 
   chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: KEEPALIVE_INTERVAL_MIN });
   connect();
 }
 
+function wsUrl() {
+  // 127.0.0.1 (not 'localhost') so it matches the daemon's IPv4 bind.
+  // On macOS 'localhost' can resolve to IPv6 ::1 and refuse.
+  const base = `ws://127.0.0.1:${wsPort}`;
+  return wsToken ? `${base}?token=${encodeURIComponent(wsToken)}` : base;
+}
+
 function connect() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
 
   try {
-    ws = new WebSocket(`ws://localhost:${wsPort}`);
+    ws = new WebSocket(wsUrl());
 
     ws.onopen = () => {
       isConnected = true;
@@ -70,7 +115,7 @@ function connect() {
         }
         await handleMessage(msg);
       } catch (err) {
-        console.error('[RealBrowser] Message error:', err);
+        console.error('[BrowserController] Message error:', err);
       }
     };
   } catch {
@@ -92,7 +137,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === KEEPALIVE_ALARM && !isConnected) connect();
 });
 
-// --- Badge ---
+// --- Badge & Overlay (unchanged behavior) ---------------------------------
 
 function updateBadge(status) {
   const config = {
@@ -106,17 +151,15 @@ function updateBadge(status) {
   chrome.action.setBadgeText({ text: c.text });
 }
 
-// --- Activity Overlay ---
-
 async function showOverlay(tabId, label) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (lbl) => {
-        let el = document.getElementById('__rbmcp-overlay');
+        let el = document.getElementById('__bc-overlay');
         if (!el) {
           el = document.createElement('div');
-          el.id = '__rbmcp-overlay';
+          el.id = '__bc-overlay';
           el.style.cssText =
             'position:fixed;top:12px;right:12px;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;' +
             'padding:6px 14px;border-radius:16px;font:500 13px system-ui,sans-serif;z-index:2147483647;' +
@@ -138,7 +181,7 @@ async function hideOverlay(tabId) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => document.getElementById('__rbmcp-overlay')?.remove(),
+      func: () => document.getElementById('__bc-overlay')?.remove(),
     });
   } catch {}
 }
@@ -159,40 +202,68 @@ function buildStatusPayload(message) {
     connectedSince,
     lastError,
     activity: currentActivity,
+    tabLocks: tabLocksToJSON(),
     statusMessage: message || null,
   };
+}
+
+function tabLocksToJSON() {
+  return tabLocks.snapshot();
 }
 
 function broadcastStatus(message) {
   chrome.runtime.sendMessage(buildStatusPayload(message)).catch(() => {});
 }
 
-// --- Message Router ---
+// --- Message Router -------------------------------------------------------
+//
+// The daemon injects `__sessionId` into params (see daemon.ts routeCall). We
+// pull it out here so it never reaches a tool handler, then route the call
+// through the per-tab mutex + lock layer.
 
 async function handleMessage(msg) {
   const { id, tool, params } = msg;
+  const p = params || {};
+  const sessionId = p.__sessionId || null;
+  delete p.__sessionId;
 
-  let tabId = null;
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    tabId = tab?.id;
-  } catch {}
+  const tabId = extractTabId(tool, p);
 
-  currentActivity = tool;
-  activeTabId = tabId;
-  updateBadge('active');
-  if (tabId) await showOverlay(tabId, tool.replace('browser_', ''));
-
-  try {
-    const result = await dispatch(tool, params || {});
-    sendResponse(id, { success: true, result });
-  } catch (err) {
-    sendResponse(id, { success: false, error: err.message || String(err) });
-  } finally {
-    currentActivity = null;
-    updateBadge(isConnected ? 'connected' : 'disconnected');
-    if (tabId) await hideOverlay(tabId);
+  // Tools without a tabId (tabs list/create, console-less) run directly.
+  if (tabId == null) {
+    try {
+      const result = await dispatch(tool, p, sessionId);
+      sendResponse(id, { success: true, result });
+    } catch (err) {
+      sendResponse(id, { success: false, error: err.message || String(err) });
+    }
+    return;
   }
+
+  // Acquire this tab's mutex (2.1) and honor per-agent locks (2.2).
+  runOnTabLib(
+    tabLocks,
+    tabMutex,
+    tabId,
+    sessionId,
+    async () => {
+      currentActivity = tool;
+      updateBadge('active');
+      await showOverlay(tabId, tool.replace('browser_', ''));
+      try {
+        const result = await dispatch(tool, p, sessionId);
+        sendResponse(id, { success: true, result });
+      } catch (err) {
+        sendResponse(id, { success: false, error: err.message || String(err) });
+      } finally {
+        currentActivity = null;
+        updateBadge(isConnected ? 'connected' : 'disconnected');
+        await hideOverlay(tabId);
+      }
+    },
+  ).catch((err) => {
+    sendResponse(id, { success: false, error: err.message || String(err) });
+  });
 }
 
 function sendResponse(id, response) {
@@ -201,9 +272,23 @@ function sendResponse(id, response) {
   }
 }
 
-// --- Tool Dispatch ---
+/** Which tabId does this call target? null = tab-agnostic (tabs list/create). */
+function extractTabId(tool, params) {
+  if (typeof params.tabId === 'number') return params.tabId;
+  // navigate allows omitting tabId → falls back to active tab inside its handler.
+  if (tool === 'browser_navigate') return null; // handled in-handler
+  if (tool === 'browser_tabs') return null; // create/list don't target; close/focus read their own tabId
+  return null;
+}
 
-async function dispatch(tool, params) {
+// --- Per-tab mutex + tab lock: see lib/tab-concurrency.js (tasks 2.1, 2.2) -
+// runOnTabLib(locks, mutex, tabId, sessionId, fn) serializes per-tab work and
+// makes non-owner sessions wait for the lock owner. Tested in
+// tests/tab-concurrency.test.ts.
+
+// --- Tool Dispatch --------------------------------------------------------
+
+async function dispatch(tool, params, sessionId) {
   const handlers = {
     browser_navigate: handleNavigate,
     browser_click: handleClick,
@@ -233,35 +318,99 @@ async function dispatch(tool, params) {
 
   const handler = handlers[tool];
   if (!handler) throw new Error(`Unknown tool: ${tool}`);
-  return handler(params);
+  return handler(params, sessionId);
 }
 
-// --- Helpers ---
+// --- Tab resolution (task 1.2) -------------------------------------------
 
+/**
+ * Resolve a tab by id, throwing a clear, actionable error if it's gone.
+ * Replaces the old getActiveTab() which silently grabbed whatever tab was
+ * focused — the root cause of agents acting on the wrong page.
+ */
+async function resolveTab(tabId) {
+  if (tabId == null || typeof tabId !== 'number') {
+    throw new Error('tabId is required. Call browser_tabs list first to get a tabId.');
+  }
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab) throw new Error(`Tab ${tabId} not found, call browser_tabs list first.`);
+    return tab;
+  } catch (err) {
+    throw new Error(`Tab ${tabId} not found, call browser_tabs list first. (${err.message || err})`);
+  }
+}
+
+/**
+ * Get the stored smart-selector fallback for a (tabId, ref). Returns null if the
+ * ref was never snapshotted or the snapshot pre-dates the fallback feature.
+ */
+function getFallback(tabId, ref) {
+  if (tabId == null || !ref) return null;
+  const map = fallbackByTab.get(tabId);
+  if (!map) return null;
+  return map.get(ref) || null;
+}
+
+/**
+ * safeExec (task 2.5): run chrome.scripting.executeScript against a tab,
+ * turning "can't access chrome:// / webstore / devtools pages" into a clear
+ * error instead of a silent timeout.
+ */
+async function safeExec(tabId, func, args = []) {
+  const tab = await resolveTab(tabId);
+  if (/^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '')) {
+    throw new Error(`Cannot access protected page (${tab.url}). Tab ${tabId} is a browser-internal page.`);
+  }
+  const sanitized = args.map((a) => (a === undefined ? null : a));
+  try {
+    const results = await chrome.scripting.executeScript({ target: { tabId }, func, args: sanitized });
+    return results[0]?.result;
+  } catch (err) {
+    const msg = err?.message || String(err);
+    if (/cannot access|Cannot access|not allowed|No tab with id/i.test(msg)) {
+      throw new Error(`Cannot execute on tab ${tabId}: ${msg}`);
+    }
+    throw err;
+  }
+}
+
+// --- Per-tab console/network storage (task 1.4) --------------------------
+
+function getTabBuffer(map, tabId) {
+  let arr = map.get(tabId);
+  if (!arr) {
+    arr = [];
+    map.set(tabId, arr);
+  }
+  return arr;
+}
+
+function pushCapped(arr, item, cap = PER_TAB_CAP) {
+  arr.push(item);
+  if (arr.length > cap) arr.splice(0, arr.length - cap);
+}
+
+// --- Tool Handlers -------------------------------------------------------
+
+/** Active-tab fallback, used ONLY by navigate when the caller omits tabId. */
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) throw new Error('No active tab');
+  if (!tab) throw new Error('No active tab and no tabId given. Call browser_tabs list first.');
   return tab;
 }
 
-async function execInTab(tabId, func, args = []) {
-  const sanitized = args.map(a => a === undefined ? null : a);
-  const results = await chrome.scripting.executeScript({ target: { tabId }, func, args: sanitized });
-  return results[0]?.result;
-}
-
-// --- Tool Handlers ---
-
 async function handleNavigate(params) {
-  const { url, waitUntil = 'load' } = params;
-  const tab = await getActiveTab();
+  const { url, waitUntil = 'load', tabId } = params;
+  // navigate is the one page tool allowed to omit tabId → active tab fallback.
+  const tab = tabId != null ? await resolveTab(tabId) : await getActiveTab();
 
   return new Promise((resolve, reject) => {
-    const listener = (tabId, changeInfo) => {
-      if (tabId !== tab.id) return;
+    const listener = (tId, changeInfo) => {
+      if (tId !== tab.id) return;
       if (changeInfo.status === 'complete' || (waitUntil === 'domcontentloaded' && changeInfo.status === 'complete')) {
         chrome.tabs.onUpdated.removeListener(listener);
-        resolve({ url, status: 'navigated' });
+        resolve({ url, status: 'navigated', tabId: tab.id });
       }
     };
 
@@ -270,19 +419,31 @@ async function handleNavigate(params) {
 
     setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
-      resolve({ url, status: 'timeout' });
+      resolve({ url, status: 'timeout', tabId: tab.id });
     }, 55000);
   });
 }
 
 async function handleClick(params) {
-  const { ref, selector, button = 'left', doubleClick = false } = params;
-  const tab = await getActiveTab();
+  const { tabId, ref, selector, button = 'left', doubleClick = false } = params;
+  await resolveTab(tabId);
+  const fb = getFallback(tabId, ref);
 
-  return execInTab(tab.id, (_ref, _sel, _btn, _dbl) => {
+  return safeExec(tabId, (_ref, _sel, _btn, _dbl, _fb, resolveFallback) => {
     let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
-    if (!el && _sel) el = document.querySelector(_sel);
-    if (!el) return { success: false, error: 'Element not found' };
+    let via = 'ref';
+    if (!el && _sel) { el = document.querySelector(_sel); via = 'selector'; }
+    // Smart-selector fallback (plan task 3): ref broke → try robust selector,
+    // then text+role+tag scan. The agent doesn't request this; it's automatic.
+    if (!el && _fb && resolveFallback) { el = resolveFallback(_fb); if (el) via = 'fallback'; }
+    if (!el) {
+      return {
+        success: false,
+        error: _ref
+          ? `Element ${_ref} not found even with fallback. The DOM changed — call browser_snapshot { tabId } to get fresh refs.`
+          : 'Element not found',
+      };
+    }
 
     el.scrollIntoView({ behavior: 'instant', block: 'center' });
 
@@ -305,18 +466,28 @@ async function handleClick(params) {
       el.dispatchEvent(new MouseEvent('dblclick', init));
     }
 
-    return { success: true };
-  }, [ref, selector, button, doubleClick]);
+    return { success: true, ...(via !== 'ref' ? { via } : {}) };
+  }, [ref, selector, button, doubleClick, fb, PAGE_RESOLVE_FALLBACK_FN]);
 }
 
 async function handleType(params) {
-  const { ref, selector, text, clear = false } = params;
-  const tab = await getActiveTab();
+  const { tabId, ref, selector, text, clear = false } = params;
+  await resolveTab(tabId);
+  const fb = getFallback(tabId, ref);
 
-  return execInTab(tab.id, (_ref, _sel, _text, _clear) => {
+  return safeExec(tabId, (_ref, _sel, _text, _clear, _fb, resolveFallback) => {
     let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
-    if (!el && _sel) el = document.querySelector(_sel);
-    if (!el) return { success: false, error: 'Element not found' };
+    let via = 'ref';
+    if (!el && _sel) { el = document.querySelector(_sel); via = 'selector'; }
+    if (!el && _fb && resolveFallback) { el = resolveFallback(_fb); if (el) via = 'fallback'; }
+    if (!el) {
+      return {
+        success: false,
+        error: _ref
+          ? `Element ${_ref} not found even with fallback. The DOM changed — call browser_snapshot { tabId } to get fresh refs.`
+          : 'Element not found',
+      };
+    }
 
     el.focus();
 
@@ -341,15 +512,15 @@ async function handleType(params) {
     }
 
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    return { success: true, typed: _text };
-  }, [ref, selector, text, clear]);
+    return { success: true, typed: _text, ...(via !== 'ref' ? { via } : {}) };
+  }, [ref, selector, text, clear, fb, PAGE_RESOLVE_FALLBACK_FN]);
 }
 
 async function handleScroll(params) {
-  const { direction = 'down', amount = 500, selector, toElement, position } = params;
-  const tab = await getActiveTab();
+  const { tabId, direction = 'down', amount = 500, selector, toElement, position } = params;
+  await resolveTab(tabId);
 
-  return execInTab(tab.id, (_dir, _amt, _sel, _toEl, _pos) => {
+  return safeExec(tabId, (_dir, _amt, _sel, _toEl, _pos) => {
     if (_toEl) {
       const el = document.querySelector(`[data-mcp-ref="${_toEl}"]`) || document.querySelector(_toEl);
       if (el) {
@@ -387,10 +558,10 @@ async function handleScroll(params) {
 }
 
 async function handlePressKey(params) {
-  const { key, modifiers = [], ref, selector } = params;
-  const tab = await getActiveTab();
+  const { tabId, key, modifiers = [], ref, selector } = params;
+  await resolveTab(tabId);
 
-  return execInTab(tab.id, (_key, _mods, _ref, _sel) => {
+  return safeExec(tabId, (_key, _mods, _ref, _sel) => {
     let target = document.activeElement || document.body;
     if (_ref) {
       const el = document.querySelector(`[data-mcp-ref="${_ref}"]`);
@@ -420,20 +591,19 @@ async function handlePressKey(params) {
 }
 
 async function handleWait(params) {
-  const { selector, state = 'visible', timeout = 10000, delay } = params;
+  const { tabId, selector, state = 'visible', timeout = 10000, delay } = params;
 
   if (delay) {
-    await new Promise(r => setTimeout(r, Math.min(delay, 30000)));
+    await new Promise((r) => setTimeout(r, Math.min(delay, 30000)));
     return { success: true, waited: delay };
   }
 
   if (!selector) return { success: false, error: 'Need selector or delay' };
-
-  const tab = await getActiveTab();
+  await resolveTab(tabId);
   const start = Date.now();
 
   while (Date.now() - start < timeout) {
-    const found = await execInTab(tab.id, (_sel, _state) => {
+    const found = await safeExec(tabId, (_sel, _state) => {
       const el = document.querySelector(_sel);
       if (_state === 'hidden') return !el || el.offsetParent === null;
       if (_state === 'attached') return !!el;
@@ -441,17 +611,17 @@ async function handleWait(params) {
     }, [selector, state]);
 
     if (found) return { success: true, selector, state, elapsed: Date.now() - start };
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 200));
   }
 
   return { success: false, error: `Timeout waiting for ${selector} to be ${state}` };
 }
 
 async function handleHover(params) {
-  const { ref, selector } = params;
-  const tab = await getActiveTab();
+  const { tabId, ref, selector } = params;
+  await resolveTab(tabId);
 
-  return execInTab(tab.id, (_ref, _sel) => {
+  return safeExec(tabId, (_ref, _sel) => {
     let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
     if (!el && _sel) el = document.querySelector(_sel);
     if (!el) return { success: false, error: 'Element not found' };
@@ -471,10 +641,10 @@ async function handleHover(params) {
 }
 
 async function handleSelect(params) {
-  const { ref, selector, value, label, index } = params;
-  const tab = await getActiveTab();
+  const { tabId, ref, selector, value, label, index } = params;
+  await resolveTab(tabId);
 
-  return execInTab(tab.id, (_ref, _sel, _val, _lbl, _idx) => {
+  return safeExec(tabId, (_ref, _sel, _val, _lbl, _idx) => {
     let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
     if (!el && _sel) el = document.querySelector(_sel);
     if (!el) return { success: false, error: 'Element not found' };
@@ -482,7 +652,7 @@ async function handleSelect(params) {
 
     if (_val !== null) el.value = _val;
     else if (_lbl !== null) {
-      const opt = Array.from(el.options).find(o => o.textContent.trim() === _lbl);
+      const opt = Array.from(el.options).find((o) => o.textContent.trim() === _lbl);
       if (opt) el.value = opt.value;
       else return { success: false, error: `Option "${_lbl}" not found` };
     } else if (_idx !== null) {
@@ -496,12 +666,19 @@ async function handleSelect(params) {
   }, [ref, selector, value, label, index]);
 }
 
+/**
+ * Snapshot (task 2.4): builds an accessibility tree INCLUDING shadow DOM and
+ * same-origin iframes. Refs are stamped via data-mcp-ref and are valid only for
+ * the tab that produced them (enforced by resolveTab in the consuming tools).
+ */
 async function handleSnapshot(params) {
-  const { selector, compact = true } = params;
-  const tab = await getActiveTab();
+  const { tabId, selector, compact = true } = params;
+  await resolveTab(tabId);
 
-  return execInTab(tab.id, (_sel, _compact) => {
+  return safeExec(tabId, (_sel, _compact, genFallback) => {
     let refCount = 0;
+    /** @type {Record<string, object>} ref -> fallback, returned to background */
+    const fallbacks = {};
     const skipTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'PATH', 'BR', 'HR', 'WBR', 'META', 'LINK']);
 
     function vis(el) {
@@ -515,10 +692,10 @@ async function handleSnapshot(params) {
       const r = el.getAttribute('role');
       if (r) return r;
       const map = {
-        A:'link',BUTTON:'button',SELECT:'combobox',TEXTAREA:'textbox',IMG:'img',
-        H1:'heading',H2:'heading',H3:'heading',H4:'heading',H5:'heading',H6:'heading',
-        NAV:'navigation',MAIN:'main',HEADER:'banner',FOOTER:'contentinfo',FORM:'form',
-        TABLE:'table',UL:'list',OL:'list',LI:'listitem',
+        A: 'link', BUTTON: 'button', SELECT: 'combobox', TEXTAREA: 'textbox', IMG: 'img',
+        H1: 'heading', H2: 'heading', H3: 'heading', H4: 'heading', H5: 'heading', H6: 'heading',
+        NAV: 'navigation', MAIN: 'main', HEADER: 'banner', FOOTER: 'contentinfo', FORM: 'form',
+        TABLE: 'table', UL: 'list', OL: 'list', LI: 'listitem',
       };
       if (el.tagName === 'INPUT') {
         const t = el.type?.toLowerCase();
@@ -543,7 +720,7 @@ async function handleSnapshot(params) {
     }
 
     function isInteractive(el) {
-      const tags = ['A','BUTTON','INPUT','SELECT','TEXTAREA'];
+      const tags = ['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'];
       return tags.includes(el.tagName) || el.onclick || el.getAttribute('tabindex') !== null ||
         el.getAttribute('role') === 'button' || el.getAttribute('role') === 'link' ||
         el.getAttribute('role') === 'tab' || el.getAttribute('role') === 'menuitem' ||
@@ -551,7 +728,24 @@ async function handleSnapshot(params) {
         el.getAttribute('contenteditable') === 'true';
     }
 
-    const landmarkRoles = new Set(['navigation','main','banner','contentinfo','form','search','complementary','region']);
+    const landmarkRoles = new Set(['navigation', 'main', 'banner', 'contentinfo', 'form', 'search', 'complementary', 'region']);
+
+    // Children including shadow DOM (open roots) and same-origin iframes.
+    function childrenOf(el) {
+      const out = [];
+      for (const c of el.children) out.push(c);
+      if (el.shadowRoot) {
+        for (const c of el.shadowRoot.children) out.push(c);
+      }
+      // same-origin iframes: expose their document body children too.
+      if (el.tagName === 'IFRAME') {
+        try {
+          const doc = el.contentDocument;
+          if (doc && doc.body) for (const c of doc.body.children) out.push(c);
+        } catch { /* cross-origin: skip */ }
+      }
+      return out;
+    }
 
     function buildCompact(el) {
       if (!el || el.nodeType !== 1) return null;
@@ -563,7 +757,7 @@ async function handleSnapshot(params) {
       const isLandmark = landmarkRoles.has(r);
 
       const kids = [];
-      for (const c of el.children) {
+      for (const c of childrenOf(el)) {
         const cn = buildCompact(c);
         if (cn) Array.isArray(cn) ? kids.push(...cn) : kids.push(cn);
       }
@@ -575,6 +769,7 @@ async function handleSnapshot(params) {
       const ref = `e${refCount++}`;
       el.setAttribute('data-mcp-ref', ref);
       const n = elName(el);
+      try { if (genFallback) fallbacks[ref] = genFallback(el); } catch {}
 
       const node = { ref, role: r };
       if (n) node.name = n;
@@ -598,7 +793,7 @@ async function handleSnapshot(params) {
 
       if (r === 'generic' && !n && !ia && depth > 1) {
         const kids = [];
-        for (const c of el.children) {
+        for (const c of childrenOf(el)) {
           const cn = buildFull(c, depth + 1);
           if (cn) Array.isArray(cn) ? kids.push(...cn) : kids.push(cn);
         }
@@ -607,6 +802,7 @@ async function handleSnapshot(params) {
 
       const ref = `e${refCount++}`;
       el.setAttribute('data-mcp-ref', ref);
+      try { if (genFallback) fallbacks[ref] = genFallback(el); } catch {}
 
       const node = { ref, role: r };
       if (r === 'generic') node.tag = el.tagName.toLowerCase();
@@ -617,7 +813,7 @@ async function handleSnapshot(params) {
       if (el.href && el.tagName === 'A') node.href = el.href;
 
       const kids = [];
-      for (const c of el.children) {
+      for (const c of childrenOf(el)) {
         const cn = buildFull(c, depth + 1);
         if (cn) Array.isArray(cn) ? kids.push(...cn) : kids.push(cn);
       }
@@ -636,13 +832,29 @@ async function handleSnapshot(params) {
       title: document.title,
       compact: _compact,
       tree,
+      // internal: background stores these per-tab; never sent to the agent.
+      __fallbacks: fallbacks,
     };
-  }, [selector, compact]);
+  }, [selector, compact, PAGE_FALLBACK_FN]).then((res) => {
+    // Store the fallbacks per-tab so click/type can resolve stale refs.
+    if (res && res.__fallbacks) {
+      const map = new Map(Object.entries(res.__fallbacks));
+      fallbackByTab.set(tabId, map);
+      delete res.__fallbacks; // keep it out of the agent-visible payload
+    }
+    return res;
+  });
 }
 
 async function handleScreenshot(params) {
-  const { format = 'png', quality = 80 } = params;
-  const tab = await getActiveTab();
+  const { tabId, format = 'png', quality = 80 } = params;
+  const tab = await resolveTab(tabId);
+  // captureVisibleTab is window-scoped: ensure the tab is the active one in its
+  // window first (a no-op if it already is).
+  if (!tab.active) {
+    await chrome.tabs.update(tabId, { active: true }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 150)); // let the paint settle
+  }
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
     format,
     quality: format === 'jpeg' ? quality : undefined,
@@ -651,29 +863,39 @@ async function handleScreenshot(params) {
 }
 
 async function handleConsole(params) {
-  const { clear = false } = params;
-  const msgs = [...consoleMessages];
-  if (clear) consoleMessages = [];
+  const { tabId, clear = false } = params;
+  const buf = getTabBuffer(consoleByTab, tabId);
+  const msgs = [...buf];
+  if (clear) consoleByTab.set(tabId, []);
   return { success: true, messages: msgs };
 }
 
 async function handleNetwork(params) {
-  const { filter, clear = false } = params;
-  let reqs = [...networkRequests];
+  const { tabId, filter, clear = false } = params;
+  let reqs = [...getTabBuffer(networkByTab, tabId)];
   if (filter) {
     const re = new RegExp(filter);
-    reqs = reqs.filter(r => re.test(r.url));
+    reqs = reqs.filter((r) => re.test(r.url));
   }
-  if (clear) networkRequests = [];
+  if (clear) networkByTab.set(tabId, []);
   return { success: true, requests: reqs };
 }
 
-async function handleTabs(params) {
+async function handleTabs(params, sessionId) {
   const { action, tabId, url } = params;
   switch (action) {
     case 'list': {
       const tabs = await chrome.tabs.query({ currentWindow: true });
-      return { success: true, tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active })) };
+      return {
+        success: true,
+        tabs: tabs.map((t) => ({
+          id: t.id,
+          url: t.url,
+          title: t.title,
+          active: t.active,
+          lockedBy: tabLocks.owner(t.id) || null,
+        })),
+      };
     }
     case 'create': {
       const t = await chrome.tabs.create({ url: url || 'about:blank' });
@@ -682,6 +904,7 @@ async function handleTabs(params) {
     case 'close': {
       if (!tabId) throw new Error('tabId required');
       await chrome.tabs.remove(tabId);
+      tabLocks.release(tabId);
       return { success: true, closed: tabId };
     }
     case 'focus': {
@@ -689,15 +912,30 @@ async function handleTabs(params) {
       await chrome.tabs.update(tabId, { active: true });
       return { success: true, focused: tabId };
     }
-    default: throw new Error(`Unknown action: ${action}`);
+    case 'lock': {
+      if (!tabId) throw new Error('tabId required');
+      if (!sessionId) throw new Error('lock requires a session (called outside daemon?)');
+      tabLocks.lock(tabId, sessionId);
+      broadcastStatus(`Tab ${tabId} locked by ${sessionId}`);
+      return { success: true, locked: tabId, sessionId };
+    }
+    case 'unlock': {
+      if (!tabId) throw new Error('tabId required');
+      const was = tabLocks.owner(tabId);
+      tabLocks.release(tabId);
+      broadcastStatus(`Tab ${tabId} unlocked (was ${was || '-'})`);
+      return { success: true, unlocked: tabId, previousSession: was || null };
+    }
+    default:
+      throw new Error(`Unknown action: ${action}`);
   }
 }
 
 async function handleFind(params) {
-  const { query, limit = 10 } = params;
-  const tab = await getActiveTab();
+  const { tabId, query, limit = 10 } = params;
+  await resolveTab(tabId);
 
-  return execInTab(tab.id, (_q, _lim) => {
+  return safeExec(tabId, (_q, _lim) => {
     const qLow = _q.toLowerCase();
     const matches = [];
 
@@ -709,7 +947,7 @@ async function handleFind(params) {
     function aRole(el) {
       const r = el.getAttribute('role');
       if (r) return r;
-      const map = { A:'link', BUTTON:'button', INPUT:'input', SELECT:'combobox', TEXTAREA:'textbox', IMG:'image' };
+      const map = { A: 'link', BUTTON: 'button', INPUT: 'input', SELECT: 'combobox', TEXTAREA: 'textbox', IMG: 'image' };
       return map[el.tagName] || el.tagName.toLowerCase();
     }
 
@@ -732,8 +970,9 @@ async function handleFind(params) {
 
       const ref = `f${rc++}`;
       node.setAttribute('data-mcp-ref', ref);
-      matches.push({ ref, role: r, name: n.slice(0, 100), tag: node.tagName.toLowerCase(), score,
-        bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
+      matches.push({
+        ref, role: r, name: n.slice(0, 100), tag: node.tagName.toLowerCase(), score,
+        bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
       });
     }
 
@@ -743,11 +982,11 @@ async function handleFind(params) {
 }
 
 async function handleGetPageText(params) {
-  const { selector, maxLength = 50000 } = params;
-  const tab = await getActiveTab();
+  const { tabId, selector, maxLength = 50000 } = params;
+  await resolveTab(tabId);
   const args = selector === undefined ? [null, maxLength] : [selector, maxLength];
 
-  return execInTab(tab.id, (_sel, _max) => {
+  return safeExec(tabId, (_sel, _max) => {
     const root = _sel ? document.querySelector(_sel) : document.body;
     if (!root) return { success: false, error: 'Element not found' };
 
@@ -760,31 +999,40 @@ async function handleGetPageText(params) {
   }, args);
 }
 
+/**
+ * evaluate (task 1.5): runs in the page's MAIN world via chrome.scripting — no
+ * chrome.debugger, so no yellow "is being debugged" banner. Replaces the old
+ * CDP Runtime.evaluate path.
+ */
 async function handleEvaluate(params) {
-  const { expression } = params;
-  const tab = await getActiveTab();
-
-  await chrome.debugger.attach({ tabId: tab.id }, '1.3');
-  try {
-    const { result, exceptionDetails } = await chrome.debugger.sendCommand(
-      { tabId: tab.id },
-      'Runtime.evaluate',
-      { expression: `(async () => { ${expression} })()`, awaitPromise: true, returnByValue: true },
-    );
-    if (exceptionDetails) {
-      return { success: false, error: exceptionDetails.exception?.description || exceptionDetails.text };
-    }
-    return { success: true, result: result.value };
-  } finally {
-    try { await chrome.debugger.detach({ tabId: tab.id }); } catch {}
+  const { tabId, expression } = params;
+  await resolveTab(tabId);
+  const tab = await chrome.tabs.get(tabId);
+  if (/^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '')) {
+    throw new Error(`Cannot evaluate on protected page (${tab.url}).`);
   }
+
+  // Wrap the user expression in an async IIFE so `await` works, then stringify
+  // the function and run it in the MAIN world (page's own JS context).
+  const wrapped = `(async () => { ${expression} })()`;
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: async (code) => {
+      // eslint-disable-next-line no-eval
+      return await eval(code);
+    },
+    args: [wrapped],
+  });
+  const value = results?.[0]?.result;
+  return { success: true, result: value };
 }
 
 async function handleClickByText(params) {
-  const { text, index = 0, exact = false } = params;
-  const tab = await getActiveTab();
+  const { tabId, text, index = 0, exact = false } = params;
+  await resolveTab(tabId);
 
-  return execInTab(tab.id, (_text, _index, _exact) => {
+  return safeExec(tabId, (_text, _index, _exact) => {
     const textLower = _text.toLowerCase();
     const candidates = [];
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
@@ -806,7 +1054,7 @@ async function handleClickByText(params) {
       }
     }
 
-    function getDepth(el) { let d = 0; let p = el; while (p = p.parentElement) d++; return d; }
+    function getDepth(el) { let d = 0; let p = el; while ((p = p.parentElement)) d++; return d; }
 
     candidates.sort((a, b) => b.depth - a.depth);
 
@@ -831,10 +1079,10 @@ async function handleClickByText(params) {
 }
 
 async function handleDialog(params) {
-  const { action = 'accept', promptText } = params;
-  const tab = await getActiveTab();
+  const { tabId, action = 'accept', promptText } = params;
+  await resolveTab(tabId);
 
-  return execInTab(tab.id, (_action, _promptText) => {
+  return safeExec(tabId, (_action, _promptText) => {
     window.__mcpDialogLog = window.__mcpDialogLog || [];
     window.__mcpDialogAction = _action;
     window.__mcpDialogPromptText = _promptText || '';
@@ -843,53 +1091,35 @@ async function handleDialog(params) {
       window.__mcpDialogOverrides = true;
 
       window.alert = function (msg) {
-        window.__mcpDialogLog.push({
-          type: 'alert',
-          message: String(msg),
-          timestamp: Date.now(),
-          handled: window.__mcpDialogAction,
-        });
+        window.__mcpDialogLog.push({ type: 'alert', message: String(msg), timestamp: Date.now(), handled: window.__mcpDialogAction });
       };
 
       window.confirm = function (msg) {
         const accepted = window.__mcpDialogAction === 'accept';
-        window.__mcpDialogLog.push({
-          type: 'confirm',
-          message: String(msg),
-          timestamp: Date.now(),
-          result: accepted,
-        });
+        window.__mcpDialogLog.push({ type: 'confirm', message: String(msg), timestamp: Date.now(), result: accepted });
         return accepted;
       };
 
       window.prompt = function (msg, def) {
         const accepted = window.__mcpDialogAction === 'accept';
         const text = accepted ? (window.__mcpDialogPromptText || def || '') : null;
-        window.__mcpDialogLog.push({
-          type: 'prompt',
-          message: String(msg),
-          timestamp: Date.now(),
-          result: text,
-        });
+        window.__mcpDialogLog.push({ type: 'prompt', message: String(msg), timestamp: Date.now(), result: text });
         return accepted ? text : null;
       };
     }
 
     const log = [...window.__mcpDialogLog];
     window.__mcpDialogLog = [];
-    return {
-      success: true,
-      dialogs: log,
-      message: log.length ? 'Retrieved dialog history' : 'Overrides configured',
-    };
+    return { success: true, dialogs: log, message: log.length ? 'Retrieved dialog history' : 'Overrides configured' };
   }, [action, promptText]);
 }
 
 async function handleRunAction(params) {
-  const { code, actionParams = {} } = params;
+  const { tabId, code, actionParams = {} } = params;
   if (!code) throw new Error('code is required');
-  const tab = await getActiveTab();
+  const tab = await resolveTab(tabId);
 
+  // run_action stays on CDP (plan decision: CDP-only, can't be scripted).
   await chrome.debugger.attach({ tabId: tab.id }, '1.3');
   try {
     const paramsJson = JSON.stringify(actionParams);
@@ -911,11 +1141,12 @@ async function handleRunAction(params) {
 }
 
 async function handleUploadFile(params) {
-  const { ref, selector, filePath, files: fileList } = params;
-  const tab = await getActiveTab();
+  const { tabId, ref, selector, filePath, files: fileList } = params;
+  const tab = await resolveTab(tabId);
   const filePaths = fileList || (filePath ? [filePath] : []);
   if (filePaths.length === 0) throw new Error('filePath or files required');
 
+  // upload_file stays on CDP (DOM.setFileInputFiles is CDP-only).
   await chrome.debugger.attach({ tabId: tab.id }, '1.3');
   try {
     await chrome.debugger.sendCommand({ tabId: tab.id }, 'DOM.enable', {});
@@ -944,13 +1175,13 @@ async function handleUploadFile(params) {
 }
 
 async function handleDrag(params) {
-  const { startRef, startSelector, endRef, endSelector, startX, startY, endX, endY, steps = 10 } = params;
-  const tab = await getActiveTab();
+  const { tabId, startRef, startSelector, endRef, endSelector, startX, startY, endX, endY, steps = 10 } = params;
+  const tab = await resolveTab(tabId);
 
   let sx = startX, sy = startY, ex = endX, ey = endY;
 
   if (sx == null || sy == null || ex == null || ey == null) {
-    const coords = await execInTab(tab.id, (_sRef, _sSel, _eRef, _eSel) => {
+    const coords = await safeExec(tabId, (_sRef, _sSel, _eRef, _eSel) => {
       function find(ref, sel) {
         let el = ref ? document.querySelector(`[data-mcp-ref="${ref}"]`) : null;
         if (!el && sel) el = document.querySelector(sel);
@@ -959,10 +1190,7 @@ async function handleDrag(params) {
         const r = el.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
       }
-      return {
-        start: find(_sRef, _sSel),
-        end: find(_eRef, _eSel),
-      };
+      return { start: find(_sRef, _sSel), end: find(_eRef, _eSel) };
     }, [startRef, startSelector, endRef, endSelector]);
 
     if (coords.start) { sx = coords.start.x; sy = coords.start.y; }
@@ -973,6 +1201,7 @@ async function handleDrag(params) {
     throw new Error('Could not determine drag coordinates. Provide refs/selectors or explicit x,y coordinates.');
   }
 
+  // drag stays on CDP (Input.dispatchMouseEvent is CDP-only).
   await chrome.debugger.attach({ tabId: tab.id }, '1.3');
   try {
     await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchMouseEvent', {
@@ -1000,13 +1229,13 @@ async function handleDrag(params) {
 }
 
 async function handleFillForm(params) {
-  const { fields, submit } = params;
+  const { tabId, fields, submit } = params;
   if (!fields || !Array.isArray(fields) || fields.length === 0) {
     throw new Error('fields array is required');
   }
-  const tab = await getActiveTab();
+  await resolveTab(tabId);
 
-  return execInTab(tab.id, (_fields, _submit) => {
+  return safeExec(tabId, (_fields, _submit) => {
     const results = [];
     for (const field of _fields) {
       const { ref, selector, value, clear } = field;
@@ -1057,11 +1286,12 @@ async function handleFillForm(params) {
   }, [fields, submit]);
 }
 
-// --- Events ---
+// --- Events (per-tab console/network capture: task 1.4) ------------------
 
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
-  if (msg.type === 'console') {
-    consoleMessages.push({ level: msg.level, text: msg.text, timestamp: Date.now(), url: sender.tab?.url });
+  if (msg.type === 'console' && sender.tab?.id != null) {
+    const buf = getTabBuffer(consoleByTab, sender.tab.id);
+    pushCapped(buf, { level: msg.level, text: msg.text, timestamp: Date.now(), url: sender.tab.url });
   } else if (msg.type === 'getStatus') {
     respond(buildStatusPayload());
   } else if (msg.type === 'setPort') {
@@ -1078,19 +1308,45 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     } else {
       respond({ success: false, error: 'Invalid port' });
     }
+  } else if (msg.type === 'setToken') {
+    // extension popup can store the auth token (3.1) once.
+    wsToken = (msg.token || '').trim();
+    chrome.storage.local.set({ wsToken });
+    ws?.close();
+    ws = null;
+    isConnected = false;
+    reconnectAttempts = 0;
+    connect();
+    respond({ success: true });
+  } else if (msg.type === 'unlockAll') {
+    tabLocks.unlockAll();
+    broadcastStatus('All tab locks cleared');
+    respond({ success: true });
   }
   return true;
 });
 
 chrome.webRequest.onCompleted.addListener(
   (details) => {
-    networkRequests.push({
-      method: details.method, url: details.url,
-      status: details.statusCode, type: details.type, timestamp: details.timeStamp,
+    if (details.tabId == null || details.tabId < 0) return; // not a real tab
+    const buf = getTabBuffer(networkByTab, details.tabId);
+    pushCapped(buf, {
+      method: details.method,
+      url: details.url,
+      status: details.statusCode,
+      type: details.type,
+      timestamp: details.timeStamp,
     });
-    if (networkRequests.length > 200) networkRequests = networkRequests.slice(-200);
   },
   { urls: ['<all_urls>'] },
 );
+
+// A tab closing should release its lock and drop its buffers.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tabLocks.release(tabId);
+  consoleByTab.delete(tabId);
+  networkByTab.delete(tabId);
+  fallbackByTab.delete(tabId);
+});
 
 initConnection();

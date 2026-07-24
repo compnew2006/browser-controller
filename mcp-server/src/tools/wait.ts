@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { textResult } from './types.js';
+import { requireTabId, textResult } from './types.js';
 
 export const waitTool: ToolDefinition = {
   name: 'browser_wait',
   description:
     'Wait for a condition: element to appear, element to disappear, or a fixed delay. Useful for SPAs and dynamic content.',
   inputSchema: z.object({
+    tabId: requireTabId(),
     selector: z.string().optional().describe('CSS selector to wait for'),
     state: z
       .enum(['visible', 'hidden', 'attached'])

@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { textResult } from './types.js';
+import { requireTabId, textResult } from './types.js';
 
 export const runActionTool: ToolDefinition = {
   name: 'browser_run_action',
   description:
     'Run a self-contained JavaScript action object in the page context via CDP. The code must be an expression that evaluates to an object with an execute(params) method. Returns the action result directly. Bypasses CSP restrictions.',
   inputSchema: z.object({
+    tabId: requireTabId(),
     code: z
       .string()
       .describe(

@@ -4,8 +4,13 @@
   <meta charset="utf-8">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
+    html, body {
+      /* size is driven by JS from storage; these are the floor + first-run default */
       width: 300px;
+      min-width: 260px;
+      min-height: 220px;
+    }
+    body {
       font: 13px/1.5 system-ui, -apple-system, sans-serif;
       background: #0f0f0f;
       color: #e4e4e7;
@@ -90,12 +95,64 @@
     }
     a { color: #667eea; text-decoration: none; }
     a:hover { text-decoration: underline; }
+    .locks {
+      margin-top: 6px;
+      padding: 8px;
+      background: #1c1c1e;
+      border-radius: 6px;
+      max-height: 96px;
+      overflow-y: auto;
+      font: 11px/1.5 'SF Mono', Menlo, monospace;
+      color: #a1a1aa;
+    }
+    .locks .empty { color: #52525b; }
+    .locks .row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+    .locks .tab { color: #e4e4e7; }
+    .locks .who { color: #667eea; }
+    .btn {
+      width: 100%;
+      margin-top: 8px;
+      background: #ef4444;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      padding: 7px 10px;
+      font: 600 12px system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .btn:hover { background: #dc2626; }
+    .btn:disabled { background: #3f3f46; cursor: default; }
+    .section-title {
+      font-size: 11px;
+      color: #71717a;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 12px 0 4px;
+    }
+    /* draggable resize handle (bottom-LEFT corner).
+       Chrome anchors an extension popup to the top-right toolbar icon, so the
+       LEFT edge is the one that actually moves when the document width changes.
+       Putting the grip on the right made dragging feel inverted (the grabbed
+       edge is the fixed one). Bottom-left makes the grab follow the cursor. */
+    .resizer {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      width: 16px;
+      height: 16px;
+      cursor: nesw-resize;
+      z-index: 2147483646;
+      background:
+        linear-gradient(45deg, transparent 0 45%, #52525b 45% 55%, transparent 55% 70%, #52525b 70% 80%, transparent 80%);
+    }
+    .resizer:active { background:
+      linear-gradient(45deg, transparent 0 45%, #667eea 45% 55%, transparent 55% 70%, #667eea 70% 80%, transparent 80%); }
   </style>
 </head>
 <body>
   <div class="header">
     <div class="dot" id="dot"></div>
-    <h1>Real Browser MCP</h1>
+    <h1>Browser Controller</h1>
   </div>
   <div class="status" id="status">Checking...</div>
   <div class="status-detail" id="detail"></div>
@@ -105,12 +162,26 @@
     <input type="number" id="port" value="7225" min="1" max="65535">
   </div>
 
+  <div class="field">
+    <label>Auth Token (auto-paired; paste only to override)</label>
+    <input type="password" id="token" placeholder="auto-fetched from daemon" autocomplete="off">
+  </div>
+
+  <div class="section-title">Connected Agents</div>
+  <div class="locks" id="agents"><div class="empty">none</div></div>
+
+  <div class="section-title">Tab Locks</div>
+  <div class="locks" id="locks"><div class="empty">none</div></div>
+  <button class="btn" id="unlockAll" disabled>Unlock All</button>
+
   <div class="log" id="log"></div>
 
   <div class="footer">
     <a href="https://github.com/ofershap/real-browser-mcp" target="_blank">Docs</a>
     <span id="version"></span>
   </div>
+
+  <div class="resizer" id="resizer" title="Drag to resize"></div>
 
   <script src="popup.js"></script>
 </body>

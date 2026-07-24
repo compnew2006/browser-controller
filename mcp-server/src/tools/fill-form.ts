@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { textResult } from './types.js';
+import { requireTabId, textResult } from './types.js';
 
 export const fillFormTool: ToolDefinition = {
   name: 'browser_fill_form',
   description:
     'Fill multiple form fields in a single call. Supports text inputs, selects, checkboxes, and contentEditable elements. Reduces round-trips compared to calling browser_type for each field individually. Optionally submit the form after filling.',
   inputSchema: z.object({
+    tabId: requireTabId(),
     fields: z
       .array(
         z.object({

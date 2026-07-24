@@ -1,5 +1,14 @@
 import { z } from 'zod';
-import type { ExtensionBridge } from '../bridge.js';
+
+/**
+ * Minimal structural host a tool handler needs. Both {@link ExtensionBridge}
+ * (used by the daemon, which owns the extension WS server) and the thin MCP
+ * client's DaemonClient satisfy this, so the same tool definitions work in
+ * either context.
+ */
+export interface ToolHost {
+  callTool(tool: string, params: Record<string, unknown>): Promise<unknown>;
+}
 
 export interface ToolResult {
   [key: string]: unknown;
@@ -7,11 +16,33 @@ export interface ToolResult {
   isError?: boolean;
 }
 
+/**
+ * Reusable `tabId` schema fields. Plan task 1.1: every page-interaction tool
+ * MUST target a specific tab (the agent gets the id from `browser_tabs list`)
+ * so the active tab the user is looking at never gets hijacked.
+ */
+export const tabIdParam = z
+  .number()
+  .int()
+  .describe(
+    'Target tab id (from browser_tabs list). Actions apply to THIS tab, not the active tab.',
+  );
+
+/** Mandatory tabId (click/type/snapshot/…). */
+export function requireTabId() {
+  return tabIdParam;
+}
+
+/** Optional tabId — for tools like navigate where "active tab" is still acceptable. */
+export function optionalTabId() {
+  return tabIdParam.optional().describe('Target tab id. If omitted, uses the active tab.');
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
-  handler: (bridge: ExtensionBridge, params: Record<string, unknown>) => Promise<ToolResult>;
+  handler: (host: ToolHost, params: Record<string, unknown>) => Promise<ToolResult>;
 }
 
 export function textResult(text: string): ToolResult {
