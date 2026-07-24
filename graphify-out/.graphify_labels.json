@@ -1,0 +1,10 @@
+{
+  "0": "background.js",
+  "1": "dispatch",
+  "2": "safeExec",
+  "3": "broadcastStatus",
+  "4": "connect",
+  "5": "handleMessage",
+  "6": "drive.mjs",
+  "7": "handleClick"
+}
