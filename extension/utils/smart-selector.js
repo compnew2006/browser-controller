@@ -250,8 +250,39 @@ export const PAGE_FALLBACK_FN = function generateFallback(el) {
     role,
     tag: el.tagName,
     attrs,
+    // nth: zero-based ordinal of this element among all visible elements sharing
+    // the same (role+name). Captured at snapshot time so the resolver can pick
+    // the CORRECT sibling when several elements share text+role (e.g. 3 "Like"
+    // buttons). Borrowed from BrowserOS's nth-recovery idea.
+    nth: computeNth(el, role, text),
   };
 };
+
+/**
+ * Count how many visible elements with the same (role + text) precede `el` in
+ * document order. Cheap O(n) walk; called once per ref'd element at snapshot
+ * time. Returns 0 for the first match.
+ */
+function computeNth(el, wantRole, wantText) {
+  if (!wantText) return 0;
+  const textLow = wantText.toLowerCase();
+  let seen = 0;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node === el) return seen;
+    const role = node.getAttribute('role') || node.tagName.toLowerCase();
+    if (role !== wantRole) continue;
+    const s = getComputedStyle(node);
+    if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) continue;
+    const r = node.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    const t = (node.innerText || node.textContent || '').split('\n')[0].trim().toLowerCase();
+    const aria = (node.getAttribute('aria-label') || node.getAttribute('alt') || node.getAttribute('title') || '').trim().toLowerCase();
+    if (t.includes(textLow) || aria.includes(textLow)) seen++;
+  }
+  return seen;
+}
 
 /**
  * Page-side resolver (plan task 3). Given a fallback descriptor, find the
@@ -271,12 +302,16 @@ export const PAGE_RESOLVE_FALLBACK_FN = function resolveFallback(fb) {
     } catch { /* malformed selector — fall through */ }
   }
 
-  // 2. text + role + tag scan. Walk visible elements, match on tag/role and
-  //    innerText containment. This survives class/id churn entirely.
+  // 2. text + role + tag scan. Collect ALL visible matches, then pick the nth
+  //    one (default 0 = first). Without nth, several elements sharing text+role
+  //    (e.g. 3 "Like" buttons) would resolve to the wrong one. Borrowed from
+  //    BrowserOS's nth-recovery idea.
   if (fb.text) {
     const wantTag = fb.tag || null;
     const wantRole = fb.role || null;
     const textLow = fb.text.toLowerCase();
+    const wantNth = typeof fb.nth === 'number' ? fb.nth : 0;
+    const matches = [];
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
     let node;
     while ((node = walker.nextNode())) {
@@ -291,9 +326,52 @@ export const PAGE_RESOLVE_FALLBACK_FN = function resolveFallback(fb) {
       if (r.width === 0 || r.height === 0) continue;
       const t = (node.innerText || node.textContent || '').split('\n')[0].trim().toLowerCase();
       const aria = (node.getAttribute('aria-label') || node.getAttribute('alt') || node.getAttribute('title') || '').trim().toLowerCase();
-      if (t.includes(textLow) || aria.includes(textLow)) return node;
+      if (t.includes(textLow) || aria.includes(textLow)) {
+        matches.push(node);
+        if (matches.length > wantNth) break; // got the nth one, stop early
+      }
     }
+    if (matches.length > wantNth) return matches[wantNth];
+    if (matches.length > 0) return matches[0]; // fallback: best effort if nth exceeded
   }
   return null;
 };
+
+// ---------------------------------------------------------------------------
+// Pure, DOM-free helpers exported ONLY for unit testing. These mirror the
+// nth-selection + isNew logic embedded in the page functions above (which must
+// stay self-contained for chrome.scripting injection). Keep them in sync.
+// ---------------------------------------------------------------------------
+
+/**
+ * Pick the nth match from a list, with a best-effort fallback. Mirrors the
+ * `matches[wantNth]` logic in PAGE_RESOLVE_FALLBACK_FN. Pure — no DOM.
+ * @param {unknown[]} matches - ordered candidate elements (or any items)
+ * @param {number} nth - zero-based ordinal to pick
+ * @returns {unknown|null} the nth match, or the first if nth is out of range, or null
+ */
+export function pickNthMatch(matches, nth) {
+  if (!Array.isArray(matches) || matches.length === 0) return null;
+  const want = typeof nth === 'number' && nth >= 0 ? nth : 0;
+  if (matches.length > want) return matches[want];
+  return matches[0]; // best effort: nth exceeded (DOM shrank since snapshot)
+}
+
+/**
+ * Compute the set of "new" fingerprints present in `current` but not `previous`.
+ * Mirrors the isNew logic in handleSnapshot (fingerprint = `${role}|${name}`).
+ * Pure — no DOM. Used to test that the diff is correct.
+ * @param {string[]} previous - fingerprints from the prior snapshot
+ * @param {string[]} current - fingerprints from this snapshot
+ * @returns {Set<string>} the fingerprints that are new (not in previous)
+ */
+export function computeNewFingerprints(previous, current) {
+  const prevSet = new Set(previous || []);
+  const isNew = new Set();
+  for (const fp of current || []) {
+    if (!prevSet.has(fp)) isNew.add(fp);
+  }
+  return isNew;
+}
+
 

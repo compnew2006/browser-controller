@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Real Browser MCP" width="100" height="100" />
+  <img src="assets/logo.png" alt="Browser Controller" width="100" height="100" />
 </p>
 
 <h1 align="center">real-browser-mcp</h1>
@@ -40,7 +40,7 @@ You alt-tab to Chrome, navigate to the page, log in, click around, find the bug.
 Your agent just wrote the code. It could also verify it.
 It already has your browser open right there. It just can't see it.
 
-**Now it can.** Real Browser MCP gives any MCP-compatible AI agent (Cursor, Claude Desktop, Windsurf, …) direct control of the **browser you already have open** — your real sessions, your logins, your cookies. No headless browser, no fresh profile, no re-authentication.
+**Now it can.** Browser Controller gives any MCP-compatible AI agent (Cursor, Claude Desktop, Windsurf, …) direct control of the **browser you already have open** — your real sessions, your logins, your cookies. No headless browser, no fresh profile, no re-authentication.
 
 ### What's new in v2 (multi-client)
 
@@ -55,7 +55,7 @@ v1 was a single-client server: one agent, one active tab. If you switched tabs o
 - **No debugger banner.** `browser_evaluate` now runs in the page's MAIN world via `chrome.scripting` — no yellow "this tab is being debugged" banner.
 
 <p align="center">
-  <img src="assets/preview.png" alt="Real Browser MCP" width="100%" />
+  <img src="assets/preview.png" alt="Browser Controller" width="100%" />
 </p>
 
 ---
@@ -153,7 +153,7 @@ git clone https://github.com/ofershap/real-browser-mcp.git
 1. Open `chrome://extensions` and enable **Developer mode** (toggle in the top right)
 2. Click **Load unpacked** and select the `extension/` folder from the cloned repo
 
-Click the Real Browser MCP icon in your toolbar.
+Click the Browser Controller icon in your toolbar.
 
 Green dot = connected. Gray = waiting for the daemon.
 
@@ -187,13 +187,14 @@ The v2 model is **tab-first**: the agent always says *which* tab to act on. It n
    browser_snapshot { tabId: 15 }
    → { tree: [ { ref: "e3", role: "button", name: "Sign in" }, ... ] }
    ```
-   Refs are valid **only for this tabId**. If you navigate or the DOM changes, re-snapshot.
+   Refs are valid **only for this tabId**. If you navigate or the DOM changes, re-snapshot. New elements since the last snapshot are tagged **`isNew: true`** — after an action opens an overlay/dropdown, the agent can focus on just those instead of re-reading the whole tree.
 3. **Interact** using the ref and the same tabId:
    ```
    browser_click { tabId: 15, ref: "e3" }
    browser_type  { tabId: 15, ref: "e5", text: "hello@example.com" }
    browser_press_key { tabId: 15, key: "Enter" }
    ```
+   If a ref is stale but the element still exists, it's found automatically via a robust selector + text/role scan (response carries `via: "fallback"`). If the element was scrolled away entirely (virtualized feeds), the response carries **`freshRefs: [...]`** with a fresh snapshot inline — retry with one of those new refs in the same step, no separate snapshot needed.
 4. **Verify** — snapshot or read text again after the action.
 
 ### Multi-agent coordination (two agents, two tabs)
@@ -211,6 +212,8 @@ The popup shows which session owns each locked tab, and there's an **Unlock All*
 - **Protected pages** (`chrome://`, the Web Store, devtools) can't be scripted — you'll get `Cannot access protected page (chrome://...)` instead of a silent hang.
 - **`browser_navigate`** is the one tool where `tabId` is optional (defaults to the active tab) — but for multi-agent safety, pass it explicitly.
 - **`browser_evaluate`** now runs in the page's MAIN world (no debugger banner, CSP-safe). It's powerful but **non-idempotent** — it won't be auto-retried on timeout.
+- **Scrolling virtualized feeds** (Facebook/Instagram/Twitter): `browser_scroll` returns `refsMayBeStale: true` because those sites recycle DOM nodes. Re-snapshot before your next interaction.
+- **Duplicate elements**: when several elements share text+role (e.g. 3 "Like" buttons), the fallback resolver picks the correct one by ordinal (`nth`), not just the first match.
 
 ---
 
@@ -293,7 +296,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## How Others Compare
 
-| | Real Browser MCP | Playwright MCP | Chrome DevTools MCP |
+| | Browser Controller | Playwright MCP | Chrome DevTools MCP |
 |---|---|---|---|
 | Uses your existing browser | Yes | No, launches new | Partial, needs debug port |
 | Sessions and cookies | Already there | Fresh profile | Manual setup |

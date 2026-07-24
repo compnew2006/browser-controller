@@ -1,10 +1,10 @@
-# Privacy Policy — Real Browser MCP
+# Privacy Policy — Browser Controller
 
 **Last updated:** March 2, 2026
 
 ## What this extension does
 
-Real Browser MCP is a Chrome extension that connects AI coding agents (via the Model Context Protocol) to your browser for automated testing and interaction. It communicates exclusively with a local MCP server running on your machine.
+Browser Controller is a Chrome extension that connects AI coding agents (via the Model Context Protocol) to your browser for automated testing and interaction. It communicates exclusively with a local MCP server running on your machine.
 
 ## Data collection
 

@@ -3,6 +3,8 @@ import {
   isStableId,
   isGeneratedClass,
   buildRobustSelectorFromPath,
+  pickNthMatch,
+  computeNewFingerprints,
 } from '../extension/utils/smart-selector.js';
 
 /**
@@ -153,5 +155,86 @@ describe('buildRobustSelectorFromPath', () => {
   it('handles null/undefined input safely', () => {
     expect(buildRobustSelectorFromPath(null as any)).toBeNull();
     expect(buildRobustSelectorFromPath(undefined as any)).toBeNull();
+  });
+});
+
+// --- nth recovery (Feature 2, borrowed from BrowserOS) ---------------------
+
+describe('pickNthMatch', () => {
+  it('picks the first match by default (nth omitted)', () => {
+    expect(pickNthMatch(['a', 'b', 'c'])).toBe('a');
+  });
+
+  it('picks the nth match (0-based)', () => {
+    expect(pickNthMatch(['a', 'b', 'c'], 0)).toBe('a');
+    expect(pickNthMatch(['a', 'b', 'c'], 1)).toBe('b');
+    expect(pickNthMatch(['a', 'b', 'c'], 2)).toBe('c');
+  });
+
+  it('falls back to the first match when nth exceeds the list (DOM shrank)', () => {
+    // 3 "Like" buttons at snapshot, only 2 remain after re-render; nth=2 → best effort = first
+    expect(pickNthMatch(['x', 'y'], 2)).toBe('x');
+  });
+
+  it('returns null for empty/null input', () => {
+    expect(pickNthMatch([], 0)).toBeNull();
+    expect(pickNthMatch(null as any, 0)).toBeNull();
+    expect(pickNthMatch(undefined as any, 0)).toBeNull();
+  });
+
+  it('treats negative/invalid nth as 0', () => {
+    expect(pickNthMatch(['a', 'b'], -1 as any)).toBe('a');
+    expect(pickNthMatch(['a', 'b'], NaN as any)).toBe('a');
+  });
+
+  it('resolves the RIGHT sibling among duplicates (the whole point)', () => {
+    // 3 buttons all named "Like"; the agent snapshotted the SECOND one (nth=1)
+    const buttons = [
+      { id: 1, name: 'Like' },
+      { id: 2, name: 'Like' },
+      { id: 3, name: 'Like' },
+    ];
+    expect(pickNthMatch(buttons, 1)).toEqual({ id: 2, name: 'Like' });
+    expect(pickNthMatch(buttons, 2)).toEqual({ id: 3, name: 'Like' });
+  });
+});
+
+// --- isNew fingerprinting (Feature 1, borrowed from Page-Agent *[index]) ---
+
+describe('computeNewFingerprints', () => {
+  it('marks elements whose role|name was NOT in the previous snapshot', () => {
+    const prev = ['button|Submit', 'link|Home', 'textbox|Email'];
+    const curr = ['button|Submit', 'link|Home', 'button|Cancel', 'textbox|Email'];
+    const isNew = computeNewFingerprints(prev, curr);
+    expect(isNew.has('button|Cancel')).toBe(true);
+    expect(isNew.has('button|Submit')).toBe(false);
+    expect(isNew.has('link|Home')).toBe(false);
+    expect(isNew.size).toBe(1);
+  });
+
+  it('first snapshot (empty previous) marks everything as new', () => {
+    const curr = ['button|Submit', 'link|Home'];
+    const isNew = computeNewFingerprints([], curr);
+    expect(isNew.size).toBe(2);
+    expect(isNew.has('button|Submit')).toBe(true);
+  });
+
+  it('no changes → nothing new', () => {
+    const prev = ['button|Submit', 'link|Home'];
+    const curr = ['button|Submit', 'link|Home'];
+    expect(computeNewFingerprints(prev, curr).size).toBe(0);
+  });
+
+  it('handles null/undefined inputs safely', () => {
+    expect(computeNewFingerprints(null, ['a']).size).toBe(1);
+    expect(computeNewFingerprints(['a'], null).size).toBe(0);
+    expect(computeNewFingerprints(null, null).size).toBe(0);
+  });
+
+  it('deduplicates repeated fingerprints in current', () => {
+    // two buttons named "Like" both new → one fingerprint entry
+    const isNew = computeNewFingerprints([], ['button|Like', 'button|Like']);
+    expect(isNew.size).toBe(1);
+    expect(isNew.has('button|Like')).toBe(true);
   });
 });

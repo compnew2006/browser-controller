@@ -27,7 +27,10 @@ If `tabId` is missing on a page tool, you'll get: *"tabId is required. Call brow
 - NEVER navigate away from pages the user is working on without asking
 - ALWAYS pass `tabId` — the "active tab" the user is looking at is NOT yours to act on
 - Prefer `browser_snapshot` over `browser_screenshot` (cheaper, faster, parseable)
-- Refs break after navigation/scroll/DOM changes - always re-snapshot before using stale refs
+- Refs break after navigation/scroll/DOM changes - re-snapshot before using stale refs
+- **Refs recover automatically**: if a ref goes stale but the element still exists, the tool finds it via a robust selector + text/role scan (response carries `via: "fallback"`). If the element was scrolled away entirely, the response carries `freshRefs: [...]` — retry with one of those new refs in the same step, no separate snapshot needed.
+- **`isNew: true`** on a snapshot ref means the element appeared since the last snapshot. After an action opens an overlay/dropdown, filter to `isNew` refs instead of re-reading the whole tree.
+- After `browser_scroll`, expect `refsMayBeStale: true` on feeds that recycle DOM nodes (Facebook/Instagram/Twitter) — re-snapshot before interacting.
 - `browser_evaluate` now runs in the page's MAIN world via chrome.scripting (no debugger banner, CSP-safe). It no longer needs CDP.
 
 ## Tools
@@ -76,6 +79,6 @@ Every page-interaction tool takes `tabId` (number, required). Listed below.
 2. (optional) `browser_tabs { action: "lock", tabId }`
 3. `browser_snapshot { tabId }` to see structure and get refs (valid only for this tabId)
 4. Interact: `browser_click { tabId, ref }`, `browser_type { tabId, ref, text }`, …
-5. For dropdowns: click trigger → `browser_wait { tabId, delay: 400 }` → `browser_text` / `browser_click_text`
-6. Re-snapshot after navigation/DOM changes
+5. For dropdowns: click trigger → `browser_wait { tabId, delay: 400 }` → look at `isNew` refs / `browser_click_text`
+6. Re-snapshot after navigation/DOM changes. If a click returns `freshRefs`, retry with a new ref from it directly.
 7. `browser_tabs { action: "unlock", tabId }` when finished

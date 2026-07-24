@@ -1,9 +1,9 @@
 ---
 name: browser-automation
-description: Control the user's real browser via Real Browser MCP. Use when asked to interact with web pages, test UIs, fill forms, or read page content.
+description: Control the user's real browser via Browser Controller. Use when asked to interact with web pages, test UIs, fill forms, or read page content.
 ---
 
-# Browser Automation with Real Browser MCP
+# Browser Automation with Browser Controller
 
 Use this skill when you need to interact with the user's actual browser - clicking, typing, reading pages, taking screenshots, or navigating.
 
@@ -32,6 +32,11 @@ For large pages, scope with a selector: `browser_snapshot { tabId, selector: "ma
 
 Use `browser_text { tabId }` to extract raw text when you need full content.
 
+### Reading efficiently (don't re-scan everything)
+
+- **`isNew: true`** on a ref means that element appeared since the last snapshot. When something just changed (an overlay opened after a click, a dropdown rendered), filter to `isNew` refs instead of re-reading the whole tree — big token saver on large pages.
+- After `browser_scroll`, expect **`refsMayBeStale: true`** — the feed may have recycled DOM nodes. Re-snapshot before your next interaction.
+
 ## Interacting
 
 Always pass `tabId`, then use refs from that tab's snapshot:
@@ -40,11 +45,18 @@ Always pass `tabId`, then use refs from that tab's snapshot:
 - `browser_press_key { tabId, key: "Enter" }`
 - `browser_scroll { tabId, direction: "down" }`
 
+### When a ref breaks (automatic recovery)
+
+On dynamic sites (React re-renders, virtualized feeds) refs can go stale. The extension handles this automatically — you usually don't need to do anything:
+
+- The response includes **`via: "fallback"`** if the element was found via a robust selector or text+role scan. Keep going, but know that ref may be stale for future calls — re-snapshot when convenient.
+- If the response includes **`freshRefs: [...]`**, the element was scrolled away entirely and a fresh snapshot was captured inline. **Retry with one of the new refs in the same step** — no separate snapshot needed.
+
 ## Dynamic Content (SPAs, social media)
 
 1. `browser_scroll { tabId, direction: "down" }` to load more
 2. `browser_wait { tabId, selector }` for lazy-loaded elements
-3. Snapshot again after scrolling - refs are regenerated
+3. After scrolling, expect `refsMayBeStale: true` → snapshot again before interacting
 4. For virtual scroll containers (Twitter, Reddit), pass the container's CSS selector to `browser_scroll`
 
 ## Debugging (per-tab)
@@ -57,5 +69,6 @@ Always pass `tabId`, then use refs from that tab's snapshot:
 
 - Forgetting `tabId` → "tabId is required" error
 - Using a ref from one tabId against a different tabId
-- Using stale refs after navigation/scroll (always re-snapshot)
+- Ignoring `freshRefs` and re-sending a stale ref that already failed
+- Re-reading the whole tree when `isNew` refs would suffice
 - Holding a tab lock too long (other agents queue behind you)

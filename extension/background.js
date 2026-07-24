@@ -48,6 +48,14 @@ const networkByTab = new Map();
  * resolves. Never sent to the agent — it keeps payloads token-cheap.
  */
 const fallbackByTab = new Map();
+/**
+ * isNew feature (borrowed from Page-Agent's *[index] idea): Map<tabId, Set<string>>
+ * of "fingerprints" (role|name) from the PREVIOUS snapshot. The next snapshot marks
+ * any ref whose fingerprint isn't in this set as `isNew: true`, so the agent can
+ * focus on what changed (e.g. an overlay that appeared after a click) instead of
+ * re-reading the whole tree — a big token saver on dynamic sites.
+ */
+const lastSnapshotFingerprints = new Map();
 let currentActivity = null; // tool currently running (single overlay label source)
 
 // --- Per-tab mutex (task 2.1) + per-agent tab locks (task 2.2) ------------
@@ -790,11 +798,17 @@ async function handleSnapshot(params) {
   // boundary, so pass the fallback generator as its SOURCE STRING and eval it
   // in the page to rebuild the live function.
   const genFallbackSrc = PAGE_FALLBACK_FN.toString();
+  // isNew feature: pass the fingerprints seen in the PREVIOUS snapshot so the
+  // page function can mark newly-appeared elements. Array is serializable.
+  const prevFingerprints = lastSnapshotFingerprints.get(tabId) || [];
 
-  return safeExec(tabId, (_sel, _compact, genFallbackSrc) => {
+  return safeExec(tabId, (_sel, _compact, genFallbackSrc, _prevFingerprints) => {
     let refCount = 0;
     /** @type {Record<string, object>} ref -> fallback, returned to background */
     const fallbacks = {};
+    /** @type {string[]} fingerprints of THIS snapshot (role|name), returned to background */
+    const fingerprints = [];
+    const prevSet = new Set(_prevFingerprints);
     // Rebuild the live function from its source string (see comment at call site).
     let genFallback = null;
     try { genFallback = eval('(' + genFallbackSrc + ')'); } catch {}
@@ -890,8 +904,14 @@ async function handleSnapshot(params) {
       const n = elName(el);
       try { if (genFallback) fallbacks[ref] = genFallback(el); } catch {}
 
+      // isNew: mark elements whose (role|name) wasn't in the previous snapshot.
+      const fp = `${r}|${n}`;
+      fingerprints.push(fp);
+      const isNew = !prevSet.has(fp);
+
       const node = { ref, role: r };
       if (n) node.name = n;
+      if (isNew) node.isNew = true;
       if (el.value !== undefined && el.value !== '') node.value = String(el.value);
       if (el.checked !== undefined) node.checked = el.checked;
       if (el.disabled) node.disabled = true;
@@ -923,9 +943,15 @@ async function handleSnapshot(params) {
       el.setAttribute('data-mcp-ref', ref);
       try { if (genFallback) fallbacks[ref] = genFallback(el); } catch {}
 
+      // isNew: mark elements whose (role|name) wasn't in the previous snapshot.
+      const fp = `${r}|${n}`;
+      fingerprints.push(fp);
+      const isNew = !prevSet.has(fp);
+
       const node = { ref, role: r };
       if (r === 'generic') node.tag = el.tagName.toLowerCase();
       if (n) node.name = n;
+      if (isNew) node.isNew = true;
       if (el.value !== undefined && el.value !== '') node.value = String(el.value);
       if (el.checked !== undefined) node.checked = el.checked;
       if (el.disabled) node.disabled = true;
@@ -953,13 +979,19 @@ async function handleSnapshot(params) {
       tree,
       // internal: background stores these per-tab; never sent to the agent.
       __fallbacks: fallbacks,
+      __fingerprints: fingerprints,
     };
-  }, [selector, compact, genFallbackSrc]).then((res) => {
+  }, [selector, compact, genFallbackSrc, prevFingerprints]).then((res) => {
     // Store the fallbacks per-tab so click/type can resolve stale refs.
     if (res && res.__fallbacks) {
       const map = new Map(Object.entries(res.__fallbacks));
       fallbackByTab.set(tabId, map);
       delete res.__fallbacks; // keep it out of the agent-visible payload
+    }
+    // Store THIS snapshot's fingerprints so the next snapshot can compute isNew.
+    if (res && res.__fingerprints) {
+      lastSnapshotFingerprints.set(tabId, res.__fingerprints);
+      delete res.__fingerprints;
     }
     return res;
   });
@@ -1480,6 +1512,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   consoleByTab.delete(tabId);
   networkByTab.delete(tabId);
   fallbackByTab.delete(tabId);
+  lastSnapshotFingerprints.delete(tabId);
 });
 
 initConnection();

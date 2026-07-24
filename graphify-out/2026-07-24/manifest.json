@@ -1,8 +1,8 @@
 {
   "agent-config/setup.mjs": {
-    "mtime": 1784871495.9700627,
-    "ast_hash": "2f4e69837622dc624e1977a6f2fc66dd",
-    "semantic_hash": "2f4e69837622dc624e1977a6f2fc66dd"
+    "mtime": 1784904818.12465,
+    "ast_hash": "20312bd006cbc71dccd54a3958f0cf4b",
+    "semantic_hash": ""
   },
   "extension/background.js": {
     "mtime": 1784871013.748449,
@@ -285,13 +285,13 @@
     "semantic_hash": "b35ccfbc55bfd6cb5d9dc3ebff6d8cca"
   },
   "agent-config/AGENTS.md": {
-    "mtime": 1784862058.4989834,
-    "ast_hash": "595efc75ee0b1baa79bab561a914912c",
-    "semantic_hash": "595efc75ee0b1baa79bab561a914912c"
+    "mtime": 1784904756.9986618,
+    "ast_hash": "015b7f6821085a03d318fdad24d64b7c",
+    "semantic_hash": ""
   },
   "agent-config/README.md": {
-    "mtime": 1784871577.9073572,
-    "ast_hash": "99873735b984178c0afdbeb6701bb7e4",
+    "mtime": 1784904837.190537,
+    "ast_hash": "7aa04f4b04fc2fa9c14e69243ada3edf",
     "semantic_hash": ""
   },
   "agent-config/cursor/commands/check-browser.md": {

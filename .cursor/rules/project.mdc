@@ -26,8 +26,9 @@ Agent ─stdio─ thin MCP client (index.ts) ─IPC─► daemon (daemon.ts, own
 
 1. `data-mcp-ref="e5"` (fast, breaks on re-render)
 2. robust CSS selector via `smart-selector.js` (climbs ≤3 ancestors, ignores React/generated classes+ids)
-3. text+role+tag scan (survives total class/id churn)
+3. text+role+tag scan (survives total class/id churn) — resolves the **correct** sibling via `nth` ordinal when several elements share text+role (e.g. 3 "Like" buttons)
 - `autoReSnapshot`: on ref failure (virtualized feed), snapshot the tab and embed `freshRefs` in the response so the agent retries in one step. Do NOT auto-retry the click (non-idempotent). `browser_scroll` returns `refsMayBeStale: true` as a hint.
+- `isNew`: each snapshot tracks `role|name` fingerprints per tab; elements appearing since the last snapshot are tagged `isNew: true` so the agent can focus on what changed (big token saver after an overlay/dropdown opens). State lives in `lastSnapshotFingerprints` Map, cleared on tab close.
 
 ## Concurrency (extension/lib/tab-concurrency.js — pure, unit-tested)
 
