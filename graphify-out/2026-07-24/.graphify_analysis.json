@@ -95,6 +95,7 @@
       "extension_background_handlescroll",
       "extension_background_handleselect",
       "extension_background_handlesnapshot",
+      "extension_background_handletabs",
       "extension_background_handletype",
       "extension_background_handleuploadfile",
       "extension_background_handlewait",
@@ -109,6 +110,7 @@
       "extension_background_sendresponse",
       "extension_background_showoverlay",
       "extension_background_tablocks",
+      "extension_background_tablockstojson",
       "extension_background_tabmutex",
       "extension_background_updatebadge",
       "extension_background_wsurl"
@@ -390,8 +392,6 @@
       "ref_src_ts"
     ],
     "11": [
-      "extension_background_handletabs",
-      "extension_background_tablockstojson",
       "extension_lib_tab_concurrency",
       "extension_lib_tab_concurrency_runontab",
       "extension_lib_tab_concurrency_tablockmap",
@@ -449,6 +449,16 @@
       "server_version"
     ],
     "15": [
+      "agent_config_readme",
+      "agent_config_readme_agent_config",
+      "agent_config_readme_claude_code",
+      "agent_config_readme_cursor",
+      "agent_config_readme_manual_install",
+      "agent_config_readme_quick_setup",
+      "agent_config_readme_skill",
+      "agent_config_readme_what_gets_installed"
+    ],
+    "16": [
       "agent_config_setup",
       "agent_config_setup_copyifneeded",
       "agent_config_setup_dirname",
@@ -456,38 +466,56 @@
       "agent_config_setup_installclaude",
       "agent_config_setup_installcursor"
     ],
-    "16": [
+    "17": [
+      "assets_icon",
+      "extension_icons_icon128",
+      "extension_icons_icon16",
+      "extension_icons_icon48",
+      "store_assets_icon",
+      "store_assets_icon_128"
+    ],
+    "18": [
       "scripts_drive",
       "scripts_drive_params",
       "scripts_drive_sock",
       "scripts_drive_sockpath",
       "scripts_drive_state"
     ],
-    "17": [
+    "19": [
+      "assets_demo_gif",
+      "assets_preview_png"
+    ],
+    "20": [
       "extension_content",
       "extension_content_capture"
     ],
-    "18": [
+    "21": [
       "github_dependabot_yml",
       "github_workflows_dependabot_auto_merge_yml"
     ],
-    "19": [
+    "22": [
       "github_workflows_ci_yml",
       "github_workflows_release_yml"
     ],
-    "20": [
+    "23": [
+      "assets_logo_png"
+    ],
+    "24": [
       "github_workflows_codeql_yml"
     ],
-    "21": [
+    "25": [
       "github_workflows_scorecard_yml"
     ],
-    "22": [
+    "26": [
+      "store_assets_screenshot_1280x800"
+    ],
+    "27": [
       "vitest_config"
     ]
   },
   "cohesion": {
     "0": 0.09994155464640561,
-    "1": 0.10530612244897959,
+    "1": 0.10105580693815988,
     "2": 0.08416389811738649,
     "3": 0.05263157894736842,
     "4": 0.0625,
@@ -497,18 +525,23 @@
     "8": 0.11255411255411256,
     "9": 0.09523809523809523,
     "10": 0.09090909090909091,
-    "11": 0.14619883040935672,
+    "11": 0.15441176470588236,
     "12": 0.2727272727272727,
     "13": 0.18181818181818182,
     "14": 0.2222222222222222,
-    "15": 0.4666666666666667,
-    "16": 0.4,
-    "17": 1.0,
-    "18": 1.0,
+    "15": 0.25,
+    "16": 0.4666666666666667,
+    "17": 0.3333333333333333,
+    "18": 0.4,
     "19": 1.0,
     "20": 1.0,
     "21": 1.0,
-    "22": 1.0
+    "22": 1.0,
+    "23": 1.0,
+    "24": 1.0,
+    "25": 1.0,
+    "26": 1.0,
+    "27": 1.0
   },
   "gods": [
     {
@@ -622,18 +655,13 @@
   "questions": [
     {
       "type": "bridge_node",
-      "question": "Why does `DaemonClient` connect `Daemon IPC Configuration` to `Tab Concurrency Locking`?",
-      "why": "High betweenness centrality (0.117) - this node is a cross-community bridge."
+      "question": "Why does `DaemonClient` connect `Daemon IPC Configuration` to `TabLockMap`?",
+      "why": "High betweenness centrality (0.027) - this node is a cross-community bridge."
     },
     {
       "type": "bridge_node",
-      "question": "Why does `TabLockMap` connect `Tab Concurrency Locking` to `Background Script Utilities`?",
-      "why": "High betweenness centrality (0.065) - this node is a cross-community bridge."
-    },
-    {
-      "type": "bridge_node",
-      "question": "Why does `tabLocksToJSON()` connect `Tab Concurrency Locking` to `Background Script Utilities`?",
-      "why": "High betweenness centrality (0.046) - this node is a cross-community bridge."
+      "question": "Why does `ExtensionBridge` connect `Extension Bridge Client` to `Daemon IPC Configuration`?",
+      "why": "High betweenness centrality (0.018) - this node is a cross-community bridge."
     },
     {
       "type": "verify_inferred",
@@ -642,8 +670,8 @@
     },
     {
       "type": "isolated_nodes",
-      "question": "What connects `consoleByTab`, `networkByTab`, `fallbackByTab` to the rest of the system?",
-      "why": "175 weakly-connected nodes found - possible documentation gaps or missing edges."
+      "question": "What connects `Quick Setup`, `Cursor`, `Claude Code` to the rest of the system?",
+      "why": "188 weakly-connected nodes found - possible documentation gaps or missing edges."
     },
     {
       "type": "low_cohesion",
@@ -652,8 +680,13 @@
     },
     {
       "type": "low_cohesion",
-      "question": "Should `Background Script Utilities` be split into smaller, more focused modules?",
-      "why": "Cohesion score 0.10530612244897959 - nodes in this community are weakly interconnected."
+      "question": "Should `background.js` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.10105580693815988 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Daemon IPC Configuration` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.08416389811738649 - nodes in this community are weakly interconnected."
     }
   ]
 }

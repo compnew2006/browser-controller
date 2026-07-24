@@ -4,6 +4,49 @@
   "graph": {
     "hyperedges": [
       {
+        "id": "app_icon_family",
+        "label": "App Icon Asset Family",
+        "nodes": [
+          "assets_icon",
+          "store_assets_icon",
+          "extension_icons_icon16",
+          "extension_icons_icon48",
+          "extension_icons_icon128",
+          "store_assets_icon_128"
+        ],
+        "relation": "form",
+        "confidence": "EXTRACTED",
+        "confidence_score": 0.9,
+        "source_file": "assets/icon.svg"
+      },
+      {
+        "id": "brand_visual_assets",
+        "label": "Brand Visual Assets",
+        "nodes": [
+          "assets_icon",
+          "assets_logo_png",
+          "assets_demo_gif",
+          "assets_preview_png"
+        ],
+        "relation": "participate_in",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "assets/icon.svg"
+      },
+      {
+        "id": "extension_icon_set",
+        "label": "Extension Icon Set",
+        "nodes": [
+          "extension_icons_icon16",
+          "extension_icons_icon48",
+          "extension_icons_icon128"
+        ],
+        "relation": "form",
+        "confidence": "EXTRACTED",
+        "confidence_score": 1.0,
+        "source_file": "extension/icons/icon16.png"
+      },
+      {
         "id": "rbm_all_tools",
         "label": "real-browser-mcp 17 MCP Tools",
         "nodes": [
@@ -80,10 +123,10 @@
       "source_file": "agent-config/README.md",
       "source_location": "L1",
       "_origin": "ast",
-      "id": "agent_config_readme",
-      "community": 23,
-      "community_name": "Agent Config",
-      "norm_label": "readme.md"
+      "community": 15,
+      "community_name": "README Documentation",
+      "norm_label": "readme.md",
+      "id": "agent_config_readme"
     },
     {
       "label": "Agent Config",
@@ -91,10 +134,10 @@
       "source_file": "agent-config/README.md",
       "source_location": "L1",
       "_origin": "ast",
-      "id": "agent_config_readme_agent_config",
-      "community": 23,
-      "community_name": "Agent Config",
-      "norm_label": "agent config"
+      "community": 15,
+      "community_name": "README Documentation",
+      "norm_label": "agent config",
+      "id": "agent_config_readme_agent_config"
     },
     {
       "label": "Quick Setup",
@@ -102,10 +145,10 @@
       "source_file": "agent-config/README.md",
       "source_location": "L5",
       "_origin": "ast",
-      "id": "agent_config_readme_quick_setup",
-      "community": 23,
-      "community_name": "Agent Config",
-      "norm_label": "quick setup"
+      "community": 15,
+      "community_name": "README Documentation",
+      "norm_label": "quick setup",
+      "id": "agent_config_readme_quick_setup"
     },
     {
       "label": "What Gets Installed",
@@ -113,10 +156,10 @@
       "source_file": "agent-config/README.md",
       "source_location": "L18",
       "_origin": "ast",
-      "id": "agent_config_readme_what_gets_installed",
-      "community": 23,
-      "community_name": "Agent Config",
-      "norm_label": "what gets installed"
+      "community": 15,
+      "community_name": "README Documentation",
+      "norm_label": "what gets installed",
+      "id": "agent_config_readme_what_gets_installed"
     },
     {
       "label": "Cursor",
@@ -124,10 +167,10 @@
       "source_file": "agent-config/README.md",
       "source_location": "L20",
       "_origin": "ast",
-      "id": "agent_config_readme_cursor",
-      "community": 23,
-      "community_name": "Agent Config",
-      "norm_label": "cursor"
+      "community": 15,
+      "community_name": "README Documentation",
+      "norm_label": "cursor",
+      "id": "agent_config_readme_cursor"
     },
     {
       "label": "Claude Code",
@@ -135,10 +178,10 @@
       "source_file": "agent-config/README.md",
       "source_location": "L33",
       "_origin": "ast",
-      "id": "agent_config_readme_claude_code",
-      "community": 23,
-      "community_name": "Agent Config",
-      "norm_label": "claude code"
+      "community": 15,
+      "community_name": "README Documentation",
+      "norm_label": "claude code",
+      "id": "agent_config_readme_claude_code"
     },
     {
       "label": "Skill",
@@ -146,10 +189,10 @@
       "source_file": "agent-config/README.md",
       "source_location": "L39",
       "_origin": "ast",
-      "id": "agent_config_readme_skill",
-      "community": 23,
-      "community_name": "Agent Config",
-      "norm_label": "skill"
+      "community": 15,
+      "community_name": "README Documentation",
+      "norm_label": "skill",
+      "id": "agent_config_readme_skill"
     },
     {
       "label": "Manual Install",
@@ -157,10 +200,10 @@
       "source_file": "agent-config/README.md",
       "source_location": "L43",
       "_origin": "ast",
-      "id": "agent_config_readme_manual_install",
-      "community": 23,
-      "community_name": "Agent Config",
-      "norm_label": "manual install"
+      "community": 15,
+      "community_name": "README Documentation",
+      "norm_label": "manual install",
+      "id": "agent_config_readme_manual_install"
     },
     {
       "label": "setup.mjs",
@@ -168,10 +211,10 @@
       "source_file": "agent-config/setup.mjs",
       "source_location": "L1",
       "_origin": "ast",
-      "id": "agent_config_setup",
-      "community": 15,
-      "community_name": "CLI Setup Scripts",
-      "norm_label": "setup.mjs"
+      "community": 16,
+      "community_name": "Install Scripts",
+      "norm_label": "setup.mjs",
+      "id": "agent_config_setup"
     },
     {
       "label": "__dirname",
@@ -179,10 +222,10 @@
       "source_file": "agent-config/setup.mjs",
       "source_location": "L7",
       "_origin": "ast",
-      "id": "agent_config_setup_dirname",
-      "community": 15,
-      "community_name": "CLI Setup Scripts",
-      "norm_label": "__dirname"
+      "community": 16,
+      "community_name": "Install Scripts",
+      "norm_label": "__dirname",
+      "id": "agent_config_setup_dirname"
     },
     {
       "label": "ensureDir()",
@@ -190,10 +233,10 @@
       "source_file": "agent-config/setup.mjs",
       "source_location": "L21",
       "_origin": "ast",
-      "id": "agent_config_setup_ensuredir",
-      "community": 15,
-      "community_name": "CLI Setup Scripts",
-      "norm_label": "ensuredir()"
+      "community": 16,
+      "community_name": "Install Scripts",
+      "norm_label": "ensuredir()",
+      "id": "agent_config_setup_ensuredir"
     },
     {
       "label": "copyIfNeeded()",
@@ -201,10 +244,10 @@
       "source_file": "agent-config/setup.mjs",
       "source_location": "L28",
       "_origin": "ast",
-      "id": "agent_config_setup_copyifneeded",
-      "community": 15,
-      "community_name": "CLI Setup Scripts",
-      "norm_label": "copyifneeded()"
+      "community": 16,
+      "community_name": "Install Scripts",
+      "norm_label": "copyifneeded()",
+      "id": "agent_config_setup_copyifneeded"
     },
     {
       "label": "installCursor()",
@@ -212,10 +255,10 @@
       "source_file": "agent-config/setup.mjs",
       "source_location": "L36",
       "_origin": "ast",
-      "id": "agent_config_setup_installcursor",
-      "community": 15,
-      "community_name": "CLI Setup Scripts",
-      "norm_label": "installcursor()"
+      "community": 16,
+      "community_name": "Install Scripts",
+      "norm_label": "installcursor()",
+      "id": "agent_config_setup_installcursor"
     },
     {
       "label": "installClaude()",
@@ -223,10 +266,10 @@
       "source_file": "agent-config/setup.mjs",
       "source_location": "L59",
       "_origin": "ast",
-      "id": "agent_config_setup_installclaude",
-      "community": 15,
-      "community_name": "CLI Setup Scripts",
-      "norm_label": "installclaude()"
+      "community": 16,
+      "community_name": "Install Scripts",
+      "norm_label": "installclaude()",
+      "id": "agent_config_setup_installclaude"
     },
     {
       "label": "background.js",
@@ -234,10 +277,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1",
       "_origin": "ast",
-      "id": "extension_background",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "background.js"
+      "community_name": "Extension Background Service",
+      "norm_label": "background.js",
+      "id": "extension_background"
     },
     {
       "label": "consoleByTab",
@@ -245,10 +288,10 @@
       "source_file": "extension/background.js",
       "source_location": "L43",
       "_origin": "ast",
-      "id": "extension_background_consolebytab",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "consolebytab"
+      "community_name": "Extension Background Service",
+      "norm_label": "consolebytab",
+      "id": "extension_background_consolebytab"
     },
     {
       "label": "networkByTab",
@@ -256,10 +299,10 @@
       "source_file": "extension/background.js",
       "source_location": "L44",
       "_origin": "ast",
-      "id": "extension_background_networkbytab",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "networkbytab"
+      "community_name": "Extension Background Service",
+      "norm_label": "networkbytab",
+      "id": "extension_background_networkbytab"
     },
     {
       "label": "fallbackByTab",
@@ -267,10 +310,10 @@
       "source_file": "extension/background.js",
       "source_location": "L50",
       "_origin": "ast",
-      "id": "extension_background_fallbackbytab",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "fallbackbytab"
+      "community_name": "Extension Background Service",
+      "norm_label": "fallbackbytab",
+      "id": "extension_background_fallbackbytab"
     },
     {
       "label": "tabMutex",
@@ -278,10 +321,10 @@
       "source_file": "extension/background.js",
       "source_location": "L55",
       "_origin": "ast",
-      "id": "extension_background_tabmutex",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "tabmutex"
+      "community_name": "Extension Background Service",
+      "norm_label": "tabmutex",
+      "id": "extension_background_tabmutex"
     },
     {
       "label": "tabLocks",
@@ -289,10 +332,10 @@
       "source_file": "extension/background.js",
       "source_location": "L56",
       "_origin": "ast",
-      "id": "extension_background_tablocks",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "tablocks"
+      "community_name": "Extension Background Service",
+      "norm_label": "tablocks",
+      "id": "extension_background_tablocks"
     },
     {
       "label": "autoPairToken()",
@@ -300,10 +343,10 @@
       "source_file": "extension/background.js",
       "source_location": "L67",
       "_origin": "ast",
-      "id": "extension_background_autopairtoken",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "autopairtoken()"
+      "community_name": "Extension Background Service",
+      "norm_label": "autopairtoken()",
+      "id": "extension_background_autopairtoken"
     },
     {
       "label": "initConnection()",
@@ -311,10 +354,10 @@
       "source_file": "extension/background.js",
       "source_location": "L85",
       "_origin": "ast",
-      "id": "extension_background_initconnection",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "initconnection()"
+      "community_name": "Extension Background Service",
+      "norm_label": "initconnection()",
+      "id": "extension_background_initconnection"
     },
     {
       "label": "wsUrl()",
@@ -322,10 +365,10 @@
       "source_file": "extension/background.js",
       "source_location": "L99",
       "_origin": "ast",
-      "id": "extension_background_wsurl",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "wsurl()"
+      "community_name": "Extension Background Service",
+      "norm_label": "wsurl()",
+      "id": "extension_background_wsurl"
     },
     {
       "label": "connect()",
@@ -333,10 +376,10 @@
       "source_file": "extension/background.js",
       "source_location": "L112",
       "_origin": "ast",
-      "id": "extension_background_connect",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "connect()"
+      "community_name": "Extension Background Service",
+      "norm_label": "connect()",
+      "id": "extension_background_connect"
     },
     {
       "label": "scheduleReconnect()",
@@ -344,10 +387,10 @@
       "source_file": "extension/background.js",
       "source_location": "L171",
       "_origin": "ast",
-      "id": "extension_background_schedulereconnect",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "schedulereconnect()"
+      "community_name": "Extension Background Service",
+      "norm_label": "schedulereconnect()",
+      "id": "extension_background_schedulereconnect"
     },
     {
       "label": "updateBadge()",
@@ -355,10 +398,10 @@
       "source_file": "extension/background.js",
       "source_location": "L187",
       "_origin": "ast",
-      "id": "extension_background_updatebadge",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "updatebadge()"
+      "community_name": "Extension Background Service",
+      "norm_label": "updatebadge()",
+      "id": "extension_background_updatebadge"
     },
     {
       "label": "showOverlay()",
@@ -366,10 +409,10 @@
       "source_file": "extension/background.js",
       "source_location": "L199",
       "_origin": "ast",
-      "id": "extension_background_showoverlay",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "showoverlay()"
+      "community_name": "Extension Background Service",
+      "norm_label": "showoverlay()",
+      "id": "extension_background_showoverlay"
     },
     {
       "label": "hideOverlay()",
@@ -377,10 +420,10 @@
       "source_file": "extension/background.js",
       "source_location": "L225",
       "_origin": "ast",
-      "id": "extension_background_hideoverlay",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "hideoverlay()"
+      "community_name": "Extension Background Service",
+      "norm_label": "hideoverlay()",
+      "id": "extension_background_hideoverlay"
     },
     {
       "label": "getConnectionState()",
@@ -388,10 +431,10 @@
       "source_file": "extension/background.js",
       "source_location": "L234",
       "_origin": "ast",
-      "id": "extension_background_getconnectionstate",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "getconnectionstate()"
+      "community_name": "Extension Background Service",
+      "norm_label": "getconnectionstate()",
+      "id": "extension_background_getconnectionstate"
     },
     {
       "label": "buildStatusPayload()",
@@ -399,10 +442,10 @@
       "source_file": "extension/background.js",
       "source_location": "L240",
       "_origin": "ast",
-      "id": "extension_background_buildstatuspayload",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "buildstatuspayload()"
+      "community_name": "Extension Background Service",
+      "norm_label": "buildstatuspayload()",
+      "id": "extension_background_buildstatuspayload"
     },
     {
       "label": "tabLocksToJSON()",
@@ -410,10 +453,10 @@
       "source_file": "extension/background.js",
       "source_location": "L255",
       "_origin": "ast",
-      "id": "extension_background_tablockstojson",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "tablockstojson()"
+      "community_name": "Extension Background Service",
+      "norm_label": "tablockstojson()",
+      "id": "extension_background_tablockstojson"
     },
     {
       "label": "broadcastStatus()",
@@ -421,10 +464,10 @@
       "source_file": "extension/background.js",
       "source_location": "L259",
       "_origin": "ast",
-      "id": "extension_background_broadcaststatus",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "broadcaststatus()"
+      "community_name": "Extension Background Service",
+      "norm_label": "broadcaststatus()",
+      "id": "extension_background_broadcaststatus"
     },
     {
       "label": "handleMessage()",
@@ -432,10 +475,10 @@
       "source_file": "extension/background.js",
       "source_location": "L269",
       "_origin": "ast",
-      "id": "extension_background_handlemessage",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlemessage()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlemessage()",
+      "id": "extension_background_handlemessage"
     },
     {
       "label": "sendResponse()",
@@ -443,10 +486,10 @@
       "source_file": "extension/background.js",
       "source_location": "L314",
       "_origin": "ast",
-      "id": "extension_background_sendresponse",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "sendresponse()"
+      "community_name": "Extension Background Service",
+      "norm_label": "sendresponse()",
+      "id": "extension_background_sendresponse"
     },
     {
       "label": "extractTabId()",
@@ -454,10 +497,10 @@
       "source_file": "extension/background.js",
       "source_location": "L321",
       "_origin": "ast",
-      "id": "extension_background_extracttabid",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "extracttabid()"
+      "community_name": "Extension Background Service",
+      "norm_label": "extracttabid()",
+      "id": "extension_background_extracttabid"
     },
     {
       "label": "dispatch()",
@@ -465,10 +508,10 @@
       "source_file": "extension/background.js",
       "source_location": "L336",
       "_origin": "ast",
-      "id": "extension_background_dispatch",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "dispatch()"
+      "community_name": "Extension Background Service",
+      "norm_label": "dispatch()",
+      "id": "extension_background_dispatch"
     },
     {
       "label": "resolveTab()",
@@ -476,10 +519,10 @@
       "source_file": "extension/background.js",
       "source_location": "L376",
       "_origin": "ast",
-      "id": "extension_background_resolvetab",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "resolvetab()"
+      "community_name": "Extension Background Service",
+      "norm_label": "resolvetab()",
+      "id": "extension_background_resolvetab"
     },
     {
       "label": "getFallback()",
@@ -487,10 +530,10 @@
       "source_file": "extension/background.js",
       "source_location": "L393",
       "_origin": "ast",
-      "id": "extension_background_getfallback",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "getfallback()"
+      "community_name": "Extension Background Service",
+      "norm_label": "getfallback()",
+      "id": "extension_background_getfallback"
     },
     {
       "label": "autoReSnapshot()",
@@ -498,10 +541,10 @@
       "source_file": "extension/background.js",
       "source_location": "L412",
       "_origin": "ast",
-      "id": "extension_background_autoresnapshot",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "autoresnapshot()"
+      "community_name": "Extension Background Service",
+      "norm_label": "autoresnapshot()",
+      "id": "extension_background_autoresnapshot"
     },
     {
       "label": "safeExec()",
@@ -509,10 +552,10 @@
       "source_file": "extension/background.js",
       "source_location": "L436",
       "_origin": "ast",
-      "id": "extension_background_safeexec",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "safeexec()"
+      "community_name": "Extension Background Service",
+      "norm_label": "safeexec()",
+      "id": "extension_background_safeexec"
     },
     {
       "label": "getTabBuffer()",
@@ -520,10 +563,10 @@
       "source_file": "extension/background.js",
       "source_location": "L456",
       "_origin": "ast",
-      "id": "extension_background_gettabbuffer",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "gettabbuffer()"
+      "community_name": "Extension Background Service",
+      "norm_label": "gettabbuffer()",
+      "id": "extension_background_gettabbuffer"
     },
     {
       "label": "pushCapped()",
@@ -531,10 +574,10 @@
       "source_file": "extension/background.js",
       "source_location": "L465",
       "_origin": "ast",
-      "id": "extension_background_pushcapped",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "pushcapped()"
+      "community_name": "Extension Background Service",
+      "norm_label": "pushcapped()",
+      "id": "extension_background_pushcapped"
     },
     {
       "label": "getActiveTab()",
@@ -542,10 +585,10 @@
       "source_file": "extension/background.js",
       "source_location": "L473",
       "_origin": "ast",
-      "id": "extension_background_getactivetab",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "getactivetab()"
+      "community_name": "Extension Background Service",
+      "norm_label": "getactivetab()",
+      "id": "extension_background_getactivetab"
     },
     {
       "label": "handleNavigate()",
@@ -553,10 +596,10 @@
       "source_file": "extension/background.js",
       "source_location": "L479",
       "_origin": "ast",
-      "id": "extension_background_handlenavigate",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlenavigate()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlenavigate()",
+      "id": "extension_background_handlenavigate"
     },
     {
       "label": "handleClick()",
@@ -564,10 +607,10 @@
       "source_file": "extension/background.js",
       "source_location": "L503",
       "_origin": "ast",
-      "id": "extension_background_handleclick",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handleclick()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handleclick()",
+      "id": "extension_background_handleclick"
     },
     {
       "label": "handleType()",
@@ -575,10 +618,10 @@
       "source_file": "extension/background.js",
       "source_location": "L565",
       "_origin": "ast",
-      "id": "extension_background_handletype",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handletype()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handletype()",
+      "id": "extension_background_handletype"
     },
     {
       "label": "handleScroll()",
@@ -586,10 +629,10 @@
       "source_file": "extension/background.js",
       "source_location": "L623",
       "_origin": "ast",
-      "id": "extension_background_handlescroll",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlescroll()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlescroll()",
+      "id": "extension_background_handlescroll"
     },
     {
       "label": "handlePressKey()",
@@ -597,10 +640,10 @@
       "source_file": "extension/background.js",
       "source_location": "L671",
       "_origin": "ast",
-      "id": "extension_background_handlepresskey",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlepresskey()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlepresskey()",
+      "id": "extension_background_handlepresskey"
     },
     {
       "label": "handleWait()",
@@ -608,10 +651,10 @@
       "source_file": "extension/background.js",
       "source_location": "L704",
       "_origin": "ast",
-      "id": "extension_background_handlewait",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlewait()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlewait()",
+      "id": "extension_background_handlewait"
     },
     {
       "label": "handleHover()",
@@ -619,10 +662,10 @@
       "source_file": "extension/background.js",
       "source_location": "L731",
       "_origin": "ast",
-      "id": "extension_background_handlehover",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlehover()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlehover()",
+      "id": "extension_background_handlehover"
     },
     {
       "label": "handleSelect()",
@@ -630,10 +673,10 @@
       "source_file": "extension/background.js",
       "source_location": "L754",
       "_origin": "ast",
-      "id": "extension_background_handleselect",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handleselect()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handleselect()",
+      "id": "extension_background_handleselect"
     },
     {
       "label": "handleSnapshot()",
@@ -641,10 +684,10 @@
       "source_file": "extension/background.js",
       "source_location": "L785",
       "_origin": "ast",
-      "id": "extension_background_handlesnapshot",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlesnapshot()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlesnapshot()",
+      "id": "extension_background_handlesnapshot"
     },
     {
       "label": "handleScreenshot()",
@@ -652,10 +695,10 @@
       "source_file": "extension/background.js",
       "source_location": "L968",
       "_origin": "ast",
-      "id": "extension_background_handlescreenshot",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlescreenshot()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlescreenshot()",
+      "id": "extension_background_handlescreenshot"
     },
     {
       "label": "handleConsole()",
@@ -663,10 +706,10 @@
       "source_file": "extension/background.js",
       "source_location": "L984",
       "_origin": "ast",
-      "id": "extension_background_handleconsole",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handleconsole()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handleconsole()",
+      "id": "extension_background_handleconsole"
     },
     {
       "label": "handleNetwork()",
@@ -674,10 +717,10 @@
       "source_file": "extension/background.js",
       "source_location": "L992",
       "_origin": "ast",
-      "id": "extension_background_handlenetwork",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlenetwork()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlenetwork()",
+      "id": "extension_background_handlenetwork"
     },
     {
       "label": "handleTabs()",
@@ -685,10 +728,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1003",
       "_origin": "ast",
-      "id": "extension_background_handletabs",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handletabs()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handletabs()",
+      "id": "extension_background_handletabs"
     },
     {
       "label": "handleFind()",
@@ -696,10 +739,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1053",
       "_origin": "ast",
-      "id": "extension_background_handlefind",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlefind()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlefind()",
+      "id": "extension_background_handlefind"
     },
     {
       "label": "handleGetPageText()",
@@ -707,10 +750,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1103",
       "_origin": "ast",
-      "id": "extension_background_handlegetpagetext",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlegetpagetext()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlegetpagetext()",
+      "id": "extension_background_handlegetpagetext"
     },
     {
       "label": "handleEvaluate()",
@@ -718,10 +761,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1126",
       "_origin": "ast",
-      "id": "extension_background_handleevaluate",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handleevaluate()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handleevaluate()",
+      "id": "extension_background_handleevaluate"
     },
     {
       "label": "handleClickByText()",
@@ -729,10 +772,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1150",
       "_origin": "ast",
-      "id": "extension_background_handleclickbytext",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handleclickbytext()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handleclickbytext()",
+      "id": "extension_background_handleclickbytext"
     },
     {
       "label": "handleDialog()",
@@ -740,10 +783,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1200",
       "_origin": "ast",
-      "id": "extension_background_handledialog",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handledialog()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handledialog()",
+      "id": "extension_background_handledialog"
     },
     {
       "label": "handleRunAction()",
@@ -751,10 +794,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1236",
       "_origin": "ast",
-      "id": "extension_background_handlerunaction",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlerunaction()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlerunaction()",
+      "id": "extension_background_handlerunaction"
     },
     {
       "label": "handleUploadFile()",
@@ -762,10 +805,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1262",
       "_origin": "ast",
-      "id": "extension_background_handleuploadfile",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handleuploadfile()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handleuploadfile()",
+      "id": "extension_background_handleuploadfile"
     },
     {
       "label": "handleDrag()",
@@ -773,10 +816,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1296",
       "_origin": "ast",
-      "id": "extension_background_handledrag",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handledrag()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handledrag()",
+      "id": "extension_background_handledrag"
     },
     {
       "label": "handleFillForm()",
@@ -784,10 +827,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1350",
       "_origin": "ast",
-      "id": "extension_background_handlefillform",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "handlefillform()"
+      "community_name": "Extension Background Service",
+      "norm_label": "handlefillform()",
+      "id": "extension_background_handlefillform"
     },
     {
       "label": "NOTE: do NOT `return true` unconditionally. Returning true tells Chrome the",
@@ -795,10 +838,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1411",
       "_origin": "ast",
-      "id": "extension_background_rationale_1411",
       "community": 1,
-      "community_name": "Background Script Utilities",
-      "norm_label": "note: do not `return true` unconditionally. returning true tells chrome the"
+      "community_name": "Extension Background Service",
+      "norm_label": "note: do not `return true` unconditionally. returning true tells chrome the",
+      "id": "extension_background_rationale_1411"
     },
     {
       "label": "content.js",
@@ -806,10 +849,10 @@
       "source_file": "extension/content.js",
       "source_location": "L1",
       "_origin": "ast",
-      "id": "extension_content",
-      "community": 17,
-      "community_name": "Content Script Capture",
-      "norm_label": "content.js"
+      "community": 20,
+      "community_name": "Content Script",
+      "norm_label": "content.js",
+      "id": "extension_content"
     },
     {
       "label": "capture()",
@@ -817,10 +860,10 @@
       "source_file": "extension/content.js",
       "source_location": "L14",
       "_origin": "ast",
-      "id": "extension_content_capture",
-      "community": 17,
-      "community_name": "Content Script Capture",
-      "norm_label": "capture()"
+      "community": 20,
+      "community_name": "Content Script",
+      "norm_label": "capture()",
+      "id": "extension_content_capture"
     },
     {
       "label": "tab-concurrency.js",
@@ -830,7 +873,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "tab-concurrency.js",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency"
     },
     {
@@ -841,7 +884,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "tabmutexmap",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tabmutexmap"
     },
     {
@@ -852,7 +895,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".constructor()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tabmutexmap_constructor"
     },
     {
@@ -863,7 +906,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".run()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tabmutexmap_run"
     },
     {
@@ -874,7 +917,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".isidle()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tabmutexmap_isidle"
     },
     {
@@ -885,7 +928,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "tablockmap",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tablockmap"
     },
     {
@@ -896,7 +939,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".constructor()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tablockmap_constructor"
     },
     {
@@ -907,7 +950,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".owner()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tablockmap_owner"
     },
     {
@@ -918,7 +961,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".lock()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tablockmap_lock"
     },
     {
@@ -929,7 +972,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".unlock()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tablockmap_unlock"
     },
     {
@@ -940,7 +983,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".release()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tablockmap_release"
     },
     {
@@ -951,7 +994,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".snapshot()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tablockmap_snapshot"
     },
     {
@@ -962,7 +1005,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".unlockall()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tablockmap_unlockall"
     },
     {
@@ -973,7 +1016,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".waitfor()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_tablockmap_waitfor"
     },
     {
@@ -984,7 +1027,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "runontab()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "extension_lib_tab_concurrency_runontab"
     },
     {
@@ -995,7 +1038,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "manifest.json",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest"
     },
     {
@@ -1006,7 +1049,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "manifest_version",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_manifest_version"
     },
     {
@@ -1017,7 +1060,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "name",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_name"
     },
     {
@@ -1028,7 +1071,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "version",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_version"
     },
     {
@@ -1039,7 +1082,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "description",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_description"
     },
     {
@@ -1050,7 +1093,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "icons",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_icons"
     },
     {
@@ -1061,7 +1104,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "16",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_icons_16"
     },
     {
@@ -1072,7 +1115,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "48",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_icons_48"
     },
     {
@@ -1083,7 +1126,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "128",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_icons_128"
     },
     {
@@ -1094,7 +1137,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "permissions",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_permissions"
     },
     {
@@ -1105,7 +1148,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "tabs",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_tabs"
     },
     {
@@ -1116,7 +1159,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "activetab",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_activetab"
     },
     {
@@ -1127,7 +1170,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "scripting",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_scripting"
     },
     {
@@ -1138,7 +1181,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "debugger",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_debugger"
     },
     {
@@ -1149,7 +1192,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "webrequest",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_webrequest"
     },
     {
@@ -1160,7 +1203,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "storage",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_storage"
     },
     {
@@ -1171,7 +1214,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "alarms",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_alarms"
     },
     {
@@ -1182,7 +1225,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "host_permissions",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_host_permissions"
     },
     {
@@ -1193,7 +1236,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "<all_urls>",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_all_urls"
     },
     {
@@ -1204,7 +1247,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "http://127.0.0.1:7225/*",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_http_127_0_0_1_7225"
     },
     {
@@ -1215,7 +1258,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "http://localhost:7225/*",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "ref_http_localhost_7225"
     },
     {
@@ -1226,7 +1269,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "background",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_background"
     },
     {
@@ -1237,7 +1280,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "service_worker",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_background_service_worker"
     },
     {
@@ -1248,7 +1291,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "type",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_background_type"
     },
     {
@@ -1259,7 +1302,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "content_scripts",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_content_scripts"
     },
     {
@@ -1270,7 +1313,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "action",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_action"
     },
     {
@@ -1281,7 +1324,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "default_popup",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_action_default_popup"
     },
     {
@@ -1292,7 +1335,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "default_title",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_action_default_title"
     },
     {
@@ -1303,7 +1346,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "default_icon",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_action_default_icon"
     },
     {
@@ -1314,7 +1357,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "16",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_default_icon_16"
     },
     {
@@ -1325,7 +1368,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "48",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_default_icon_48"
     },
     {
@@ -1336,7 +1379,7 @@
       "_origin": "ast",
       "community": 4,
       "norm_label": "128",
-      "community_name": "Extension Manifest Config",
+      "community_name": "Extension Manifest",
       "id": "extension_manifest_default_icon_128"
     },
     {
@@ -1611,7 +1654,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "smart-selector.js",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "extension_utils_smart_selector"
     },
     {
@@ -1622,7 +1665,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "isstableid()",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "extension_utils_smart_selector_isstableid"
     },
     {
@@ -1633,7 +1676,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "isgeneratedclass()",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "extension_utils_smart_selector_isgeneratedclass"
     },
     {
@@ -1644,7 +1687,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "stable_attrs",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "extension_utils_smart_selector_stable_attrs"
     },
     {
@@ -1655,7 +1698,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "buildrobustselectorfrompath()",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "extension_utils_smart_selector_buildrobustselectorfrompath"
     },
     {
@@ -1666,7 +1709,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "cssescape()",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "extension_utils_smart_selector_cssescape"
     },
     {
@@ -1677,7 +1720,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "page_fallback_fn()",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "extension_utils_smart_selector_page_fallback_fn"
     },
     {
@@ -1688,7 +1731,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "page_resolve_fallback_fn()",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "extension_utils_smart_selector_page_resolve_fallback_fn"
     },
     {
@@ -1699,7 +1742,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "bridge.ts",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge"
     },
     {
@@ -1710,7 +1753,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "httprequesthandler",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_httprequesthandler"
     },
     {
@@ -1721,7 +1764,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "cors",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_cors"
     },
     {
@@ -1732,7 +1775,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "pendingrequest",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_pendingrequest"
     },
     {
@@ -1743,7 +1786,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "bridgeoptions",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_bridgeoptions"
     },
     {
@@ -1754,7 +1797,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "tool_timeouts",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_tool_timeouts"
     },
     {
@@ -1765,7 +1808,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "isportinuse()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_isportinuse"
     },
     {
@@ -1776,7 +1819,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "findlistenersonport()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_findlistenersonport"
     },
     {
@@ -1787,7 +1830,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "extensionbridge",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge"
     },
     {
@@ -1798,7 +1841,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".constructor()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_constructor"
     },
     {
@@ -1809,7 +1852,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".registerhttphandler()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_registerhttphandler"
     },
     {
@@ -1820,7 +1863,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".start()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_start"
     },
     {
@@ -1831,7 +1874,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".killstaleprocess()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_killstaleprocess"
     },
     {
@@ -1842,7 +1885,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".trylisten()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_trylisten"
     },
     {
@@ -1853,7 +1896,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".startpingloop()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_startpingloop"
     },
     {
@@ -1864,7 +1907,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".stoppingloop()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_stoppingloop"
     },
     {
@@ -1875,7 +1918,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".handleresponse()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_handleresponse"
     },
     {
@@ -1886,7 +1929,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".isconnected()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_isconnected"
     },
     {
@@ -1897,7 +1940,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".waitforconnection()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_waitforconnection"
     },
     {
@@ -1908,7 +1951,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".calltool()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_calltool"
     },
     {
@@ -1919,7 +1962,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".sendtoolcall()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_sendtoolcall"
     },
     {
@@ -1930,7 +1973,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".rejectallpending()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_rejectallpending"
     },
     {
@@ -1941,7 +1984,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": ".stop()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_bridge_extensionbridge_stop"
     },
     {
@@ -1952,7 +1995,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "daemon-config.ts",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config"
     },
     {
@@ -1963,7 +2006,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "default_ws_port",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_default_ws_port"
     },
     {
@@ -1974,7 +2017,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "state_dir",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_state_dir"
     },
     {
@@ -1985,7 +2028,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "daemon_info_file",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_daemon_info_file"
     },
     {
@@ -1996,7 +2039,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "token_file",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_token_file"
     },
     {
@@ -2007,7 +2050,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "ipcclientmessage",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_ipcclientmessage"
     },
     {
@@ -2018,7 +2061,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "ipcdaemonmessage",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_ipcdaemonmessage"
     },
     {
@@ -2029,7 +2072,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "extensionrequest",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_extensionrequest"
     },
     {
@@ -2038,9 +2081,9 @@
       "source_file": "mcp-server/src/daemon-config.ts",
       "source_location": "L73",
       "_origin": "ast",
-      "community": 2,
+      "community": 5,
       "norm_label": "idempotent_tools",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_daemon_config_idempotent_tools"
     },
     {
@@ -2049,9 +2092,9 @@
       "source_file": "mcp-server/src/daemon-config.ts",
       "source_location": "L82",
       "_origin": "ast",
-      "community": 2,
+      "community": 5,
       "norm_label": "isidempotent()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "Extension Bridge Logic",
       "id": "mcp_server_src_daemon_config_isidempotent"
     },
     {
@@ -2062,7 +2105,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "storedtoken",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_storedtoken"
     },
     {
@@ -2073,7 +2116,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "loadorcreatetoken()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_loadorcreatetoken"
     },
     {
@@ -2084,7 +2127,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "readtoken()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_readtoken"
     },
     {
@@ -2095,7 +2138,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "note: `browser_evaluate` runs arbitrary user js (can submit forms, click,",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_config_rationale_69"
     },
     {
@@ -2106,7 +2149,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "daemon.ts",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon"
     },
     {
@@ -2117,7 +2160,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "ipcclient",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_ipcclient"
     },
     {
@@ -2128,7 +2171,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "daemon",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon"
     },
     {
@@ -2139,7 +2182,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".constructor()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_constructor"
     },
     {
@@ -2150,7 +2193,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".start()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_start"
     },
     {
@@ -2161,7 +2204,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".createipcserver()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_createipcserver"
     },
     {
@@ -2172,7 +2215,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".handlenewclient()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_handlenewclient"
     },
     {
@@ -2183,7 +2226,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".checktoken()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_checktoken"
     },
     {
@@ -2194,7 +2237,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".routecall()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_routecall"
     },
     {
@@ -2205,7 +2248,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".sendtoclient()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_sendtoclient"
     },
     {
@@ -2216,7 +2259,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".handlehttp()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_handlehttp"
     },
     {
@@ -2227,7 +2270,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".agents()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_agents"
     },
     {
@@ -2238,7 +2281,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".writedaemoninfo()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_writedaemoninfo"
     },
     {
@@ -2249,7 +2292,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".clientcount()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_clientcount"
     },
     {
@@ -2260,7 +2303,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".stop()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_daemon_stop"
     },
     {
@@ -2271,7 +2314,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "main()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_daemon_main"
     },
     {
@@ -2282,7 +2325,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "src/index.ts",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index"
     },
     {
@@ -2293,7 +2336,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "setupidx",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_setupidx"
     },
     {
@@ -2304,7 +2347,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "daemonclient",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_daemonclient"
     },
     {
@@ -2315,7 +2358,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".sessionid()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "mcp_server_src_index_daemonclient_sessionid"
     },
     {
@@ -2326,7 +2369,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".constructor()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_daemonclient_constructor"
     },
     {
@@ -2337,7 +2380,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".connect()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_daemonclient_connect"
     },
     {
@@ -2348,7 +2391,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".waitforwelcome()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_daemonclient_waitforwelcome"
     },
     {
@@ -2359,7 +2402,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".handlemessage()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_daemonclient_handlemessage"
     },
     {
@@ -2370,7 +2413,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".calltool()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_daemonclient_calltool"
     },
     {
@@ -2381,7 +2424,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".failall()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_daemonclient_failall"
     },
     {
@@ -2392,7 +2435,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": ".close()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_daemonclient_close"
     },
     {
@@ -2403,7 +2446,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "daemonlooksalive()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_daemonlooksalive"
     },
     {
@@ -2414,7 +2457,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "deriveagentname()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_deriveagentname"
     },
     {
@@ -2425,7 +2468,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "spawndaemon()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_spawndaemon"
     },
     {
@@ -2436,7 +2479,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "waitfordaemon()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_waitfordaemon"
     },
     {
@@ -2447,7 +2490,7 @@
       "_origin": "ast",
       "community": 2,
       "norm_label": "main()",
-      "community_name": "Daemon IPC Configuration",
+      "community_name": "IPC Daemon Config",
       "id": "mcp_server_src_index_main"
     },
     {
@@ -2458,7 +2501,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "click-text.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_click_text"
     },
     {
@@ -2469,7 +2512,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "clicktexttool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_click_text_clicktexttool"
     },
     {
@@ -2480,7 +2523,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "click.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_click"
     },
     {
@@ -2491,7 +2534,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "clicktool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_click_clicktool"
     },
     {
@@ -2502,7 +2545,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "console.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_console"
     },
     {
@@ -2513,7 +2556,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "consoletool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_console_consoletool"
     },
     {
@@ -2524,7 +2567,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "dialog.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_dialog"
     },
     {
@@ -2535,7 +2578,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "dialogtool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_dialog_dialogtool"
     },
     {
@@ -2546,7 +2589,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "drag.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_drag"
     },
     {
@@ -2557,7 +2600,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "dragtool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_drag_dragtool"
     },
     {
@@ -2568,7 +2611,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "evaluate.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_evaluate"
     },
     {
@@ -2579,7 +2622,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "evaluatetool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_evaluate_evaluatetool"
     },
     {
@@ -2590,7 +2633,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "fill-form.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_fill_form"
     },
     {
@@ -2601,7 +2644,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "fillformtool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_fill_form_fillformtool"
     },
     {
@@ -2612,7 +2655,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "find.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_find"
     },
     {
@@ -2623,7 +2666,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "findtool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_find_findtool"
     },
     {
@@ -2634,7 +2677,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "hover.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_hover"
     },
     {
@@ -2645,7 +2688,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "hovertool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_hover_hovertool"
     },
     {
@@ -2656,7 +2699,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "tools/index.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_index"
     },
     {
@@ -2667,7 +2710,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "alltools",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_index_alltools"
     },
     {
@@ -2678,7 +2721,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "toolmap",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_index_toolmap"
     },
     {
@@ -2689,7 +2732,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "navigate.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_navigate"
     },
     {
@@ -2700,7 +2743,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "navigatetool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_navigate_navigatetool"
     },
     {
@@ -2711,7 +2754,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "network.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_network"
     },
     {
@@ -2722,7 +2765,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "networktool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_network_networktool"
     },
     {
@@ -2733,7 +2776,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "press-key.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_press_key"
     },
     {
@@ -2744,7 +2787,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "presskeytool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_press_key_presskeytool"
     },
     {
@@ -2755,7 +2798,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "run-action.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_run_action"
     },
     {
@@ -2766,7 +2809,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "runactiontool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_run_action_runactiontool"
     },
     {
@@ -2777,7 +2820,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "screenshot.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_screenshot"
     },
     {
@@ -2788,7 +2831,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "screenshottool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_screenshot_screenshottool"
     },
     {
@@ -2799,7 +2842,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "scroll.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_scroll"
     },
     {
@@ -2810,7 +2853,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "scrolltool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_scroll_scrolltool"
     },
     {
@@ -2821,7 +2864,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "select.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_select"
     },
     {
@@ -2832,7 +2875,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "selecttool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_select_selecttool"
     },
     {
@@ -2843,7 +2886,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "snapshot.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_snapshot"
     },
     {
@@ -2854,7 +2897,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "snapshottool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_snapshot_snapshottool"
     },
     {
@@ -2865,7 +2908,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "tabs.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_tabs"
     },
     {
@@ -2876,7 +2919,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "tabstool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_tabs_tabstool"
     },
     {
@@ -2887,7 +2930,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "text.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_text"
     },
     {
@@ -2898,7 +2941,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "texttool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_text_texttool"
     },
     {
@@ -2909,7 +2952,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "type.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_type"
     },
     {
@@ -2920,7 +2963,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "typetool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_type_typetool"
     },
     {
@@ -2931,7 +2974,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "types.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types"
     },
     {
@@ -2942,7 +2985,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "toolhost",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_toolhost"
     },
     {
@@ -2953,7 +2996,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": ".calltool()",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_toolhost_calltool"
     },
     {
@@ -2964,7 +3007,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "toolresult",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_toolresult"
     },
     {
@@ -2975,7 +3018,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "tabidparam",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_tabidparam"
     },
     {
@@ -2986,7 +3029,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "requiretabid()",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_requiretabid"
     },
     {
@@ -2997,7 +3040,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "optionaltabid()",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_optionaltabid"
     },
     {
@@ -3008,7 +3051,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "tooldefinition",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_tooldefinition"
     },
     {
@@ -3019,7 +3062,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "textresult()",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_textresult"
     },
     {
@@ -3030,7 +3073,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "errorresult()",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_errorresult"
     },
     {
@@ -3041,7 +3084,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "imageresult()",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_types_imageresult"
     },
     {
@@ -3052,7 +3095,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "upload-file.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_upload_file"
     },
     {
@@ -3063,7 +3106,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "uploadfiletool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_upload_file_uploadfiletool"
     },
     {
@@ -3074,7 +3117,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "wait.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_wait"
     },
     {
@@ -3085,7 +3128,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "waittool",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "mcp_server_src_tools_wait_waittool"
     },
     {
@@ -3096,7 +3139,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "tsconfig.json",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig"
     },
     {
@@ -3107,7 +3150,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "compileroptions",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions"
     },
     {
@@ -3118,7 +3161,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "target",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_target"
     },
     {
@@ -3129,7 +3172,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "module",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_module"
     },
     {
@@ -3140,7 +3183,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "moduleresolution",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_moduleresolution"
     },
     {
@@ -3151,7 +3194,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "lib",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_lib"
     },
     {
@@ -3162,7 +3205,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "es2022",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "ref_es2022"
     },
     {
@@ -3173,7 +3216,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "outdir",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_outdir"
     },
     {
@@ -3184,7 +3227,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "rootdir",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_rootdir"
     },
     {
@@ -3195,7 +3238,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "strict",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_strict"
     },
     {
@@ -3206,7 +3249,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "esmoduleinterop",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_esmoduleinterop"
     },
     {
@@ -3217,7 +3260,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "skiplibcheck",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_skiplibcheck"
     },
     {
@@ -3228,7 +3271,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "forceconsistentcasinginfilenames",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_forceconsistentcasinginfilenames"
     },
     {
@@ -3239,7 +3282,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "resolvejsonmodule",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_resolvejsonmodule"
     },
     {
@@ -3250,7 +3293,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "declaration",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_declaration"
     },
     {
@@ -3261,7 +3304,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "declarationmap",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_declarationmap"
     },
     {
@@ -3272,7 +3315,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "sourcemap",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_compileroptions_sourcemap"
     },
     {
@@ -3283,7 +3326,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "include",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_include"
     },
     {
@@ -3294,7 +3337,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "src/**/*.ts",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "ref_src_ts"
     },
     {
@@ -3305,7 +3348,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "exclude",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "mcp_server_tsconfig_exclude"
     },
     {
@@ -3316,7 +3359,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "dist",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "ref_dist"
     },
     {
@@ -3327,7 +3370,7 @@
       "_origin": "ast",
       "community": 10,
       "norm_label": "node_modules",
-      "community_name": "TypeScript Configuration",
+      "community_name": "TypeScript Config",
       "id": "ref_node_modules"
     },
     {
@@ -3338,7 +3381,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "package.json",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package"
     },
     {
@@ -3349,7 +3392,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "name",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_name"
     },
     {
@@ -3360,7 +3403,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "mcpname",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_mcpname"
     },
     {
@@ -3371,7 +3414,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "version",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_version"
     },
     {
@@ -3382,7 +3425,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "description",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_description"
     },
     {
@@ -3393,7 +3436,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "type",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_type"
     },
     {
@@ -3404,7 +3447,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "bin",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_bin"
     },
     {
@@ -3415,7 +3458,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "browser-controller",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_bin_browser_controller"
     },
     {
@@ -3426,7 +3469,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "main",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_main"
     },
     {
@@ -3437,7 +3480,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "scripts",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts"
     },
     {
@@ -3448,7 +3491,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "build",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_build"
     },
     {
@@ -3459,7 +3502,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "dev",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_dev"
     },
     {
@@ -3470,7 +3513,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "start",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_start"
     },
     {
@@ -3481,7 +3524,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "test",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_test"
     },
     {
@@ -3492,7 +3535,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "test:watch",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_test_watch"
     },
     {
@@ -3503,7 +3546,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "typecheck",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_typecheck"
     },
     {
@@ -3514,7 +3557,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "lint",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_lint"
     },
     {
@@ -3525,7 +3568,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "format",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_format"
     },
     {
@@ -3536,7 +3579,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "setup:cursor",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_setup_cursor"
     },
     {
@@ -3547,7 +3590,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "setup:claude",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_setup_claude"
     },
     {
@@ -3558,7 +3601,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "context:lint",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_context_lint"
     },
     {
@@ -3569,7 +3612,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "context:measure",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_scripts_context_measure"
     },
     {
@@ -3580,7 +3623,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "keywords",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "package_keywords"
     },
     {
@@ -3591,7 +3634,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "mcp",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_mcp"
     },
     {
@@ -3602,7 +3645,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "mcp-server",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_mcp_server"
     },
     {
@@ -3613,7 +3656,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "browser",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_browser"
     },
     {
@@ -3624,7 +3667,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "browser-automation",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_browser_automation"
     },
     {
@@ -3635,7 +3678,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "browser-control",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_browser_control"
     },
     {
@@ -3646,7 +3689,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "browser-use",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_browser_use"
     },
     {
@@ -3657,7 +3700,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "chrome",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_chrome"
     },
     {
@@ -3668,7 +3711,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "chrome-extension",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_chrome_extension"
     },
     {
@@ -3679,7 +3722,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "web-automation",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_web_automation"
     },
     {
@@ -3690,7 +3733,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "browser-controller",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_browser_controller"
     },
     {
@@ -3701,7 +3744,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "live-browser",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_live_browser"
     },
     {
@@ -3712,7 +3755,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "ai-agent",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_ai_agent"
     },
     {
@@ -3723,7 +3766,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "ai-coding",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_ai_coding"
     },
     {
@@ -3734,7 +3777,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "cursor",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_cursor"
     },
     {
@@ -3745,7 +3788,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "claude",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_claude"
     },
     {
@@ -3756,7 +3799,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "windsurf",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_windsurf"
     },
     {
@@ -3767,7 +3810,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "playwright-alternative",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_playwright_alternative"
     },
     {
@@ -3778,7 +3821,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "devtools",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ref_devtools"
     },
     {
@@ -3789,7 +3832,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "author",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_author"
     },
     {
@@ -3800,7 +3843,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "license",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_license"
     },
     {
@@ -3811,7 +3854,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "repository",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_repository"
     },
     {
@@ -3822,7 +3865,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "type",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_repository_type"
     },
     {
@@ -3833,7 +3876,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "url",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_repository_url"
     },
     {
@@ -3844,7 +3887,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "homepage",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_homepage"
     },
     {
@@ -3855,7 +3898,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "bugs",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_bugs"
     },
     {
@@ -3866,7 +3909,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "url",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_bugs_url"
     },
     {
@@ -3877,7 +3920,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "files",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_files"
     },
     {
@@ -3888,7 +3931,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "mcp-server/dist/",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "ref_mcp_server_dist"
     },
     {
@@ -3899,7 +3942,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "extension/",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "ref_extension"
     },
     {
@@ -3910,7 +3953,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "agent-config/",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "ref_agent_config"
     },
     {
@@ -3921,7 +3964,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "license",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "ref_license"
     },
     {
@@ -3932,7 +3975,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "readme.md",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "ref_readme_md"
     },
     {
@@ -3943,7 +3986,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "engines",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_engines"
     },
     {
@@ -3954,7 +3997,7 @@
       "_origin": "ast",
       "community": 3,
       "norm_label": "node",
-      "community_name": "Package Manifest Metadata",
+      "community_name": "Package Metadata",
       "id": "package_engines_node"
     },
     {
@@ -3965,7 +4008,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "dependencies",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "package_dependencies"
     },
     {
@@ -3976,7 +4019,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "@modelcontextprotocol/sdk",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "package_dependencies_modelcontextprotocol_sdk"
     },
     {
@@ -3987,7 +4030,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "@modelcontextprotocol/sdk",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "modelcontextprotocol_sdk"
     },
     {
@@ -3998,7 +4041,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "ws",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "package_dependencies_ws"
     },
     {
@@ -4009,7 +4052,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "ws",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "ws"
     },
     {
@@ -4020,7 +4063,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "zod",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "package_dependencies_zod"
     },
     {
@@ -4031,7 +4074,7 @@
       "_origin": "ast",
       "community": 6,
       "norm_label": "zod",
-      "community_name": "NPM Dependencies and Keywords",
+      "community_name": "Keywords and Dependencies",
       "id": "zod"
     },
     {
@@ -4042,7 +4085,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "devdependencies",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "package_devdependencies"
     },
     {
@@ -4053,7 +4096,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "@types/node",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "package_devdependencies_types_node"
     },
     {
@@ -4064,7 +4107,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "@types/node",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "types_node"
     },
     {
@@ -4075,7 +4118,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "@types/ws",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "package_devdependencies_types_ws"
     },
     {
@@ -4086,7 +4129,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "@types/ws",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "types_ws"
     },
     {
@@ -4097,7 +4140,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "ai-context-kit",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "package_devdependencies_ai_context_kit"
     },
     {
@@ -4108,7 +4151,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "ai-context-kit",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "ai_context_kit"
     },
     {
@@ -4119,7 +4162,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "typescript",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "package_devdependencies_typescript"
     },
     {
@@ -4130,7 +4173,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "typescript",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "typescript"
     },
     {
@@ -4141,7 +4184,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "vitest",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "package_devdependencies_vitest"
     },
     {
@@ -4152,7 +4195,7 @@
       "_origin": "ast",
       "community": 13,
       "norm_label": "vitest",
-      "community_name": "Development Dependencies",
+      "community_name": "Dev Dependencies",
       "id": "vitest"
     },
     {
@@ -4161,9 +4204,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "drive.mjs",
-      "community_name": "Socket Driver",
+      "community_name": "IPC Socket Utils",
       "id": "scripts_drive"
     },
     {
@@ -4172,9 +4215,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L14",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "state",
-      "community_name": "Socket Driver",
+      "community_name": "IPC Socket Utils",
       "id": "scripts_drive_state"
     },
     {
@@ -4183,9 +4226,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L16",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "sockpath",
-      "community_name": "Socket Driver",
+      "community_name": "IPC Socket Utils",
       "id": "scripts_drive_sockpath"
     },
     {
@@ -4194,9 +4237,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L20",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "params",
-      "community_name": "Socket Driver",
+      "community_name": "IPC Socket Utils",
       "id": "scripts_drive_params"
     },
     {
@@ -4205,9 +4248,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L23",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "sock",
-      "community_name": "Socket Driver",
+      "community_name": "IPC Socket Utils",
       "id": "scripts_drive_sock"
     },
     {
@@ -4218,7 +4261,7 @@
       "_origin": "ast",
       "community": 14,
       "norm_label": "server.json",
-      "community_name": "Workspace Server Config",
+      "community_name": "Monorepo Config",
       "id": "server"
     },
     {
@@ -4229,7 +4272,7 @@
       "_origin": "ast",
       "community": 14,
       "norm_label": "$schema",
-      "community_name": "Workspace Server Config",
+      "community_name": "Monorepo Config",
       "id": "server_schema"
     },
     {
@@ -4240,7 +4283,7 @@
       "_origin": "ast",
       "community": 14,
       "norm_label": "name",
-      "community_name": "Workspace Server Config",
+      "community_name": "Monorepo Config",
       "id": "server_name"
     },
     {
@@ -4251,7 +4294,7 @@
       "_origin": "ast",
       "community": 14,
       "norm_label": "description",
-      "community_name": "Workspace Server Config",
+      "community_name": "Monorepo Config",
       "id": "server_description"
     },
     {
@@ -4262,7 +4305,7 @@
       "_origin": "ast",
       "community": 14,
       "norm_label": "repository",
-      "community_name": "Workspace Server Config",
+      "community_name": "Monorepo Config",
       "id": "server_repository"
     },
     {
@@ -4273,7 +4316,7 @@
       "_origin": "ast",
       "community": 14,
       "norm_label": "url",
-      "community_name": "Workspace Server Config",
+      "community_name": "Monorepo Config",
       "id": "server_repository_url"
     },
     {
@@ -4284,7 +4327,7 @@
       "_origin": "ast",
       "community": 14,
       "norm_label": "source",
-      "community_name": "Workspace Server Config",
+      "community_name": "Monorepo Config",
       "id": "server_repository_source"
     },
     {
@@ -4295,7 +4338,7 @@
       "_origin": "ast",
       "community": 14,
       "norm_label": "version",
-      "community_name": "Workspace Server Config",
+      "community_name": "Monorepo Config",
       "id": "server_version"
     },
     {
@@ -4306,7 +4349,7 @@
       "_origin": "ast",
       "community": 14,
       "norm_label": "packages",
-      "community_name": "Workspace Server Config",
+      "community_name": "Monorepo Config",
       "id": "server_packages"
     },
     {
@@ -4317,7 +4360,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "bridge.test.ts",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "tests_bridge_test"
     },
     {
@@ -4328,7 +4371,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "nextport()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "tests_bridge_test_nextport"
     },
     {
@@ -4339,7 +4382,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "createbridge()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "tests_bridge_test_createbridge"
     },
     {
@@ -4350,7 +4393,7 @@
       "_origin": "ast",
       "community": 5,
       "norm_label": "connectclient()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Extension Bridge Logic",
       "id": "tests_bridge_test_connectclient"
     },
     {
@@ -4361,7 +4404,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "smart-selector.test.ts",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "tests_smart_selector_test"
     },
     {
@@ -4372,7 +4415,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "fakeel",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "tests_smart_selector_test_fakeel"
     },
     {
@@ -4383,7 +4426,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "mk()",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "tests_smart_selector_test_mk"
     },
     {
@@ -4394,7 +4437,7 @@
       "_origin": "ast",
       "community": 12,
       "norm_label": "options()",
-      "community_name": "Smart Element Selectors",
+      "community_name": "Smart Selector Utils",
       "id": "tests_smart_selector_test_options"
     },
     {
@@ -4405,7 +4448,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "tab-concurrency.test.ts",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "Tab Concurrency Lock",
       "id": "tests_tab_concurrency_test"
     },
     {
@@ -4416,7 +4459,7 @@
       "_origin": "ast",
       "community": 0,
       "norm_label": "registry.test.ts",
-      "community_name": "Browser Interaction Tools",
+      "community_name": "Browser Tool Definitions",
       "id": "tests_tools_registry_test"
     },
     {
@@ -4425,9 +4468,9 @@
       "source_file": "vitest.config.ts",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 22,
+      "community": 27,
       "norm_label": "vitest.config.ts",
-      "community_name": "Vitest Configuration",
+      "community_name": "Vitest Config",
       "id": "vitest_config"
     },
     {
@@ -4441,7 +4484,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "real browser mcp",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "real_browser_mcp"
     },
     {
@@ -4455,7 +4498,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "chrome web store listing",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "chrome_web_store"
     },
     {
@@ -4469,7 +4512,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "mcp server daemon",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "mcp_server_daemon"
     },
     {
@@ -4483,7 +4526,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "chrome extension (manifest v3)",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "chrome_extension"
     },
     {
@@ -4497,7 +4540,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "agents.md (claude code config)",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "agent_config_agents"
     },
     {
@@ -4510,9 +4553,9 @@
       "author": null,
       "contributor": null,
       "verification": "unverified",
-      "community": 19,
+      "community": 22,
       "norm_label": "ci workflow",
-      "community_name": "CI and Release Workflows",
+      "community_name": "CI/CD Workflows",
       "id": "github_workflows_ci_yml"
     },
     {
@@ -4524,9 +4567,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 22,
       "norm_label": "release workflow",
-      "community_name": "CI and Release Workflows",
+      "community_name": "CI/CD Workflows",
       "id": "github_workflows_release_yml"
     },
     {
@@ -4538,9 +4581,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 20,
+      "community": 24,
       "norm_label": "codeql workflow",
-      "community_name": "CodeQL Analysis Workflow",
+      "community_name": "CodeQL Workflow",
       "id": "github_workflows_codeql_yml"
     },
     {
@@ -4552,9 +4595,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 21,
+      "community": 25,
       "norm_label": "openssf scorecard workflow",
-      "community_name": "Security Scorecard Workflow",
+      "community_name": "Security Scorecard",
       "id": "github_workflows_scorecard_yml"
     },
     {
@@ -4566,9 +4609,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 18,
+      "community": 21,
       "norm_label": "dependabot auto-merge workflow",
-      "community_name": "Dependabot Configuration",
+      "community_name": "Dependabot Config",
       "id": "github_workflows_dependabot_auto_merge_yml"
     },
     {
@@ -4581,9 +4624,9 @@
       "author": null,
       "contributor": null,
       "verification": "unverified",
-      "community": 18,
+      "community": 21,
       "norm_label": "dependabot config",
-      "community_name": "Dependabot Configuration",
+      "community_name": "Dependabot Config",
       "id": "github_dependabot_yml"
     },
     {
@@ -4597,7 +4640,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "browser_snapshot tool",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "browser_snapshot_tool"
     },
     {
@@ -4611,7 +4654,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "browser_click tool",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "browser_click_tool"
     },
     {
@@ -4625,7 +4668,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "browser_navigate tool",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "browser_navigate_tool"
     },
     {
@@ -4639,7 +4682,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "browser_tabs tool",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "browser_tabs_tool"
     },
     {
@@ -4653,7 +4696,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "browser_evaluate tool",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "browser_evaluate_tool"
     },
     {
@@ -4667,7 +4710,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "tab-first workflow pattern",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "tab_first_workflow"
     },
     {
@@ -4681,7 +4724,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "multi-agent coordination",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "multi_agent_coordination"
     },
     {
@@ -4695,7 +4738,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "real-browser-mcp npm package",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "npm_real_browser_mcp"
     },
     {
@@ -4709,7 +4752,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "/check-browser cursor command",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "cursor_check_browser"
     },
     {
@@ -4723,7 +4766,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "browser automation skill",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "agent_config_skills_browser_automation_skill"
     },
     {
@@ -4737,7 +4780,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "privacy policy",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "privacy_policy"
     },
     {
@@ -4751,7 +4794,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "security policy",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "security_policy"
     },
     {
@@ -4765,7 +4808,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "code of conduct",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "code_of_conduct"
     },
     {
@@ -4779,7 +4822,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "contributing guide",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "contributing_md"
     },
     {
@@ -4793,7 +4836,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "ws_port environment variable",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "ws_port_config"
     },
     {
@@ -4807,7 +4850,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "token.json (auth token)",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "token_json"
     },
     {
@@ -4821,7 +4864,7 @@
       "contributor": null,
       "community": 8,
       "norm_label": "daemon.sock (ipc socket)",
-      "community_name": "Documentation and Guides",
+      "community_name": "Documentation",
       "id": "daemon_sock"
     },
     {
@@ -4835,7 +4878,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "real-browser-mcp",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_real_browser_mcp"
     },
     {
@@ -4849,7 +4892,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "mcp server (node.js/typescript)",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_mcp_server"
     },
     {
@@ -4863,7 +4906,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "chrome extension (manifest v3)",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_chrome_extension"
     },
     {
@@ -4877,7 +4920,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_navigate tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_navigate"
     },
     {
@@ -4891,7 +4934,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_tabs tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_tabs"
     },
     {
@@ -4905,7 +4948,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_click tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_click"
     },
     {
@@ -4919,7 +4962,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_type tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_type"
     },
     {
@@ -4933,7 +4976,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_press_key tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_press_key"
     },
     {
@@ -4947,7 +4990,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_scroll tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_scroll"
     },
     {
@@ -4961,7 +5004,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_hover tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_hover"
     },
     {
@@ -4975,7 +5018,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_select tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_select"
     },
     {
@@ -4989,7 +5032,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_wait tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_wait"
     },
     {
@@ -5003,7 +5046,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_snapshot tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_snapshot"
     },
     {
@@ -5017,7 +5060,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_screenshot tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_screenshot"
     },
     {
@@ -5031,7 +5074,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_text tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_text"
     },
     {
@@ -5045,7 +5088,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_find tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_find"
     },
     {
@@ -5059,7 +5102,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_evaluate tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_evaluate"
     },
     {
@@ -5073,7 +5116,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_handle_dialog tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_handle_dialog"
     },
     {
@@ -5087,7 +5130,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_console tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_console"
     },
     {
@@ -5101,7 +5144,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "browser_network tool",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_browser_network"
     },
     {
@@ -5115,7 +5158,7 @@
       "contributor": null,
       "community": 9,
       "norm_label": "ofershap (author)",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "llms_ofershap"
     },
     {
@@ -5129,8 +5172,98 @@
       "contributor": null,
       "community": 9,
       "norm_label": "ofershap (funding recipient)",
-      "community_name": "Exposed MCP Tools",
+      "community_name": "MCP Server Tools",
       "id": "github_funding_ofershap"
+    },
+    {
+      "label": "App Icon SVG",
+      "file_type": "image",
+      "source_file": "assets/icon.svg",
+      "community": 17,
+      "norm_label": "app icon svg",
+      "community_name": "Extension Icons",
+      "id": "assets_icon"
+    },
+    {
+      "label": "Store Icon SVG",
+      "file_type": "image",
+      "source_file": "store-assets/icon.svg",
+      "community": 17,
+      "norm_label": "store icon svg",
+      "community_name": "Extension Icons",
+      "id": "store_assets_icon"
+    },
+    {
+      "label": "Demo GIF",
+      "file_type": "image",
+      "source_file": "assets/demo.gif",
+      "community": 19,
+      "norm_label": "demo gif",
+      "community_name": "Demo Media",
+      "id": "assets_demo_gif"
+    },
+    {
+      "label": "Logo PNG",
+      "file_type": "image",
+      "source_file": "assets/logo.png",
+      "community": 23,
+      "norm_label": "logo png",
+      "community_name": "Logos",
+      "id": "assets_logo_png"
+    },
+    {
+      "label": "Preview Screenshot",
+      "file_type": "image",
+      "source_file": "assets/preview.png",
+      "community": 19,
+      "norm_label": "preview screenshot",
+      "community_name": "Demo Media",
+      "id": "assets_preview_png"
+    },
+    {
+      "label": "Extension Icon 128px",
+      "file_type": "image",
+      "source_file": "extension/icons/icon128.png",
+      "community": 17,
+      "norm_label": "extension icon 128px",
+      "community_name": "Extension Icons",
+      "id": "extension_icons_icon128"
+    },
+    {
+      "label": "Extension Icon 16px",
+      "file_type": "image",
+      "source_file": "extension/icons/icon16.png",
+      "community": 17,
+      "norm_label": "extension icon 16px",
+      "community_name": "Extension Icons",
+      "id": "extension_icons_icon16"
+    },
+    {
+      "label": "Extension Icon 48px",
+      "file_type": "image",
+      "source_file": "extension/icons/icon48.png",
+      "community": 17,
+      "norm_label": "extension icon 48px",
+      "community_name": "Extension Icons",
+      "id": "extension_icons_icon48"
+    },
+    {
+      "label": "Store Icon 128px PNG",
+      "file_type": "image",
+      "source_file": "store-assets/icon-128.png",
+      "community": 17,
+      "norm_label": "store icon 128px png",
+      "community_name": "Extension Icons",
+      "id": "store_assets_icon_128"
+    },
+    {
+      "label": "Store Screenshot",
+      "file_type": "image",
+      "source_file": "store-assets/screenshot-1280x800.png",
+      "community": 26,
+      "norm_label": "store screenshot",
+      "community_name": "Store Assets",
+      "id": "store_assets_screenshot_1280x800"
     }
   ],
   "links": [
@@ -5141,9 +5274,9 @@
       "source_location": "L1",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_readme",
-      "target": "agent_config_readme_agent_config",
-      "confidence_score": 1.0
+      "target": "agent_config_readme_agent_config"
     },
     {
       "relation": "contains",
@@ -5152,9 +5285,9 @@
       "source_location": "L43",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_readme_agent_config",
-      "target": "agent_config_readme_manual_install",
-      "confidence_score": 1.0
+      "target": "agent_config_readme_manual_install"
     },
     {
       "relation": "contains",
@@ -5163,9 +5296,9 @@
       "source_location": "L5",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_readme_agent_config",
-      "target": "agent_config_readme_quick_setup",
-      "confidence_score": 1.0
+      "target": "agent_config_readme_quick_setup"
     },
     {
       "relation": "contains",
@@ -5174,9 +5307,9 @@
       "source_location": "L18",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_readme_agent_config",
-      "target": "agent_config_readme_what_gets_installed",
-      "confidence_score": 1.0
+      "target": "agent_config_readme_what_gets_installed"
     },
     {
       "relation": "contains",
@@ -5185,9 +5318,9 @@
       "source_location": "L33",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_readme_what_gets_installed",
-      "target": "agent_config_readme_claude_code",
-      "confidence_score": 1.0
+      "target": "agent_config_readme_claude_code"
     },
     {
       "relation": "contains",
@@ -5196,9 +5329,9 @@
       "source_location": "L20",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_readme_what_gets_installed",
-      "target": "agent_config_readme_cursor",
-      "confidence_score": 1.0
+      "target": "agent_config_readme_cursor"
     },
     {
       "relation": "contains",
@@ -5207,9 +5340,9 @@
       "source_location": "L39",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_readme_what_gets_installed",
-      "target": "agent_config_readme_skill",
-      "confidence_score": 1.0
+      "target": "agent_config_readme_skill"
     },
     {
       "relation": "contains",
@@ -5218,9 +5351,9 @@
       "source_location": "L28",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_setup",
-      "target": "agent_config_setup_copyifneeded",
-      "confidence_score": 1.0
+      "target": "agent_config_setup_copyifneeded"
     },
     {
       "relation": "contains",
@@ -5229,9 +5362,9 @@
       "source_location": "L7",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_setup",
-      "target": "agent_config_setup_dirname",
-      "confidence_score": 1.0
+      "target": "agent_config_setup_dirname"
     },
     {
       "relation": "contains",
@@ -5240,9 +5373,9 @@
       "source_location": "L21",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_setup",
-      "target": "agent_config_setup_ensuredir",
-      "confidence_score": 1.0
+      "target": "agent_config_setup_ensuredir"
     },
     {
       "relation": "contains",
@@ -5251,9 +5384,9 @@
       "source_location": "L59",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_setup",
-      "target": "agent_config_setup_installclaude",
-      "confidence_score": 1.0
+      "target": "agent_config_setup_installclaude"
     },
     {
       "relation": "contains",
@@ -5262,9 +5395,9 @@
       "source_location": "L36",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_setup",
-      "target": "agent_config_setup_installcursor",
-      "confidence_score": 1.0
+      "target": "agent_config_setup_installcursor"
     },
     {
       "relation": "calls",
@@ -5274,9 +5407,9 @@
       "source_location": "L40",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_setup_installcursor",
-      "target": "agent_config_setup_ensuredir",
-      "confidence_score": 1.0
+      "target": "agent_config_setup_ensuredir"
     },
     {
       "relation": "calls",
@@ -5286,9 +5419,9 @@
       "source_location": "L41",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "agent_config_setup_installcursor",
-      "target": "agent_config_setup_copyifneeded",
-      "confidence_score": 1.0
+      "target": "agent_config_setup_copyifneeded"
     },
     {
       "relation": "contains",
@@ -5297,9 +5430,9 @@
       "source_location": "L67",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_autopairtoken",
-      "confidence_score": 1.0
+      "target": "extension_background_autopairtoken"
     },
     {
       "relation": "contains",
@@ -5308,9 +5441,9 @@
       "source_location": "L412",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_autoresnapshot",
-      "confidence_score": 1.0
+      "target": "extension_background_autoresnapshot"
     },
     {
       "relation": "contains",
@@ -5319,9 +5452,9 @@
       "source_location": "L259",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_broadcaststatus",
-      "confidence_score": 1.0
+      "target": "extension_background_broadcaststatus"
     },
     {
       "relation": "contains",
@@ -5330,9 +5463,9 @@
       "source_location": "L240",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_buildstatuspayload",
-      "confidence_score": 1.0
+      "target": "extension_background_buildstatuspayload"
     },
     {
       "relation": "contains",
@@ -5341,9 +5474,9 @@
       "source_location": "L112",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_connect",
-      "confidence_score": 1.0
+      "target": "extension_background_connect"
     },
     {
       "relation": "contains",
@@ -5352,9 +5485,9 @@
       "source_location": "L43",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_consolebytab",
-      "confidence_score": 1.0
+      "target": "extension_background_consolebytab"
     },
     {
       "relation": "contains",
@@ -5363,9 +5496,9 @@
       "source_location": "L336",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_dispatch",
-      "confidence_score": 1.0
+      "target": "extension_background_dispatch"
     },
     {
       "relation": "contains",
@@ -5374,9 +5507,9 @@
       "source_location": "L321",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_extracttabid",
-      "confidence_score": 1.0
+      "target": "extension_background_extracttabid"
     },
     {
       "relation": "contains",
@@ -5385,9 +5518,9 @@
       "source_location": "L50",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_fallbackbytab",
-      "confidence_score": 1.0
+      "target": "extension_background_fallbackbytab"
     },
     {
       "relation": "contains",
@@ -5396,9 +5529,9 @@
       "source_location": "L473",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_getactivetab",
-      "confidence_score": 1.0
+      "target": "extension_background_getactivetab"
     },
     {
       "relation": "contains",
@@ -5407,9 +5540,9 @@
       "source_location": "L234",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_getconnectionstate",
-      "confidence_score": 1.0
+      "target": "extension_background_getconnectionstate"
     },
     {
       "relation": "contains",
@@ -5418,9 +5551,9 @@
       "source_location": "L393",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_getfallback",
-      "confidence_score": 1.0
+      "target": "extension_background_getfallback"
     },
     {
       "relation": "contains",
@@ -5429,9 +5562,9 @@
       "source_location": "L456",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_gettabbuffer",
-      "confidence_score": 1.0
+      "target": "extension_background_gettabbuffer"
     },
     {
       "relation": "contains",
@@ -5440,9 +5573,9 @@
       "source_location": "L503",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleclick",
-      "confidence_score": 1.0
+      "target": "extension_background_handleclick"
     },
     {
       "relation": "contains",
@@ -5451,9 +5584,9 @@
       "source_location": "L1150",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleclickbytext",
-      "confidence_score": 1.0
+      "target": "extension_background_handleclickbytext"
     },
     {
       "relation": "contains",
@@ -5462,9 +5595,9 @@
       "source_location": "L984",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleconsole",
-      "confidence_score": 1.0
+      "target": "extension_background_handleconsole"
     },
     {
       "relation": "contains",
@@ -5473,9 +5606,9 @@
       "source_location": "L1200",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handledialog",
-      "confidence_score": 1.0
+      "target": "extension_background_handledialog"
     },
     {
       "relation": "contains",
@@ -5484,9 +5617,9 @@
       "source_location": "L1296",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handledrag",
-      "confidence_score": 1.0
+      "target": "extension_background_handledrag"
     },
     {
       "relation": "contains",
@@ -5495,9 +5628,9 @@
       "source_location": "L1126",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleevaluate",
-      "confidence_score": 1.0
+      "target": "extension_background_handleevaluate"
     },
     {
       "relation": "contains",
@@ -5506,9 +5639,9 @@
       "source_location": "L1350",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlefillform",
-      "confidence_score": 1.0
+      "target": "extension_background_handlefillform"
     },
     {
       "relation": "contains",
@@ -5517,9 +5650,9 @@
       "source_location": "L1053",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlefind",
-      "confidence_score": 1.0
+      "target": "extension_background_handlefind"
     },
     {
       "relation": "contains",
@@ -5528,9 +5661,9 @@
       "source_location": "L1103",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlegetpagetext",
-      "confidence_score": 1.0
+      "target": "extension_background_handlegetpagetext"
     },
     {
       "relation": "contains",
@@ -5539,9 +5672,9 @@
       "source_location": "L731",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlehover",
-      "confidence_score": 1.0
+      "target": "extension_background_handlehover"
     },
     {
       "relation": "contains",
@@ -5550,9 +5683,9 @@
       "source_location": "L269",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlemessage",
-      "confidence_score": 1.0
+      "target": "extension_background_handlemessage"
     },
     {
       "relation": "contains",
@@ -5561,9 +5694,9 @@
       "source_location": "L479",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlenavigate",
-      "confidence_score": 1.0
+      "target": "extension_background_handlenavigate"
     },
     {
       "relation": "contains",
@@ -5572,9 +5705,9 @@
       "source_location": "L992",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlenetwork",
-      "confidence_score": 1.0
+      "target": "extension_background_handlenetwork"
     },
     {
       "relation": "contains",
@@ -5583,9 +5716,9 @@
       "source_location": "L671",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlepresskey",
-      "confidence_score": 1.0
+      "target": "extension_background_handlepresskey"
     },
     {
       "relation": "contains",
@@ -5594,9 +5727,9 @@
       "source_location": "L1236",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlerunaction",
-      "confidence_score": 1.0
+      "target": "extension_background_handlerunaction"
     },
     {
       "relation": "contains",
@@ -5605,9 +5738,9 @@
       "source_location": "L968",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlescreenshot",
-      "confidence_score": 1.0
+      "target": "extension_background_handlescreenshot"
     },
     {
       "relation": "contains",
@@ -5616,9 +5749,9 @@
       "source_location": "L623",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlescroll",
-      "confidence_score": 1.0
+      "target": "extension_background_handlescroll"
     },
     {
       "relation": "contains",
@@ -5627,9 +5760,9 @@
       "source_location": "L754",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleselect",
-      "confidence_score": 1.0
+      "target": "extension_background_handleselect"
     },
     {
       "relation": "contains",
@@ -5638,9 +5771,9 @@
       "source_location": "L785",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlesnapshot",
-      "confidence_score": 1.0
+      "target": "extension_background_handlesnapshot"
     },
     {
       "relation": "contains",
@@ -5649,9 +5782,9 @@
       "source_location": "L1003",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handletabs",
-      "confidence_score": 1.0
+      "target": "extension_background_handletabs"
     },
     {
       "relation": "contains",
@@ -5660,9 +5793,9 @@
       "source_location": "L565",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handletype",
-      "confidence_score": 1.0
+      "target": "extension_background_handletype"
     },
     {
       "relation": "contains",
@@ -5671,9 +5804,9 @@
       "source_location": "L1262",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleuploadfile",
-      "confidence_score": 1.0
+      "target": "extension_background_handleuploadfile"
     },
     {
       "relation": "contains",
@@ -5682,9 +5815,9 @@
       "source_location": "L704",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlewait",
-      "confidence_score": 1.0
+      "target": "extension_background_handlewait"
     },
     {
       "relation": "contains",
@@ -5693,9 +5826,9 @@
       "source_location": "L225",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_hideoverlay",
-      "confidence_score": 1.0
+      "target": "extension_background_hideoverlay"
     },
     {
       "relation": "contains",
@@ -5704,9 +5837,9 @@
       "source_location": "L85",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_initconnection",
-      "confidence_score": 1.0
+      "target": "extension_background_initconnection"
     },
     {
       "relation": "contains",
@@ -5715,9 +5848,9 @@
       "source_location": "L44",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_networkbytab",
-      "confidence_score": 1.0
+      "target": "extension_background_networkbytab"
     },
     {
       "relation": "contains",
@@ -5726,9 +5859,9 @@
       "source_location": "L465",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_pushcapped",
-      "confidence_score": 1.0
+      "target": "extension_background_pushcapped"
     },
     {
       "relation": "contains",
@@ -5737,9 +5870,9 @@
       "source_location": "L376",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "contains",
@@ -5748,9 +5881,9 @@
       "source_location": "L436",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "contains",
@@ -5759,9 +5892,9 @@
       "source_location": "L171",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_schedulereconnect",
-      "confidence_score": 1.0
+      "target": "extension_background_schedulereconnect"
     },
     {
       "relation": "contains",
@@ -5770,9 +5903,9 @@
       "source_location": "L314",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_sendresponse",
-      "confidence_score": 1.0
+      "target": "extension_background_sendresponse"
     },
     {
       "relation": "contains",
@@ -5781,9 +5914,9 @@
       "source_location": "L199",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_showoverlay",
-      "confidence_score": 1.0
+      "target": "extension_background_showoverlay"
     },
     {
       "relation": "contains",
@@ -5792,9 +5925,9 @@
       "source_location": "L56",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_tablocks",
-      "confidence_score": 1.0
+      "target": "extension_background_tablocks"
     },
     {
       "relation": "contains",
@@ -5803,9 +5936,9 @@
       "source_location": "L255",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_tablockstojson",
-      "confidence_score": 1.0
+      "target": "extension_background_tablockstojson"
     },
     {
       "relation": "contains",
@@ -5814,9 +5947,9 @@
       "source_location": "L55",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_tabmutex",
-      "confidence_score": 1.0
+      "target": "extension_background_tabmutex"
     },
     {
       "relation": "contains",
@@ -5825,9 +5958,9 @@
       "source_location": "L187",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_updatebadge",
-      "confidence_score": 1.0
+      "target": "extension_background_updatebadge"
     },
     {
       "relation": "contains",
@@ -5836,9 +5969,9 @@
       "source_location": "L99",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_wsurl",
-      "confidence_score": 1.0
+      "target": "extension_background_wsurl"
     },
     {
       "relation": "rationale_for",
@@ -5847,9 +5980,9 @@
       "source_location": "L1411",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_rationale_1411",
-      "target": "extension_background",
-      "confidence_score": 1.0
+      "target": "extension_background"
     },
     {
       "relation": "calls",
@@ -5859,9 +5992,9 @@
       "source_location": "L118",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_connect",
-      "target": "extension_background_autopairtoken",
-      "confidence_score": 1.0
+      "target": "extension_background_autopairtoken"
     },
     {
       "relation": "calls",
@@ -5871,9 +6004,9 @@
       "source_location": "L95",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_initconnection",
-      "target": "extension_background_autopairtoken",
-      "confidence_score": 1.0
+      "target": "extension_background_autopairtoken"
     },
     {
       "relation": "calls",
@@ -5883,9 +6016,9 @@
       "source_location": "L96",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_initconnection",
-      "target": "extension_background_connect",
-      "confidence_score": 1.0
+      "target": "extension_background_connect"
     },
     {
       "relation": "calls",
@@ -5895,9 +6028,9 @@
       "source_location": "L124",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_connect",
-      "target": "extension_background_wsurl",
-      "confidence_score": 1.0
+      "target": "extension_background_wsurl"
     },
     {
       "relation": "calls",
@@ -5907,9 +6040,9 @@
       "source_location": "L133",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_connect",
-      "target": "extension_background_broadcaststatus",
-      "confidence_score": 1.0
+      "target": "extension_background_broadcaststatus"
     },
     {
       "relation": "calls",
@@ -5919,21 +6052,9 @@
       "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_connect",
-      "target": "extension_background_handlemessage",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "indirect_call",
-      "context": "argument",
-      "confidence": "INFERRED",
-      "source_file": "extension/background.js",
-      "source_location": "L178",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "extension_background_schedulereconnect",
-      "target": "extension_background_connect",
-      "confidence_score": 0.5
+      "target": "extension_background_handlemessage"
     },
     {
       "relation": "calls",
@@ -5943,9 +6064,21 @@
       "source_location": "L132",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_connect",
-      "target": "extension_background_updatebadge",
-      "confidence_score": 1.0
+      "target": "extension_background_updatebadge"
+    },
+    {
+      "relation": "indirect_call",
+      "context": "argument",
+      "confidence": "INFERRED",
+      "source_file": "extension/background.js",
+      "source_location": "L178",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 0.5,
+      "source": "extension_background_schedulereconnect",
+      "target": "extension_background_connect"
     },
     {
       "relation": "calls",
@@ -5955,9 +6088,9 @@
       "source_location": "L177",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_schedulereconnect",
-      "target": "extension_background_broadcaststatus",
-      "confidence_score": 1.0
+      "target": "extension_background_broadcaststatus"
     },
     {
       "relation": "calls",
@@ -5967,9 +6100,9 @@
       "source_location": "L296",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_updatebadge",
-      "confidence_score": 1.0
+      "target": "extension_background_updatebadge"
     },
     {
       "relation": "calls",
@@ -5979,9 +6112,9 @@
       "source_location": "L297",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_showoverlay",
-      "confidence_score": 1.0
+      "target": "extension_background_showoverlay"
     },
     {
       "relation": "calls",
@@ -5991,9 +6124,9 @@
       "source_location": "L306",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_hideoverlay",
-      "confidence_score": 1.0
+      "target": "extension_background_hideoverlay"
     },
     {
       "relation": "calls",
@@ -6003,9 +6136,9 @@
       "source_location": "L243",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_buildstatuspayload",
-      "target": "extension_background_getconnectionstate",
-      "confidence_score": 1.0
+      "target": "extension_background_getconnectionstate"
     },
     {
       "relation": "calls",
@@ -6015,9 +6148,9 @@
       "source_location": "L260",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_broadcaststatus",
-      "target": "extension_background_buildstatuspayload",
-      "confidence_score": 1.0
+      "target": "extension_background_buildstatuspayload"
     },
     {
       "relation": "calls",
@@ -6027,9 +6160,9 @@
       "source_location": "L250",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_buildstatuspayload",
-      "target": "extension_background_tablockstojson",
-      "confidence_score": 1.0
+      "target": "extension_background_tablockstojson"
     },
     {
       "relation": "calls",
@@ -6039,9 +6172,9 @@
       "source_location": "L1038",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handletabs",
-      "target": "extension_background_broadcaststatus",
-      "confidence_score": 1.0
+      "target": "extension_background_broadcaststatus"
     },
     {
       "relation": "calls",
@@ -6051,9 +6184,9 @@
       "source_location": "L280",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_dispatch",
-      "confidence_score": 1.0
+      "target": "extension_background_dispatch"
     },
     {
       "relation": "calls",
@@ -6063,9 +6196,9 @@
       "source_location": "L275",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_extracttabid",
-      "confidence_score": 1.0
+      "target": "extension_background_extracttabid"
     },
     {
       "relation": "calls",
@@ -6075,9 +6208,9 @@
       "source_location": "L281",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_sendresponse",
-      "confidence_score": 1.0
+      "target": "extension_background_sendresponse"
     },
     {
       "relation": "indirect_call",
@@ -6087,9 +6220,9 @@
       "source_location": "L339",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleclick",
-      "confidence_score": 0.5
+      "target": "extension_background_handleclick"
     },
     {
       "relation": "indirect_call",
@@ -6099,9 +6232,9 @@
       "source_location": "L352",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleclickbytext",
-      "confidence_score": 0.5
+      "target": "extension_background_handleclickbytext"
     },
     {
       "relation": "indirect_call",
@@ -6111,9 +6244,9 @@
       "source_location": "L346",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleconsole",
-      "confidence_score": 0.5
+      "target": "extension_background_handleconsole"
     },
     {
       "relation": "indirect_call",
@@ -6123,9 +6256,9 @@
       "source_location": "L353",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handledialog",
-      "confidence_score": 0.5
+      "target": "extension_background_handledialog"
     },
     {
       "relation": "indirect_call",
@@ -6135,9 +6268,9 @@
       "source_location": "L356",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handledrag",
-      "confidence_score": 0.5
+      "target": "extension_background_handledrag"
     },
     {
       "relation": "indirect_call",
@@ -6147,9 +6280,9 @@
       "source_location": "L351",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleevaluate",
-      "confidence_score": 0.5
+      "target": "extension_background_handleevaluate"
     },
     {
       "relation": "indirect_call",
@@ -6159,9 +6292,9 @@
       "source_location": "L357",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlefillform",
-      "confidence_score": 0.5
+      "target": "extension_background_handlefillform"
     },
     {
       "relation": "indirect_call",
@@ -6171,9 +6304,9 @@
       "source_location": "L358",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlefind",
-      "confidence_score": 0.5
+      "target": "extension_background_handlefind"
     },
     {
       "relation": "indirect_call",
@@ -6183,9 +6316,9 @@
       "source_location": "L360",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlegetpagetext",
-      "confidence_score": 0.5
+      "target": "extension_background_handlegetpagetext"
     },
     {
       "relation": "indirect_call",
@@ -6195,9 +6328,9 @@
       "source_location": "L349",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlehover",
-      "confidence_score": 0.5
+      "target": "extension_background_handlehover"
     },
     {
       "relation": "indirect_call",
@@ -6207,9 +6340,9 @@
       "source_location": "L338",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlenavigate",
-      "confidence_score": 0.5
+      "target": "extension_background_handlenavigate"
     },
     {
       "relation": "indirect_call",
@@ -6219,9 +6352,9 @@
       "source_location": "L347",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlenetwork",
-      "confidence_score": 0.5
+      "target": "extension_background_handlenetwork"
     },
     {
       "relation": "indirect_call",
@@ -6231,9 +6364,9 @@
       "source_location": "L342",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlepresskey",
-      "confidence_score": 0.5
+      "target": "extension_background_handlepresskey"
     },
     {
       "relation": "indirect_call",
@@ -6243,9 +6376,9 @@
       "source_location": "L355",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlerunaction",
-      "confidence_score": 0.5
+      "target": "extension_background_handlerunaction"
     },
     {
       "relation": "indirect_call",
@@ -6255,9 +6388,9 @@
       "source_location": "L345",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlescreenshot",
-      "confidence_score": 0.5
+      "target": "extension_background_handlescreenshot"
     },
     {
       "relation": "indirect_call",
@@ -6267,9 +6400,9 @@
       "source_location": "L341",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlescroll",
-      "confidence_score": 0.5
+      "target": "extension_background_handlescroll"
     },
     {
       "relation": "indirect_call",
@@ -6279,9 +6412,9 @@
       "source_location": "L350",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleselect",
-      "confidence_score": 0.5
+      "target": "extension_background_handleselect"
     },
     {
       "relation": "indirect_call",
@@ -6291,9 +6424,9 @@
       "source_location": "L344",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlesnapshot",
-      "confidence_score": 0.5
+      "target": "extension_background_handlesnapshot"
     },
     {
       "relation": "indirect_call",
@@ -6303,9 +6436,9 @@
       "source_location": "L348",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handletabs",
-      "confidence_score": 0.5
+      "target": "extension_background_handletabs"
     },
     {
       "relation": "indirect_call",
@@ -6315,9 +6448,9 @@
       "source_location": "L340",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handletype",
-      "confidence_score": 0.5
+      "target": "extension_background_handletype"
     },
     {
       "relation": "indirect_call",
@@ -6327,9 +6460,9 @@
       "source_location": "L354",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleuploadfile",
-      "confidence_score": 0.5
+      "target": "extension_background_handleuploadfile"
     },
     {
       "relation": "indirect_call",
@@ -6339,9 +6472,9 @@
       "source_location": "L343",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlewait",
-      "confidence_score": 0.5
+      "target": "extension_background_handlewait"
     },
     {
       "relation": "calls",
@@ -6351,9 +6484,9 @@
       "source_location": "L505",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleclick",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6363,9 +6496,9 @@
       "source_location": "L1152",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleclickbytext",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6375,9 +6508,9 @@
       "source_location": "L1202",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handledialog",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6387,9 +6520,9 @@
       "source_location": "L1298",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handledrag",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6399,9 +6532,9 @@
       "source_location": "L1128",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleevaluate",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6411,9 +6544,9 @@
       "source_location": "L1355",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlefillform",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6423,9 +6556,9 @@
       "source_location": "L1055",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlefind",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6435,9 +6568,9 @@
       "source_location": "L1105",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlegetpagetext",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6447,9 +6580,9 @@
       "source_location": "L733",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlehover",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6459,9 +6592,9 @@
       "source_location": "L482",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlenavigate",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6471,9 +6604,9 @@
       "source_location": "L673",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlepresskey",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6483,9 +6616,9 @@
       "source_location": "L1239",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlerunaction",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6495,9 +6628,9 @@
       "source_location": "L970",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlescreenshot",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6507,9 +6640,9 @@
       "source_location": "L625",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlescroll",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6519,9 +6652,9 @@
       "source_location": "L756",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleselect",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6531,9 +6664,9 @@
       "source_location": "L787",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlesnapshot",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6543,9 +6676,9 @@
       "source_location": "L567",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handletype",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6555,9 +6688,9 @@
       "source_location": "L1264",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleuploadfile",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6567,9 +6700,9 @@
       "source_location": "L713",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlewait",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6579,9 +6712,9 @@
       "source_location": "L437",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_safeexec",
-      "target": "extension_background_resolvetab",
-      "confidence_score": 1.0
+      "target": "extension_background_resolvetab"
     },
     {
       "relation": "calls",
@@ -6591,9 +6724,9 @@
       "source_location": "L506",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleclick",
-      "target": "extension_background_getfallback",
-      "confidence_score": 1.0
+      "target": "extension_background_getfallback"
     },
     {
       "relation": "calls",
@@ -6603,9 +6736,9 @@
       "source_location": "L568",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handletype",
-      "target": "extension_background_getfallback",
-      "confidence_score": 1.0
+      "target": "extension_background_getfallback"
     },
     {
       "relation": "calls",
@@ -6615,9 +6748,9 @@
       "source_location": "L414",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_autoresnapshot",
-      "target": "extension_background_handlesnapshot",
-      "confidence_score": 1.0
+      "target": "extension_background_handlesnapshot"
     },
     {
       "relation": "calls",
@@ -6627,9 +6760,9 @@
       "source_location": "L555",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleclick",
-      "target": "extension_background_autoresnapshot",
-      "confidence_score": 1.0
+      "target": "extension_background_autoresnapshot"
     },
     {
       "relation": "calls",
@@ -6639,9 +6772,9 @@
       "source_location": "L613",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handletype",
-      "target": "extension_background_autoresnapshot",
-      "confidence_score": 1.0
+      "target": "extension_background_autoresnapshot"
     },
     {
       "relation": "calls",
@@ -6651,9 +6784,9 @@
       "source_location": "L509",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleclick",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6663,9 +6796,9 @@
       "source_location": "L1154",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleclickbytext",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6675,9 +6808,9 @@
       "source_location": "L1204",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handledialog",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6687,9 +6820,9 @@
       "source_location": "L1303",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handledrag",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6699,9 +6832,9 @@
       "source_location": "L1357",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlefillform",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6711,9 +6844,9 @@
       "source_location": "L1057",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlefind",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6723,9 +6856,9 @@
       "source_location": "L1108",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlegetpagetext",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6735,9 +6868,9 @@
       "source_location": "L735",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlehover",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6747,9 +6880,9 @@
       "source_location": "L675",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlepresskey",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6759,9 +6892,9 @@
       "source_location": "L627",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlescroll",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6771,9 +6904,9 @@
       "source_location": "L758",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleselect",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6783,9 +6916,9 @@
       "source_location": "L794",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlesnapshot",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6795,9 +6928,9 @@
       "source_location": "L571",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handletype",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6807,9 +6940,9 @@
       "source_location": "L717",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlewait",
-      "target": "extension_background_safeexec",
-      "confidence_score": 1.0
+      "target": "extension_background_safeexec"
     },
     {
       "relation": "calls",
@@ -6819,9 +6952,9 @@
       "source_location": "L986",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handleconsole",
-      "target": "extension_background_gettabbuffer",
-      "confidence_score": 1.0
+      "target": "extension_background_gettabbuffer"
     },
     {
       "relation": "calls",
@@ -6831,9 +6964,9 @@
       "source_location": "L994",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlenetwork",
-      "target": "extension_background_gettabbuffer",
-      "confidence_score": 1.0
+      "target": "extension_background_gettabbuffer"
     },
     {
       "relation": "calls",
@@ -6843,9 +6976,9 @@
       "source_location": "L482",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_background_handlenavigate",
-      "target": "extension_background_getactivetab",
-      "confidence_score": 1.0
+      "target": "extension_background_getactivetab"
     },
     {
       "relation": "contains",
@@ -6854,9 +6987,9 @@
       "source_location": "L14",
       "weight": 1.0,
       "_origin": "ast",
+      "confidence_score": 1.0,
       "source": "extension_content",
-      "target": "extension_content_capture",
-      "confidence_score": 1.0
+      "target": "extension_content_capture"
     },
     {
       "relation": "contains",
@@ -13238,9 +13371,100 @@
       "weight": 1.0,
       "source": "llms_ofershap",
       "target": "github_funding_ofershap"
+    },
+    {
+      "relation": "semantically_similar_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "assets/icon.svg",
+      "source": "assets_icon",
+      "target": "store_assets_icon"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "extension/icons/icon128.png",
+      "source": "extension_icons_icon128",
+      "target": "assets_icon"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "extension/icons/icon16.png",
+      "source": "extension_icons_icon16",
+      "target": "assets_icon"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "extension/icons/icon48.png",
+      "source": "extension_icons_icon48",
+      "target": "assets_icon"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "store-assets/icon-128.png",
+      "source": "store_assets_icon_128",
+      "target": "store_assets_icon"
+    },
+    {
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.7,
+      "source_file": "assets/demo.gif",
+      "source": "assets_demo_gif",
+      "target": "assets_preview_png"
     }
   ],
   "hyperedges": [
+    {
+      "id": "app_icon_family",
+      "label": "App Icon Asset Family",
+      "nodes": [
+        "assets_icon",
+        "store_assets_icon",
+        "extension_icons_icon16",
+        "extension_icons_icon48",
+        "extension_icons_icon128",
+        "store_assets_icon_128"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.9,
+      "source_file": "assets/icon.svg"
+    },
+    {
+      "id": "brand_visual_assets",
+      "label": "Brand Visual Assets",
+      "nodes": [
+        "assets_icon",
+        "assets_logo_png",
+        "assets_demo_gif",
+        "assets_preview_png"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "assets/icon.svg"
+    },
+    {
+      "id": "extension_icon_set",
+      "label": "Extension Icon Set",
+      "nodes": [
+        "extension_icons_icon16",
+        "extension_icons_icon48",
+        "extension_icons_icon128"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "extension/icons/icon16.png"
+    },
     {
       "id": "rbm_all_tools",
       "label": "real-browser-mcp 17 MCP Tools",
@@ -13310,5 +13534,5 @@
       "source_file": "agent-config/AGENTS.md"
     }
   ],
-  "built_at_commit": "dd91f6c3d9d352a2f7947d6190c01f213556d009"
+  "built_at_commit": "7cdf26ec149f5250509fdb8257bf8ea51bac3a5f"
 }

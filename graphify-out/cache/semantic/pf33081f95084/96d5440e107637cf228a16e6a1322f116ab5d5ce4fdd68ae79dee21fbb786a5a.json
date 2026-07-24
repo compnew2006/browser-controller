@@ -1,0 +1,1 @@
+{"nodes": [{"id": "store_assets_icon_128", "label": "Store Icon 128px PNG", "file_type": "image", "source_file": "store-assets/icon-128.png"}], "edges": [{"source": "store_assets_icon_128", "target": "store_assets_icon", "relation": "references", "confidence": "INFERRED", "confidence_score": 0.8, "source_file": "store-assets/icon-128.png"}], "hyperedges": []}

@@ -4,6 +4,49 @@
   "graph": {
     "hyperedges": [
       {
+        "id": "app_icon_family",
+        "label": "App Icon Asset Family",
+        "nodes": [
+          "assets_icon",
+          "store_assets_icon",
+          "extension_icons_icon16",
+          "extension_icons_icon48",
+          "extension_icons_icon128",
+          "store_assets_icon_128"
+        ],
+        "relation": "form",
+        "confidence": "EXTRACTED",
+        "confidence_score": 0.9,
+        "source_file": "assets/icon.svg"
+      },
+      {
+        "id": "brand_visual_assets",
+        "label": "Brand Visual Assets",
+        "nodes": [
+          "assets_icon",
+          "assets_logo_png",
+          "assets_demo_gif",
+          "assets_preview_png"
+        ],
+        "relation": "participate_in",
+        "confidence": "INFERRED",
+        "confidence_score": 0.8,
+        "source_file": "assets/icon.svg"
+      },
+      {
+        "id": "extension_icon_set",
+        "label": "Extension Icon Set",
+        "nodes": [
+          "extension_icons_icon16",
+          "extension_icons_icon48",
+          "extension_icons_icon128"
+        ],
+        "relation": "form",
+        "confidence": "EXTRACTED",
+        "confidence_score": 1.0,
+        "source_file": "extension/icons/icon16.png"
+      },
+      {
         "id": "rbm_all_tools",
         "label": "real-browser-mcp 17 MCP Tools",
         "nodes": [
@@ -75,14 +118,168 @@
   },
   "nodes": [
     {
+      "label": "README.md",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "Agent Config",
+      "norm_label": "readme.md",
+      "id": "agent_config_readme"
+    },
+    {
+      "label": "Agent Config",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "Agent Config",
+      "norm_label": "agent config",
+      "id": "agent_config_readme_agent_config"
+    },
+    {
+      "label": "Quick Setup",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L5",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "Agent Config",
+      "norm_label": "quick setup",
+      "id": "agent_config_readme_quick_setup"
+    },
+    {
+      "label": "What Gets Installed",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L18",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "Agent Config",
+      "norm_label": "what gets installed",
+      "id": "agent_config_readme_what_gets_installed"
+    },
+    {
+      "label": "Cursor",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L20",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "Agent Config",
+      "norm_label": "cursor",
+      "id": "agent_config_readme_cursor"
+    },
+    {
+      "label": "Claude Code",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L33",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "Agent Config",
+      "norm_label": "claude code",
+      "id": "agent_config_readme_claude_code"
+    },
+    {
+      "label": "Skill",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L39",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "Agent Config",
+      "norm_label": "skill",
+      "id": "agent_config_readme_skill"
+    },
+    {
+      "label": "Manual Install",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L43",
+      "_origin": "ast",
+      "community": 15,
+      "community_name": "Agent Config",
+      "norm_label": "manual install",
+      "id": "agent_config_readme_manual_install"
+    },
+    {
+      "label": "setup.mjs",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 16,
+      "community_name": "setup.mjs",
+      "norm_label": "setup.mjs",
+      "id": "agent_config_setup"
+    },
+    {
+      "label": "__dirname",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L7",
+      "_origin": "ast",
+      "community": 16,
+      "community_name": "setup.mjs",
+      "norm_label": "__dirname",
+      "id": "agent_config_setup_dirname"
+    },
+    {
+      "label": "ensureDir()",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L21",
+      "_origin": "ast",
+      "community": 16,
+      "community_name": "setup.mjs",
+      "norm_label": "ensuredir()",
+      "id": "agent_config_setup_ensuredir"
+    },
+    {
+      "label": "copyIfNeeded()",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L28",
+      "_origin": "ast",
+      "community": 16,
+      "community_name": "setup.mjs",
+      "norm_label": "copyifneeded()",
+      "id": "agent_config_setup_copyifneeded"
+    },
+    {
+      "label": "installCursor()",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L36",
+      "_origin": "ast",
+      "community": 16,
+      "community_name": "setup.mjs",
+      "norm_label": "installcursor()",
+      "id": "agent_config_setup_installcursor"
+    },
+    {
+      "label": "installClaude()",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L59",
+      "_origin": "ast",
+      "community": 16,
+      "community_name": "setup.mjs",
+      "norm_label": "installclaude()",
+      "id": "agent_config_setup_installclaude"
+    },
+    {
       "label": "background.js",
       "file_type": "code",
       "source_file": "extension/background.js",
       "source_location": "L1",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "background.js",
-      "community_name": "Background Script Utilities",
       "id": "extension_background"
     },
     {
@@ -92,8 +289,8 @@
       "source_location": "L43",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "consolebytab",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_consolebytab"
     },
     {
@@ -103,8 +300,8 @@
       "source_location": "L44",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "networkbytab",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_networkbytab"
     },
     {
@@ -114,8 +311,8 @@
       "source_location": "L50",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "fallbackbytab",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_fallbackbytab"
     },
     {
@@ -125,8 +322,8 @@
       "source_location": "L55",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "tabmutex",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_tabmutex"
     },
     {
@@ -136,8 +333,8 @@
       "source_location": "L56",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "tablocks",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_tablocks"
     },
     {
@@ -147,8 +344,8 @@
       "source_location": "L67",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "autopairtoken()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_autopairtoken"
     },
     {
@@ -158,8 +355,8 @@
       "source_location": "L85",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "initconnection()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_initconnection"
     },
     {
@@ -169,8 +366,8 @@
       "source_location": "L99",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "wsurl()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_wsurl"
     },
     {
@@ -180,8 +377,8 @@
       "source_location": "L112",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "connect()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_connect"
     },
     {
@@ -191,8 +388,8 @@
       "source_location": "L171",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "schedulereconnect()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_schedulereconnect"
     },
     {
@@ -202,8 +399,8 @@
       "source_location": "L187",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "updatebadge()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_updatebadge"
     },
     {
@@ -213,8 +410,8 @@
       "source_location": "L199",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "showoverlay()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_showoverlay"
     },
     {
@@ -224,8 +421,8 @@
       "source_location": "L225",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "hideoverlay()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_hideoverlay"
     },
     {
@@ -235,8 +432,8 @@
       "source_location": "L234",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "getconnectionstate()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_getconnectionstate"
     },
     {
@@ -246,8 +443,8 @@
       "source_location": "L240",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "buildstatuspayload()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_buildstatuspayload"
     },
     {
@@ -256,9 +453,9 @@
       "source_file": "extension/background.js",
       "source_location": "L255",
       "_origin": "ast",
-      "community": 11,
+      "community": 1,
+      "community_name": "background.js",
       "norm_label": "tablockstojson()",
-      "community_name": "Tab Concurrency Locking",
       "id": "extension_background_tablockstojson"
     },
     {
@@ -268,8 +465,8 @@
       "source_location": "L259",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "broadcaststatus()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_broadcaststatus"
     },
     {
@@ -279,8 +476,8 @@
       "source_location": "L269",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlemessage()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlemessage"
     },
     {
@@ -290,8 +487,8 @@
       "source_location": "L314",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "sendresponse()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_sendresponse"
     },
     {
@@ -301,8 +498,8 @@
       "source_location": "L321",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "extracttabid()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_extracttabid"
     },
     {
@@ -312,8 +509,8 @@
       "source_location": "L336",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "dispatch()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_dispatch"
     },
     {
@@ -323,8 +520,8 @@
       "source_location": "L376",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "resolvetab()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_resolvetab"
     },
     {
@@ -334,8 +531,8 @@
       "source_location": "L393",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "getfallback()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_getfallback"
     },
     {
@@ -345,8 +542,8 @@
       "source_location": "L412",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "autoresnapshot()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_autoresnapshot"
     },
     {
@@ -356,8 +553,8 @@
       "source_location": "L436",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "safeexec()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_safeexec"
     },
     {
@@ -367,8 +564,8 @@
       "source_location": "L456",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "gettabbuffer()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_gettabbuffer"
     },
     {
@@ -378,8 +575,8 @@
       "source_location": "L465",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "pushcapped()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_pushcapped"
     },
     {
@@ -389,8 +586,8 @@
       "source_location": "L473",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "getactivetab()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_getactivetab"
     },
     {
@@ -400,8 +597,8 @@
       "source_location": "L479",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlenavigate()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlenavigate"
     },
     {
@@ -411,8 +608,8 @@
       "source_location": "L503",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handleclick()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handleclick"
     },
     {
@@ -422,8 +619,8 @@
       "source_location": "L565",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handletype()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handletype"
     },
     {
@@ -433,8 +630,8 @@
       "source_location": "L623",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlescroll()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlescroll"
     },
     {
@@ -444,8 +641,8 @@
       "source_location": "L671",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlepresskey()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlepresskey"
     },
     {
@@ -455,8 +652,8 @@
       "source_location": "L704",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlewait()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlewait"
     },
     {
@@ -466,8 +663,8 @@
       "source_location": "L731",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlehover()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlehover"
     },
     {
@@ -477,8 +674,8 @@
       "source_location": "L754",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handleselect()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handleselect"
     },
     {
@@ -488,8 +685,8 @@
       "source_location": "L785",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlesnapshot()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlesnapshot"
     },
     {
@@ -499,8 +696,8 @@
       "source_location": "L968",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlescreenshot()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlescreenshot"
     },
     {
@@ -510,8 +707,8 @@
       "source_location": "L984",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handleconsole()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handleconsole"
     },
     {
@@ -521,8 +718,8 @@
       "source_location": "L992",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlenetwork()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlenetwork"
     },
     {
@@ -531,9 +728,9 @@
       "source_file": "extension/background.js",
       "source_location": "L1003",
       "_origin": "ast",
-      "community": 11,
+      "community": 1,
+      "community_name": "background.js",
       "norm_label": "handletabs()",
-      "community_name": "Tab Concurrency Locking",
       "id": "extension_background_handletabs"
     },
     {
@@ -543,8 +740,8 @@
       "source_location": "L1053",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlefind()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlefind"
     },
     {
@@ -554,8 +751,8 @@
       "source_location": "L1103",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlegetpagetext()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlegetpagetext"
     },
     {
@@ -565,8 +762,8 @@
       "source_location": "L1126",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handleevaluate()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handleevaluate"
     },
     {
@@ -576,8 +773,8 @@
       "source_location": "L1150",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handleclickbytext()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handleclickbytext"
     },
     {
@@ -587,8 +784,8 @@
       "source_location": "L1200",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handledialog()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handledialog"
     },
     {
@@ -598,8 +795,8 @@
       "source_location": "L1236",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlerunaction()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlerunaction"
     },
     {
@@ -609,8 +806,8 @@
       "source_location": "L1262",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handleuploadfile()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handleuploadfile"
     },
     {
@@ -620,8 +817,8 @@
       "source_location": "L1296",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handledrag()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handledrag"
     },
     {
@@ -631,8 +828,8 @@
       "source_location": "L1350",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "handlefillform()",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_handlefillform"
     },
     {
@@ -642,8 +839,8 @@
       "source_location": "L1411",
       "_origin": "ast",
       "community": 1,
+      "community_name": "background.js",
       "norm_label": "note: do not `return true` unconditionally. returning true tells chrome the",
-      "community_name": "Background Script Utilities",
       "id": "extension_background_rationale_1411"
     },
     {
@@ -652,9 +849,9 @@
       "source_file": "extension/content.js",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 17,
+      "community": 20,
+      "community_name": "content.js",
       "norm_label": "content.js",
-      "community_name": "Content Script Capture",
       "id": "extension_content"
     },
     {
@@ -663,9 +860,9 @@
       "source_file": "extension/content.js",
       "source_location": "L14",
       "_origin": "ast",
-      "community": 17,
+      "community": 20,
+      "community_name": "content.js",
       "norm_label": "capture()",
-      "community_name": "Content Script Capture",
       "id": "extension_content_capture"
     },
     {
@@ -676,7 +873,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "tab-concurrency.js",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency"
     },
     {
@@ -687,7 +884,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "tabmutexmap",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tabmutexmap"
     },
     {
@@ -698,7 +895,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".constructor()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tabmutexmap_constructor"
     },
     {
@@ -709,7 +906,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".run()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tabmutexmap_run"
     },
     {
@@ -720,7 +917,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".isidle()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tabmutexmap_isidle"
     },
     {
@@ -731,7 +928,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "tablockmap",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tablockmap"
     },
     {
@@ -742,7 +939,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".constructor()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tablockmap_constructor"
     },
     {
@@ -753,7 +950,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".owner()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tablockmap_owner"
     },
     {
@@ -764,7 +961,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".lock()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tablockmap_lock"
     },
     {
@@ -775,7 +972,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".unlock()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tablockmap_unlock"
     },
     {
@@ -786,7 +983,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".release()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tablockmap_release"
     },
     {
@@ -797,7 +994,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".snapshot()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tablockmap_snapshot"
     },
     {
@@ -808,7 +1005,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".unlockall()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tablockmap_unlockall"
     },
     {
@@ -819,7 +1016,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".waitfor()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_tablockmap_waitfor"
     },
     {
@@ -830,7 +1027,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "runontab()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "extension_lib_tab_concurrency_runontab"
     },
     {
@@ -2161,7 +2358,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": ".sessionid()",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "mcp_server_src_index_daemonclient_sessionid"
     },
     {
@@ -4007,9 +4204,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "drive.mjs",
-      "community_name": "Socket Driver",
+      "community_name": "drive.mjs",
       "id": "scripts_drive"
     },
     {
@@ -4018,9 +4215,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L14",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "state",
-      "community_name": "Socket Driver",
+      "community_name": "drive.mjs",
       "id": "scripts_drive_state"
     },
     {
@@ -4029,9 +4226,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L16",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "sockpath",
-      "community_name": "Socket Driver",
+      "community_name": "drive.mjs",
       "id": "scripts_drive_sockpath"
     },
     {
@@ -4040,9 +4237,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L20",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "params",
-      "community_name": "Socket Driver",
+      "community_name": "drive.mjs",
       "id": "scripts_drive_params"
     },
     {
@@ -4051,9 +4248,9 @@
       "source_file": "scripts/drive.mjs",
       "source_location": "L23",
       "_origin": "ast",
-      "community": 16,
+      "community": 18,
       "norm_label": "sock",
-      "community_name": "Socket Driver",
+      "community_name": "drive.mjs",
       "id": "scripts_drive_sock"
     },
     {
@@ -4251,7 +4448,7 @@
       "_origin": "ast",
       "community": 11,
       "norm_label": "tab-concurrency.test.ts",
-      "community_name": "Tab Concurrency Locking",
+      "community_name": "TabLockMap",
       "id": "tests_tab_concurrency_test"
     },
     {
@@ -4271,76 +4468,10 @@
       "source_file": "vitest.config.ts",
       "source_location": "L1",
       "_origin": "ast",
-      "community": 22,
+      "community": 27,
       "norm_label": "vitest.config.ts",
-      "community_name": "Vitest Configuration",
+      "community_name": "vitest.config.ts",
       "id": "vitest_config"
-    },
-    {
-      "label": "setup.mjs",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "setup.mjs",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup"
-    },
-    {
-      "label": "__dirname",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L7",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "__dirname",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_dirname"
-    },
-    {
-      "label": "ensureDir()",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L21",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "ensuredir()",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_ensuredir"
-    },
-    {
-      "label": "copyIfNeeded()",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L28",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "copyifneeded()",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_copyifneeded"
-    },
-    {
-      "label": "installCursor()",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L36",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "installcursor()",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_installcursor"
-    },
-    {
-      "label": "installClaude()",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L59",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "installclaude()",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_installclaude"
     },
     {
       "label": "Real Browser MCP",
@@ -4422,9 +4553,9 @@
       "author": null,
       "contributor": null,
       "verification": "unverified",
-      "community": 19,
+      "community": 22,
       "norm_label": "ci workflow",
-      "community_name": "CI and Release Workflows",
+      "community_name": "CI Workflow",
       "id": "github_workflows_ci_yml"
     },
     {
@@ -4436,9 +4567,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 19,
+      "community": 22,
       "norm_label": "release workflow",
-      "community_name": "CI and Release Workflows",
+      "community_name": "CI Workflow",
       "id": "github_workflows_release_yml"
     },
     {
@@ -4450,9 +4581,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 20,
+      "community": 24,
       "norm_label": "codeql workflow",
-      "community_name": "CodeQL Analysis Workflow",
+      "community_name": "CodeQL Workflow",
       "id": "github_workflows_codeql_yml"
     },
     {
@@ -4464,9 +4595,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 21,
+      "community": 25,
       "norm_label": "openssf scorecard workflow",
-      "community_name": "Security Scorecard Workflow",
+      "community_name": "OpenSSF Scorecard Workflow",
       "id": "github_workflows_scorecard_yml"
     },
     {
@@ -4478,9 +4609,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "community": 18,
+      "community": 21,
       "norm_label": "dependabot auto-merge workflow",
-      "community_name": "Dependabot Configuration",
+      "community_name": "Dependabot Config",
       "id": "github_workflows_dependabot_auto_merge_yml"
     },
     {
@@ -4493,9 +4624,9 @@
       "author": null,
       "contributor": null,
       "verification": "unverified",
-      "community": 18,
+      "community": 21,
       "norm_label": "dependabot config",
-      "community_name": "Dependabot Configuration",
+      "community_name": "Dependabot Config",
       "id": "github_dependabot_yml"
     },
     {
@@ -5043,9 +5174,255 @@
       "norm_label": "ofershap (funding recipient)",
       "community_name": "Exposed MCP Tools",
       "id": "github_funding_ofershap"
+    },
+    {
+      "label": "App Icon SVG",
+      "file_type": "image",
+      "source_file": "assets/icon.svg",
+      "community": 17,
+      "norm_label": "app icon svg",
+      "id": "assets_icon",
+      "community_name": "App Icon SVG"
+    },
+    {
+      "label": "Store Icon SVG",
+      "file_type": "image",
+      "source_file": "store-assets/icon.svg",
+      "community": 17,
+      "norm_label": "store icon svg",
+      "id": "store_assets_icon",
+      "community_name": "App Icon SVG"
+    },
+    {
+      "label": "Demo GIF",
+      "file_type": "image",
+      "source_file": "assets/demo.gif",
+      "community": 19,
+      "norm_label": "demo gif",
+      "id": "assets_demo_gif",
+      "community_name": "Demo GIF"
+    },
+    {
+      "label": "Logo PNG",
+      "file_type": "image",
+      "source_file": "assets/logo.png",
+      "community": 23,
+      "norm_label": "logo png",
+      "id": "assets_logo_png",
+      "community_name": "Logo PNG"
+    },
+    {
+      "label": "Preview Screenshot",
+      "file_type": "image",
+      "source_file": "assets/preview.png",
+      "community": 19,
+      "norm_label": "preview screenshot",
+      "id": "assets_preview_png",
+      "community_name": "Demo GIF"
+    },
+    {
+      "label": "Extension Icon 128px",
+      "file_type": "image",
+      "source_file": "extension/icons/icon128.png",
+      "community": 17,
+      "norm_label": "extension icon 128px",
+      "id": "extension_icons_icon128",
+      "community_name": "App Icon SVG"
+    },
+    {
+      "label": "Extension Icon 16px",
+      "file_type": "image",
+      "source_file": "extension/icons/icon16.png",
+      "community": 17,
+      "norm_label": "extension icon 16px",
+      "id": "extension_icons_icon16",
+      "community_name": "App Icon SVG"
+    },
+    {
+      "label": "Extension Icon 48px",
+      "file_type": "image",
+      "source_file": "extension/icons/icon48.png",
+      "community": 17,
+      "norm_label": "extension icon 48px",
+      "id": "extension_icons_icon48",
+      "community_name": "App Icon SVG"
+    },
+    {
+      "label": "Store Icon 128px PNG",
+      "file_type": "image",
+      "source_file": "store-assets/icon-128.png",
+      "community": 17,
+      "norm_label": "store icon 128px png",
+      "id": "store_assets_icon_128",
+      "community_name": "App Icon SVG"
+    },
+    {
+      "label": "Store Screenshot",
+      "file_type": "image",
+      "source_file": "store-assets/screenshot-1280x800.png",
+      "community": 26,
+      "norm_label": "store screenshot",
+      "id": "store_assets_screenshot_1280x800",
+      "community_name": "Store Screenshot"
     }
   ],
   "links": [
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L1",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_readme",
+      "target": "agent_config_readme_agent_config"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L43",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_readme_agent_config",
+      "target": "agent_config_readme_manual_install"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L5",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_readme_agent_config",
+      "target": "agent_config_readme_quick_setup"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L18",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_readme_agent_config",
+      "target": "agent_config_readme_what_gets_installed"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L33",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_readme_what_gets_installed",
+      "target": "agent_config_readme_claude_code"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L20",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_readme_what_gets_installed",
+      "target": "agent_config_readme_cursor"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L39",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_readme_what_gets_installed",
+      "target": "agent_config_readme_skill"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L28",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_copyifneeded"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L7",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_dirname"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L21",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_ensuredir"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L59",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_installclaude"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L36",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_installcursor"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L40",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_setup_installcursor",
+      "target": "agent_config_setup_ensuredir"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L41",
+      "weight": 1.0,
+      "_origin": "ast",
+      "confidence_score": 1.0,
+      "source": "agent_config_setup_installcursor",
+      "target": "agent_config_setup_copyifneeded"
+    },
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
@@ -5597,90 +5974,6 @@
       "target": "extension_background_wsurl"
     },
     {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L37",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_lib_tab_concurrency"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L37",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_lib_tab_concurrency_runontab"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L37",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_lib_tab_concurrency_tablockmap"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L37",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_lib_tab_concurrency_tabmutexmap"
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L38",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_utils_smart_selector"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L38",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_utils_smart_selector_page_fallback_fn"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L38",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_utils_smart_selector_page_resolve_fallback_fn"
-    },
-    {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "extension/background.js",
@@ -5875,18 +6168,6 @@
       "relation": "calls",
       "context": "call",
       "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "extension/background.js",
-      "source_location": "L256",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "extension_background_tablockstojson",
-      "target": "extension_lib_tab_concurrency_tablockmap_snapshot"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
       "source_file": "extension/background.js",
       "source_location": "L1038",
       "weight": 1.0,
@@ -5930,18 +6211,6 @@
       "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
       "target": "extension_background_sendresponse"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L289",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background_handlemessage",
-      "target": "extension_lib_tab_concurrency_runontab"
     },
     {
       "relation": "indirect_call",
@@ -6710,42 +6979,6 @@
       "confidence_score": 1.0,
       "source": "extension_background_handlenavigate",
       "target": "extension_background_getactivetab"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "extension/background.js",
-      "source_location": "L1037",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "extension_background_handletabs",
-      "target": "extension_lib_tab_concurrency_tablockmap_lock"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "extension/background.js",
-      "source_location": "L1015",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "extension_background_handletabs",
-      "target": "extension_lib_tab_concurrency_tablockmap_owner"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "extension/background.js",
-      "source_location": "L1026",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "extension_background_handletabs",
-      "target": "extension_lib_tab_concurrency_tablockmap_release"
     },
     {
       "relation": "contains",
@@ -12640,85 +12873,6 @@
       "target": "tests_smart_selector_test_options"
     },
     {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L28",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_copyifneeded"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L7",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_dirname"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L21",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_ensuredir"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L59",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_installclaude"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L36",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_installcursor"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L40",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup_installcursor",
-      "target": "agent_config_setup_ensuredir"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L41",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup_installcursor",
-      "target": "agent_config_setup_copyifneeded"
-    },
-    {
       "relation": "conceptually_related_to",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
@@ -13217,9 +13371,100 @@
       "weight": 1.0,
       "source": "llms_ofershap",
       "target": "github_funding_ofershap"
+    },
+    {
+      "relation": "semantically_similar_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "assets/icon.svg",
+      "source": "assets_icon",
+      "target": "store_assets_icon"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "extension/icons/icon128.png",
+      "source": "extension_icons_icon128",
+      "target": "assets_icon"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "extension/icons/icon16.png",
+      "source": "extension_icons_icon16",
+      "target": "assets_icon"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "extension/icons/icon48.png",
+      "source": "extension_icons_icon48",
+      "target": "assets_icon"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "store-assets/icon-128.png",
+      "source": "store_assets_icon_128",
+      "target": "store_assets_icon"
+    },
+    {
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.7,
+      "source_file": "assets/demo.gif",
+      "source": "assets_demo_gif",
+      "target": "assets_preview_png"
     }
   ],
   "hyperedges": [
+    {
+      "id": "app_icon_family",
+      "label": "App Icon Asset Family",
+      "nodes": [
+        "assets_icon",
+        "store_assets_icon",
+        "extension_icons_icon16",
+        "extension_icons_icon48",
+        "extension_icons_icon128",
+        "store_assets_icon_128"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.9,
+      "source_file": "assets/icon.svg"
+    },
+    {
+      "id": "brand_visual_assets",
+      "label": "Brand Visual Assets",
+      "nodes": [
+        "assets_icon",
+        "assets_logo_png",
+        "assets_demo_gif",
+        "assets_preview_png"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "assets/icon.svg"
+    },
+    {
+      "id": "extension_icon_set",
+      "label": "Extension Icon Set",
+      "nodes": [
+        "extension_icons_icon16",
+        "extension_icons_icon48",
+        "extension_icons_icon128"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "extension/icons/icon16.png"
+    },
     {
       "id": "rbm_all_tools",
       "label": "real-browser-mcp 17 MCP Tools",
@@ -13289,5 +13534,5 @@
       "source_file": "agent-config/AGENTS.md"
     }
   ],
-  "built_at_commit": "4bd588f335ea6db653b040ded9de7a3810d77048"
+  "built_at_commit": "7cdf26ec149f5250509fdb8257bf8ea51bac3a5f"
 }

@@ -313,5 +313,55 @@
     "mtime": 1784860647.1379876,
     "ast_hash": "d140607f505c1b9e3d7ff2fa84bc9615",
     "semantic_hash": "d140607f505c1b9e3d7ff2fa84bc9615"
+  },
+  "assets/demo.gif": {
+    "mtime": 1784860647.1370237,
+    "ast_hash": "f11a63b31bb89448983b5081cb43d8e5",
+    "semantic_hash": "f11a63b31bb89448983b5081cb43d8e5"
+  },
+  "assets/icon.svg": {
+    "mtime": 1784863789.531985,
+    "ast_hash": "2e35e069863ffe6ffb82c96203df3fe5",
+    "semantic_hash": "2e35e069863ffe6ffb82c96203df3fe5"
+  },
+  "assets/logo.png": {
+    "mtime": 1784863802.065434,
+    "ast_hash": "db6f6a356c328dde13b7f2b30670f493",
+    "semantic_hash": "db6f6a356c328dde13b7f2b30670f493"
+  },
+  "assets/preview.png": {
+    "mtime": 1784860647.1374996,
+    "ast_hash": "d2ed6a218d3911017799be093e9f03f3",
+    "semantic_hash": "d2ed6a218d3911017799be093e9f03f3"
+  },
+  "extension/icons/icon128.png": {
+    "mtime": 1784863802.0096977,
+    "ast_hash": "040aacfe3d686e81f405e4d8e7116fe9",
+    "semantic_hash": "040aacfe3d686e81f405e4d8e7116fe9"
+  },
+  "extension/icons/icon16.png": {
+    "mtime": 1784863801.910706,
+    "ast_hash": "e119cf3382345a462699e3ec68937057",
+    "semantic_hash": "e119cf3382345a462699e3ec68937057"
+  },
+  "extension/icons/icon48.png": {
+    "mtime": 1784863801.959913,
+    "ast_hash": "64f70fdd1e210932dda1dba4ad94c989",
+    "semantic_hash": "64f70fdd1e210932dda1dba4ad94c989"
+  },
+  "store-assets/icon-128.png": {
+    "mtime": 1784863802.012715,
+    "ast_hash": "040aacfe3d686e81f405e4d8e7116fe9",
+    "semantic_hash": "040aacfe3d686e81f405e4d8e7116fe9"
+  },
+  "store-assets/icon.svg": {
+    "mtime": 1784863802.014115,
+    "ast_hash": "2e35e069863ffe6ffb82c96203df3fe5",
+    "semantic_hash": "2e35e069863ffe6ffb82c96203df3fe5"
+  },
+  "store-assets/screenshot-1280x800.png": {
+    "mtime": 1784860647.1398132,
+    "ast_hash": "9a691152b0a084411323ca6497920716",
+    "semantic_hash": "9a691152b0a084411323ca6497920716"
   }
 }
