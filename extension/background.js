@@ -1408,12 +1408,21 @@ async function handleFillForm(params) {
 // --- Events (per-tab console/network capture: task 1.4) ------------------
 
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+  // NOTE: do NOT `return true` unconditionally. Returning true tells Chrome the
+  // listener will call `respond()` ASYNCHRONOUSLY; if the sender (popup) closes
+  // before that, Chrome logs "message channel closed before a response was
+  // received". Every branch below responds synchronously (or is fire-and-forget),
+  // so we return false (or nothing) — Chrome handles it without the warning.
   if (msg.type === 'console' && sender.tab?.id != null) {
     const buf = getTabBuffer(consoleByTab, sender.tab.id);
     pushCapped(buf, { level: msg.level, text: msg.text, timestamp: Date.now(), url: sender.tab.url });
-  } else if (msg.type === 'getStatus') {
+    return false; // fire-and-forget; no response expected
+  }
+  if (msg.type === 'getStatus') {
     respond(buildStatusPayload());
-  } else if (msg.type === 'setPort') {
+    return false;
+  }
+  if (msg.type === 'setPort') {
     const p = parseInt(msg.port, 10);
     if (p > 0 && p < 65536) {
       wsPort = p;
@@ -1427,7 +1436,9 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     } else {
       respond({ success: false, error: 'Invalid port' });
     }
-  } else if (msg.type === 'setToken') {
+    return false;
+  }
+  if (msg.type === 'setToken') {
     // extension popup can store the auth token (3.1) once.
     wsToken = (msg.token || '').trim();
     chrome.storage.local.set({ wsToken });
@@ -1437,12 +1448,15 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     reconnectAttempts = 0;
     connect();
     respond({ success: true });
-  } else if (msg.type === 'unlockAll') {
+    return false;
+  }
+  if (msg.type === 'unlockAll') {
     tabLocks.unlockAll();
     broadcastStatus('All tab locks cleared');
     respond({ success: true });
+    return false;
   }
-  return true;
+  return false; // unrecognized message — no async response promised
 });
 
 chrome.webRequest.onCompleted.addListener(

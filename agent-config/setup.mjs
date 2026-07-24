@@ -39,8 +39,8 @@ function installCursor() {
   const rulesDir = join(home, '.cursor', 'rules');
   ensureDir(rulesDir);
   copyIfNeeded(
-    join(__dirname, 'cursor', 'rules', 'real-browser-mcp.mdc'),
-    join(rulesDir, 'real-browser-mcp.mdc'),
+    join(__dirname, 'cursor', 'rules', 'browser-controller.mdc'),
+    join(rulesDir, 'browser-controller.mdc'),
     'rule',
   );
 

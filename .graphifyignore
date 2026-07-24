@@ -1,0 +1,11 @@
+# Z.ai coding-plan endpoint rejects image content (error 1210).
+# Skip images so the doc batch doesn't get poisoned.
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+*.webp
+# keep generated graphify output out of itself
+graphify-out/

@@ -21,7 +21,7 @@ npx real-browser-mcp --setup all
 
 | File | Location | What it does |
 |------|----------|-------------|
-| `real-browser-mcp.mdc` | `~/.cursor/rules/` | Global rule - teaches the agent how to use browser tools |
+| `browser-controller.mdc` | `~/.cursor/rules/` | Global rule - teaches the agent how to use browser tools |
 | `check-browser.md` | `~/.cursor/commands/` | `/check-browser` command - quick way to say "look at my browser" |
 
 After install, type `/check-browser` in Cursor chat or just tell your agent:
@@ -44,7 +44,7 @@ The `skills/browser-automation/SKILL.md` is a detailed workflow guide for browse
 
 Copy the files yourself if you prefer:
 
-- **Cursor rule:** `cursor/rules/real-browser-mcp.mdc` -> `~/.cursor/rules/`
+- **Cursor rule:** `cursor/rules/browser-controller.mdc` -> `~/.cursor/rules/`
 - **Cursor command:** `cursor/commands/check-browser.md` -> `~/.cursor/commands/`
 - **Claude Code:** `AGENTS.md` -> your project root
 - **Skill:** `skills/browser-automation/` -> your skills directory

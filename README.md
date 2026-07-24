@@ -223,7 +223,7 @@ npx real-browser-mcp --setup cursor
 ```
 
 This installs:
-- `~/.cursor/rules/real-browser-mcp.mdc` — the tab-targeting workflow, dropdown handling, when to lock tabs
+- `~/.cursor/rules/browser-controller.mdc` — the tab-targeting workflow, dropdown handling, when to lock tabs
 - `~/.cursor/commands/check-browser.md` — adds `/check-browser` to your Cursor chat
 
 After that, type `/check-browser` in any chat. Or just say "check the result in my browser" and the agent knows what to do.
