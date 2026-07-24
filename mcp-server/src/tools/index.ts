@@ -50,3 +50,36 @@ export const allTools: ToolDefinition[] = [
 export const toolMap = new Map<string, ToolDefinition>(
   allTools.map(t => [t.name, t]),
 );
+
+/**
+ * Whether a tool is safe to retry on timeout, derived from each tool's
+ * `idempotent` flag (the single source of truth — see ToolDefinition). This
+ * replaces the hand-maintained IDEMPOTENT_TOOLS string set that previously
+ * lived in daemon-config.ts and could silently drift from the real registry
+ * (audit C1/m5). `browser_console`/`browser_network` are false here despite
+ * "looking" like reads, because `clear:true` mutates state (audit M2).
+ */
+const idempotentToolNames = new Set(
+  allTools.filter((t) => t.idempotent === true).map((t) => t.name),
+);
+
+export function isIdempotent(tool: string): boolean {
+  return idempotentToolNames.has(tool);
+}
+
+/**
+ * Per-tool transport timeout (bridge → extension round-trip). Derived from
+ * each tool's `timeoutMs` when set; tools without one fall back to the caller's
+ * default. This co-locates transport policy with the tool registry so a new
+ * tool forces the author to consider its timeout (audit M3), rather than
+ * relying on a parallel TOOL_TIMEOUTS table that can drift.
+ */
+const timeoutByToolName = new Map(
+  allTools
+    .filter((t) => typeof t.timeoutMs === 'number')
+    .map((t) => [t.name, t.timeoutMs as number]),
+);
+
+export function toolTimeoutMs(tool: string): number | undefined {
+  return timeoutByToolName.get(tool);
+}

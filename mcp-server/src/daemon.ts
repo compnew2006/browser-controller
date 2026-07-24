@@ -45,7 +45,7 @@ interface IpcClient {
   agentName: string;
   connectedAt: number;
   /** in-flight calls keyed by the client-local id the client sent. */
-  pending: Map<string, { tool: string; daemonCallId: string }>;
+  pending: Map<string, { tool: string; daemonCallId: string; controller: AbortController }>;
   /** Missed heartbeat pongs — daemon evicts at HEARTBEAT_MAX_MISSED. */
   missedPongs: number;
 }
@@ -224,10 +224,14 @@ class Daemon {
     socket.on('close', () => {
       if (client) {
         console.error(`[${SERVER_NAME}] client disconnected: ${client.sessionId} (${client.agentName})`);
-        // fail any of this client's in-flight calls
-        for (const [clientId, entry] of client.pending) {
+        // CANCEL this client's in-flight calls (audit C2). Previously this only
+        // deleted the tracking entry, leaving the bridge awaiting a WS reply —
+        // so a non-idempotent action (click/type) kept running after the agent
+        // was evicted. Aborting the controller makes the bridge reject the
+        // pending promise, halting retries too.
+        for (const [, entry] of client.pending) {
           this.pendingCalls.delete(entry.daemonCallId);
-          void clientId;
+          try { entry.controller.abort(); } catch { /* already settled */ }
         }
         this.clients.delete(socket);
       }
@@ -265,23 +269,35 @@ class Daemon {
 
   private checkToken(presented: string): boolean {
     if (!presented || !this.token) return false;
-    if (presented.length !== this.token.length) return false;
-    // constant-time compare
-    return crypto.timingSafeEqual(Buffer.from(presented), Buffer.from(this.token));
+    // Constant-time compare with NO length early-return (audit timing leak):
+    // pad both to a fixed size so timingSafeEqual always runs on equal-length
+    // buffers and the comparison time doesn't reveal the token length. A length
+    // mismatch short-circuits after a full-length compare, which leaks nothing.
+    const FIXED = 128;
+    const a = Buffer.alloc(FIXED);
+    const b = Buffer.alloc(FIXED);
+    a.write(presented);
+    b.write(this.token);
+    return crypto.timingSafeEqual(a, b) && presented === this.token;
   }
 
   private async routeCall(client: IpcClient, msg: IpcClientMessage & { kind: 'call' }): Promise<void> {
     if (msg.kind !== 'call') return;
     const daemonCallId = `c${Date.now().toString(36)}-${msg.id}`;
-    client.pending.set(msg.id, { tool: msg.tool, daemonCallId });
+    // One AbortController per call so the close handler can cancel in-flight
+    // work when this client is evicted (heartbeat) or replaced (dedup). Without
+    // this, a non-idempotent action (click/type) keeps running after the
+    // originating agent was declared dead (audit C2).
+    const controller = new AbortController();
+    client.pending.set(msg.id, { tool: msg.tool, daemonCallId, controller });
     this.pendingCalls.set(daemonCallId, { client, clientId: msg.id });
 
-    // The bridge forwards params as-is; the sessionId is threaded through to
-    // the extension via a `__sessionId` injection so the extension's tab-lock
-    // layer (2.2) can attribute the call.
-    const params = { ...msg.params, __sessionId: client.sessionId };
+    // sessionId is passed as a first-class argument to the bridge (audit M1),
+    // which forwards it as a top-level field on the WS message — NOT injected
+    // into params. The daemon stays a pure {tool, params} multiplexer; the
+    // extension's tab-lock layer reads msg.sessionId, never params.__sessionId.
     try {
-      const result = await this.bridge.callTool(msg.tool, params);
+      const result = await this.bridge.callTool(msg.tool, msg.params, client.sessionId, controller.signal);
       this.sendToClient(client, { kind: 'result', id: msg.id, success: true, result });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

@@ -192,10 +192,16 @@ class DaemonClient {
         reject(new Error('Not connected to daemon'));
         return;
       }
+      // Client-side safety-net timeout (audit M4). The BRIDGE owns the real
+      // per-tool timeout (TOOL_TIMEOUTS, up to 60s) + retries (×3 = 180s worst
+      // case for idempotent reads). This client timer must always outlive the
+      // bridge's worst case so the bridge's own rejection (with an actionable
+      // message) wins; the client timer is only a backstop if the daemon itself
+      // hangs. 210s = 60s × 3 + 30s slack.
       const t = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Tool call timed out (client side): ${tool}`));
-      }, 70_000);
+      }, 210_000);
       this.pending.set(id, { resolve, reject, t });
       try {
         this.socket.write(JSON.stringify({ kind: 'call', id, tool, params }) + '\n');
@@ -218,6 +224,11 @@ class DaemonClient {
   close(): void {
     this.socket?.destroy();
     this.socket = null;
+  }
+
+  /** Register a handler fired when the daemon socket closes (audit m3 respawn). */
+  onClose(handler: () => void): void {
+    this.closeHandlers.push(handler);
   }
 }
 
@@ -333,6 +344,23 @@ async function main(): Promise<void> {
   // 3) connect to daemon
   const client = new DaemonClient(IPC_SOCKET_PATH, token, agentName);
   await client.connect();
+
+  // One-shot daemon respawn on disconnect (audit m3). If the daemon dies after
+  // startup, the thin client used to reject every subsequent call forever — the
+  // MCP host had to be restarted by its parent. Now we attempt exactly ONE
+  // respawn+reconnect before giving up. The `respawned` flag prevents infinite
+  // respawn loops if the daemon can't stay up.
+  let respawned = false;
+  client.onClose(() => {
+    if (respawned) return; // already tried once — don't loop
+    respawned = true;
+    console.error(`[${SERVER_NAME}] daemon connection lost — attempting one respawn`);
+    spawnDaemon();
+    waitForDaemon()
+      .then(() => client.connect())
+      .then(() => { console.error(`[${SERVER_NAME}] reconnected after respawn`); })
+      .catch((err) => { console.error(`[${SERVER_NAME}] respawn failed:`, err); });
+  });
 
   // 4) wire MCP <-> daemon
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });

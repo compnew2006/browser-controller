@@ -2,7 +2,7 @@ import net from 'node:net';
 import http from 'node:http';
 import { execSync } from 'node:child_process';
 import { WebSocket, WebSocketServer } from 'ws';
-import { isIdempotent } from './daemon-config.js';
+import { isIdempotent, toolTimeoutMs } from './tools/index.js';
 
 /**
  * Signature of an HTTP request handler the daemon can register so it can serve
@@ -32,6 +32,9 @@ interface PendingRequest {
   tool: string;
   retries: number;
   params: Record<string, unknown>;
+  /** Abort listener registered for this request (audit C2); removed on settle. */
+  onAbort?: (() => void) | null;
+  signal?: AbortSignal | null;
 }
 
 interface BridgeOptions {
@@ -312,6 +315,8 @@ export class ExtensionBridge {
     if (!pending) return;
 
     clearTimeout(pending.timeout);
+    // Detach the abort listener — the call settled normally (audit C2).
+    if (pending.onAbort && pending.signal) pending.signal.removeEventListener('abort', pending.onAbort);
     this.pendingRequests.delete(msg.id);
 
     if (msg.success) {
@@ -349,7 +354,7 @@ export class ExtensionBridge {
     });
   }
 
-  async callTool(tool: string, params: Record<string, unknown>): Promise<unknown> {
+  async callTool(tool: string, params: Record<string, unknown>, sessionId?: string, signal?: AbortSignal): Promise<unknown> {
     if (!this.isConnected()) {
       try {
         await this.waitForConnection(5_000);
@@ -360,13 +365,22 @@ export class ExtensionBridge {
       }
     }
 
-    return this.sendToolCall(tool, params, 0);
+    return this.sendToolCall(tool, params, 0, sessionId, signal);
   }
 
-  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number): Promise<unknown> {
+  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal): Promise<unknown> {
+    // If the caller already aborted (e.g. client evicted before we even sent),
+    // reject immediately rather than firing the action into the void.
+    if (signal?.aborted) {
+      return Promise.reject(new Error(`Call aborted before send: ${tool}`));
+    }
     return new Promise((resolve, reject) => {
       const id = String(++this.requestId);
-      const timeoutMs = TOOL_TIMEOUTS[tool] || this.defaultTimeoutMs;
+      // Timeout policy: the tool registry is the source of truth (audit M3).
+      // A tool's `timeoutMs` wins; otherwise the legacy TOOL_TIMEOUTS table;
+      // otherwise the bridge default (30s). New tools should set `timeoutMs`
+      // rather than adding to TOOL_TIMEOUTS.
+      const timeoutMs = toolTimeoutMs(tool) ?? TOOL_TIMEOUTS[tool] ?? this.defaultTimeoutMs;
 
       // Task 2.3: non-idempotent tools (click, type, navigate, …) must never be
       // retried on timeout — re-sending could double-fire the action. Only
@@ -377,7 +391,7 @@ export class ExtensionBridge {
         this.pendingRequests.delete(id);
         if (canRetry && retryCount < this.maxRetries) {
           console.error(`[Bridge] Timeout on ${tool}, retry ${retryCount + 1}/${this.maxRetries}`);
-          this.sendToolCall(tool, params, retryCount + 1).then(resolve, reject);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal).then(resolve, reject);
         } else if (!canRetry) {
           reject(new Error(`Tool call timed out (no retry: non-idempotent): ${tool}`));
         } else {
@@ -385,15 +399,33 @@ export class ExtensionBridge {
         }
       }, timeoutMs);
 
-      this.pendingRequests.set(id, { resolve, reject, timeout, tool, retries: retryCount, params });
+      // Cancellation (audit C2): if the caller aborts (daemon evicted the
+      // client mid-call), tear down this pending entry and reject — otherwise
+      // a non-idempotent action (click/type) would keep running after the
+      // originating agent was declared dead.
+      const onAbort = () => {
+        clearTimeout(timeout);
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          reject(new Error(`Call aborted: ${tool} (originating client gone)`));
+        }
+      };
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      this.pendingRequests.set(id, { resolve, reject, timeout, tool, retries: retryCount, params, onAbort, signal });
 
       try {
-        this.client!.send(JSON.stringify({ id, tool, params }));
+        // sessionId travels as a top-level WS field (audit M1), not injected
+        // into params — the daemon stays a pure {tool, params} multiplexer.
+        this.client!.send(JSON.stringify({ id, tool, params, sessionId }));
       } catch (err) {
         clearTimeout(timeout);
+        if (signal) signal.removeEventListener('abort', onAbort);
         this.pendingRequests.delete(id);
         if (canRetry && retryCount < this.maxRetries && this.isConnected()) {
-          this.sendToolCall(tool, params, retryCount + 1).then(resolve, reject);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal).then(resolve, reject);
         } else {
           reject(err instanceof Error ? err : new Error('Send failed'));
         }
@@ -404,6 +436,7 @@ export class ExtensionBridge {
   private rejectAllPending(reason: string): void {
     for (const [id, pending] of this.pendingRequests) {
       clearTimeout(pending.timeout);
+      if (pending.onAbort && pending.signal) pending.signal.removeEventListener('abort', pending.onAbort);
       pending.reject(new Error(reason));
       this.pendingRequests.delete(id);
     }

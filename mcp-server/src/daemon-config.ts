@@ -65,29 +65,11 @@ export interface ExtensionRequest {
   sessionId: string;
 }
 
-// --- Idempotency (task 2.3) ------------------------------------------------
-
-/**
- * Tools that are safe to retry on timeout because re-running them has no side
- * effects (they only read). Everything else is treated as non-idempotent and is
- * NOT retried — a click must never fire twice.
- *
- * NOTE: `browser_evaluate` runs ARBITRARY user JS (can submit forms, click,
- * mutate state) so it is NOT here despite "looking" like a read. `browser_tabs`
- * has lock/unlock/close side effects, so it is NOT here either.
- */
-export const IDEMPOTENT_TOOLS = new Set<string>([
-  'browser_snapshot',
-  'browser_screenshot',
-  'browser_text',
-  'browser_find',
-  'browser_console',
-  'browser_network',
-]);
-
-export function isIdempotent(tool: string): boolean {
-  return IDEMPOTENT_TOOLS.has(tool);
-}
+// --- Idempotency -----------------------------------------------------------
+// MOVED to mcp-server/src/tools/index.ts (isIdempotent), derived from each
+// tool's `idempotent` flag. It was previously a hand-maintained string set
+// here that silently drifted from the real registry (audit C1/m5) and wrongly
+// included browser_console/browser_network (which mutate on clear:true — M2).
 
 // --- Auth token (task 3.1) -------------------------------------------------
 

@@ -10,6 +10,8 @@ export const networkTool: ToolDefinition = {
     filter: z.string().optional().describe('URL regex pattern to filter requests'),
     clear: z.boolean().optional().default(false).describe('Clear this tab\'s requests after reading'),
   }),
+  // NOT idempotent: `clear:true` mutates the buffer (same reasoning as console — M2).
+  idempotent: false,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_network', params);
     return textResult(JSON.stringify(result, null, 2));

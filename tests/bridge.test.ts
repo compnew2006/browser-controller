@@ -146,4 +146,62 @@ describe('ExtensionBridge', () => {
     });
     expect(bridge.isConnected()).toBe(false);
   });
+
+  // --- Call cancellation (audit C2) -----------------------------------------
+  // When the daemon evicts a client mid-call, it aborts the AbortController.
+  // The bridge must reject the pending promise so a non-idempotent action
+  // (click/type) doesn't keep running after the originating agent is gone.
+  it('aborts an in-flight call when the AbortSignal fires (audit C2)', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const client = await connectClient(port);
+    // Extension NEVER replies — simulates a slow/in-flight action.
+    client.on('message', () => { /* swallow: deliberately hang */ });
+
+    const controller = new AbortController();
+    const promise = bridge.callTool('browser_click', { ref: 'e1' }, undefined, controller.signal);
+
+    // Abort mid-flight (as the daemon's close handler would on eviction).
+    await new Promise((r) => setTimeout(r, 30));
+    controller.abort();
+
+    await expect(promise).rejects.toThrow(/aborted/i);
+  });
+
+  it('rejects immediately if the signal is already aborted before send', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+    await connectClient(port);
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      bridge.callTool('browser_click', { ref: 'e1' }, undefined, controller.signal)
+    ).rejects.toThrow(/aborted before send/i);
+  });
+
+  it('a normally-completing call detaches the abort listener (no late reject)', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const client = await connectClient(port);
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.tool) {
+        client.send(JSON.stringify({ id: msg.id, success: true, result: { ok: 1 } }));
+      }
+    });
+
+    const controller = new AbortController();
+    const result = await bridge.callTool('browser_snapshot', { tabId: 1 }, undefined, controller.signal);
+    expect(result).toEqual({ ok: 1 });
+    // Aborting AFTER settlement must be a no-op (listener was removed).
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 20));
+    // No unhandled rejection thrown — test passing this far proves it.
+  });
 });

@@ -7,8 +7,10 @@
  *     tabs/move the mouse while an agent works. (1.2)
  *   - Element refs are stored per-tab (refsByTab), so a ref from tab 10 can never
  *     resolve against tab 20's DOM. (1.3)
- *   - console/network buffers are per-tab (capped 200), persisted to
- *     chrome.storage.session so they survive service-worker death. (1.4)
+ *   - console/network buffers are per-tab (capped 200). NOTE: these live in
+ *     service-worker memory and are LOST when Chrome recycles the worker
+ *     (~30s idle). They are debug aids, not durable state — the agent can
+ *     always re-read them after the page emits new messages. (1.4)
  *   - browser_evaluate runs via chrome.scripting MAIN world — no debugger banner. (1.5)
  *   - Per-tab mutex: only one tool runs against a given tab at a time; different
  *     tabs run in parallel. (2.1)
@@ -38,8 +40,12 @@ import { TabMutexMap, TabLockMap, runOnTab as runOnTabLib } from './lib/tab-conc
 import { PAGE_FALLBACK_FN, PAGE_RESOLVE_FALLBACK_FN } from './utils/smart-selector.js';
 
 // --- Per-tab state (tasks 1.3, 1.4) ---------------------------------------
-// Map<tabId, Array<{level,text,timestamp,url}>> and Map<tabId, Array<req>>
-// Kept in chrome.storage.session so a service-worker restart doesn't wipe them.
+// Map<tabId, Array<{level,text,timestamp,url}>> and Map<tabId, Array<req>>.
+// In-memory only: Chrome recycles the service worker (~30s idle), which wipes
+// these. They're debug aids; the agent re-reads after new messages arrive.
+// (Audit C3: the header previously claimed chrome.storage.session persistence
+//  that was never implemented. Persisting on every message would be write-
+//  heavy; the honest fix is to document the in-memory behavior.)
 const consoleByTab = new Map();
 const networkByTab = new Map();
 /**
@@ -160,8 +166,10 @@ async function connect() {
     };
 
     ws.onmessage = async (event) => {
+      let msgId = null;
       try {
         const msg = JSON.parse(event.data);
+        msgId = msg.id ?? null;
         if (msg.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong' }));
           return;
@@ -169,6 +177,14 @@ async function connect() {
         await handleMessage(msg);
       } catch (err) {
         console.error('[BrowserController] Message error:', err);
+        // Audit C4/6d: a throw inside handleMessage (e.g. bad params, a handler
+        // bug) used to leave the daemon hanging until its timeout. Reply with
+        // an explicit error so the agent gets an actionable message fast.
+        if (msgId && ws && ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify({ id: msgId, success: false, error: err?.message || String(err) }));
+          } catch { /* ws gone — close path will reject pending on the daemon */ }
+        }
       }
     };
   } catch {
@@ -298,15 +314,16 @@ async function broadcastStatus(message) {
 
 // --- Message Router -------------------------------------------------------
 //
-// The daemon injects `__sessionId` into params (see daemon.ts routeCall). We
-// pull it out here so it never reaches a tool handler, then route the call
-// through the per-tab mutex + lock layer.
+// sessionId arrives as a first-class top-level field on the WS message (audit
+// M1) — the daemon no longer injects it into params. We read it here so the
+// per-tab mutex + lock layer can attribute the call; it never reaches a tool
+// handler. (Previously it was smuggled through params.__sessionId, which
+// coupled the multiplexer to the extension's wire format.)
 
 async function handleMessage(msg) {
   const { id, tool, params } = msg;
   const p = params || {};
-  const sessionId = p.__sessionId || null;
-  delete p.__sessionId;
+  const sessionId = msg.sessionId || null;
 
   const tabId = extractTabId(tool, p);
 
@@ -391,9 +408,10 @@ async function dispatch(tool, params, sessionId) {
     browser_run_action: handleRunAction,
     browser_drag: handleDrag,
     browser_fill_form: handleFillForm,
-    find: handleFind,
+    // Legacy wire-name aliases (find / get_page_text) removed: the tool files
+    // now send their canonical .name (browser_find / browser_text), so the
+    // aliases would only mask future drift. (audit C1)
     browser_find: handleFind,
-    get_page_text: handleGetPageText,
     browser_text: handleGetPageText,
   };
 
