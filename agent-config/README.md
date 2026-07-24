@@ -6,13 +6,13 @@ Your AI agent needs to know these tools exist and how to use them. These configs
 
 ```bash
 # Cursor - installs rule + /check-browser command
-npx real-browser-mcp --setup cursor
+npx browser-controller --setup cursor
 
 # Claude Code - adds AGENTS.md
-npx real-browser-mcp --setup claude
+npx browser-controller --setup claude
 
 # Both
-npx real-browser-mcp --setup all
+npx browser-controller --setup all
 ```
 
 ## What Gets Installed

@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const target = process.argv[2];
 
 if (!target || !['cursor', 'claude', 'all'].includes(target)) {
-  console.log('Usage: real-browser-mcp --setup <cursor|claude|all>');
+  console.log('Usage: browser-controller --setup <cursor|claude|all>');
   console.log('');
   console.log('  cursor  - Install Cursor rule + command');
   console.log('  claude  - Copy AGENTS.md to your project');
@@ -64,8 +64,8 @@ function installClaude() {
 
   if (existsSync(dest)) {
     const existing = readFileSync(dest, 'utf-8');
-    if (existing.includes('real-browser-mcp')) {
-      console.log('  AGENTS.md already contains real-browser-mcp config. Skipping.');
+    if (existing.includes('browser-controller')) {
+      console.log('  AGENTS.md already contains browser-controller config. Skipping.');
       return;
     }
     const addition = readFileSync(src, 'utf-8');

@@ -1,67 +1,74 @@
 ---
-description: Core project context for real-browser-mcp
+description: Core project context for browser-controller
 alwaysApply: true
 ---
 
-# real-browser-mcp
+# browser-controller
 
-MCP server (TypeScript) + Chrome extension (plain JS) that talk over WebSocket on localhost:7225.
+Multi-client MCP server (TypeScript) + Chrome extension (plain JS). Renamed from `real-browser-mcp` (v2.0.0). npm `browser-controller`, MCP id `io.github.noiemany/browser-controller`.
 
-## Versioning
+## Three-piece architecture
 
-Bump minor versions: 1.0.0 -> 1.1.0 -> 1.2.0. Three places must stay in sync:
-1. `package.json` "version"
-2. `extension/manifest.json` "version"
-3. `mcp-server/src/index.ts` SERVER_VERSION
+```
+Agent ─stdio─ thin MCP client (index.ts) ─IPC─► daemon (daemon.ts, owns :7225) ─WS─► extension (background.js)
+```
 
-## Adding a Tool
+- The daemon owns the WS server on 7225 AND an HTTP server on the **same port** (`/pair` returns the token, `/status` returns agents). The extension auto-fetches the token via `/pair` (MV3 can't read the filesystem).
+- Bind host is **`127.0.0.1`** (NOT 'localhost' — macOS resolves localhost to IPv6 ::1 first and refuses IPv4). Both WS connect and HTTP fetch use 127.0.0.1.
+- Thin client auto-spawns the daemon if absent. State in `~/.browser-controller/`.
 
-Four files to touch:
-1. `mcp-server/src/tools/<name>.ts` - ToolDefinition with Zod schema
-2. `mcp-server/src/tools/index.ts` - add to allTools array
-3. `extension/background.js` - add handler in dispatch() map + handler function
-4. `tests/tools/` - add test
+## The two invariants
 
-The schema type MUST be `z.ZodObject<z.ZodRawShape>`, not `z.ZodType`. The MCP SDK calls `.shape` on it.
+1. **`tabId` is mandatory** for every page-interaction tool. `navigate` is the ONE exception (optional, active-tab fallback). `tabs` create/close/focus/list take no target tabId. Enforced via `requireTabId()` in `tools/types.ts`.
+2. **background.js never acts on "the active tab"** implicitly — `resolveTab(tabId)` is the entry point. The active-tab fallback survives ONLY inside `handleNavigate`.
 
-## Tool inventory (18 tools)
+## Element identification (3 layers + auto-recovery)
 
-Navigation: browser_navigate, browser_tabs
-Interaction: browser_click (ref OR selector), browser_click_text (by visible text, CSP-safe), browser_type, browser_press_key, browser_scroll, browser_hover, browser_select
-Reading: browser_snapshot (compact mode default), browser_screenshot, browser_text, browser_find
-JS execution: browser_evaluate (via chrome.debugger CDP - bypasses CSP but shows debugger banner)
-Dialogs: browser_handle_dialog (override alert/confirm/prompt)
-Wait: browser_wait
-Debug: browser_console (read-only), browser_network
+1. `data-mcp-ref="e5"` (fast, breaks on re-render)
+2. robust CSS selector via `smart-selector.js` (climbs ≤3 ancestors, ignores React/generated classes+ids)
+3. text+role+tag scan (survives total class/id churn)
+- `autoReSnapshot`: on ref failure (virtualized feed), snapshot the tab and embed `freshRefs` in the response so the agent retries in one step. Do NOT auto-retry the click (non-idempotent). `browser_scroll` returns `refsMayBeStale: true` as a hint.
 
-## CSP and browser_evaluate
+## Concurrency (extension/lib/tab-concurrency.js — pure, unit-tested)
 
-`browser_evaluate` uses chrome.debugger API (CDP Runtime.evaluate). This bypasses CSP but:
-- Shows "is being debugged" infobar
-- Attaching/detaching the debugger can steal focus and close open popups/dropdowns
-- Requires `debugger` permission in manifest.json
+- `TabMutexMap`: same-tab serializes, cross-tab parallelizes.
+- `TabLockMap`: per-agent tab ownership via `browser_tabs {action:'lock'}`; non-owner calls queue.
+- `isIdempotent` (daemon-config.ts): read tools retry on timeout; **click/type/navigate/evaluate NEVER retry**.
 
-For DOM interactions (clicking dropdown options, etc.), prefer `browser_click` with CSS selectors or `browser_click_text` instead. These use `chrome.scripting.executeScript` with compiled functions — no eval, no CSP issues.
+## Tool inventory (22 tools)
 
-Previous attempts using `new Function()` in MAIN world failed on GitHub/Google/strict-CSP sites. Sandbox/offscreen approaches can't access page DOM. chrome.debugger is the only universal eval but has the focus-stealing side effect.
+Navigation: browser_navigate (tabId optional), browser_tabs (list/create/close/focus/**lock**/**unlock**)
+Interaction (tabId required): browser_click, browser_click_text, browser_type, browser_press_key, browser_scroll, browser_hover, browser_select, browser_drag, browser_fill_form, browser_upload_file
+Reading (tabId required): browser_snapshot, browser_screenshot, browser_text, browser_find
+JS/Dialogs (tabId required): browser_evaluate (MAIN world, no banner), browser_handle_dialog, browser_run_action
+Waiting: browser_wait
+Debug (tabId required, per-tab buffers capped 200): browser_console, browser_network
 
-## Snapshot modes
+## browser_evaluate (changed in v2)
 
-`compact: true` (default) - returns only interactive elements + landmarks, ~70% smaller output. No `tag` field.
-`compact: false` - full accessibility tree with all visible elements. Includes `tag` for generic roles.
+Now runs via `chrome.scripting` MAIN world (NOT chrome.debugger) — no "is being debugged" infobar, CSP-safe. `run_action`/`upload_file`/`drag` still use CDP (CDP-only operations: `DOM.setFileInputFiles`, `Input.dispatchMouseEvent`).
 
-## Extension is plain JS
+## chrome.scripting serialization gotcha
 
-No build step. Reload in chrome://extensions after changes. Chrome kills service workers after 30s idle - the `chrome.alarms` keepalive handles this. Don't remove it.
+`chrome.scripting.executeScript` args **cannot be functions** (recent MV3). The smart-selector fallback fns are passed as their `.toString()` source and rebuilt via `eval('(' + src + ')')` inside the page. If a tool suddenly fails with "Value is unserializable" at args index N, that's the cause.
 
-## Element refs are ephemeral
+## Adding a tool
 
-`browser_snapshot` assigns `data-mcp-ref` attributes. These refs break after navigation, scroll, or DOM changes. Always re-snapshot before using refs.
+1. `mcp-server/src/tools/<name>.ts` — ToolDefinition with `requireTabId()` in the Zod schema
+2. `mcp-server/src/tools/index.ts` — add to `allTools`
+3. `extension/background.js` — add to `dispatch()` map + handler (use `resolveTab(tabId)` + `safeExec`)
+4. If it has side effects, ensure `isIdempotent()` in `daemon-config.ts` does NOT list it.
 
-## Port 7225
+## Build/test
 
-Not negotiable without updating both server default (index.ts) AND extension default (background.js + popup.html). Configurable via `WS_PORT` env var on server side, popup input on extension side.
+- `npm run build` (tsc), `npm test` (vitest), `npm run typecheck`
+- Extension is plain JS (no build) — `node --check` each file after edits
+- Daemon is built to `mcp-server/dist/`. Reload the extension at `chrome://extensions` after any extension edit; content scripts cache per-page-load so open tabs need a hard refresh.
 
-## Tests need port isolation
+## graphify
 
-Each test gets a unique port (counter starting at 19230). WebSocket servers take time to unbind - tests will flake without this.
+This repo is graphify-indexed (457 nodes / 727 edges / 28 communities). Use `graphify query "..."` to trace code paths, `graphify update .` for zero-cost code refresh, `graphify . --backend claude` for image extraction. See memory `mem:graphify-setup` for the Z.ai endpoint config.
+
+## Known benign console noise (already filtered)
+
+`ResizeObserver loop` and `message channel closed` are filtered in `content.js`. Both need extension reload + tab refresh to take effect (content scripts cache per page).

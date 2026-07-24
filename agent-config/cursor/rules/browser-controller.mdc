@@ -1,11 +1,11 @@
 ---
-description: Instructions for using Real Browser MCP to control the user's actual browser
+description: Instructions for using Browser Controller to control the user's actual browser
 alwaysApply: true
 ---
 
-# Real Browser MCP
+# Browser Controller
 
-MCP server: `user-real-browser-mcp`. Controls the user's REAL Chrome browser - not headless. All sessions, logins, cookies are already active.
+MCP server: `browser-controller`. Controls the user's REAL Chrome browser - not headless. All sessions, logins, cookies are already active.
 
 ## CRITICAL: Tab-targeting model (v2)
 

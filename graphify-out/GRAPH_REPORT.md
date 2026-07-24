@@ -1,15 +1,16 @@
-# Graph Report - .  (2026-07-24)
+# Graph Report - real-browser-mcp  (2026-07-24)
 
 ## Corpus Check
-- cluster-only mode — file stats not available
+- 54 files · ~67,058 words
+- Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 456 nodes · 715 edges · 28 communities (21 shown, 7 thin omitted)
+- 457 nodes · 727 edges · 28 communities (21 shown, 7 thin omitted)
 - Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 32 edges (avg confidence: 0.56)
-- Token cost: 944 input · 254 output
+- Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7cdf26ec`
+- Built from commit: `1f25b4c4`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -84,28 +85,28 @@ Cohesion: 0.10
 Nodes (32): clickTool, clickTextTool, consoleTool, dialogTool, dragTool, evaluateTool, fillFormTool, findTool (+24 more)
 
 ### Community 1 - "Extension Background Service"
-Cohesion: 0.10
-Nodes (50): autoPairToken(), autoReSnapshot(), broadcastStatus(), buildStatusPayload(), connect(), consoleByTab, dispatch(), extractTabId() (+42 more)
+Cohesion: 0.11
+Nodes (48): autoPairToken(), autoReSnapshot(), broadcastStatus(), buildStatusPayload(), connect(), consoleByTab, dispatch(), extractTabId() (+40 more)
 
 ### Community 2 - "IPC Daemon Config"
 Cohesion: 0.08
-Nodes (21): DAEMON_INFO_FILE, DEFAULT_WS_PORT, ExtensionRequest, IpcClientMessage, IpcDaemonMessage, loadOrCreateToken(), NOTE: `browser_evaluate` runs ARBITRARY user JS (can submit forms, click,, readToken() (+13 more)
+Nodes (23): DAEMON_INFO_FILE, DEFAULT_WS_PORT, ExtensionRequest, IDEMPOTENT_TOOLS, IpcClientMessage, IpcDaemonMessage, isIdempotent(), loadOrCreateToken() (+15 more)
 
 ### Community 3 - "Package Metadata"
-Cohesion: 0.05
-Nodes (37): author, bin, browser-controller, bugs, url, description, engines, node (+29 more)
+Cohesion: 0.04
+Nodes (44): @modelcontextprotocol/sdk, author, bin, browser-controller, bugs, url, dependencies, @modelcontextprotocol/sdk (+36 more)
 
 ### Community 4 - "Extension Manifest"
 Cohesion: 0.06
 Nodes (31): action, default_icon, default_popup, default_title, background, service_worker, type, content_scripts (+23 more)
 
 ### Community 5 - "Extension Bridge Logic"
-Cohesion: 0.12
-Nodes (10): BridgeOptions, CORS, ExtensionBridge, findListenersOnPort(), HttpRequestHandler, isPortInUse(), PendingRequest, TOOL_TIMEOUTS (+2 more)
+Cohesion: 0.13
+Nodes (8): BridgeOptions, CORS, ExtensionBridge, findListenersOnPort(), HttpRequestHandler, isPortInUse(), PendingRequest, TOOL_TIMEOUTS
 
 ### Community 6 - "Keywords and Dependencies"
-Cohesion: 0.08
-Nodes (26): @modelcontextprotocol/sdk, dependencies, @modelcontextprotocol/sdk, ws, zod, keywords, ai-agent, ai-coding (+18 more)
+Cohesion: 0.10
+Nodes (20): keywords, ai-agent, ai-coding, browser, browser-automation, browser-control, browser-controller, browser-use (+12 more)
 
 ### Community 7 - "Popup UI Logic"
 Cohesion: 0.11
@@ -125,11 +126,11 @@ Nodes (21): compilerOptions, declaration, declarationMap, esModuleInterop, force
 
 ### Community 11 - "Tab Concurrency Lock"
 Cohesion: 0.15
-Nodes (3): runOnTab(), TabLockMap, TabMutexMap
+Nodes (5): handleTabs(), tabLocksToJSON(), runOnTab(), TabLockMap, TabMutexMap
 
 ### Community 12 - "Smart Selector Utils"
 Cohesion: 0.27
-Nodes (8): buildRobustSelectorFromPath(), cssEscape(), isGeneratedClass(), isStableId(), STABLE_ATTRS, FakeEl, mk(), options()
+Nodes (10): buildRobustSelectorFromPath(), cssEscape(), isGeneratedClass(), isStableId(), PAGE_FALLBACK_FN(), PAGE_RESOLVE_FALLBACK_FN(), STABLE_ATTRS, FakeEl (+2 more)
 
 ### Community 13 - "Dev Dependencies"
 Cohesion: 0.18
@@ -156,7 +157,7 @@ Cohesion: 0.40
 Nodes (4): params, sock, sockPath, STATE
 
 ## Knowledge Gaps
-- **188 isolated node(s):** `Quick Setup`, `Cursor`, `Claude Code`, `Skill`, `Manual Install` (+183 more)
+- **190 isolated node(s):** `__dirname`, `consoleByTab`, `networkByTab`, `fallbackByTab`, `tabMutex` (+185 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **7 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -164,16 +165,16 @@ Nodes (4): params, sock, sockPath, STATE
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `DaemonClient` connect `IPC Daemon Config` to `Tab Concurrency Lock`?**
-  _High betweenness centrality (0.027) - this node is a cross-community bridge._
-- **Why does `ExtensionBridge` connect `Extension Bridge Logic` to `IPC Daemon Config`?**
-  _High betweenness centrality (0.018) - this node is a cross-community bridge._
+  _High betweenness centrality (0.107) - this node is a cross-community bridge._
+- **Why does `TabLockMap` connect `Tab Concurrency Lock` to `Extension Background Service`?**
+  _High betweenness centrality (0.060) - this node is a cross-community bridge._
+- **Why does `tabLocksToJSON()` connect `Tab Concurrency Lock` to `Extension Background Service`?**
+  _High betweenness centrality (0.043) - this node is a cross-community bridge._
 - **Are the 22 inferred relationships involving `dispatch()` (e.g. with `handleClick()` and `handleClickByText()`) actually correct?**
   _`dispatch()` has 22 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Quick Setup`, `Cursor`, `Claude Code` to the rest of the system?**
-  _188 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `__dirname`, `consoleByTab`, `networkByTab` to the rest of the system?**
+  _190 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Browser Tool Definitions` be split into smaller, more focused modules?**
   _Cohesion score 0.09994155464640561 - nodes in this community are weakly interconnected._
 - **Should `Extension Background Service` be split into smaller, more focused modules?**
-  _Cohesion score 0.10105580693815988 - nodes in this community are weakly interconnected._
-- **Should `IPC Daemon Config` be split into smaller, more focused modules?**
-  _Cohesion score 0.08416389811738649 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.10530612244897959 - nodes in this community are weakly interconnected._
