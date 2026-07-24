@@ -1,15 +1,16 @@
-# Graph Report - .  (2026-07-24)
+# Graph Report - real-browser-mcp  (2026-07-24)
 
 ## Corpus Check
-- cluster-only mode — file stats not available
+- 54 files · ~26,749 words
+- Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 438 nodes · 714 edges · 23 communities (19 shown, 4 thin omitted)
+- 446 nodes · 709 edges · 24 communities (20 shown, 4 thin omitted)
 - Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 27 edges (avg confidence: 0.51)
-- Token cost: 856 input · 1,430 output
+- Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4bd588f3`
+- Built from commit: `dd91f6c3`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -35,6 +36,7 @@
 - CI and Release Workflows
 - CodeQL Analysis Workflow
 - Security Scorecard Workflow
+- Agent Config
 
 ## God Nodes (most connected - your core abstractions)
 1. `dispatch()` - 24 edges
@@ -69,19 +71,19 @@
 - **Real Browser MCP Three-Piece Architecture** — mcp_server_daemon, chrome_extension, real_browser_mcp [EXTRACTED 0.95]
 - **Tab-First Page Interaction Tools** — browser_snapshot_tool, browser_click_tool, browser_navigate_tool, browser_tabs_tool, browser_evaluate_tool [EXTRACTED 0.90]
 
-## Communities (23 total, 4 thin omitted)
+## Communities (24 total, 4 thin omitted)
 
 ### Community 0 - "Browser Interaction Tools"
 Cohesion: 0.10
 Nodes (32): clickTool, clickTextTool, consoleTool, dialogTool, dragTool, evaluateTool, fillFormTool, findTool (+24 more)
 
 ### Community 1 - "Background Script Utilities"
-Cohesion: 0.11
-Nodes (48): autoPairToken(), autoReSnapshot(), broadcastStatus(), buildStatusPayload(), connect(), consoleByTab, dispatch(), extractTabId() (+40 more)
+Cohesion: 0.10
+Nodes (50): autoPairToken(), autoReSnapshot(), broadcastStatus(), buildStatusPayload(), connect(), consoleByTab, dispatch(), extractTabId() (+42 more)
 
 ### Community 2 - "Daemon IPC Configuration"
 Cohesion: 0.08
-Nodes (21): DAEMON_INFO_FILE, DEFAULT_WS_PORT, ExtensionRequest, IpcClientMessage, IpcDaemonMessage, loadOrCreateToken(), NOTE: `browser_evaluate` runs ARBITRARY user JS (can submit forms, click,, readToken() (+13 more)
+Nodes (23): DAEMON_INFO_FILE, DEFAULT_WS_PORT, ExtensionRequest, IDEMPOTENT_TOOLS, IpcClientMessage, IpcDaemonMessage, isIdempotent(), loadOrCreateToken() (+15 more)
 
 ### Community 3 - "Package Manifest Metadata"
 Cohesion: 0.05
@@ -92,8 +94,8 @@ Cohesion: 0.06
 Nodes (31): action, default_icon, default_popup, default_title, background, service_worker, type, content_scripts (+23 more)
 
 ### Community 5 - "Extension Bridge Client"
-Cohesion: 0.12
-Nodes (10): BridgeOptions, CORS, ExtensionBridge, findListenersOnPort(), HttpRequestHandler, isPortInUse(), PendingRequest, TOOL_TIMEOUTS (+2 more)
+Cohesion: 0.13
+Nodes (8): BridgeOptions, CORS, ExtensionBridge, findListenersOnPort(), HttpRequestHandler, isPortInUse(), PendingRequest, TOOL_TIMEOUTS
 
 ### Community 6 - "NPM Dependencies and Keywords"
 Cohesion: 0.08
@@ -117,11 +119,11 @@ Nodes (21): compilerOptions, declaration, declarationMap, esModuleInterop, force
 
 ### Community 11 - "Tab Concurrency Locking"
 Cohesion: 0.15
-Nodes (5): handleTabs(), tabLocksToJSON(), runOnTab(), TabLockMap, TabMutexMap
+Nodes (3): runOnTab(), TabLockMap, TabMutexMap
 
 ### Community 12 - "Smart Element Selectors"
 Cohesion: 0.27
-Nodes (10): buildRobustSelectorFromPath(), cssEscape(), isGeneratedClass(), isStableId(), PAGE_FALLBACK_FN(), PAGE_RESOLVE_FALLBACK_FN(), STABLE_ATTRS, FakeEl (+2 more)
+Nodes (8): buildRobustSelectorFromPath(), cssEscape(), isGeneratedClass(), isStableId(), STABLE_ATTRS, FakeEl, mk(), options()
 
 ### Community 13 - "Development Dependencies"
 Cohesion: 0.18
@@ -139,8 +141,12 @@ Nodes (4): copyIfNeeded(), __dirname, ensureDir(), installCursor()
 Cohesion: 0.40
 Nodes (4): params, sock, sockPath, STATE
 
+### Community 23 - "Agent Config"
+Cohesion: 0.25
+Nodes (7): Agent Config, Claude Code, Cursor, Manual Install, Quick Setup, Skill, What Gets Installed
+
 ## Knowledge Gaps
-- **175 isolated node(s):** `consoleByTab`, `networkByTab`, `fallbackByTab`, `tabMutex`, `tabLocks` (+170 more)
+- **180 isolated node(s):** `Quick Setup`, `Cursor`, `Claude Code`, `Skill`, `Manual Install` (+175 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **4 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -148,16 +154,16 @@ Nodes (4): params, sock, sockPath, STATE
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `DaemonClient` connect `Daemon IPC Configuration` to `Tab Concurrency Locking`?**
-  _High betweenness centrality (0.117) - this node is a cross-community bridge._
-- **Why does `TabLockMap` connect `Tab Concurrency Locking` to `Background Script Utilities`?**
-  _High betweenness centrality (0.065) - this node is a cross-community bridge._
-- **Why does `tabLocksToJSON()` connect `Tab Concurrency Locking` to `Background Script Utilities`?**
-  _High betweenness centrality (0.046) - this node is a cross-community bridge._
+  _High betweenness centrality (0.028) - this node is a cross-community bridge._
+- **Why does `ExtensionBridge` connect `Extension Bridge Client` to `Daemon IPC Configuration`?**
+  _High betweenness centrality (0.019) - this node is a cross-community bridge._
 - **Are the 22 inferred relationships involving `dispatch()` (e.g. with `handleClick()` and `handleClickByText()`) actually correct?**
   _`dispatch()` has 22 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `consoleByTab`, `networkByTab`, `fallbackByTab` to the rest of the system?**
-  _175 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `Quick Setup`, `Cursor`, `Claude Code` to the rest of the system?**
+  _180 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Browser Interaction Tools` be split into smaller, more focused modules?**
   _Cohesion score 0.09994155464640561 - nodes in this community are weakly interconnected._
 - **Should `Background Script Utilities` be split into smaller, more focused modules?**
-  _Cohesion score 0.10530612244897959 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.10105580693815988 - nodes in this community are weakly interconnected._
+- **Should `Daemon IPC Configuration` be split into smaller, more focused modules?**
+  _Cohesion score 0.0797979797979798 - nodes in this community are weakly interconnected._

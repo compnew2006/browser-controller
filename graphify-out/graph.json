@@ -75,15 +75,169 @@
   },
   "nodes": [
     {
+      "label": "README.md",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "agent_config_readme",
+      "community": 23,
+      "community_name": "Agent Config",
+      "norm_label": "readme.md"
+    },
+    {
+      "label": "Agent Config",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "agent_config_readme_agent_config",
+      "community": 23,
+      "community_name": "Agent Config",
+      "norm_label": "agent config"
+    },
+    {
+      "label": "Quick Setup",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L5",
+      "_origin": "ast",
+      "id": "agent_config_readme_quick_setup",
+      "community": 23,
+      "community_name": "Agent Config",
+      "norm_label": "quick setup"
+    },
+    {
+      "label": "What Gets Installed",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L18",
+      "_origin": "ast",
+      "id": "agent_config_readme_what_gets_installed",
+      "community": 23,
+      "community_name": "Agent Config",
+      "norm_label": "what gets installed"
+    },
+    {
+      "label": "Cursor",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L20",
+      "_origin": "ast",
+      "id": "agent_config_readme_cursor",
+      "community": 23,
+      "community_name": "Agent Config",
+      "norm_label": "cursor"
+    },
+    {
+      "label": "Claude Code",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L33",
+      "_origin": "ast",
+      "id": "agent_config_readme_claude_code",
+      "community": 23,
+      "community_name": "Agent Config",
+      "norm_label": "claude code"
+    },
+    {
+      "label": "Skill",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L39",
+      "_origin": "ast",
+      "id": "agent_config_readme_skill",
+      "community": 23,
+      "community_name": "Agent Config",
+      "norm_label": "skill"
+    },
+    {
+      "label": "Manual Install",
+      "file_type": "document",
+      "source_file": "agent-config/README.md",
+      "source_location": "L43",
+      "_origin": "ast",
+      "id": "agent_config_readme_manual_install",
+      "community": 23,
+      "community_name": "Agent Config",
+      "norm_label": "manual install"
+    },
+    {
+      "label": "setup.mjs",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "agent_config_setup",
+      "community": 15,
+      "community_name": "CLI Setup Scripts",
+      "norm_label": "setup.mjs"
+    },
+    {
+      "label": "__dirname",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L7",
+      "_origin": "ast",
+      "id": "agent_config_setup_dirname",
+      "community": 15,
+      "community_name": "CLI Setup Scripts",
+      "norm_label": "__dirname"
+    },
+    {
+      "label": "ensureDir()",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L21",
+      "_origin": "ast",
+      "id": "agent_config_setup_ensuredir",
+      "community": 15,
+      "community_name": "CLI Setup Scripts",
+      "norm_label": "ensuredir()"
+    },
+    {
+      "label": "copyIfNeeded()",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L28",
+      "_origin": "ast",
+      "id": "agent_config_setup_copyifneeded",
+      "community": 15,
+      "community_name": "CLI Setup Scripts",
+      "norm_label": "copyifneeded()"
+    },
+    {
+      "label": "installCursor()",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L36",
+      "_origin": "ast",
+      "id": "agent_config_setup_installcursor",
+      "community": 15,
+      "community_name": "CLI Setup Scripts",
+      "norm_label": "installcursor()"
+    },
+    {
+      "label": "installClaude()",
+      "file_type": "code",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L59",
+      "_origin": "ast",
+      "id": "agent_config_setup_installclaude",
+      "community": 15,
+      "community_name": "CLI Setup Scripts",
+      "norm_label": "installclaude()"
+    },
+    {
       "label": "background.js",
       "file_type": "code",
       "source_file": "extension/background.js",
       "source_location": "L1",
       "_origin": "ast",
+      "id": "extension_background",
       "community": 1,
-      "norm_label": "background.js",
       "community_name": "Background Script Utilities",
-      "id": "extension_background"
+      "norm_label": "background.js"
     },
     {
       "label": "consoleByTab",
@@ -91,10 +245,10 @@
       "source_file": "extension/background.js",
       "source_location": "L43",
       "_origin": "ast",
+      "id": "extension_background_consolebytab",
       "community": 1,
-      "norm_label": "consolebytab",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_consolebytab"
+      "norm_label": "consolebytab"
     },
     {
       "label": "networkByTab",
@@ -102,10 +256,10 @@
       "source_file": "extension/background.js",
       "source_location": "L44",
       "_origin": "ast",
+      "id": "extension_background_networkbytab",
       "community": 1,
-      "norm_label": "networkbytab",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_networkbytab"
+      "norm_label": "networkbytab"
     },
     {
       "label": "fallbackByTab",
@@ -113,10 +267,10 @@
       "source_file": "extension/background.js",
       "source_location": "L50",
       "_origin": "ast",
+      "id": "extension_background_fallbackbytab",
       "community": 1,
-      "norm_label": "fallbackbytab",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_fallbackbytab"
+      "norm_label": "fallbackbytab"
     },
     {
       "label": "tabMutex",
@@ -124,10 +278,10 @@
       "source_file": "extension/background.js",
       "source_location": "L55",
       "_origin": "ast",
+      "id": "extension_background_tabmutex",
       "community": 1,
-      "norm_label": "tabmutex",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_tabmutex"
+      "norm_label": "tabmutex"
     },
     {
       "label": "tabLocks",
@@ -135,10 +289,10 @@
       "source_file": "extension/background.js",
       "source_location": "L56",
       "_origin": "ast",
+      "id": "extension_background_tablocks",
       "community": 1,
-      "norm_label": "tablocks",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_tablocks"
+      "norm_label": "tablocks"
     },
     {
       "label": "autoPairToken()",
@@ -146,10 +300,10 @@
       "source_file": "extension/background.js",
       "source_location": "L67",
       "_origin": "ast",
+      "id": "extension_background_autopairtoken",
       "community": 1,
-      "norm_label": "autopairtoken()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_autopairtoken"
+      "norm_label": "autopairtoken()"
     },
     {
       "label": "initConnection()",
@@ -157,10 +311,10 @@
       "source_file": "extension/background.js",
       "source_location": "L85",
       "_origin": "ast",
+      "id": "extension_background_initconnection",
       "community": 1,
-      "norm_label": "initconnection()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_initconnection"
+      "norm_label": "initconnection()"
     },
     {
       "label": "wsUrl()",
@@ -168,10 +322,10 @@
       "source_file": "extension/background.js",
       "source_location": "L99",
       "_origin": "ast",
+      "id": "extension_background_wsurl",
       "community": 1,
-      "norm_label": "wsurl()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_wsurl"
+      "norm_label": "wsurl()"
     },
     {
       "label": "connect()",
@@ -179,10 +333,10 @@
       "source_file": "extension/background.js",
       "source_location": "L112",
       "_origin": "ast",
+      "id": "extension_background_connect",
       "community": 1,
-      "norm_label": "connect()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_connect"
+      "norm_label": "connect()"
     },
     {
       "label": "scheduleReconnect()",
@@ -190,10 +344,10 @@
       "source_file": "extension/background.js",
       "source_location": "L171",
       "_origin": "ast",
+      "id": "extension_background_schedulereconnect",
       "community": 1,
-      "norm_label": "schedulereconnect()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_schedulereconnect"
+      "norm_label": "schedulereconnect()"
     },
     {
       "label": "updateBadge()",
@@ -201,10 +355,10 @@
       "source_file": "extension/background.js",
       "source_location": "L187",
       "_origin": "ast",
+      "id": "extension_background_updatebadge",
       "community": 1,
-      "norm_label": "updatebadge()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_updatebadge"
+      "norm_label": "updatebadge()"
     },
     {
       "label": "showOverlay()",
@@ -212,10 +366,10 @@
       "source_file": "extension/background.js",
       "source_location": "L199",
       "_origin": "ast",
+      "id": "extension_background_showoverlay",
       "community": 1,
-      "norm_label": "showoverlay()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_showoverlay"
+      "norm_label": "showoverlay()"
     },
     {
       "label": "hideOverlay()",
@@ -223,10 +377,10 @@
       "source_file": "extension/background.js",
       "source_location": "L225",
       "_origin": "ast",
+      "id": "extension_background_hideoverlay",
       "community": 1,
-      "norm_label": "hideoverlay()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_hideoverlay"
+      "norm_label": "hideoverlay()"
     },
     {
       "label": "getConnectionState()",
@@ -234,10 +388,10 @@
       "source_file": "extension/background.js",
       "source_location": "L234",
       "_origin": "ast",
+      "id": "extension_background_getconnectionstate",
       "community": 1,
-      "norm_label": "getconnectionstate()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_getconnectionstate"
+      "norm_label": "getconnectionstate()"
     },
     {
       "label": "buildStatusPayload()",
@@ -245,10 +399,10 @@
       "source_file": "extension/background.js",
       "source_location": "L240",
       "_origin": "ast",
+      "id": "extension_background_buildstatuspayload",
       "community": 1,
-      "norm_label": "buildstatuspayload()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_buildstatuspayload"
+      "norm_label": "buildstatuspayload()"
     },
     {
       "label": "tabLocksToJSON()",
@@ -256,10 +410,10 @@
       "source_file": "extension/background.js",
       "source_location": "L255",
       "_origin": "ast",
-      "community": 11,
-      "norm_label": "tablockstojson()",
-      "community_name": "Tab Concurrency Locking",
-      "id": "extension_background_tablockstojson"
+      "id": "extension_background_tablockstojson",
+      "community": 1,
+      "community_name": "Background Script Utilities",
+      "norm_label": "tablockstojson()"
     },
     {
       "label": "broadcastStatus()",
@@ -267,10 +421,10 @@
       "source_file": "extension/background.js",
       "source_location": "L259",
       "_origin": "ast",
+      "id": "extension_background_broadcaststatus",
       "community": 1,
-      "norm_label": "broadcaststatus()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_broadcaststatus"
+      "norm_label": "broadcaststatus()"
     },
     {
       "label": "handleMessage()",
@@ -278,10 +432,10 @@
       "source_file": "extension/background.js",
       "source_location": "L269",
       "_origin": "ast",
+      "id": "extension_background_handlemessage",
       "community": 1,
-      "norm_label": "handlemessage()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlemessage"
+      "norm_label": "handlemessage()"
     },
     {
       "label": "sendResponse()",
@@ -289,10 +443,10 @@
       "source_file": "extension/background.js",
       "source_location": "L314",
       "_origin": "ast",
+      "id": "extension_background_sendresponse",
       "community": 1,
-      "norm_label": "sendresponse()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_sendresponse"
+      "norm_label": "sendresponse()"
     },
     {
       "label": "extractTabId()",
@@ -300,10 +454,10 @@
       "source_file": "extension/background.js",
       "source_location": "L321",
       "_origin": "ast",
+      "id": "extension_background_extracttabid",
       "community": 1,
-      "norm_label": "extracttabid()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_extracttabid"
+      "norm_label": "extracttabid()"
     },
     {
       "label": "dispatch()",
@@ -311,10 +465,10 @@
       "source_file": "extension/background.js",
       "source_location": "L336",
       "_origin": "ast",
+      "id": "extension_background_dispatch",
       "community": 1,
-      "norm_label": "dispatch()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_dispatch"
+      "norm_label": "dispatch()"
     },
     {
       "label": "resolveTab()",
@@ -322,10 +476,10 @@
       "source_file": "extension/background.js",
       "source_location": "L376",
       "_origin": "ast",
+      "id": "extension_background_resolvetab",
       "community": 1,
-      "norm_label": "resolvetab()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_resolvetab"
+      "norm_label": "resolvetab()"
     },
     {
       "label": "getFallback()",
@@ -333,10 +487,10 @@
       "source_file": "extension/background.js",
       "source_location": "L393",
       "_origin": "ast",
+      "id": "extension_background_getfallback",
       "community": 1,
-      "norm_label": "getfallback()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_getfallback"
+      "norm_label": "getfallback()"
     },
     {
       "label": "autoReSnapshot()",
@@ -344,10 +498,10 @@
       "source_file": "extension/background.js",
       "source_location": "L412",
       "_origin": "ast",
+      "id": "extension_background_autoresnapshot",
       "community": 1,
-      "norm_label": "autoresnapshot()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_autoresnapshot"
+      "norm_label": "autoresnapshot()"
     },
     {
       "label": "safeExec()",
@@ -355,10 +509,10 @@
       "source_file": "extension/background.js",
       "source_location": "L436",
       "_origin": "ast",
+      "id": "extension_background_safeexec",
       "community": 1,
-      "norm_label": "safeexec()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_safeexec"
+      "norm_label": "safeexec()"
     },
     {
       "label": "getTabBuffer()",
@@ -366,10 +520,10 @@
       "source_file": "extension/background.js",
       "source_location": "L456",
       "_origin": "ast",
+      "id": "extension_background_gettabbuffer",
       "community": 1,
-      "norm_label": "gettabbuffer()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_gettabbuffer"
+      "norm_label": "gettabbuffer()"
     },
     {
       "label": "pushCapped()",
@@ -377,10 +531,10 @@
       "source_file": "extension/background.js",
       "source_location": "L465",
       "_origin": "ast",
+      "id": "extension_background_pushcapped",
       "community": 1,
-      "norm_label": "pushcapped()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_pushcapped"
+      "norm_label": "pushcapped()"
     },
     {
       "label": "getActiveTab()",
@@ -388,10 +542,10 @@
       "source_file": "extension/background.js",
       "source_location": "L473",
       "_origin": "ast",
+      "id": "extension_background_getactivetab",
       "community": 1,
-      "norm_label": "getactivetab()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_getactivetab"
+      "norm_label": "getactivetab()"
     },
     {
       "label": "handleNavigate()",
@@ -399,10 +553,10 @@
       "source_file": "extension/background.js",
       "source_location": "L479",
       "_origin": "ast",
+      "id": "extension_background_handlenavigate",
       "community": 1,
-      "norm_label": "handlenavigate()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlenavigate"
+      "norm_label": "handlenavigate()"
     },
     {
       "label": "handleClick()",
@@ -410,10 +564,10 @@
       "source_file": "extension/background.js",
       "source_location": "L503",
       "_origin": "ast",
+      "id": "extension_background_handleclick",
       "community": 1,
-      "norm_label": "handleclick()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handleclick"
+      "norm_label": "handleclick()"
     },
     {
       "label": "handleType()",
@@ -421,10 +575,10 @@
       "source_file": "extension/background.js",
       "source_location": "L565",
       "_origin": "ast",
+      "id": "extension_background_handletype",
       "community": 1,
-      "norm_label": "handletype()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handletype"
+      "norm_label": "handletype()"
     },
     {
       "label": "handleScroll()",
@@ -432,10 +586,10 @@
       "source_file": "extension/background.js",
       "source_location": "L623",
       "_origin": "ast",
+      "id": "extension_background_handlescroll",
       "community": 1,
-      "norm_label": "handlescroll()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlescroll"
+      "norm_label": "handlescroll()"
     },
     {
       "label": "handlePressKey()",
@@ -443,10 +597,10 @@
       "source_file": "extension/background.js",
       "source_location": "L671",
       "_origin": "ast",
+      "id": "extension_background_handlepresskey",
       "community": 1,
-      "norm_label": "handlepresskey()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlepresskey"
+      "norm_label": "handlepresskey()"
     },
     {
       "label": "handleWait()",
@@ -454,10 +608,10 @@
       "source_file": "extension/background.js",
       "source_location": "L704",
       "_origin": "ast",
+      "id": "extension_background_handlewait",
       "community": 1,
-      "norm_label": "handlewait()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlewait"
+      "norm_label": "handlewait()"
     },
     {
       "label": "handleHover()",
@@ -465,10 +619,10 @@
       "source_file": "extension/background.js",
       "source_location": "L731",
       "_origin": "ast",
+      "id": "extension_background_handlehover",
       "community": 1,
-      "norm_label": "handlehover()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlehover"
+      "norm_label": "handlehover()"
     },
     {
       "label": "handleSelect()",
@@ -476,10 +630,10 @@
       "source_file": "extension/background.js",
       "source_location": "L754",
       "_origin": "ast",
+      "id": "extension_background_handleselect",
       "community": 1,
-      "norm_label": "handleselect()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handleselect"
+      "norm_label": "handleselect()"
     },
     {
       "label": "handleSnapshot()",
@@ -487,10 +641,10 @@
       "source_file": "extension/background.js",
       "source_location": "L785",
       "_origin": "ast",
+      "id": "extension_background_handlesnapshot",
       "community": 1,
-      "norm_label": "handlesnapshot()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlesnapshot"
+      "norm_label": "handlesnapshot()"
     },
     {
       "label": "handleScreenshot()",
@@ -498,10 +652,10 @@
       "source_file": "extension/background.js",
       "source_location": "L968",
       "_origin": "ast",
+      "id": "extension_background_handlescreenshot",
       "community": 1,
-      "norm_label": "handlescreenshot()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlescreenshot"
+      "norm_label": "handlescreenshot()"
     },
     {
       "label": "handleConsole()",
@@ -509,10 +663,10 @@
       "source_file": "extension/background.js",
       "source_location": "L984",
       "_origin": "ast",
+      "id": "extension_background_handleconsole",
       "community": 1,
-      "norm_label": "handleconsole()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handleconsole"
+      "norm_label": "handleconsole()"
     },
     {
       "label": "handleNetwork()",
@@ -520,10 +674,10 @@
       "source_file": "extension/background.js",
       "source_location": "L992",
       "_origin": "ast",
+      "id": "extension_background_handlenetwork",
       "community": 1,
-      "norm_label": "handlenetwork()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlenetwork"
+      "norm_label": "handlenetwork()"
     },
     {
       "label": "handleTabs()",
@@ -531,10 +685,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1003",
       "_origin": "ast",
-      "community": 11,
-      "norm_label": "handletabs()",
-      "community_name": "Tab Concurrency Locking",
-      "id": "extension_background_handletabs"
+      "id": "extension_background_handletabs",
+      "community": 1,
+      "community_name": "Background Script Utilities",
+      "norm_label": "handletabs()"
     },
     {
       "label": "handleFind()",
@@ -542,10 +696,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1053",
       "_origin": "ast",
+      "id": "extension_background_handlefind",
       "community": 1,
-      "norm_label": "handlefind()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlefind"
+      "norm_label": "handlefind()"
     },
     {
       "label": "handleGetPageText()",
@@ -553,10 +707,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1103",
       "_origin": "ast",
+      "id": "extension_background_handlegetpagetext",
       "community": 1,
-      "norm_label": "handlegetpagetext()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlegetpagetext"
+      "norm_label": "handlegetpagetext()"
     },
     {
       "label": "handleEvaluate()",
@@ -564,10 +718,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1126",
       "_origin": "ast",
+      "id": "extension_background_handleevaluate",
       "community": 1,
-      "norm_label": "handleevaluate()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handleevaluate"
+      "norm_label": "handleevaluate()"
     },
     {
       "label": "handleClickByText()",
@@ -575,10 +729,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1150",
       "_origin": "ast",
+      "id": "extension_background_handleclickbytext",
       "community": 1,
-      "norm_label": "handleclickbytext()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handleclickbytext"
+      "norm_label": "handleclickbytext()"
     },
     {
       "label": "handleDialog()",
@@ -586,10 +740,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1200",
       "_origin": "ast",
+      "id": "extension_background_handledialog",
       "community": 1,
-      "norm_label": "handledialog()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handledialog"
+      "norm_label": "handledialog()"
     },
     {
       "label": "handleRunAction()",
@@ -597,10 +751,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1236",
       "_origin": "ast",
+      "id": "extension_background_handlerunaction",
       "community": 1,
-      "norm_label": "handlerunaction()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlerunaction"
+      "norm_label": "handlerunaction()"
     },
     {
       "label": "handleUploadFile()",
@@ -608,10 +762,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1262",
       "_origin": "ast",
+      "id": "extension_background_handleuploadfile",
       "community": 1,
-      "norm_label": "handleuploadfile()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handleuploadfile"
+      "norm_label": "handleuploadfile()"
     },
     {
       "label": "handleDrag()",
@@ -619,10 +773,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1296",
       "_origin": "ast",
+      "id": "extension_background_handledrag",
       "community": 1,
-      "norm_label": "handledrag()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handledrag"
+      "norm_label": "handledrag()"
     },
     {
       "label": "handleFillForm()",
@@ -630,10 +784,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1350",
       "_origin": "ast",
+      "id": "extension_background_handlefillform",
       "community": 1,
-      "norm_label": "handlefillform()",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_handlefillform"
+      "norm_label": "handlefillform()"
     },
     {
       "label": "NOTE: do NOT `return true` unconditionally. Returning true tells Chrome the",
@@ -641,10 +795,10 @@
       "source_file": "extension/background.js",
       "source_location": "L1411",
       "_origin": "ast",
+      "id": "extension_background_rationale_1411",
       "community": 1,
-      "norm_label": "note: do not `return true` unconditionally. returning true tells chrome the",
       "community_name": "Background Script Utilities",
-      "id": "extension_background_rationale_1411"
+      "norm_label": "note: do not `return true` unconditionally. returning true tells chrome the"
     },
     {
       "label": "content.js",
@@ -652,10 +806,10 @@
       "source_file": "extension/content.js",
       "source_location": "L1",
       "_origin": "ast",
+      "id": "extension_content",
       "community": 17,
-      "norm_label": "content.js",
       "community_name": "Content Script Capture",
-      "id": "extension_content"
+      "norm_label": "content.js"
     },
     {
       "label": "capture()",
@@ -663,10 +817,10 @@
       "source_file": "extension/content.js",
       "source_location": "L14",
       "_origin": "ast",
+      "id": "extension_content_capture",
       "community": 17,
-      "norm_label": "capture()",
       "community_name": "Content Script Capture",
-      "id": "extension_content_capture"
+      "norm_label": "capture()"
     },
     {
       "label": "tab-concurrency.js",
@@ -1884,9 +2038,9 @@
       "source_file": "mcp-server/src/daemon-config.ts",
       "source_location": "L73",
       "_origin": "ast",
-      "community": 5,
+      "community": 2,
       "norm_label": "idempotent_tools",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Daemon IPC Configuration",
       "id": "mcp_server_src_daemon_config_idempotent_tools"
     },
     {
@@ -1895,9 +2049,9 @@
       "source_file": "mcp-server/src/daemon-config.ts",
       "source_location": "L82",
       "_origin": "ast",
-      "community": 5,
+      "community": 2,
       "norm_label": "isidempotent()",
-      "community_name": "Extension Bridge Client",
+      "community_name": "Daemon IPC Configuration",
       "id": "mcp_server_src_daemon_config_isidempotent"
     },
     {
@@ -4277,72 +4431,6 @@
       "id": "vitest_config"
     },
     {
-      "label": "setup.mjs",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "setup.mjs",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup"
-    },
-    {
-      "label": "__dirname",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L7",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "__dirname",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_dirname"
-    },
-    {
-      "label": "ensureDir()",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L21",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "ensuredir()",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_ensuredir"
-    },
-    {
-      "label": "copyIfNeeded()",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L28",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "copyifneeded()",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_copyifneeded"
-    },
-    {
-      "label": "installCursor()",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L36",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "installcursor()",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_installcursor"
-    },
-    {
-      "label": "installClaude()",
-      "file_type": "code",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L59",
-      "_origin": "ast",
-      "community": 15,
-      "norm_label": "installclaude()",
-      "community_name": "CLI Setup Scripts",
-      "id": "agent_config_setup_installclaude"
-    },
-    {
       "label": "Real Browser MCP",
       "file_type": "concept",
       "source_file": "README.md",
@@ -5049,13 +5137,169 @@
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L1",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_readme",
+      "target": "agent_config_readme_agent_config",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L43",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_readme_agent_config",
+      "target": "agent_config_readme_manual_install",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L5",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_readme_agent_config",
+      "target": "agent_config_readme_quick_setup",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L18",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_readme_agent_config",
+      "target": "agent_config_readme_what_gets_installed",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L33",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_readme_what_gets_installed",
+      "target": "agent_config_readme_claude_code",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L20",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_readme_what_gets_installed",
+      "target": "agent_config_readme_cursor",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/README.md",
+      "source_location": "L39",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_readme_what_gets_installed",
+      "target": "agent_config_readme_skill",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L28",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_copyifneeded",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L7",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_dirname",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L21",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_ensuredir",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L59",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_installclaude",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L36",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_setup",
+      "target": "agent_config_setup_installcursor",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L40",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_setup_installcursor",
+      "target": "agent_config_setup_ensuredir",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "agent-config/setup.mjs",
+      "source_location": "L41",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "agent_config_setup_installcursor",
+      "target": "agent_config_setup_copyifneeded",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
       "source_file": "extension/background.js",
       "source_location": "L67",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_autopairtoken"
+      "target": "extension_background_autopairtoken",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5064,9 +5308,9 @@
       "source_location": "L412",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_autoresnapshot"
+      "target": "extension_background_autoresnapshot",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5075,9 +5319,9 @@
       "source_location": "L259",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_broadcaststatus"
+      "target": "extension_background_broadcaststatus",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5086,9 +5330,9 @@
       "source_location": "L240",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_buildstatuspayload"
+      "target": "extension_background_buildstatuspayload",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5097,9 +5341,9 @@
       "source_location": "L112",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_connect"
+      "target": "extension_background_connect",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5108,9 +5352,9 @@
       "source_location": "L43",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_consolebytab"
+      "target": "extension_background_consolebytab",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5119,9 +5363,9 @@
       "source_location": "L336",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_dispatch"
+      "target": "extension_background_dispatch",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5130,9 +5374,9 @@
       "source_location": "L321",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_extracttabid"
+      "target": "extension_background_extracttabid",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5141,9 +5385,9 @@
       "source_location": "L50",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_fallbackbytab"
+      "target": "extension_background_fallbackbytab",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5152,9 +5396,9 @@
       "source_location": "L473",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_getactivetab"
+      "target": "extension_background_getactivetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5163,9 +5407,9 @@
       "source_location": "L234",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_getconnectionstate"
+      "target": "extension_background_getconnectionstate",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5174,9 +5418,9 @@
       "source_location": "L393",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_getfallback"
+      "target": "extension_background_getfallback",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5185,9 +5429,9 @@
       "source_location": "L456",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_gettabbuffer"
+      "target": "extension_background_gettabbuffer",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5196,9 +5440,9 @@
       "source_location": "L503",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleclick"
+      "target": "extension_background_handleclick",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5207,9 +5451,9 @@
       "source_location": "L1150",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleclickbytext"
+      "target": "extension_background_handleclickbytext",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5218,9 +5462,9 @@
       "source_location": "L984",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleconsole"
+      "target": "extension_background_handleconsole",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5229,9 +5473,9 @@
       "source_location": "L1200",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handledialog"
+      "target": "extension_background_handledialog",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5240,9 +5484,9 @@
       "source_location": "L1296",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handledrag"
+      "target": "extension_background_handledrag",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5251,9 +5495,9 @@
       "source_location": "L1126",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleevaluate"
+      "target": "extension_background_handleevaluate",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5262,9 +5506,9 @@
       "source_location": "L1350",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlefillform"
+      "target": "extension_background_handlefillform",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5273,9 +5517,9 @@
       "source_location": "L1053",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlefind"
+      "target": "extension_background_handlefind",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5284,9 +5528,9 @@
       "source_location": "L1103",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlegetpagetext"
+      "target": "extension_background_handlegetpagetext",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5295,9 +5539,9 @@
       "source_location": "L731",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlehover"
+      "target": "extension_background_handlehover",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5306,9 +5550,9 @@
       "source_location": "L269",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlemessage"
+      "target": "extension_background_handlemessage",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5317,9 +5561,9 @@
       "source_location": "L479",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlenavigate"
+      "target": "extension_background_handlenavigate",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5328,9 +5572,9 @@
       "source_location": "L992",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlenetwork"
+      "target": "extension_background_handlenetwork",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5339,9 +5583,9 @@
       "source_location": "L671",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlepresskey"
+      "target": "extension_background_handlepresskey",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5350,9 +5594,9 @@
       "source_location": "L1236",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlerunaction"
+      "target": "extension_background_handlerunaction",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5361,9 +5605,9 @@
       "source_location": "L968",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlescreenshot"
+      "target": "extension_background_handlescreenshot",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5372,9 +5616,9 @@
       "source_location": "L623",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlescroll"
+      "target": "extension_background_handlescroll",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5383,9 +5627,9 @@
       "source_location": "L754",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleselect"
+      "target": "extension_background_handleselect",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5394,9 +5638,9 @@
       "source_location": "L785",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlesnapshot"
+      "target": "extension_background_handlesnapshot",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5405,9 +5649,9 @@
       "source_location": "L1003",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handletabs"
+      "target": "extension_background_handletabs",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5416,9 +5660,9 @@
       "source_location": "L565",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handletype"
+      "target": "extension_background_handletype",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5427,9 +5671,9 @@
       "source_location": "L1262",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handleuploadfile"
+      "target": "extension_background_handleuploadfile",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5438,9 +5682,9 @@
       "source_location": "L704",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_handlewait"
+      "target": "extension_background_handlewait",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5449,9 +5693,9 @@
       "source_location": "L225",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_hideoverlay"
+      "target": "extension_background_hideoverlay",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5460,9 +5704,9 @@
       "source_location": "L85",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_initconnection"
+      "target": "extension_background_initconnection",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5471,9 +5715,9 @@
       "source_location": "L44",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_networkbytab"
+      "target": "extension_background_networkbytab",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5482,9 +5726,9 @@
       "source_location": "L465",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_pushcapped"
+      "target": "extension_background_pushcapped",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5493,9 +5737,9 @@
       "source_location": "L376",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5504,9 +5748,9 @@
       "source_location": "L436",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5515,9 +5759,9 @@
       "source_location": "L171",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_schedulereconnect"
+      "target": "extension_background_schedulereconnect",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5526,9 +5770,9 @@
       "source_location": "L314",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_sendresponse"
+      "target": "extension_background_sendresponse",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5537,9 +5781,9 @@
       "source_location": "L199",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_showoverlay"
+      "target": "extension_background_showoverlay",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5548,9 +5792,9 @@
       "source_location": "L56",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_tablocks"
+      "target": "extension_background_tablocks",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5559,9 +5803,9 @@
       "source_location": "L255",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_tablockstojson"
+      "target": "extension_background_tablockstojson",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5570,9 +5814,9 @@
       "source_location": "L55",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_tabmutex"
+      "target": "extension_background_tabmutex",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5581,9 +5825,9 @@
       "source_location": "L187",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_updatebadge"
+      "target": "extension_background_updatebadge",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -5592,93 +5836,9 @@
       "source_location": "L99",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background",
-      "target": "extension_background_wsurl"
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L37",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_lib_tab_concurrency"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L37",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_lib_tab_concurrency_runontab"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L37",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_lib_tab_concurrency_tablockmap"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L37",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_lib_tab_concurrency_tabmutexmap"
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L38",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_utils_smart_selector"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L38",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_utils_smart_selector_page_fallback_fn"
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L38",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background",
-      "target": "extension_utils_smart_selector_page_resolve_fallback_fn"
+      "target": "extension_background_wsurl",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
@@ -5687,9 +5847,9 @@
       "source_location": "L1411",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_rationale_1411",
-      "target": "extension_background"
+      "target": "extension_background",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5699,9 +5859,9 @@
       "source_location": "L118",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_connect",
-      "target": "extension_background_autopairtoken"
+      "target": "extension_background_autopairtoken",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5711,9 +5871,9 @@
       "source_location": "L95",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_initconnection",
-      "target": "extension_background_autopairtoken"
+      "target": "extension_background_autopairtoken",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5723,9 +5883,9 @@
       "source_location": "L96",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_initconnection",
-      "target": "extension_background_connect"
+      "target": "extension_background_connect",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5735,9 +5895,9 @@
       "source_location": "L124",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_connect",
-      "target": "extension_background_wsurl"
+      "target": "extension_background_wsurl",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5747,9 +5907,9 @@
       "source_location": "L133",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_connect",
-      "target": "extension_background_broadcaststatus"
+      "target": "extension_background_broadcaststatus",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5759,21 +5919,9 @@
       "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_connect",
-      "target": "extension_background_handlemessage"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L132",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background_connect",
-      "target": "extension_background_updatebadge"
+      "target": "extension_background_handlemessage",
+      "confidence_score": 1.0
     },
     {
       "relation": "indirect_call",
@@ -5783,9 +5931,21 @@
       "source_location": "L178",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_schedulereconnect",
-      "target": "extension_background_connect"
+      "target": "extension_background_connect",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "extension/background.js",
+      "source_location": "L132",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "extension_background_connect",
+      "target": "extension_background_updatebadge",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5795,9 +5955,9 @@
       "source_location": "L177",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_schedulereconnect",
-      "target": "extension_background_broadcaststatus"
+      "target": "extension_background_broadcaststatus",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5807,9 +5967,9 @@
       "source_location": "L296",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_updatebadge"
+      "target": "extension_background_updatebadge",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5819,9 +5979,9 @@
       "source_location": "L297",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_showoverlay"
+      "target": "extension_background_showoverlay",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5831,9 +5991,9 @@
       "source_location": "L306",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_hideoverlay"
+      "target": "extension_background_hideoverlay",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5843,9 +6003,9 @@
       "source_location": "L243",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_buildstatuspayload",
-      "target": "extension_background_getconnectionstate"
+      "target": "extension_background_getconnectionstate",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5855,9 +6015,9 @@
       "source_location": "L260",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_broadcaststatus",
-      "target": "extension_background_buildstatuspayload"
+      "target": "extension_background_buildstatuspayload",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5867,21 +6027,9 @@
       "source_location": "L250",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_buildstatuspayload",
-      "target": "extension_background_tablockstojson"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "extension/background.js",
-      "source_location": "L256",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "extension_background_tablockstojson",
-      "target": "extension_lib_tab_concurrency_tablockmap_snapshot"
+      "target": "extension_background_tablockstojson",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5891,9 +6039,9 @@
       "source_location": "L1038",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handletabs",
-      "target": "extension_background_broadcaststatus"
+      "target": "extension_background_broadcaststatus",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5903,9 +6051,9 @@
       "source_location": "L280",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_dispatch"
+      "target": "extension_background_dispatch",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5915,9 +6063,9 @@
       "source_location": "L275",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_extracttabid"
+      "target": "extension_background_extracttabid",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -5927,21 +6075,9 @@
       "source_location": "L281",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlemessage",
-      "target": "extension_background_sendresponse"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "extension/background.js",
-      "source_location": "L289",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "extension_background_handlemessage",
-      "target": "extension_lib_tab_concurrency_runontab"
+      "target": "extension_background_sendresponse",
+      "confidence_score": 1.0
     },
     {
       "relation": "indirect_call",
@@ -5951,9 +6087,9 @@
       "source_location": "L339",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleclick"
+      "target": "extension_background_handleclick",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -5963,9 +6099,9 @@
       "source_location": "L352",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleclickbytext"
+      "target": "extension_background_handleclickbytext",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -5975,9 +6111,9 @@
       "source_location": "L346",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleconsole"
+      "target": "extension_background_handleconsole",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -5987,9 +6123,9 @@
       "source_location": "L353",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handledialog"
+      "target": "extension_background_handledialog",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -5999,9 +6135,9 @@
       "source_location": "L356",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handledrag"
+      "target": "extension_background_handledrag",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6011,9 +6147,9 @@
       "source_location": "L351",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleevaluate"
+      "target": "extension_background_handleevaluate",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6023,9 +6159,9 @@
       "source_location": "L357",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlefillform"
+      "target": "extension_background_handlefillform",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6035,9 +6171,9 @@
       "source_location": "L358",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlefind"
+      "target": "extension_background_handlefind",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6047,9 +6183,9 @@
       "source_location": "L360",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlegetpagetext"
+      "target": "extension_background_handlegetpagetext",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6059,9 +6195,9 @@
       "source_location": "L349",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlehover"
+      "target": "extension_background_handlehover",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6071,9 +6207,9 @@
       "source_location": "L338",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlenavigate"
+      "target": "extension_background_handlenavigate",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6083,9 +6219,9 @@
       "source_location": "L347",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlenetwork"
+      "target": "extension_background_handlenetwork",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6095,9 +6231,9 @@
       "source_location": "L342",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlepresskey"
+      "target": "extension_background_handlepresskey",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6107,9 +6243,9 @@
       "source_location": "L355",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlerunaction"
+      "target": "extension_background_handlerunaction",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6119,9 +6255,9 @@
       "source_location": "L345",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlescreenshot"
+      "target": "extension_background_handlescreenshot",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6131,9 +6267,9 @@
       "source_location": "L341",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlescroll"
+      "target": "extension_background_handlescroll",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6143,9 +6279,9 @@
       "source_location": "L350",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleselect"
+      "target": "extension_background_handleselect",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6155,9 +6291,9 @@
       "source_location": "L344",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlesnapshot"
+      "target": "extension_background_handlesnapshot",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6167,9 +6303,9 @@
       "source_location": "L348",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handletabs"
+      "target": "extension_background_handletabs",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6179,9 +6315,9 @@
       "source_location": "L340",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handletype"
+      "target": "extension_background_handletype",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6191,9 +6327,9 @@
       "source_location": "L354",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handleuploadfile"
+      "target": "extension_background_handleuploadfile",
+      "confidence_score": 0.5
     },
     {
       "relation": "indirect_call",
@@ -6203,9 +6339,9 @@
       "source_location": "L343",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 0.5,
       "source": "extension_background_dispatch",
-      "target": "extension_background_handlewait"
+      "target": "extension_background_handlewait",
+      "confidence_score": 0.5
     },
     {
       "relation": "calls",
@@ -6215,9 +6351,9 @@
       "source_location": "L505",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleclick",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6227,9 +6363,9 @@
       "source_location": "L1152",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleclickbytext",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6239,9 +6375,9 @@
       "source_location": "L1202",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handledialog",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6251,9 +6387,9 @@
       "source_location": "L1298",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handledrag",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6263,9 +6399,9 @@
       "source_location": "L1128",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleevaluate",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6275,9 +6411,9 @@
       "source_location": "L1355",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlefillform",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6287,9 +6423,9 @@
       "source_location": "L1055",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlefind",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6299,9 +6435,9 @@
       "source_location": "L1105",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlegetpagetext",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6311,9 +6447,9 @@
       "source_location": "L733",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlehover",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6323,9 +6459,9 @@
       "source_location": "L482",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlenavigate",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6335,9 +6471,9 @@
       "source_location": "L673",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlepresskey",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6347,9 +6483,9 @@
       "source_location": "L1239",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlerunaction",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6359,9 +6495,9 @@
       "source_location": "L970",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlescreenshot",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6371,9 +6507,9 @@
       "source_location": "L625",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlescroll",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6383,9 +6519,9 @@
       "source_location": "L756",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleselect",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6395,9 +6531,9 @@
       "source_location": "L787",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlesnapshot",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6407,9 +6543,9 @@
       "source_location": "L567",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handletype",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6419,9 +6555,9 @@
       "source_location": "L1264",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleuploadfile",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6431,9 +6567,9 @@
       "source_location": "L713",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlewait",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6443,9 +6579,9 @@
       "source_location": "L437",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_safeexec",
-      "target": "extension_background_resolvetab"
+      "target": "extension_background_resolvetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6455,9 +6591,9 @@
       "source_location": "L506",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleclick",
-      "target": "extension_background_getfallback"
+      "target": "extension_background_getfallback",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6467,9 +6603,9 @@
       "source_location": "L568",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handletype",
-      "target": "extension_background_getfallback"
+      "target": "extension_background_getfallback",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6479,9 +6615,9 @@
       "source_location": "L414",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_autoresnapshot",
-      "target": "extension_background_handlesnapshot"
+      "target": "extension_background_handlesnapshot",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6491,9 +6627,9 @@
       "source_location": "L555",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleclick",
-      "target": "extension_background_autoresnapshot"
+      "target": "extension_background_autoresnapshot",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6503,9 +6639,9 @@
       "source_location": "L613",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handletype",
-      "target": "extension_background_autoresnapshot"
+      "target": "extension_background_autoresnapshot",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6515,9 +6651,9 @@
       "source_location": "L509",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleclick",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6527,9 +6663,9 @@
       "source_location": "L1154",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleclickbytext",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6539,9 +6675,9 @@
       "source_location": "L1204",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handledialog",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6551,9 +6687,9 @@
       "source_location": "L1303",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handledrag",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6563,9 +6699,9 @@
       "source_location": "L1357",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlefillform",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6575,9 +6711,9 @@
       "source_location": "L1057",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlefind",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6587,9 +6723,9 @@
       "source_location": "L1108",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlegetpagetext",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6599,9 +6735,9 @@
       "source_location": "L735",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlehover",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6611,9 +6747,9 @@
       "source_location": "L675",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlepresskey",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6623,9 +6759,9 @@
       "source_location": "L627",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlescroll",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6635,9 +6771,9 @@
       "source_location": "L758",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleselect",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6647,9 +6783,9 @@
       "source_location": "L794",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlesnapshot",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6659,9 +6795,9 @@
       "source_location": "L571",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handletype",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6671,9 +6807,9 @@
       "source_location": "L717",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlewait",
-      "target": "extension_background_safeexec"
+      "target": "extension_background_safeexec",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6683,9 +6819,9 @@
       "source_location": "L986",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handleconsole",
-      "target": "extension_background_gettabbuffer"
+      "target": "extension_background_gettabbuffer",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6695,9 +6831,9 @@
       "source_location": "L994",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlenetwork",
-      "target": "extension_background_gettabbuffer"
+      "target": "extension_background_gettabbuffer",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -6707,45 +6843,9 @@
       "source_location": "L482",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_background_handlenavigate",
-      "target": "extension_background_getactivetab"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "extension/background.js",
-      "source_location": "L1037",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "extension_background_handletabs",
-      "target": "extension_lib_tab_concurrency_tablockmap_lock"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "extension/background.js",
-      "source_location": "L1015",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "extension_background_handletabs",
-      "target": "extension_lib_tab_concurrency_tablockmap_owner"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "extension/background.js",
-      "source_location": "L1026",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "extension_background_handletabs",
-      "target": "extension_lib_tab_concurrency_tablockmap_release"
+      "target": "extension_background_getactivetab",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -6754,9 +6854,9 @@
       "source_location": "L14",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "extension_content",
-      "target": "extension_content_capture"
+      "target": "extension_content_capture",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -12640,85 +12740,6 @@
       "target": "tests_smart_selector_test_options"
     },
     {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L28",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_copyifneeded"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L7",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_dirname"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L21",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_ensuredir"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L59",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_installclaude"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L36",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup",
-      "target": "agent_config_setup_installcursor"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L40",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup_installcursor",
-      "target": "agent_config_setup_ensuredir"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "agent-config/setup.mjs",
-      "source_location": "L41",
-      "weight": 1.0,
-      "_origin": "ast",
-      "confidence_score": 1.0,
-      "source": "agent_config_setup_installcursor",
-      "target": "agent_config_setup_copyifneeded"
-    },
-    {
       "relation": "conceptually_related_to",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
@@ -13289,5 +13310,5 @@
       "source_file": "agent-config/AGENTS.md"
     }
   ],
-  "built_at_commit": "4bd588f335ea6db653b040ded9de7a3810d77048"
+  "built_at_commit": "dd91f6c3d9d352a2f7947d6190c01f213556d009"
 }

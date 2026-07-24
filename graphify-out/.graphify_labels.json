@@ -1,1 +1,26 @@
-{"0": "Browser Interaction Tools", "1": "Background Script Utilities", "2": "Daemon IPC Configuration", "3": "Package Manifest Metadata", "4": "Extension Manifest Config", "5": "Extension Bridge Client", "6": "NPM Dependencies and Keywords", "7": "Popup UI Logic", "8": "Documentation and Guides", "9": "Exposed MCP Tools", "10": "TypeScript Configuration", "11": "Tab Concurrency Locking", "12": "Smart Element Selectors", "13": "Development Dependencies", "14": "Workspace Server Config", "15": "CLI Setup Scripts", "16": "Socket Driver", "17": "Content Script Capture", "18": "Dependabot Configuration", "19": "CI and Release Workflows", "20": "CodeQL Analysis Workflow", "21": "Security Scorecard Workflow", "22": "Vitest Configuration"}
+{
+  "0": "Browser Interaction Tools",
+  "1": "Background Script Utilities",
+  "2": "Daemon IPC Configuration",
+  "3": "Package Manifest Metadata",
+  "4": "Extension Manifest Config",
+  "5": "Extension Bridge Client",
+  "6": "NPM Dependencies and Keywords",
+  "7": "Popup UI Logic",
+  "8": "Documentation and Guides",
+  "9": "Exposed MCP Tools",
+  "10": "TypeScript Configuration",
+  "11": "Tab Concurrency Locking",
+  "12": "Smart Element Selectors",
+  "13": "Development Dependencies",
+  "14": "Workspace Server Config",
+  "15": "CLI Setup Scripts",
+  "16": "Socket Driver",
+  "17": "Content Script Capture",
+  "18": "Dependabot Configuration",
+  "19": "CI and Release Workflows",
+  "20": "CodeQL Analysis Workflow",
+  "21": "Security Scorecard Workflow",
+  "22": "Vitest Configuration",
+  "23": "Agent Config"
+}
