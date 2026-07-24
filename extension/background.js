@@ -57,6 +57,31 @@ const tabLocks = new TabLockMap();
 
 // --- Connection Management ------------------------------------------------
 
+/**
+ * Auto-pair: fetch the daemon's auth token over localhost. The background
+ * service worker can fetch() (it has host_permissions for 127.0.0.1:7225), and
+ * it MUST own this — the popup only exists while open, but the WS connection is
+ * driven by the background at startup and via the keepalive alarm. Returns the
+ * token, or '' if the daemon isn't up yet (caller retries via reconnect loop).
+ */
+async function autoPairToken() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${wsPort}/pair`, { cache: 'no-store' });
+    if (!res.ok) return '';
+    const data = await res.json();
+    if (data && typeof data.token === 'string' && data.token) {
+      if (data.token !== wsToken) {
+        wsToken = data.token;
+        chrome.storage.local.set({ wsToken });
+      }
+      return data.token;
+    }
+  } catch {
+    // daemon not reachable yet
+  }
+  return '';
+}
+
 async function initConnection() {
   try {
     const stored = await chrome.storage.local.get(['wsPort', 'wsToken']);
@@ -65,6 +90,9 @@ async function initConnection() {
   } catch {}
 
   chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: KEEPALIVE_INTERVAL_MIN });
+  // Always try to (re)pair at startup so the WS carries a fresh token even if
+  // the daemon rotated it or storage is empty.
+  await autoPairToken();
   connect();
 }
 
@@ -75,13 +103,28 @@ function wsUrl() {
   return wsToken ? `${base}?token=${encodeURIComponent(wsToken)}` : base;
 }
 
-function connect() {
+/**
+ * Track whether the socket closed BEFORE opening (handshake destroyed). That's
+ * the signature of a bad/missing token — so the next reconnect re-pairs first.
+ */
+let lastWasHandshakeClose = false;
+
+async function connect() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
 
+  // If the last attempt died mid-handshake, the token is likely stale/empty —
+  // re-fetch it before reconnecting so we don't loop on a bad token.
+  if (lastWasHandshakeClose) {
+    await autoPairToken();
+    lastWasHandshakeClose = false;
+  }
+
+  let opened = false;
   try {
     ws = new WebSocket(wsUrl());
 
     ws.onopen = () => {
+      opened = true;
       isConnected = true;
       reconnectAttempts = 0;
       connectedSince = Date.now();
@@ -91,6 +134,8 @@ function connect() {
     };
 
     ws.onclose = () => {
+      // closed before open = the daemon destroyed the upgrade (bad/no token)
+      if (!opened) lastWasHandshakeClose = true;
       isConnected = false;
       connectedSince = null;
       ws = null;
@@ -353,6 +398,37 @@ function getFallback(tabId, ref) {
 }
 
 /**
+ * Auto-re-snapshot helper (Facebook/Instagram virtualization recovery).
+ *
+ * On virtualized sites (FB/IG/Twitter feeds), scrolling can REMOVE a post from
+ * the DOM entirely — so a stale `ref` + every in-page fallback all return null.
+ * Rather than forcing the agent to do a full round-trip (error → snapshot →
+ * retry), we snapshot the tab HERE and embed the fresh refs in the error so the
+ * agent can retry in one step using the new refs.
+ *
+ * Returns a compact summary (refs + names) suitable for an error payload — NOT
+ * the full tree (keeps it token-cheap). null if the re-snapshot itself failed.
+ */
+async function autoReSnapshot(tabId) {
+  try {
+    const res = await handleSnapshot({ tabId, compact: true });
+    if (!res || !res.success || !res.tree) return null;
+    // Flatten ref → {role, name} so the agent can pick the right new ref.
+    const refs = [];
+    const walk = (n) => {
+      if (!n) return;
+      if (Array.isArray(n)) { n.forEach(walk); return; }
+      if (n.ref) refs.push({ ref: n.ref, role: n.role || '', name: (n.name || '').slice(0, 60) });
+      if (n.children) walk(n.children);
+    };
+    walk(res.tree);
+    return { refs: refs.slice(0, 40), url: res.url, title: res.title };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * safeExec (task 2.5): run chrome.scripting.executeScript against a tab,
  * turning "can't access chrome:// / webstore / devtools pages" into a clear
  * error instead of a silent timeout.
@@ -428,21 +504,22 @@ async function handleClick(params) {
   const { tabId, ref, selector, button = 'left', doubleClick = false } = params;
   await resolveTab(tabId);
   const fb = getFallback(tabId, ref);
+  const resolveFallbackSrc = PAGE_RESOLVE_FALLBACK_FN.toString();
 
-  return safeExec(tabId, (_ref, _sel, _btn, _dbl, _fb, resolveFallback) => {
+  return safeExec(tabId, (_ref, _sel, _btn, _dbl, _fb, resolveFallbackSrc) => {
     let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
     let via = 'ref';
     if (!el && _sel) { el = document.querySelector(_sel); via = 'selector'; }
+    // Rebuild the resolver from its source (chrome.scripting can't serialize fns).
+    let resolveFallback = null;
+    try { resolveFallback = eval('(' + resolveFallbackSrc + ')'); } catch {}
     // Smart-selector fallback (plan task 3): ref broke → try robust selector,
     // then text+role+tag scan. The agent doesn't request this; it's automatic.
     if (!el && _fb && resolveFallback) { el = resolveFallback(_fb); if (el) via = 'fallback'; }
     if (!el) {
-      return {
-        success: false,
-        error: _ref
-          ? `Element ${_ref} not found even with fallback. The DOM changed — call browser_snapshot { tabId } to get fresh refs.`
-          : 'Element not found',
-      };
+      // Element is gone (likely virtualized away on scroll). Abort WITHOUT
+      // clicking — the background auto-re-snapshots and embeds fresh refs.
+      return { success: false, error: 'REF_GONE', _ref };
     }
 
     el.scrollIntoView({ behavior: 'instant', block: 'center' });
@@ -467,26 +544,41 @@ async function handleClick(params) {
     }
 
     return { success: true, ...(via !== 'ref' ? { via } : {}) };
-  }, [ref, selector, button, doubleClick, fb, PAGE_RESOLVE_FALLBACK_FN]);
+  }, [ref, selector, button, doubleClick, fb, resolveFallbackSrc]);
+
+  // The page function returns REF_GONE when the element (and all fallbacks)
+  // can't be found — typical of virtualized feeds (FB/IG) after scrolling.
+  // Auto-re-snapshot and embed fresh refs so the agent retries in ONE step.
+  // We do NOT auto-retry the click: it's non-idempotent and the element that
+  // re-appears may be a different post after the scroll shifted the feed.
+  if (res && res.success === false && res.error === 'REF_GONE') {
+    const fresh = await autoReSnapshot(tabId);
+    return {
+      success: false,
+      error: `Element ${res._ref || ref} is gone from the DOM (feed scrolled/virtualized). Fresh refs captured — retry with a new ref.`,
+      freshRefs: fresh,
+    };
+  }
+  return res;
 }
 
 async function handleType(params) {
   const { tabId, ref, selector, text, clear = false } = params;
   await resolveTab(tabId);
   const fb = getFallback(tabId, ref);
+  const resolveFallbackSrc = PAGE_RESOLVE_FALLBACK_FN.toString();
 
-  return safeExec(tabId, (_ref, _sel, _text, _clear, _fb, resolveFallback) => {
+  return safeExec(tabId, (_ref, _sel, _text, _clear, _fb, resolveFallbackSrc) => {
     let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
     let via = 'ref';
     if (!el && _sel) { el = document.querySelector(_sel); via = 'selector'; }
+    let resolveFallback = null;
+    try { resolveFallback = eval('(' + resolveFallbackSrc + ')'); } catch {}
     if (!el && _fb && resolveFallback) { el = resolveFallback(_fb); if (el) via = 'fallback'; }
     if (!el) {
-      return {
-        success: false,
-        error: _ref
-          ? `Element ${_ref} not found even with fallback. The DOM changed — call browser_snapshot { tabId } to get fresh refs.`
-          : 'Element not found',
-      };
+      // Element gone (virtualized feed) — abort WITHOUT typing; background
+      // auto-re-snapshots and embeds fresh refs for a one-step retry.
+      return { success: false, error: 'REF_GONE', _ref };
     }
 
     el.focus();
@@ -513,7 +605,19 @@ async function handleType(params) {
 
     el.dispatchEvent(new Event('change', { bubbles: true }));
     return { success: true, typed: _text, ...(via !== 'ref' ? { via } : {}) };
-  }, [ref, selector, text, clear, fb, PAGE_RESOLVE_FALLBACK_FN]);
+  }, [ref, selector, text, clear, fb, resolveFallbackSrc]);
+
+  // Virtualization recovery (same as click): type target is gone, so
+  // auto-re-snapshot and embed fresh refs. No auto-retry (non-idempotent).
+  if (res && res.success === false && res.error === 'REF_GONE') {
+    const fresh = await autoReSnapshot(tabId);
+    return {
+      success: false,
+      error: `Element ${res._ref || ref} is gone from the DOM (feed scrolled/virtualized). Fresh refs captured — retry with a new ref.`,
+      freshRefs: fresh,
+    };
+  }
+  return res;
 }
 
 async function handleScroll(params) {
@@ -554,7 +658,14 @@ async function handleScroll(params) {
     else target.scrollBy(scrollOpts);
 
     return { success: true, direction: _dir, amount: _amt };
-  }, [direction, amount, selector, toElement, position]);
+  }, [direction, amount, selector, toElement, position]).then((res) => {
+    // Scrolling a virtualized feed (FB/IG/Twitter) recycles DOM nodes, so any
+    // refs the agent holds are now likely stale. Hint it to re-snapshot. We
+    // don't auto-snapshot here (every scroll would be expensive); the hint is
+    // enough for a well-behaved agent to snapshot before its next interaction.
+    if (res && res.success) res.refsMayBeStale = true;
+    return res;
+  });
 }
 
 async function handlePressKey(params) {
@@ -675,10 +786,18 @@ async function handleSnapshot(params) {
   const { tabId, selector, compact = true } = params;
   await resolveTab(tabId);
 
-  return safeExec(tabId, (_sel, _compact, genFallback) => {
+  // chrome.scripting cannot serialize functions across the service worker
+  // boundary, so pass the fallback generator as its SOURCE STRING and eval it
+  // in the page to rebuild the live function.
+  const genFallbackSrc = PAGE_FALLBACK_FN.toString();
+
+  return safeExec(tabId, (_sel, _compact, genFallbackSrc) => {
     let refCount = 0;
     /** @type {Record<string, object>} ref -> fallback, returned to background */
     const fallbacks = {};
+    // Rebuild the live function from its source string (see comment at call site).
+    let genFallback = null;
+    try { genFallback = eval('(' + genFallbackSrc + ')'); } catch {}
     const skipTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'PATH', 'BR', 'HR', 'WBR', 'META', 'LINK']);
 
     function vis(el) {
@@ -835,7 +954,7 @@ async function handleSnapshot(params) {
       // internal: background stores these per-tab; never sent to the agent.
       __fallbacks: fallbacks,
     };
-  }, [selector, compact, PAGE_FALLBACK_FN]).then((res) => {
+  }, [selector, compact, genFallbackSrc]).then((res) => {
     // Store the fallbacks per-tab so click/type can resolve stale refs.
     if (res && res.__fallbacks) {
       const map = new Map(Object.entries(res.__fallbacks));
