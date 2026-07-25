@@ -17,14 +17,14 @@ describe('ExtensionBridge', () => {
     await new Promise(r => setTimeout(r, 50));
   });
 
-  function createBridge(port: number, opts?: Partial<{ maxRetries: number }>): ExtensionBridge {
-    const b = new ExtensionBridge({ port, maxRetries: opts?.maxRetries ?? 1, pingIntervalMs: 60_000 });
+  function createBridge(port: number, opts?: Partial<{ maxRetries: number; token: string }>): ExtensionBridge {
+    const b = new ExtensionBridge({ port, maxRetries: opts?.maxRetries ?? 1, pingIntervalMs: 60_000, token: opts?.token });
     bridges.push(b);
     return b;
   }
 
-  async function connectClient(port: number): Promise<WebSocket> {
-    const client = new WebSocket(`ws://localhost:${port}`);
+  async function connectClient(port: number, path = ''): Promise<WebSocket> {
+    const client = new WebSocket(`ws://localhost:${port}${path}`);
     clients.push(client);
     await new Promise<void>((resolve, reject) => {
       client.on('open', resolve);
@@ -106,4 +106,102 @@ describe('ExtensionBridge', () => {
 
     await expect(bridge.callTool('browser_click', {})).rejects.toThrow();
   }, 10_000);
+
+  // Task 3.1 regression guard: this test would have caught the daemon shipping
+  // with WS auth disabled (the token was loaded but never passed to the bridge).
+  it('with a token, accepts a connection that presents the right token', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port, { token: 'sekret' });
+    await bridge.start();
+
+    await connectClient(port, '?token=sekret');
+    expect(bridge.isConnected()).toBe(true);
+  });
+
+  it('with a token, REJECTS a connection missing the token', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port, { token: 'sekret' });
+    await bridge.start();
+
+    // The socket opens (handshake) then the server closes it for bad auth.
+    const client = new WebSocket(`ws://localhost:${port}`);
+    clients.push(client);
+    await new Promise<void>((resolve) => {
+      client.on('close', () => resolve());
+      client.on('error', () => resolve());
+    });
+    expect(bridge.isConnected()).toBe(false);
+  });
+
+  it('with a token, REJECTS a connection with a wrong token', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port, { token: 'sekret' });
+    await bridge.start();
+
+    const client = new WebSocket(`ws://localhost:${port}?token=wrong`);
+    clients.push(client);
+    await new Promise<void>((resolve) => {
+      client.on('close', () => resolve());
+      client.on('error', () => resolve());
+    });
+    expect(bridge.isConnected()).toBe(false);
+  });
+
+  // --- Call cancellation (audit C2) -----------------------------------------
+  // When the daemon evicts a client mid-call, it aborts the AbortController.
+  // The bridge must reject the pending promise so a non-idempotent action
+  // (click/type) doesn't keep running after the originating agent is gone.
+  it('aborts an in-flight call when the AbortSignal fires (audit C2)', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const client = await connectClient(port);
+    // Extension NEVER replies — simulates a slow/in-flight action.
+    client.on('message', () => { /* swallow: deliberately hang */ });
+
+    const controller = new AbortController();
+    const promise = bridge.callTool('browser_click', { ref: 'e1' }, undefined, controller.signal);
+
+    // Abort mid-flight (as the daemon's close handler would on eviction).
+    await new Promise((r) => setTimeout(r, 30));
+    controller.abort();
+
+    await expect(promise).rejects.toThrow(/aborted/i);
+  });
+
+  it('rejects immediately if the signal is already aborted before send', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+    await connectClient(port);
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      bridge.callTool('browser_click', { ref: 'e1' }, undefined, controller.signal)
+    ).rejects.toThrow(/aborted before send/i);
+  });
+
+  it('a normally-completing call detaches the abort listener (no late reject)', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const client = await connectClient(port);
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.tool) {
+        client.send(JSON.stringify({ id: msg.id, success: true, result: { ok: 1 } }));
+      }
+    });
+
+    const controller = new AbortController();
+    const result = await bridge.callTool('browser_snapshot', { tabId: 1 }, undefined, controller.signal);
+    expect(result).toEqual({ ok: 1 });
+    // Aborting AFTER settlement must be a no-op (listener was removed).
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 20));
+    // No unhandled rejection thrown — test passing this far proves it.
+  });
 });

@@ -6,7 +6,7 @@
 
 Report vulnerabilities through:
 
-1. **GitHub Security Advisories (preferred):** [Create a private security advisory](https://github.com/ofershap/real-browser-mcp/security/advisories/new)
+1. **GitHub Security Advisories (preferred):** [Create a private security advisory](https://github.com/compnew2006/browser-controller/security/advisories/new)
 
 ### What to Include
 

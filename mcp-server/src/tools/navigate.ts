@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { textResult } from './types.js';
+import { optionalTabId, textResult } from './types.js';
 
 export const navigateTool: ToolDefinition = {
   name: 'browser_navigate',
-  description: 'Navigate to a URL in the active browser tab',
+  description: 'Navigate to a URL in a browser tab. If tabId is omitted, navigates the active tab (or use browser_tabs create to open a new one).',
   inputSchema: z.object({
     url: z.string().describe('The URL to navigate to'),
+    tabId: optionalTabId(),
     waitUntil: z
       .enum(['load', 'domcontentloaded'])
       .optional()

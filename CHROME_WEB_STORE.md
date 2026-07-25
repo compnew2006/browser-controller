@@ -4,16 +4,16 @@ Extension ID: `fkkimpklpgedomcheiojngaaaicmaidi`
 URL: https://chromewebstore.google.com/detail/real-browser-mcp/fkkimpklpgedomcheiojngaaaicmaidi
 
 ## Item name
-Real Browser MCP
+Browser Controller
 
 ## Summary (132 chars max)
 Give your AI coding agent eyes — let Cursor, Claude, and Windsurf see, click, and interact with your real browser tabs.
 
 ## Description (16,000 chars max)
 
-Real Browser MCP is a Chrome extension that connects AI coding agents to your actual browser — the one you already have open with all your sessions, logins, and cookies intact.
+Browser Controller is a Chrome extension that connects AI coding agents to your actual browser — the one you already have open with all your sessions, logins, and cookies intact.
 
-Unlike Playwright MCP or Chrome DevTools MCP that launch a fresh headless browser, Real Browser MCP works with your real browser. No re-authentication. No replaying login flows. Your agent can see and interact with exactly what you see.
+Unlike Playwright MCP or Chrome DevTools MCP that launch a fresh headless browser, Browser Controller works with your real browser. No re-authentication. No replaying login flows. Your agent can see and interact with exactly what you see.
 
 HOW IT WORKS:
 1. Install this extension
@@ -43,12 +43,12 @@ PRIVACY:
 • All data stays local — the extension communicates only with a local MCP server on your machine (localhost)
 • No data is sent to external servers
 • No analytics, no tracking, no telemetry
-• Open source: https://github.com/ofershap/real-browser-mcp
+• Open source: https://github.com/compnew2006/browser-controller
 
 REQUIREMENTS:
 • An MCP-compatible AI editor (Cursor, Claude Code, Windsurf, Cline, etc.)
 • Node.js 18+ for the MCP server component
-• Run: npx real-browser-mcp to start the server
+• Run: npx browser-controller to start the server
 
 ## Category
 Developer Tools

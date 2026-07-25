@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { textResult } from './types.js';
+import { requireTabId, textResult } from './types.js';
 
 export const typeTool: ToolDefinition = {
   name: 'browser_type',
   description: 'Type text into an input element',
   inputSchema: z.object({
+    tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot'),
     selector: z.string().optional().describe('CSS selector for the input'),
     text: z.string().describe('Text to type'),

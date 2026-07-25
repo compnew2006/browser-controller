@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { textResult } from './types.js';
+import { requireTabId, textResult } from './types.js';
 
 export const dragTool: ToolDefinition = {
   name: 'browser_drag',
   description:
     'Drag from one element or position to another. Uses CDP mouse events for reliable drag-and-drop. Provide either refs/selectors or explicit x,y coordinates.',
   inputSchema: z.object({
+    tabId: requireTabId(),
     startRef: z.string().optional().describe('Ref of the element to drag from'),
     startSelector: z.string().optional().describe('CSS selector of the element to drag from'),
     endRef: z.string().optional().describe('Ref of the element to drag to'),

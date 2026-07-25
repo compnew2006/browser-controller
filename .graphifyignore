@@ -1,0 +1,3 @@
+# Images ARE extracted now via the Z.ai Anthropic endpoint (glm-4.6 vision).
+# Keep generated graphify output out of itself.
+graphify-out/
