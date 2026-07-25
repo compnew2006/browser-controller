@@ -1,212 +1,318 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <style>
+    /* ── Design tokens ───────────────────────────────────────────────
+       Dark control-panel identity (preserved). One neutral ramp (zinc),
+       one accent (indigo), three semantic states. Sizes in px (popup is a
+       fixed-DPI surface — fluid units buy nothing and hurt density). */
+    :root {
+      --bg:        #0a0a0b;   /* app background  */
+      --surface:   #131316;   /* panels, inputs  */
+      --surface-2: #1b1b20;   /* hover, raised   */
+      --border:    #26262c;   /* hairlines       */
+      --border-2:  #33333b;   /* focus / active  */
+      --ink:       #ededf0;   /* primary text    */
+      --ink-2:     #a1a1aa;   /* secondary text  */
+      --ink-3:     #6b6b75;   /* muted, labels   */
+      --accent:    #818cf8;   /* indigo-400 (AA on dark) */
+      --accent-2:  #6366f1;   /* indigo-500      */
+      --accent-soft: rgba(129,140,248,0.12);
+      --ok:        #34d399;
+      --warn:      #fbbf24;
+      --err:       #f87171;
+      --err-2:     #dc2626;
+      --radius:    8px;
+      --radius-sm: 5px;
+      --rhythm:    14px;
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
+
     html, body {
-      /* size is driven by JS from storage; these are the floor + first-run default */
-      width: 300px;
-      min-width: 260px;
-      min-height: 220px;
+      width: 320px;
+      min-width: 280px;
+      min-height: 240px;
     }
+
     body {
-      font: 13px/1.5 system-ui, -apple-system, sans-serif;
-      background: #0f0f0f;
-      color: #e4e4e7;
+      font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--ink);
+      background: var(--bg);
       padding: 16px;
+      -webkit-font-smoothing: antialiased;
     }
+
+    /* ── Header / connection status ───────────────────────────────── */
     .header {
       display: flex;
       align-items: center;
-      gap: 8px;
-      margin-bottom: 14px;
+      gap: 9px;
+      margin-bottom: 12px;
     }
     .header h1 {
       font-size: 14px;
       font-weight: 600;
+      letter-spacing: -0.01em;
     }
+
     .dot {
-      width: 10px;
-      height: 10px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       flex-shrink: 0;
+      transition: background 200ms ease, box-shadow 200ms ease;
     }
-    .dot.connected { background: #22c55e; box-shadow: 0 0 6px #22c55e80; }
-    .dot.reconnecting { background: #f59e0b; box-shadow: 0 0 6px #f59e0b80; animation: pulse 1.5s ease-in-out infinite; }
-    .dot.disconnected { background: #6b7280; }
-    .dot.error { background: #ef4444; box-shadow: 0 0 6px #ef444480; }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .dot.connected    { background: var(--ok);   box-shadow: 0 0 0 3px rgba(52,211,153,0.15); }
+    .dot.reconnecting { background: var(--warn); box-shadow: 0 0 0 3px rgba(251,191,36,0.15); animation: pulse 1.6s ease-in-out infinite; }
+    .dot.disconnected { background: var(--ink-3); }
+    .dot.error        { background: var(--err);  box-shadow: 0 0 0 3px rgba(248,113,113,0.15); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
     .status {
-      font-size: 12px;
-      color: #a1a1aa;
-      margin-bottom: 4px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--ink);
+      margin-bottom: 2px;
     }
     .status-detail {
       font-size: 11px;
-      color: #52525b;
-      margin-bottom: 12px;
-      min-height: 16px;
+      color: var(--ink-3);
+      margin-bottom: var(--rhythm);
+      min-height: 15px;
+      font-variant-numeric: tabular-nums;
     }
-    .field {
-      margin-bottom: 12px;
-    }
+
+    /* ── Form fields ───────────────────────────────────────────────── */
+    .field { margin-bottom: 12px; }
     .field label {
       display: block;
-      font-size: 11px;
-      color: #71717a;
-      margin-bottom: 4px;
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--ink-3);
+      margin-bottom: 5px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.06em;
     }
     .field input {
       width: 100%;
-      background: #1c1c1e;
-      border: 1px solid #27272a;
-      border-radius: 6px;
-      color: #e4e4e7;
-      padding: 6px 10px;
-      font-size: 13px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--ink);
+      padding: 7px 10px;
+      font: inherit;
+      font-size: 12.5px;
       outline: none;
+      transition: border-color 150ms ease, background 150ms ease;
     }
+    .field input::placeholder { color: var(--ink-3); }
+    .field input:hover { border-color: var(--border-2); }
     .field input:focus {
-      border-color: #667eea;
+      border-color: var(--accent);
+      background: var(--surface-2);
+      box-shadow: 0 0 0 3px var(--accent-soft);
     }
-    .log {
-      margin-top: 8px;
-      padding: 8px;
-      background: #1c1c1e;
-      border-radius: 6px;
-      max-height: 120px;
+
+    /* ── Section labels ────────────────────────────────────────────── */
+    .section-title {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--ink-3);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: var(--rhythm) 0 6px;
+    }
+
+    /* ── Lists (tabs / agents / locks share the surface look) ──────── */
+    .tabs-list,
+    .locks {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px;
+      max-height: 150px;
       overflow-y: auto;
-      font: 11px/1.6 'SF Mono', Menlo, monospace;
-      color: #71717a;
+      font-size: 11.5px;
     }
-    .log .entry { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .log .entry.err { color: #ef4444; }
-    .log .entry.ok { color: #22c55e; }
-    .log .entry.warn { color: #f59e0b; }
-    .footer {
-      font-size: 11px;
-      color: #52525b;
-      margin-top: 10px;
+    .locks { max-height: 96px; }
+    .locks .empty,
+    .tabs-list .empty { color: var(--ink-3); padding: 2px 6px; }
+
+    .locks .row {
       display: flex;
       justify-content: space-between;
-    }
-    a { color: #667eea; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .locks {
-      margin-top: 6px;
-      padding: 8px;
-      background: #1c1c1e;
-      border-radius: 6px;
-      max-height: 96px;
-      overflow-y: auto;
-      font: 11px/1.5 'SF Mono', Menlo, monospace;
-      color: #a1a1aa;
-    }
-    .locks .empty { color: #52525b; }
-    .locks .row { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
-    .locks .tab { color: #e4e4e7; }
-    .locks .who { color: #667eea; }
-    .btn {
-      width: 100%;
-      margin-top: 8px;
-      background: #ef4444;
-      border: none;
-      border-radius: 6px;
-      color: #fff;
-      padding: 7px 10px;
-      font: 600 12px system-ui, sans-serif;
-      cursor: pointer;
-    }
-    .btn:hover { background: #dc2626; }
-    .btn:disabled { background: #3f3f46; cursor: default; }
-    .section-title {
+      align-items: center;
+      gap: 8px;
+      padding: 3px 6px;
+      border-radius: var(--radius-sm);
+      font-family: "SF Mono", "JetBrains Mono", Menlo, monospace;
       font-size: 11px;
-      color: #71717a;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin: 12px 0 4px;
     }
-    .tabs-list {
-      margin-top: 6px;
-      padding: 6px;
-      background: #1c1c1e;
-      border-radius: 6px;
-      max-height: 140px;
-      overflow-y: auto;
-    }
+    .locks .row:hover { background: var(--surface-2); }
+    .locks .tab { color: var(--ink); font-weight: 500; }
+    .locks .who { color: var(--accent); }
+
+    /* ── Open Tabs rows ────────────────────────────────────────────── */
     .tab-row {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 4px 2px;
-      border-bottom: 1px solid #27272a;
+      gap: 8px;
+      padding: 5px 6px;
+      border-radius: var(--radius-sm);
+      transition: background 120ms ease;
     }
-    .tab-row:last-child { border-bottom: none; }
+    .tab-row + .tab-row { border-top: 1px solid var(--border); }
     .tab-title {
       flex: 1;
       min-width: 0;
-      font-size: 11px;
-      color: #d4d4d8;
+      font-size: 11.5px;
+      color: var(--ink-2);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .tab-title.active { color: #667eea; font-weight: 600; }
+    .tab-title.active { color: var(--accent); font-weight: 600; }
     .tab-pin {
       display: flex;
       align-items: center;
-      gap: 3px;
+      gap: 4px;
       flex-shrink: 0;
     }
     .tab-pin select {
-      background: #0f0f0f;
-      border: 1px solid #27272a;
-      border-radius: 4px;
-      color: #a1a1aa;
-      padding: 2px 4px;
-      font: 10px/1.4 system-ui, sans-serif;
-      max-width: 90px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--ink-2);
+      padding: 3px 5px;
+      font: 500 10.5px/1.3 -apple-system, system-ui, sans-serif;
+      max-width: 95px;
       outline: none;
-    }
-    .icon-btn {
-      background: none;
-      border: none;
-      color: #71717a;
       cursor: pointer;
-      font-size: 14px;
-      padding: 0 3px;
-      line-height: 1;
+      transition: border-color 150ms ease;
     }
-    .icon-btn:hover { color: #ef4444; }
-    .icon-btn.unpin:hover { color: #f59e0b; }
+    .tab-pin select:hover { border-color: var(--border-2); }
+    .tab-pin select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+    /* ── Agent rows (Connected Agents panel) ───────────────────────── */
     .agent-row {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 2px 0;
+      gap: 8px;
+      padding: 3px 6px;
+      border-radius: var(--radius-sm);
+      transition: background 120ms ease;
     }
-    .agent-row .who { flex: 1; }
-    /* draggable resize handle (bottom-LEFT corner).
-       Chrome anchors an extension popup to the top-right toolbar icon, so the
-       LEFT edge is the one that actually moves when the document width changes.
-       Putting the grip on the right made dragging feel inverted (the grabbed
-       edge is the fixed one). Bottom-left makes the grab follow the cursor. */
+    .agent-row:hover { background: var(--surface-2); }
+    .agent-row .tab { color: var(--ink); font-weight: 500; }
+    .agent-row .who {
+      flex: 1;
+      color: var(--ink-3);
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 10.5px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Icon buttons (✕ disconnect, ✕ unpin, 📌 pin) ──────────────── */
+    .icon-btn {
+      background: none;
+      border: none;
+      color: var(--ink-3);
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: color 150ms ease, background 150ms ease;
+    }
+    .icon-btn:hover { color: var(--err); background: rgba(248,113,113,0.1); }
+    .icon-btn.unpin:hover { color: var(--warn); background: rgba(251,191,36,0.1); }
+    /* the 📌 pin button keeps accent color, not red */
+    .icon-btn[data-action="lockTab"] { color: var(--accent); }
+    .icon-btn[data-action="lockTab"]:hover { background: var(--accent-soft); color: var(--accent); }
+
+    /* ── Primary button (Unlock All) ───────────────────────────────── */
+    .btn {
+      width: 100%;
+      margin-top: 8px;
+      background: var(--err-2);
+      border: none;
+      border-radius: var(--radius-sm);
+      color: #fff;
+      padding: 8px 12px;
+      font: 600 12px -apple-system, system-ui, sans-serif;
+      cursor: pointer;
+      transition: background 150ms ease, transform 80ms ease;
+    }
+    .btn:hover { background: #b91c1c; }
+    .btn:active { transform: scale(0.985); }
+    .btn:disabled { background: var(--border-2); color: var(--ink-3); cursor: default; transform: none; }
+    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* ── Activity log ──────────────────────────────────────────────── */
+    .log {
+      margin-top: var(--rhythm);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      max-height: 110px;
+      overflow-y: auto;
+      font: 10.5px/1.6 "SF Mono", Menlo, monospace;
+      color: var(--ink-3);
+    }
+    .log .entry {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
+    }
+    .log .entry.err  { color: var(--err); }
+    .log .entry.ok   { color: var(--ok); }
+    .log .entry.warn { color: var(--warn); }
+
+    /* ── Footer ────────────────────────────────────────────────────── */
+    .footer {
+      font-size: 10.5px;
+      color: var(--ink-3);
+      margin-top: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Scrollbars (dark, thin, unobtrusive) ──────────────────────── */
+    ::-webkit-scrollbar { width: 7px; height: 7px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+
+    /* ── Resize handle (bottom-left) ───────────────────────────────── */
     .resizer {
       position: fixed;
       left: 0;
       bottom: 0;
-      width: 16px;
-      height: 16px;
+      width: 15px;
+      height: 15px;
       cursor: nesw-resize;
       z-index: 2147483646;
-      background:
-        linear-gradient(45deg, transparent 0 45%, #52525b 45% 55%, transparent 55% 70%, #52525b 70% 80%, transparent 80%);
+      background: linear-gradient(45deg, transparent 0 45%, var(--border-2) 45% 55%, transparent 55% 70%, var(--border-2) 70% 80%, transparent 80%);
+      transition: background 150ms ease;
     }
-    .resizer:active { background:
-      linear-gradient(45deg, transparent 0 45%, #667eea 45% 55%, transparent 55% 70%, #667eea 70% 80%, transparent 80%); }
+    .resizer:hover,
+    .resizer:active {
+      background: linear-gradient(45deg, transparent 0 45%, var(--accent) 45% 55%, transparent 55% 70%, var(--accent) 70% 80%, transparent 80%);
+    }
+
+    /* ── Reduced motion ────────────────────────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -214,16 +320,16 @@
     <div class="dot" id="dot"></div>
     <h1>Browser Controller</h1>
   </div>
-  <div class="status" id="status">Checking...</div>
+  <div class="status" id="status">Checking…</div>
   <div class="status-detail" id="detail"></div>
 
   <div class="field">
-    <label>WebSocket Port</label>
+    <label for="port">WebSocket Port</label>
     <input type="number" id="port" value="7225" min="1" max="65535">
   </div>
 
   <div class="field">
-    <label>Auth Token (auto-paired; paste only to override)</label>
+    <label for="token">Auth Token (auto-paired; paste only to override)</label>
     <input type="password" id="token" placeholder="auto-fetched from daemon" autocomplete="off">
   </div>
 
