@@ -5,8 +5,8 @@
     "semantic_hash": ""
   },
   "extension/background.js": {
-    "mtime": 1784927347.1917803,
-    "ast_hash": "334bcf1d03d62e8082321ae755480c60",
+    "mtime": 1784929969.8820355,
+    "ast_hash": "3077310b3b5838aab62c9cc2124c9fd7",
     "semantic_hash": ""
   },
   "extension/content.js": {
@@ -35,23 +35,23 @@
     "semantic_hash": ""
   },
   "mcp-server/src/bridge.ts": {
-    "mtime": 1784865704.2014072,
-    "ast_hash": "b37111a484ecee198f69b41c7ca942a9",
-    "semantic_hash": "b37111a484ecee198f69b41c7ca942a9"
+    "mtime": 1784929617.0301232,
+    "ast_hash": "f07444cddf37af4dcbbb0bb878f3c9d8",
+    "semantic_hash": ""
   },
   "mcp-server/src/daemon-config.ts": {
-    "mtime": 1784927611.7222521,
-    "ast_hash": "0dbac9c6bb8194bdefd69e0adc53e7e0",
+    "mtime": 1784929250.3012176,
+    "ast_hash": "c7ffde1e6d63bbc24c9cc0b11e01429c",
     "semantic_hash": ""
   },
   "mcp-server/src/daemon.ts": {
-    "mtime": 1784927621.2674239,
-    "ast_hash": "2ef77657bec94acf65d25203b805cf86",
+    "mtime": 1784930014.1413333,
+    "ast_hash": "517669501ff98609c89ef053b24fffe7",
     "semantic_hash": ""
   },
   "mcp-server/src/index.ts": {
-    "mtime": 1784927498.3142724,
-    "ast_hash": "d0e6e16ff4e50a02761075c77e0c0a0e",
+    "mtime": 1784930122.8127248,
+    "ast_hash": "8ab1781732c8e9ff828b0d102947dc2d",
     "semantic_hash": ""
   },
   "mcp-server/src/tools/click-text.ts": {
@@ -100,9 +100,9 @@
     "semantic_hash": "29e79f97fe5cb073626561f4fd1bbf2a"
   },
   "mcp-server/src/tools/index.ts": {
-    "mtime": 1784860647.1387448,
-    "ast_hash": "4afa581faa64b6334da4920e1c336b3b",
-    "semantic_hash": "4afa581faa64b6334da4920e1c336b3b"
+    "mtime": 1784929279.0989347,
+    "ast_hash": "4395a412afd9279784e3b3d8f66d8448",
+    "semantic_hash": ""
   },
   "mcp-server/src/tools/navigate.ts": {
     "mtime": 1784861504.9335837,
@@ -110,9 +110,9 @@
     "semantic_hash": "5cc930ea645d503f6daf716e2b34fc3c"
   },
   "mcp-server/src/tools/network.ts": {
-    "mtime": 1784861556.8659215,
-    "ast_hash": "88e754106e89a41a904ff8e35bfa8c48",
-    "semantic_hash": "88e754106e89a41a904ff8e35bfa8c48"
+    "mtime": 1784929220.7453773,
+    "ast_hash": "5c79b26ae5f467684e38d128a9d472bf",
+    "semantic_hash": ""
   },
   "mcp-server/src/tools/press-key.ts": {
     "mtime": 1784861519.9358408,
@@ -195,9 +195,9 @@
     "semantic_hash": "b7fe194b960787a6d801faec4e3093a1"
   },
   "tests/bridge.test.ts": {
-    "mtime": 1784862575.8513315,
-    "ast_hash": "dbc403de00f3f820108054684070a0f1",
-    "semantic_hash": "dbc403de00f3f820108054684070a0f1"
+    "mtime": 1784929759.6154537,
+    "ast_hash": "5ae555289731fddd61f1fd69984a8fbc",
+    "semantic_hash": ""
   },
   "tests/smart-selector.test.ts": {
     "mtime": 1784921690.0908873,
@@ -205,14 +205,14 @@
     "semantic_hash": ""
   },
   "tests/tab-concurrency.test.ts": {
-    "mtime": 1784861997.9434884,
-    "ast_hash": "c726d772fc817e16fe5629703803e3dc",
-    "semantic_hash": "c726d772fc817e16fe5629703803e3dc"
+    "mtime": 1784930046.883119,
+    "ast_hash": "9a5cd71fe47227b67e127e49a8b10bad",
+    "semantic_hash": ""
   },
   "tests/tools/registry.test.ts": {
-    "mtime": 1784860647.1403236,
-    "ast_hash": "02582db717348ee1ca54996a266bedf0",
-    "semantic_hash": "02582db717348ee1ca54996a266bedf0"
+    "mtime": 1784929381.9899447,
+    "ast_hash": "ef6216507946af7d3e35e6039a525207",
+    "semantic_hash": ""
   },
   "vitest.config.ts": {
     "mtime": 1784860647.1403668,
@@ -372,6 +372,26 @@
   ".zcode/plans/plan-sess_cb96dc0a-88a2-4f04-b749-9806799a675a.md": {
     "mtime": 1784927182.1615999,
     "ast_hash": "5f5d11730c8f249d35bf70b3d78b4261",
+    "semantic_hash": ""
+  },
+  "extension/utils/snapshot-tree.js": {
+    "mtime": 1784929939.7258923,
+    "ast_hash": "45ca5852bcb04b8b6b9abbc9c0199919",
+    "semantic_hash": ""
+  },
+  "ARCHITECTURE.md": {
+    "mtime": 1784930190.1681485,
+    "ast_hash": "557e5250dac3b6123233f0df18f2c8ed",
+    "semantic_hash": ""
+  },
+  "CHANGELOG.md": {
+    "mtime": 1784930174.6770365,
+    "ast_hash": "b0b680bb3b2034adf2de5e798e5dca71",
+    "semantic_hash": ""
+  },
+  "RALPH_MEMORY.md": {
+    "mtime": 1784930206.676041,
+    "ast_hash": "f59f8233433aabe61512de5e1ee8734e",
     "semantic_hash": ""
   }
 }

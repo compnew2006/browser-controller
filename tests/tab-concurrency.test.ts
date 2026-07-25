@@ -139,14 +139,30 @@ describe('TabMutexMap additional coverage (audit m4)', () => {
   let mutex: TabMutexMap;
   beforeEach(() => (mutex = new TabMutexMap()));
 
-  it('isIdle reflects pending work', async () => {
-    expect(mutex.isIdle(1)).toBe(true);
+  it('isIdle reflects pending work and clears after completion (no queue leak)', async () => {
+    // Regression guard (javascript-pro audit): TabMutexMap.run used to leave a
+    // permanent entry in `queues` after the chain settled, leaking memory and
+    // making isIdle() return false forever after the first call. After the fix,
+    // the entry is deleted once the chain settles AND no newer call chained on.
+    expect(mutex.isIdle(1)).toBe(true); // nothing run yet
     const p = mutex.run(1, () => new Promise<void>((r) => setTimeout(r, 40)));
-    expect(mutex.isIdle(1)).toBe(false); // work pending
+    expect(mutex.isIdle(1)).toBe(false); // work in flight
     await p;
-    // Note: the queue entry persists (swallowed chain) even after resolution;
-    // isIdle reports whether anything is CURRENTLY pending, which here is done.
-    // We only assert the in-flight case definitively.
+    // Allow the settled-then cleanup microtask to run.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mutex.isIdle(1)).toBe(true); // queue entry deleted after settle → no leak
+  });
+
+  it('isIdle stays false while a newer call is chained (delete-if-owner safety)', async () => {
+    // The leak-fix deletes the entry only if it's still the SAME settled chain.
+    // A second run() that chains onto the first must keep the entry alive until
+    // IT settles — otherwise we'd break serialization for a fast follow-up call.
+    const p1 = mutex.run(1, () => new Promise<void>((r) => setTimeout(r, 40)));
+    const p2 = mutex.run(1, () => new Promise<void>((r) => setTimeout(r, 40)));
+    expect(mutex.isIdle(1)).toBe(false);
+    await Promise.all([p1, p2]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mutex.isIdle(1)).toBe(true); // both done → entry cleared
   });
 
   it('a synchronous throw inside fn does not poison the next call', async () => {

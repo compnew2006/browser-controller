@@ -5,6 +5,7 @@ import {
   buildRobustSelectorFromPath,
   pickNthMatch,
   computeNewFingerprints,
+  isPreciseTextMatch,
 } from '../extension/utils/smart-selector.js';
 
 /**
@@ -236,5 +237,56 @@ describe('computeNewFingerprints', () => {
     const isNew = computeNewFingerprints([], ['button|Like', 'button|Like']);
     expect(isNew.size).toBe(1);
     expect(isNew.has('button|Like')).toBe(true);
+  });
+});
+
+// Fix #3 (precise text match): the old includes() matched too loosely — "Save"
+// matched "Saved", "Like" matched "Liked", picking the WRONG element among
+// duplicates. isPreciseTextMatch is the testable mirror of the rule inlined in
+// PAGE_RESOLVE_FALLBACK_FN + computeNth. Locks down the regression.
+describe('isPreciseTextMatch (Fix #3: precise nth matching)', () => {
+  it('matches exact text (case-insensitive, trimmed)', () => {
+    expect(isPreciseTextMatch('Save', 'Save')).toBe(true);
+    expect(isPreciseTextMatch('  save  ', 'SAVE')).toBe(true);
+    expect(isPreciseTextMatch('Login', 'login')).toBe(true);
+  });
+
+  it('matches near-exact when the suffix is NON-LETTER (punctuation/symbols/space)', () => {
+    expect(isPreciseTextMatch('Login »', 'Login')).toBe(true);   // +symbol suffix
+    expect(isPreciseTextMatch('Save...', 'Save')).toBe(true);    // +punctuation
+    expect(isPreciseTextMatch('Submit ', 'Submit')).toBe(true);  // trailing space (trimmed anyway)
+  });
+
+  it('REJECTS letter suffixes — "Save"/"Saved" and "Like"/"Liked" are indistinguishable', () => {
+    // Both are +1 past-tense; matching one means matching the other, so we
+    // reject ALL letter suffixes to avoid picking an already-pressed "Liked"
+    // button when the agent asked for "Like". This is the only consistent rule.
+    expect(isPreciseTextMatch('Saved', 'Save')).toBe(false);
+    expect(isPreciseTextMatch('Liked', 'Like')).toBe(false);
+    expect(isPreciseTextMatch('Commenting', 'Comment')).toBe(false);
+    expect(isPreciseTextMatch('Shareholder', 'Share')).toBe(false);
+  });
+
+  it('REJECTS unrelated or substring-only text', () => {
+    expect(isPreciseTextMatch('Settings', 'Set')).toBe(false);  // 5-char delta
+    expect(isPreciseTextMatch('homepage', 'home')).toBe(false); // 4-char delta
+    expect(isPreciseTextMatch('totally different', 'Save')).toBe(false);
+  });
+
+  it('is case- and whitespace-normalized', () => {
+    expect(isPreciseTextMatch('  OK  ', 'ok')).toBe(true);
+    expect(isPreciseTextMatch('OK', '  OK  ')).toBe(true);
+  });
+
+  it('returns false for empty wanted text (no-op, avoids matching everything)', () => {
+    expect(isPreciseTextMatch('anything', '')).toBe(false);
+    expect(isPreciseTextMatch('', '')).toBe(false);
+    expect(isPreciseTextMatch('x', '   ')).toBe(false);
+  });
+
+  it('handles non-string inputs defensively', () => {
+    expect(isPreciseTextMatch(null as any, 'Save')).toBe(false);
+    expect(isPreciseTextMatch(undefined as any, 'Save')).toBe(false);
+    expect(isPreciseTextMatch('Save', null as any)).toBe(false);
   });
 });

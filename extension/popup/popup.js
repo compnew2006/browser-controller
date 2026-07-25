@@ -116,13 +116,37 @@ async function disconnectAgent(sessionId) {
 }
 
 /** Render the Open Tabs panel with a Pin dropdown per tab. */
+// Signature of the last-rendered tab set — skip the innerHTML rebuild when
+// nothing material changed (avoids the 2s poll destroying an open <select> and
+// resetting its value, which made the Pin dropdown close/snaps-back-to-free).
+let lastTabsSignature = '';
+
 function renderOpenTabs() {
   const tabs = lastTabs;
   if (!tabs || tabs.length === 0) {
-    openTabsEl.innerHTML = '<div class="empty">none</div>';
+    if (lastTabsSignature !== 'empty') {
+      openTabsEl.innerHTML = '<div class="empty">none</div>';
+      lastTabsSignature = 'empty';
+    }
     return;
   }
+  // GUARD 1: if the user has a <select> open (mid-interaction), do NOT rebuild —
+  // replacing innerHTML closes the dropdown and loses the in-progress selection.
+  const openSelect = openTabsEl.querySelector('select[data-action="pickAgent"]');
+  if (openSelect && openSelect === document.activeElement) {
+    return; // user is interacting with a dropdown; leave the DOM alone
+  }
+  // GUARD 2: only rebuild if the tab set + lock state + agent roster changed.
+  // The signature encodes tab ids, titles, lockedBy, and the agent list. Without
+  // this, every 2s poll re-renders identical rows, flickering the dropdown.
   const agents = (lastAgents || []).filter(Boolean);
+  const sig = JSON.stringify({
+    tabs: tabs.map(t => ({ id: t.id, title: t.title, lockedBy: t.lockedBy })),
+    agents: agents.map(a => a.sessionId),
+  });
+  if (sig === lastTabsSignature) return; // nothing changed — keep the DOM stable
+  lastTabsSignature = sig;
+
   openTabsEl.innerHTML = tabs
     .map((t) => {
       const title = escapeHtml(t.title || t.url || `tab ${t.id}`);
@@ -139,11 +163,14 @@ function renderOpenTabs() {
           </span>
         </div>`;
       }
-      // Unlocked: dropdown of agents + Pin button. Preselect the placeholder.
+      // Unlocked: dropdown of agents + Pin button. The option VALUE is the
+      // agentName (the stable lock identity — survives reconnects where the
+      // sessionId churns s3→s4). The label shows both for clarity.
       const opts = ['<option value="">— free —</option>']
         .concat(agents.map((a) => {
-          const label = escapeHtml(`${a.name || 'agent'} · ${a.sessionId}`);
-          const val = escapeHtml(a.sessionId);
+          const name = a.name || 'agent';
+          const label = escapeHtml(`${name} · ${a.sessionId}`);
+          const val = escapeHtml(name);
           return `<option value="${val}">${label}</option>`;
         }))
         .join('');
@@ -312,17 +339,18 @@ document.addEventListener('click', (e) => {
 
   if (action === 'lockTab') {
     const tabId = Number(btn.dataset.tab);
-    // find this tab row's <select> to read the chosen agent
+    // find this tab row's <select> to read the chosen agent. The select's
+    // value is the agentName (stable lock identity across reconnects).
     const row = btn.closest('.tab-row');
     const select = row && row.querySelector('select[data-action="pickAgent"]');
-    const sessionId = select ? select.value : '';
-    if (!sessionId) {
+    const agentName = select ? select.value : '';
+    if (!agentName) {
       addLog('Pick an agent first', 'warn');
       return;
     }
-    chrome.runtime.sendMessage({ type: 'lockTab', tabId, sessionId }, (resp) => {
+    chrome.runtime.sendMessage({ type: 'lockTab', tabId, agentName }, (resp) => {
       if (resp?.success) {
-        addLog(`Pinned tab ${tabId} to ${agentLabelFor(sessionId)}`, 'ok');
+        addLog(`Pinned tab ${tabId} to ${agentName}`, 'ok');
         refreshStatus();
       } else {
         addLog(`Pin failed: ${resp?.error || 'unknown'}`, 'err');

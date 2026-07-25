@@ -233,6 +233,22 @@ class Daemon {
           this.pendingCalls.delete(entry.daemonCallId);
           try { entry.controller.abort(); } catch { /* already settled */ }
         }
+        // Release this session's tab locks so a crashed/quit agent doesn't leave
+        // orphaned locks that block other agents forever. BUT: only do this if
+        // no OTHER live connection shares the same agentName. MCP clients
+        // (Cursor/Hermes/...) reconnect 2-3x on startup, and the dedup-by-name
+        // logic replaces the old session — the old socket's close fires and
+        // would wrongly clear locks that belong to the NEW (surviving) session
+        // of the same agent. Keying the check on agentName (not sessionId) makes
+        // locks survive the reconnect churn. Only a true agent exit (no same-name
+        // connection remains) releases the locks.
+        const name = client.agentName;
+        const stillAlive = Array.from(this.clients.values()).some(
+          (c) => c !== client && c.agentName === name,
+        );
+        if (!stillAlive) {
+          this.bridge.sendControl('releaseSession', { sessionId: client.sessionId, agentName: name });
+        }
         this.clients.delete(socket);
       }
     });
@@ -297,7 +313,7 @@ class Daemon {
     // into params. The daemon stays a pure {tool, params} multiplexer; the
     // extension's tab-lock layer reads msg.sessionId, never params.__sessionId.
     try {
-      const result = await this.bridge.callTool(msg.tool, msg.params, client.sessionId, controller.signal);
+      const result = await this.bridge.callTool(msg.tool, msg.params, client.sessionId, controller.signal, client.agentName);
       this.sendToClient(client, { kind: 'result', id: msg.id, success: true, result });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

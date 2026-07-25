@@ -330,6 +330,20 @@ export class ExtensionBridge {
     return this.client !== null && this.client.readyState === WebSocket.OPEN;
   }
 
+  /**
+   * Send a non-tool control message to the extension (e.g. notify it that an
+   * agent disconnected, so it can release that session's tab locks). Fire-and-
+   * forget: control messages carry no reply. Used by the daemon's close handler.
+   */
+  sendControl(type: string, payload: Record<string, unknown> = {}): void {
+    if (!this.isConnected()) return; // extension gone — nothing to notify
+    try {
+      this.client!.send(JSON.stringify({ type, ...payload }));
+    } catch {
+      // socket gone — close path will fire
+    }
+  }
+
   waitForConnection(timeoutMs = 10_000): Promise<void> {
     if (this.isConnected()) return Promise.resolve();
 
@@ -354,7 +368,7 @@ export class ExtensionBridge {
     });
   }
 
-  async callTool(tool: string, params: Record<string, unknown>, sessionId?: string, signal?: AbortSignal): Promise<unknown> {
+  async callTool(tool: string, params: Record<string, unknown>, sessionId?: string, signal?: AbortSignal, agentName?: string): Promise<unknown> {
     if (!this.isConnected()) {
       try {
         await this.waitForConnection(5_000);
@@ -365,10 +379,10 @@ export class ExtensionBridge {
       }
     }
 
-    return this.sendToolCall(tool, params, 0, sessionId, signal);
+    return this.sendToolCall(tool, params, 0, sessionId, signal, agentName);
   }
 
-  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal): Promise<unknown> {
+  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal, agentName?: string): Promise<unknown> {
     // If the caller already aborted (e.g. client evicted before we even sent),
     // reject immediately rather than firing the action into the void.
     if (signal?.aborted) {
@@ -391,7 +405,7 @@ export class ExtensionBridge {
         this.pendingRequests.delete(id);
         if (canRetry && retryCount < this.maxRetries) {
           console.error(`[Bridge] Timeout on ${tool}, retry ${retryCount + 1}/${this.maxRetries}`);
-          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal).then(resolve, reject);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName).then(resolve, reject);
         } else if (!canRetry) {
           reject(new Error(`Tool call timed out (no retry: non-idempotent): ${tool}`));
         } else {
@@ -417,15 +431,17 @@ export class ExtensionBridge {
       this.pendingRequests.set(id, { resolve, reject, timeout, tool, retries: retryCount, params, onAbort, signal });
 
       try {
-        // sessionId travels as a top-level WS field (audit M1), not injected
-        // into params — the daemon stays a pure {tool, params} multiplexer.
-        this.client!.send(JSON.stringify({ id, tool, params, sessionId }));
+        // sessionId + agentName travel as top-level WS fields (audit M1), not
+        // injected into params — the daemon stays a pure {tool, params} multiplexer.
+        // agentName is the STABLE identity for tab locks (survives reconnects);
+        // sessionId is transient (s3→s4) and used only for logging/UI.
+        this.client!.send(JSON.stringify({ id, tool, params, sessionId, agentName }));
       } catch (err) {
         clearTimeout(timeout);
         if (signal) signal.removeEventListener('abort', onAbort);
         this.pendingRequests.delete(id);
         if (canRetry && retryCount < this.maxRetries && this.isConnected()) {
-          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal).then(resolve, reject);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName).then(resolve, reject);
         } else {
           reject(err instanceof Error ? err : new Error('Send failed'));
         }

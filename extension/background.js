@@ -321,16 +321,41 @@ async function broadcastStatus(message) {
 // coupled the multiplexer to the extension's wire format.)
 
 async function handleMessage(msg) {
+  // Control messages (non-tool) from the daemon. These carry a `type` and no
+  // `tool`; handle them here before the tool-dispatch path assumes a tool call.
+  if (msg.type === 'releaseSession') {
+    // An agent disconnected — release any tabs it had locked, so a crashed/quit
+    // agent doesn't leave orphaned locks blocking other agents forever. Locks
+    // are keyed by agentName, so release by that (the daemon only sends this
+    // when NO surviving connection shares the agentName — see daemon close handler).
+    const owner = msg.agentName || msg.sessionId;
+    if (owner) {
+      const released = tabLocks.releaseByOwner(owner);
+      if (released.length) {
+        broadcastStatus(`Released ${released.length} lock(s) from disconnected agent ${owner}`);
+      }
+    }
+    return; // control message — no response expected
+  }
+  if (msg.type === 'ping') {
+    // already handled in onmessage, but be defensive
+    return;
+  }
+
   const { id, tool, params } = msg;
   const p = params || {};
   const sessionId = msg.sessionId || null;
+  // agentName is the STABLE identity for tab locks (survives MCP-client
+  // reconnects where sessionId churns s3→s4). Locks are keyed by agentName;
+  // sessionId is kept only for logging/UI.
+  const agentName = msg.agentName || null;
 
   const tabId = extractTabId(tool, p);
 
   // Tools without a tabId (tabs list/create, console-less) run directly.
   if (tabId == null) {
     try {
-      const result = await dispatch(tool, p, sessionId);
+      const result = await dispatch(tool, p, sessionId, agentName);
       sendResponse(id, { success: true, result });
     } catch (err) {
       sendResponse(id, { success: false, error: err.message || String(err) });
@@ -338,18 +363,19 @@ async function handleMessage(msg) {
     return;
   }
 
-  // Acquire this tab's mutex (2.1) and honor per-agent locks (2.2).
+  // Acquire this tab's mutex (2.1) and honor per-agent locks (2.2). Locks are
+  // keyed by agentName (stable across reconnects), so waitFor checks agentName.
   runOnTabLib(
     tabLocks,
     tabMutex,
     tabId,
-    sessionId,
+    agentName,
     async () => {
       currentActivity = tool;
       updateBadge('active');
       await showOverlay(tabId, tool.replace('browser_', ''));
       try {
-        const result = await dispatch(tool, p, sessionId);
+        const result = await dispatch(tool, p, sessionId, agentName);
         sendResponse(id, { success: true, result });
       } catch (err) {
         sendResponse(id, { success: false, error: err.message || String(err) });
@@ -386,7 +412,7 @@ function extractTabId(tool, params) {
 
 // --- Tool Dispatch --------------------------------------------------------
 
-async function dispatch(tool, params, sessionId) {
+async function dispatch(tool, params, sessionId, agentName) {
   const handlers = {
     browser_navigate: handleNavigate,
     browser_click: handleClick,
@@ -417,7 +443,7 @@ async function dispatch(tool, params, sessionId) {
 
   const handler = handlers[tool];
   if (!handler) throw new Error(`Unknown tool: ${tool}`);
-  return handler(params, sessionId);
+  return handler(params, sessionId, agentName);
 }
 
 // --- Tab resolution (task 1.2) -------------------------------------------
@@ -535,23 +561,49 @@ async function handleNavigate(params) {
   // navigate is the one page tool allowed to omit tabId → active tab fallback.
   const tab = tabId != null ? await resolveTab(tabId) : await getActiveTab();
 
-  return new Promise((resolve, reject) => {
+  // Fix #1 (SPA-ready): Chrome fires `complete` as soon as the HTML loads, but
+  // SPAs (React/Vue/...) render content via JS AFTER that — so a snapshot taken
+  // immediately returns an empty body. We (a) wait for `complete`, (b) give the
+  // SPA ~500ms to render, then (c) return a snapshot inline so the agent doesn't
+  // waste a separate browser_snapshot call on a still-empty page. On a protected
+  // page (chrome://, 401 Basic auth) the snapshot will surface a clear error
+  // instead of silently returning empty.
+  await new Promise((resolve, reject) => {
     const listener = (tId, changeInfo) => {
       if (tId !== tab.id) return;
       if (changeInfo.status === 'complete' || (waitUntil === 'domcontentloaded' && changeInfo.status === 'complete')) {
         chrome.tabs.onUpdated.removeListener(listener);
-        resolve({ url, status: 'navigated', tabId: tab.id });
+        resolve();
       }
     };
-
     chrome.tabs.onUpdated.addListener(listener);
     chrome.tabs.update(tab.id, { url }).catch(reject);
-
     setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
-      resolve({ url, status: 'timeout', tabId: tab.id });
+      resolve(); // timeout — still proceed to settle + snapshot
     }, 55000);
   });
+
+  // SPA settle window. 500ms is a cheap, robust default that covers most
+  // client-rendered apps without making navigation feel slow for static pages.
+  await new Promise((r) => setTimeout(r, 500));
+
+  // Return the snapshot inline — saves the agent a step (no separate call).
+  try {
+    const snap = await handleSnapshot({ tabId: tab.id, compact: true });
+    const snapObj = typeof snap === 'string' ? JSON.parse(snap) : snap;
+    return {
+      url,
+      status: 'navigated',
+      tabId: tab.id,
+      // The tool returns textResult(JSON.stringify(...)); inline the snapshot
+      // under `snapshot` so it's visible to the agent alongside nav status.
+      snapshot: snapObj && snapObj.content ? snapObj.content : snapObj,
+    };
+  } catch {
+    // snapshot failed (protected page / 401 / etc) — navigation still succeeded.
+    return { url, status: 'navigated', tabId: tab.id };
+  }
 }
 
 async function handleClick(params) {
@@ -560,7 +612,7 @@ async function handleClick(params) {
   const fb = getFallback(tabId, ref);
   const resolveFallbackSrc = PAGE_RESOLVE_FALLBACK_FN.toString();
 
-  return safeExec(tabId, (_ref, _sel, _btn, _dbl, _fb, resolveFallbackSrc) => {
+  return safeExec(tabId, async (_ref, _sel, _btn, _dbl, _fb, resolveFallbackSrc) => {
     let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
     let via = 'ref';
     if (!el && _sel) { el = document.querySelector(_sel); via = 'selector'; }
@@ -577,6 +629,21 @@ async function handleClick(params) {
     }
 
     el.scrollIntoView({ behavior: 'instant', block: 'center' });
+
+    // Fix #2 (visibility retry): after scrollIntoView, the element may still be
+    // off-screen or zero-size if layout hasn't reflowed yet. Give it one short
+    // settle (200ms) and re-read the element once. This kills the common "element
+    // present but click landed nowhere" failure on lazy-rendered lists. Bounded
+    // to a single retry so a truly-hidden element still surfaces honestly.
+    const rect0 = el.getBoundingClientRect();
+    const visible0 = rect0.width > 0 && rect0.height > 0;
+    if (!visible0) {
+      await new Promise((r) => setTimeout(r, 200));
+      // re-resolve the element (it may have been re-rendered with a new node)
+      el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : el;
+      if (el) el.scrollIntoView({ behavior: 'instant', block: 'center' });
+    }
+    if (!el) return { success: false, error: 'REF_GONE', _ref };
 
     const rect = el.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
@@ -1078,7 +1145,7 @@ async function handleNetwork(params) {
   return { success: true, requests: reqs };
 }
 
-async function handleTabs(params, sessionId) {
+async function handleTabs(params, sessionId, agentName) {
   const { action, tabId, url } = params;
   switch (action) {
     case 'list': {
@@ -1111,10 +1178,13 @@ async function handleTabs(params, sessionId) {
     }
     case 'lock': {
       if (!tabId) throw new Error('tabId required');
-      if (!sessionId) throw new Error('lock requires a session (called outside daemon?)');
-      tabLocks.lock(tabId, sessionId);
-      broadcastStatus(`Tab ${tabId} locked by ${sessionId}`);
-      return { success: true, locked: tabId, sessionId };
+      // Lock by agentName (stable across reconnects) when available; fall back
+      // to sessionId for the popup path (which only knows sessionId from /status).
+      const owner = agentName || sessionId;
+      if (!owner) throw new Error('lock requires a session (called outside daemon?)');
+      tabLocks.lock(tabId, owner);
+      broadcastStatus(`Tab ${tabId} locked by ${owner}`);
+      return { success: true, locked: tabId, owner };
     }
     case 'unlock': {
       if (!tabId) throw new Error('tabId required');
@@ -1540,15 +1610,16 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     return false;
   }
   if (msg.type === 'lockTab') {
-    // { tabId, sessionId } — pin a specific tab to a specific agent from the
-    // popup. This is the user-facing counterpart to the agent-driven
-    // browser_tabs lock action; same primitive (tabLocks.lock).
-    if (msg.tabId == null || !msg.sessionId) {
-      respond({ success: false, error: 'tabId and sessionId required' });
+    // { tabId, agentName?, sessionId? } — pin a tab to an agent from the popup.
+    // Prefer agentName (stable across reconnects); fall back to sessionId for
+    // backward compat. Same primitive as the browser_tabs lock tool.
+    const owner = msg.agentName || msg.sessionId;
+    if (msg.tabId == null || !owner) {
+      respond({ success: false, error: 'tabId and agentName/sessionId required' });
       return false;
     }
-    tabLocks.lock(msg.tabId, msg.sessionId);
-    broadcastStatus(`Tab ${msg.tabId} pinned to ${msg.sessionId}`);
+    tabLocks.lock(msg.tabId, owner);
+    broadcastStatus(`Tab ${msg.tabId} pinned to ${owner}`);
     respond({ success: true });
     return false;
   }

@@ -5,8 +5,8 @@
     "semantic_hash": ""
   },
   "extension/background.js": {
-    "mtime": 1784929969.8820355,
-    "ast_hash": "3077310b3b5838aab62c9cc2124c9fd7",
+    "mtime": 1784931041.7036684,
+    "ast_hash": "1e854c66a01ec6b7f041aa3ddcce9016",
     "semantic_hash": ""
   },
   "extension/content.js": {
@@ -372,11 +372,6 @@
   ".zcode/plans/plan-sess_cb96dc0a-88a2-4f04-b749-9806799a675a.md": {
     "mtime": 1784927182.1615999,
     "ast_hash": "5f5d11730c8f249d35bf70b3d78b4261",
-    "semantic_hash": ""
-  },
-  "extension/utils/snapshot-tree.js": {
-    "mtime": 1784929939.7258923,
-    "ast_hash": "45ca5852bcb04b8b6b9abbc9c0199919",
     "semantic_hash": ""
   },
   "ARCHITECTURE.md": {

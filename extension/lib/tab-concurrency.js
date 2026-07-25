@@ -29,13 +29,22 @@ export class TabMutexMap {
     const next = prev.then(fn, fn);
     // Swallow rejection on the stored chain so a later call isn't poisoned,
     // but the returned `next` still surfaces the real error to the caller.
-    this.queues.set(
-      tabId,
-      next.then(
-        () => {},
-        () => {},
-      ),
+    const settled = next.then(
+      () => {},
+      () => {},
     );
+    this.queues.set(tabId, settled);
+    // Leak fix: once this chain settles, drop the entry IF it's still ours.
+    // A later run() may have chained onto `settled` and replaced the map value —
+    // in that case `settled !== current`, and deleting would break the newer
+    // chain's serialization. The identity check makes this safe. Without this,
+    // every tab's first run() left a permanent entry → memory leak + isIdle()
+    // returned false forever after the first call.
+    settled.then(() => {
+      if (this.queues.get(tabId) === settled) {
+        this.queues.delete(tabId);
+      }
+    });
     return next;
   }
 
@@ -73,6 +82,25 @@ export class TabLockMap {
   /** Release tabId unconditionally (used when the tab is closed). */
   release(tabId) {
     this.locks.delete(tabId);
+  }
+
+  /**
+   * Release every tab locked to `sessionId`. Called when an agent disconnects
+   * (daemon close handler → bridge → extension) so a crashed/quit agent doesn't
+   * leave orphaned locks that block other agents forever. Returns the tabIds
+   * that were released (empty if the session owned nothing).
+   * @param {string} sessionId
+   * @returns {number[]}
+   */
+  releaseByOwner(sessionId) {
+    const released = [];
+    for (const [tabId, owner] of this.locks) {
+      if (owner === sessionId) {
+        this.locks.delete(tabId);
+        released.push(tabId);
+      }
+    }
+    return released;
   }
 
   /** @returns {Array<{tabId:number,sessionId:string}>} serializable snapshot. */

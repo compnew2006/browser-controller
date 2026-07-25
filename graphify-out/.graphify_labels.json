@@ -29,6 +29,8 @@
   "27": "Vitest Config",
   "28": "[2.1.0] — 2026-07-25 — Architecture hardening",
   "29": "RALPH_MEMORY",
+  "30": "TabLockMap",
+  "31": "tab-concurrency.test.ts",
   "32": "daemon.test.ts",
   "33": "التغييرات (٥ ملفات)"
 }

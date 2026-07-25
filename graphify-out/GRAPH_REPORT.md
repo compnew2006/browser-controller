@@ -1,16 +1,16 @@
 # Graph Report - real-browser-mcp  (2026-07-25)
 
 ## Corpus Check
-- 60 files · ~76,839 words
+- 59 files · ~76,558 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 526 nodes · 818 edges · 32 communities (25 shown, 7 thin omitted)
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 34 edges (avg confidence: 0.56)
+- 524 nodes · 750 edges · 34 communities (27 shown, 7 thin omitted)
+- Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 34 edges (avg confidence: 0.56)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `51fed142`
+- Built from commit: `92aee0f5`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -43,15 +43,16 @@
 - Store Assets
 - [2.1.0] — 2026-07-25 — Architecture hardening
 - RALPH_MEMORY
+- TabLockMap
 - daemon.test.ts
 - التغييرات (٥ ملفات)
 
 ## God Nodes (most connected - your core abstractions)
 1. `dispatch()` - 24 edges
-2. `ToolDefinition` - 24 edges
-3. `textResult()` - 23 edges
+2. `ToolDefinition` - 22 edges
+3. `textResult()` - 22 edges
 4. `resolveTab()` - 21 edges
-5. `requireTabId()` - 21 edges
+5. `requireTabId()` - 20 edges
 6. `keywords` - 20 edges
 7. `real-browser-mcp` - 20 edges
 8. `ExtensionBridge` - 18 edges
@@ -82,18 +83,18 @@
 - **Real Browser MCP Three-Piece Architecture** — mcp_server_daemon, chrome_extension, real_browser_mcp [EXTRACTED 0.95]
 - **Tab-First Page Interaction Tools** — browser_snapshot_tool, browser_click_tool, browser_navigate_tool, browser_tabs_tool, browser_evaluate_tool [EXTRACTED 0.90]
 
-## Communities (32 total, 7 thin omitted)
+## Communities (34 total, 7 thin omitted)
 
 ### Community 0 - "Browser Tool Definitions"
-Cohesion: 0.09
-Nodes (37): clickTool, clickTextTool, consoleTool, dialogTool, dragTool, evaluateTool, fillFormTool, findTool (+29 more)
+Cohesion: 0.08
+Nodes (30): clickTool, clickTextTool, consoleTool, dialogTool, dragTool, evaluateTool, fillFormTool, findTool (+22 more)
 
 ### Community 1 - "Extension Background Service"
-Cohesion: 0.07
-Nodes (56): autoPairToken(), autoReSnapshot(), broadcastStatus(), buildStatusPayload(), connect(), consoleByTab, dispatch(), extractTabId() (+48 more)
+Cohesion: 0.10
+Nodes (52): autoPairToken(), autoReSnapshot(), broadcastStatus(), buildStatusPayload(), connect(), consoleByTab, dispatch(), extractTabId() (+44 more)
 
 ### Community 2 - "IPC Daemon Config"
-Cohesion: 0.08
+Cohesion: 0.07
 Nodes (22): DAEMON_INFO_FILE, DEFAULT_WS_PORT, ExtensionRequest, IpcClientMessage, IpcDaemonMessage, loadOrCreateToken(), readToken(), StoredToken (+14 more)
 
 ### Community 3 - "Package Metadata"
@@ -105,8 +106,8 @@ Cohesion: 0.06
 Nodes (31): action, default_icon, default_popup, default_title, background, service_worker, type, content_scripts (+23 more)
 
 ### Community 5 - "Extension Bridge Logic"
-Cohesion: 0.13
-Nodes (8): BridgeOptions, CORS, ExtensionBridge, findListenersOnPort(), HttpRequestHandler, isPortInUse(), PendingRequest, TOOL_TIMEOUTS
+Cohesion: 0.09
+Nodes (15): BridgeOptions, CORS, ExtensionBridge, findListenersOnPort(), HttpRequestHandler, isPortInUse(), PendingRequest, TOOL_TIMEOUTS (+7 more)
 
 ### Community 6 - "Keywords and Dependencies"
 Cohesion: 0.10
@@ -134,7 +135,7 @@ Nodes (6): Architecture, Extension points, Key invariants (do not break), Proces
 
 ### Community 12 - "Smart Selector Utils"
 Cohesion: 0.23
-Nodes (13): buildRobustSelectorFromPath(), computeNewFingerprints(), computeNth(), cssEscape(), isGeneratedClass(), isStableId(), PAGE_FALLBACK_FN(), PAGE_RESOLVE_FALLBACK_FN() (+5 more)
+Nodes (12): buildRobustSelectorFromPath(), computeNewFingerprints(), computeNth(), cssEscape(), isGeneratedClass(), isStableId(), PAGE_FALLBACK_FN(), pickNthMatch() (+4 more)
 
 ### Community 13 - "Dev Dependencies"
 Cohesion: 0.18
@@ -168,6 +169,10 @@ Nodes (6): [2.1.0] — 2026-07-25 — Architecture hardening, Changelog, CRITICA
 Cohesion: 0.33
 Nodes (5): 2026-07-25 00:30 — Issue: tool-name drift silently disabled retry, 2026-07-25 00:35 — Issue: eviction orphaned non-idempotent actions, 2026-07-25 00:40 — Issue: docstring promised persistence that wasn't implemented, 2026-07-25 00:45 — Issue: parallel config tables drift from the registry, RALPH_MEMORY
 
+### Community 30 - "TabLockMap"
+Cohesion: 0.18
+Nodes (3): runOnTab(), TabLockMap, TabMutexMap
+
 ### Community 32 - "daemon.test.ts"
 Cohesion: 0.16
 Nodes (14): Client, __dirname, DIST_DAEMON, DIST_INDEX, fetchStatus(), httpGet(), killSession(), ROOT (+6 more)
@@ -177,24 +182,24 @@ Cohesion: 0.18
 Nodes (10): إصلاح الوكلاء الأشباح (Zombie) + اسم الوكيل + إدارة التبويبات من الـ Popup, التغييرات (٥ ملفات), السبب الجذري لكل عرض, ترتيب التنفيذ, نطاق الانفجار (blast radius) — من graphify Phase 4, ١. `mcp-server/src/daemon.ts` — نبضة الحياة + إزالة التكرار + `/kill`, ٢. `mcp-server/src/index.ts` — اسم وكيل أفضل + نبضة pong + سجل صحيح, ٣. `extension/background.js` — قفل/فتح من الـ popup + قائمة التبويبات (+2 more)
 
 ## Knowledge Gaps
-- **228 isolated node(s):** `__dirname`, `consoleByTab`, `networkByTab`, `fallbackByTab`, `lastSnapshotFingerprints` (+223 more)
+- **249 isolated node(s):** `Process model`, `Key invariants (do not break)`, `Extension points`, `Where state lives`, `Testing` (+244 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **7 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `DaemonClient` connect `IPC Daemon Config` to `Extension Background Service`?**
-  _High betweenness centrality (0.125) - this node is a cross-community bridge._
-- **Why does `updateUI()` connect `Popup UI Logic` to `Extension Background Service`?**
-  _High betweenness centrality (0.052) - this node is a cross-community bridge._
+- **Why does `TabLockMap` connect `TabLockMap` to `IPC Daemon Config`, `Popup UI Logic`?**
+  _High betweenness centrality (0.032) - this node is a cross-community bridge._
 - **Are the 22 inferred relationships involving `dispatch()` (e.g. with `handleClick()` and `handleClickByText()`) actually correct?**
   _`dispatch()` has 22 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `__dirname`, `consoleByTab`, `networkByTab` to the rest of the system?**
-  _228 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `Process model`, `Key invariants (do not break)`, `Extension points` to the rest of the system?**
+  _249 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Browser Tool Definitions` be split into smaller, more focused modules?**
-  _Cohesion score 0.0882936507936508 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.08106219426974144 - nodes in this community are weakly interconnected._
 - **Should `Extension Background Service` be split into smaller, more focused modules?**
-  _Cohesion score 0.06506849315068493 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.0957372466806429 - nodes in this community are weakly interconnected._
 - **Should `IPC Daemon Config` be split into smaller, more focused modules?**
-  _Cohesion score 0.0782608695652174 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.07358156028368794 - nodes in this community are weakly interconnected._
+- **Should `Package Metadata` be split into smaller, more focused modules?**
+  _Cohesion score 0.044444444444444446 - nodes in this community are weakly interconnected._
