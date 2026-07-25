@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="Browser Controller" width="100" height="100" />
 </p>
 
-<h1 align="center">real-browser-mcp</h1>
+<h1 align="center">Browser Controller</h1>
 
 <p align="center">
   <strong>The missing piece in AI coding: your agent can now see your REAL browser.</strong>
@@ -11,19 +11,17 @@
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/real-browser-mcp/fkkimpklpgedomcheiojngaaaicmaidi"><img src="https://img.shields.io/badge/Chrome_Extension-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Chrome Extension" /></a>
   &nbsp;
-  <a href="https://www.npmjs.com/package/real-browser-mcp"><img src="https://img.shields.io/badge/MCP_Server-CB3837?style=for-the-badge&logo=npm&logoColor=white" alt="MCP Server" /></a>
+  <a href="https://www.npmjs.com/package/browser-controller"><img src="https://img.shields.io/badge/MCP_Server-CB3837?style=for-the-badge&logo=npm&logoColor=white" alt="MCP Server" /></a>
   &nbsp;
-  <a href="cursor://anysphere.cursor-deeplink/mcp/install?name=real-browser&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImJyb3dzZXItY29udHJvbGxlciJdfQ=="><img src="https://img.shields.io/badge/Add_to_Cursor-6366f1?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJMMiA3bDEwIDUgMTAtNS0xMC01ek0yIDE3bDEwIDUgMTAtNS0xMC01LTEwIDV6TTIgMTJsMTAgNSAxMC01LTEwLTUtMTAgNXoiIGZpbGw9IndoaXRlIi8+PC9zdmc+" alt="Add to Cursor" /></a>
+  <a href="cursor://anysphere.cursor-deeplink/mcp/install?name=browser-controller&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImJyb3dzZXItY29udHJvbGxlciJdfQ=="><img src="https://img.shields.io/badge/Add_to_Cursor-6366f1?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IDAgMCAyNCAyNCI+PHBhdGggZD0iTTEyIDJMMiA3bDEwIDUgMTAtNS0xMC01ek0yIDE3bDEwIDUgMTAtNS0xMC01LTEwIDV6TTIgMTJsMTAgNSAxMC01LTEwLTUtMTAgNXoiIGZpbGw9IndoaXRlIi8+PC9zdmc+" alt="Add to Cursor" /></a>
   &nbsp;
   <a href="#-teach-your-agent"><img src="https://img.shields.io/badge/🧠_Agent_Rules-22c55e?style=for-the-badge" alt="Agent Rules" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ofershap/real-browser-mcp/actions/workflows/ci.yml"><img src="https://github.com/ofershap/real-browser-mcp/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://www.npmjs.com/package/real-browser-mcp"><img src="https://img.shields.io/npm/v/real-browser-mcp.svg" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/real-browser-mcp"><img src="https://img.shields.io/npm/dm/real-browser-mcp.svg" alt="npm downloads" /></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-strict-blue" alt="TypeScript" /></a>
+  <img src="https://img.shields.io/badge/agents-122%20tests%20green-22c55e" alt="122 tests green" />
 </p>
 
 <p align="center">
@@ -172,7 +170,7 @@ Any MCP-compatible client works.
 **Or load from source:**
 
 ```bash
-git clone https://github.com/ofershap/real-browser-mcp.git
+git clone https://github.com/compnew2006/browser-controller.git
 ```
 
 1. Open `chrome://extensions` and enable **Developer mode** (toggle in the top right)
@@ -186,8 +184,8 @@ Green dot = connected. Gray = waiting for the daemon.
 
 The daemon generates a secret token on first run. The extension must present it to connect.
 
-1. Run any browser command once (e.g. ask your agent to "list my browser tabs") — this starts the daemon and creates the token at `~/.real-browser-mcp/token.json`.
-2. Read it: `cat ~/.real-browser-mcp/token.json` (on Windows: `%USERPROFILE%\.real-browser-mcp\token.json`)
+1. Run any browser command once (e.g. ask your agent to "list my browser tabs") — this starts the daemon and creates the token at `~/.browser-controller/token.json`.
+2. Read it: `cat ~/.browser-controller/token.json` (on Windows: `%USERPROFILE%\.browser-controller\token.json`)
 3. Click the extension icon → paste the token into the **Auth Token** field.
 
 Green dot = you're connected. Your agent can now see your browser.
@@ -344,7 +342,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ### Daemon state files
 
-The daemon keeps everything in `~/.real-browser-mcp/` (Windows: `%USERPROFILE%\.real-browser-mcp\`):
+The daemon keeps everything in `~/.browser-controller/` (Windows: `%USERPROFILE%\.browser-controller\`):
 
 | File | Purpose |
 |------|---------|
@@ -394,7 +392,7 @@ Update the port in each extension popup to match.
 Everything stays on your machine. The extension connects to the daemon via an authenticated WebSocket on localhost; MCP clients connect to the daemon via a local IPC socket. No cloud, no proxy, nothing leaves your browser.
 
 ```
-real-browser-mcp/
+browser-controller/
 ├── mcp-server/          MCP server (npm package, TypeScript)
 │   └── src/
 │       ├── daemon.ts        Single multi-client daemon (owns WS :7225)
@@ -422,8 +420,8 @@ real-browser-mcp/
 <summary><strong>Development</strong></summary>
 
 ```bash
-git clone https://github.com/ofershap/real-browser-mcp.git
-cd real-browser-mcp
+git clone https://github.com/compnew2006/browser-controller.git
+cd browser-controller
 npm install
 npm run build
 npm test
@@ -481,7 +479,7 @@ It can't — not silently. Every page-interaction tool requires a `tabId`, and i
 <details>
 <summary>Why is there an auth token?</summary>
 
-Without it, any local process on your machine could open a WebSocket to port 7225 and drive your authenticated browser sessions (your bank, your email, your company SSO). The daemon generates a secret token in `~/.real-browser-mcp/token.json` and the extension must present it to connect.
+Without it, any local process on your machine could open a WebSocket to port 7225 and drive your authenticated browser sessions (your bank, your email, your company SSO). The daemon generates a secret token in `~/.browser-controller/token.json` and the extension must present it to connect.
 
 </details>
 
@@ -500,16 +498,8 @@ Bug reports, feature requests, and PRs welcome. Open an issue first for larger c
 
 ## Author
 
-[![Made by ofershap](https://gitshow.dev/api/card/ofershap)](https://gitshow.dev/ofershap)
-
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-0A66C2?style=flat&logo=linkedin&logoColor=white)](https://linkedin.com/in/ofershap)
-[![GitHub](https://img.shields.io/badge/GitHub-Follow-181717?style=flat&logo=github&logoColor=white)](https://github.com/ofershap)
-
-
----
-
-<sub>README built with [README Builder](https://ofershap.github.io/readme-builder/)</sub>
+**noiemany** — [GitHub](https://github.com/noiemany)
 
 ## License
 
-[MIT](LICENSE) &copy; [Ofer Shapira](https://github.com/ofershap)
+[MIT](LICENSE) &copy; noiemany

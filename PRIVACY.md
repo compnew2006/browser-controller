@@ -37,8 +37,8 @@ This extension does not integrate with or send data to any third-party services.
 
 ## Changes to this policy
 
-Updates to this privacy policy will be posted at: https://github.com/ofershap/real-browser-mcp/blob/main/PRIVACY.md
+Updates to this privacy policy will be posted at: https://github.com/compnew2006/browser-controller/blob/main/PRIVACY.md
 
 ## Contact
 
-For questions about this privacy policy, open an issue at: https://github.com/ofershap/real-browser-mcp/issues
+For questions about this privacy policy, open an issue at: https://github.com/compnew2006/browser-controller/issues

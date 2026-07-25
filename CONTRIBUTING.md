@@ -5,7 +5,7 @@ Contributions are welcome! Here's how to get started.
 ## Setup
 
 ```bash
-git clone https://github.com/ofershap/real-browser-mcp.git
+git clone https://github.com/compnew2006/browser-controller.git
 cd real-browser-mcp
 npm install
 ```

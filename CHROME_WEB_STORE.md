@@ -43,7 +43,7 @@ PRIVACY:
 • All data stays local — the extension communicates only with a local MCP server on your machine (localhost)
 • No data is sent to external servers
 • No analytics, no tracking, no telemetry
-• Open source: https://github.com/ofershap/real-browser-mcp
+• Open source: https://github.com/compnew2006/browser-controller
 
 REQUIREMENTS:
 • An MCP-compatible AI editor (Cursor, Claude Code, Windsurf, Cline, etc.)
