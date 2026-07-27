@@ -1392,11 +1392,31 @@ async function handleRunAction(params) {
   if (!code) throw new Error('code is required');
   const tab = await resolveTab(tabId);
 
-  // run_action stays on CDP (plan decision: CDP-only, can't be scripted).
+  // run_action stays on CDP (plan decision: CDP-only, can't be scripted —
+  // it bypasses page CSP via the debugger protocol, unlike browser_evaluate).
   await chrome.debugger.attach({ tabId: tab.id }, '1.3');
   try {
     const paramsJson = JSON.stringify(actionParams);
-    const expression = `(async function() { try { var tool = (${code}); if (tool && typeof tool.execute === "function") { return await tool.execute(${paramsJson}); } return { error: "No execute function found" }; } catch(e) { return { error: e.message, stack: e.stack }; } })()`;
+    // Dual mode: accept EITHER a {execute:function()} tool wrapper (legacy
+    // skill syntax) OR a plain JS expression/statement (simple usage like
+    // "document.title" or "var x=...; JSON.stringify(x)"). Previously only
+    // the wrapper worked; any plain expression returned "No execute function
+    // found", making the tool unusable for simple extraction tasks.
+    const expression = `(async function() {
+      try {
+        var tool = (${code});
+        if (tool && typeof tool.execute === "function") {
+          return await tool.execute(${paramsJson});
+        }
+        if (tool && Array.isArray(tool.content)) {
+          return tool;
+        }
+        var raw = (typeof tool === 'object' && tool !== null) ? JSON.stringify(tool) : String(tool);
+        return { content: [{ type: 'text', text: raw }] };
+      } catch(e) {
+        return { error: e.message, stack: e.stack };
+      }
+    })()`;
 
     const { result, exceptionDetails } = await chrome.debugger.sendCommand(
       { tabId: tab.id },
