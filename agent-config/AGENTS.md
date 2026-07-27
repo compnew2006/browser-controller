@@ -6,6 +6,18 @@ This project has `browser-controller` configured (renamed from `real-browser-mcp
 
 The daemon runs on `127.0.0.1:7225` (WS + HTTP). The Chrome extension auto-pairs a token and connects automatically. Multiple agents can connect at once — they share a single daemon, each getting its own sessionId (visible in the popup alongside its agent name and uptime). Reconnecting with the same agent name replaces the old session (no duplicates), and dead connections are evicted by a heartbeat after ~45s. Name the agent explicitly with `--agent <name>` in the MCP config args, or `MCP_AGENT_NAME` env.
 
+## Tool discovery (progressive disclosure)
+
+By default, all 22 browser tools are visible directly (`browser_click`, `browser_snapshot`, etc.). No discovery step needed.
+
+To save ~82% tool-definition tokens, set `BROWSER_CONTROLLER_PROGRESSIVE=1` in the agent's env. Then only `browser_tools` is visible, and you discover + activate others on demand:
+
+1. `browser_tools { action: "list" }` — see all tool names + short summaries (~400 tokens vs ~4200)
+2. `browser_tools { action: "search", query: "click" }` — find tools by keyword
+3. `browser_tools { action: "details", tool: "browser_click" }` — get the full schema AND activate the tool (it becomes callable directly after this)
+
+Once activated, a tool stays visible for the rest of the session. You only need to activate each tool once.
+
 ## CRITICAL: Tab targeting (v2)
 
 This is a multi-client server. **Never assume which tab your actions hit.** You MUST target a tab explicitly with `tabId`.

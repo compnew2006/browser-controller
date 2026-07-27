@@ -367,10 +367,9 @@ async function main(): Promise<void> {
 
   // Progressive disclosure (Anthropic "Code Execution with MCP" pattern):
   // Instead of registering all 22 tools upfront (~4200 tokens in system prompt),
-  // only browser_tools (the meta tool) is visible by default. The agent discovers
-  // and activates other tools on demand via browser_tools {action:"details"}.
-  // Set BROWSER_CONTROLLER_FULL_TOOLS=1 to disable this and register all tools
-  // upfront (backward-compat for clients that expect the full list immediately).
+  // only browser_tools (the meta tool) is visible, and the agent discovers +
+  // activates other tools on demand via browser_tools {action:"details"}.
+  //
   // Default is FULL mode (all tools visible) for safety — existing agents that
   // call browser_click directly will work without changes. Opt INTO progressive
   // disclosure with BROWSER_CONTROLLER_PROGRESSIVE=1 to save ~82% tool-definition

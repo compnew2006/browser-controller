@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.2.0] — 2026-07-27 — Progressive disclosure + token optimization
+
+### Token optimization (46-90% reduction across all tools)
+- **Compact JSON**: removed `JSON.stringify(result, null, 2)` across all 21 tools (-48% per response)
+- **navigate snapshot:false**: `browser_navigate` now accepts `snapshot:false` to skip the inline accessibility tree (-92% when skipped)
+- **browser_text default**: maxLength 50000 → 5000 (-90%)
+- **tabs list**: truncate URLs to 80 chars + omit null fields (-46%)
+
+### Progressive disclosure (Anthropic "Code Execution with MCP" pattern)
+- New meta tool `browser_tools` with `list`/`search`/`details` actions
+- When `BROWSER_CONTROLLER_PROGRESSIVE=1`: only `browser_tools` is visible (~150 tokens vs ~4200 for all 22 tools). Agent discovers + activates tools on demand.
+- Default is FULL mode (all tools visible) for backward compatibility
+- `details` action uses `z.toJSONSchema()` for clean JSON Schema with parameter descriptions
+- All 22 tools now carry a `summary` field (one-line description for search/list)
+
+### Other improvements
+- `browser_run_action`: dual mode — accepts both tool wrappers AND plain JS expressions/IIFEs
+- Popup: full design system (tokens, spacing scale, state vocabulary, anti-ban guards)
+- Tab locks keyed by agentName (survives reconnect churn)
+- LaunchAgent auto-start for daemon (launchd, macOS)
+- Locks auto-release when owning agent disconnects
+
+Test count: 115 → 134 (all green)
+
 ## [2.1.0] — 2026-07-25 — Architecture hardening
 
 Outcome of a full architecture-guardian audit (graphify + 3 parallel deep-dive

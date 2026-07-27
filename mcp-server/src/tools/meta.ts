@@ -24,8 +24,9 @@ import { allTools, toolMap } from './index.js';
  * `RegisteredTool.enable()` + `sendToolListChanged()`, so subsequent `tools/list`
  * responses include it.
  *
- * Set BROWSER_CONTROLLER_FULL_TOOLS=1 to disable progressive disclosure and
- * register all tools upfront (backward-compat mode).
+ * Default is FULL mode (all tools always visible). Set
+ * BROWSER_CONTROLLER_PROGRESSIVE=1 to enable progressive disclosure (only
+ * browser_tools is visible until the agent activates others on demand).
  */
 export interface MetaToolDeps {
   /** Activate a tool by name (enable + sendToolListChanged). No-op if already active. */
@@ -104,12 +105,16 @@ Workflow: call "list" or "search" first, then "details" on the tool you need, th
         }
         // Activate the tool so the agent can call it directly after this.
         deps.onActivate(tool);
-        // Return the full definition (minus the handler — the agent can't call it directly anyway)
+        // Return the full definition with a clean JSON Schema (not Zod internals).
+        // z.toJSONSchema produces proper JSON Schema with parameter descriptions —
+        // .shape serializes Zod's internal structure (1213 chars of noise without
+        // descriptions). This is ~50% smaller AND includes the .describe() text.
+        const jsonSchema = z.toJSONSchema(def.inputSchema);
         return textResult(
           JSON.stringify({
             name: def.name,
             description: def.description,
-            inputSchema: def.inputSchema.shape,
+            inputSchema: jsonSchema,
             activated: true,
             message: `Tool "${tool}" is now active. You can call it directly.`,
           }),
