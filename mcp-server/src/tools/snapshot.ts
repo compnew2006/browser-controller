@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const snapshotTool: ToolDefinition = {
   name: 'browser_snapshot',
-  description:
+  summary: 'Get the accessibility tree with element refs',  description:
     'Get an accessibility tree snapshot of the page. Returns element refs you can use with click, type, and other tools. Use compact mode (default) for smaller output - only interactive elements.',
   inputSchema: z.object({
     tabId: requireTabId(),

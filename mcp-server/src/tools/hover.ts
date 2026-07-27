@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const hoverTool: ToolDefinition = {
   name: 'browser_hover',
-  description: 'Hover over an element to trigger tooltips, dropdown menus, or hover states',
+  summary: 'Hover over an element',  description: 'Hover over an element to trigger tooltips, dropdown menus, or hover states',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot'),

@@ -4,7 +4,7 @@ import { requireTabId, imageResult, textResult } from './types.js';
 
 export const screenshotTool: ToolDefinition = {
   name: 'browser_screenshot',
-  description: 'Capture a screenshot of a tab. Note: Chrome screenshots the tab\'s window, so the tab must be the active one in its window; if it is not, the tool activates it first.',
+  summary: 'Capture a screenshot of a tab',  description: 'Capture a screenshot of a tab. Note: Chrome screenshots the tab\'s window, so the tab must be the active one in its window; if it is not, the tool activates it first.',
   inputSchema: z.object({
     tabId: requireTabId(),
     format: z.enum(['png', 'jpeg']).optional().default('png'),

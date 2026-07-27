@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const clickTextTool: ToolDefinition = {
   name: 'browser_click_text',
-  description:
+  summary: 'Click an element by its visible text',  description:
     'Click an element by its visible text content. Works on React dropdowns, portals, and overlays that may not appear in snapshots. CSP-safe (no eval). Prefers deepest matching element.',
   inputSchema: z.object({
     tabId: requireTabId(),

@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const clickTool: ToolDefinition = {
   name: 'browser_click',
-  description: 'Click an element on the page using a ref from snapshot or a CSS selector',
+  summary: 'Click an element by ref or CSS selector',  description: 'Click an element on the page using a ref from snapshot or a CSS selector',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot (e.g. "e12")'),

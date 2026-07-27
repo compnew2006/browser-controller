@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const waitTool: ToolDefinition = {
   name: 'browser_wait',
-  description:
+  summary: 'Wait for a duration or condition',  description:
     'Wait for a condition: element to appear, element to disappear, or a fixed delay. Useful for SPAs and dynamic content.',
   inputSchema: z.object({
     tabId: requireTabId(),

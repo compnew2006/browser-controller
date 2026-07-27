@@ -4,7 +4,7 @@ import { textResult } from './types.js';
 
 export const tabsTool: ToolDefinition = {
   name: 'browser_tabs',
-  description:
+  summary: 'List, create, close, focus, lock, or unlock tabs',  description:
     'Manage browser tabs: list, create, close, focus, or lock. list requires no tabId. lock/unlock claim a tab for the calling agent so other agents queue behind it instead of racing (see browser_tabs lock).',
   inputSchema: z.object({
     action: z

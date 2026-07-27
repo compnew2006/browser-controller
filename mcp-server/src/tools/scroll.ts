@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const scrollTool: ToolDefinition = {
   name: 'browser_scroll',
-  description:
+  summary: 'Scroll a tab up/down/left/right',  description:
     'Scroll the page or an element. Supports pixel offsets, scrolling to elements, and named positions (top/bottom). Works with virtual scroll containers used by social media sites.',
   inputSchema: z.object({
     tabId: requireTabId(),

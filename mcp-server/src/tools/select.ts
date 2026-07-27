@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const selectTool: ToolDefinition = {
   name: 'browser_select',
-  description: 'Select an option from a dropdown/select element',
+  summary: 'Select an option in a dropdown element',  description: 'Select an option from a dropdown/select element',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot'),

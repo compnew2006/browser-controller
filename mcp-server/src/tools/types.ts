@@ -40,6 +40,13 @@ export function optionalTabId() {
 
 export interface ToolDefinition {
   name: string;
+  /**
+   * One-line summary (max ~60 chars) used by progressive disclosure: the
+   * `browser_tools` meta tool returns this instead of the full description
+   * when listing/searching. Must be concise enough that 22 of them fit in
+   * ~400 tokens (vs ~4200 for full definitions). Example: "Click an element by ref or CSS selector".
+   */
+  summary: string;
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
   handler: (host: ToolHost, params: Record<string, unknown>) => Promise<ToolResult>;

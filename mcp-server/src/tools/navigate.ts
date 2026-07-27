@@ -4,7 +4,7 @@ import { optionalTabId, textResult } from './types.js';
 
 export const navigateTool: ToolDefinition = {
   name: 'browser_navigate',
-  description: 'Navigate to a URL in a browser tab. If tabId is omitted, navigates the active tab (or use browser_tabs create to open a new one). By default also returns a compact snapshot of the new page so you can act immediately; set snapshot:false to skip it and save tokens.',
+  summary: 'Navigate a tab to a URL (+ optional inline snapshot)',  description: 'Navigate to a URL in a browser tab. If tabId is omitted, navigates the active tab (or use browser_tabs create to open a new one). By default also returns a compact snapshot of the new page so you can act immediately; set snapshot:false to skip it and save tokens.',
   inputSchema: z.object({
     url: z.string().describe('The URL to navigate to'),
     tabId: optionalTabId(),

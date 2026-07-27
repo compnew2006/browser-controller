@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const typeTool: ToolDefinition = {
   name: 'browser_type',
-  description: 'Type text into an input element',
+  summary: 'Type text into an input element',  description: 'Type text into an input element',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot'),

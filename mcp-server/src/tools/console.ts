@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const consoleTool: ToolDefinition = {
   name: 'browser_console',
-  description: 'Read console messages (log, warn, error) captured from a specific tab',
+  summary: 'Read console messages from a tab',  description: 'Read console messages (log, warn, error) captured from a specific tab',
   inputSchema: z.object({
     tabId: requireTabId(),
     clear: z.boolean().optional().default(false).describe('Clear this tab\'s messages after reading'),

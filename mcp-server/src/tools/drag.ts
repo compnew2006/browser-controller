@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const dragTool: ToolDefinition = {
   name: 'browser_drag',
-  description:
+  summary: 'Drag an element from one ref/selector to another',  description:
     'Drag from one element or position to another. Uses CDP mouse events for reliable drag-and-drop. Provide either refs/selectors or explicit x,y coordinates.',
   inputSchema: z.object({
     tabId: requireTabId(),

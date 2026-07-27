@@ -20,6 +20,17 @@ describe('Tool Registry', () => {
     }
   });
 
+  // Progressive disclosure: every tool must have a concise `summary` for the
+  // browser_tools meta tool. Without it, search/list would return empty.
+  it('all tools have a summary (progressive disclosure)', () => {
+    for (const tool of allTools) {
+      expect(tool.summary, `${tool.name} must have a summary`).toBeTruthy();
+      expect(typeof tool.summary).toBe('string');
+      expect(tool.summary.length, `${tool.name} summary should be <80 chars`).toBeLessThan(80);
+      expect(tool.summary.length, `${tool.name} summary should be >10 chars`).toBeGreaterThan(10);
+    }
+  });
+
   it('toolMap contains all tools', () => {
     expect(toolMap.size).toBe(allTools.length);
     for (const tool of allTools) {

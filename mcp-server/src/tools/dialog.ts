@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const dialogTool: ToolDefinition = {
   name: 'browser_handle_dialog',
-  description: 'Handle JavaScript dialogs (alert, confirm, prompt). Dialogs block page interaction until handled.',
+  summary: 'Handle or dismiss browser dialogs (alert/confirm/prompt)',  description: 'Handle JavaScript dialogs (alert, confirm, prompt). Dialogs block page interaction until handled.',
   inputSchema: z.object({
     tabId: requireTabId(),
     action: z.enum(['accept', 'dismiss']).describe('Accept or dismiss the dialog'),

@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const pressKeyTool: ToolDefinition = {
   name: 'browser_press_key',
-  description:
+  summary: 'Press a keyboard key (Enter, Tab, Escape, etc.)',  description:
     'Press a keyboard key or combination (Enter, Escape, Tab, ArrowDown, etc). Supports modifiers like Ctrl+A, Cmd+C.',
   inputSchema: z.object({
     tabId: requireTabId(),

@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const networkTool: ToolDefinition = {
   name: 'browser_network',
-  description: 'Read network requests made by a specific tab. Filter by URL pattern.',
+  summary: 'Read network requests captured from a tab',  description: 'Read network requests made by a specific tab. Filter by URL pattern.',
   inputSchema: z.object({
     tabId: requireTabId(),
     filter: z.string().optional().describe('URL regex pattern to filter requests'),

@@ -365,8 +365,37 @@ async function main(): Promise<void> {
   // 4) wire MCP <-> daemon
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 
+  // Progressive disclosure (Anthropic "Code Execution with MCP" pattern):
+  // Instead of registering all 22 tools upfront (~4200 tokens in system prompt),
+  // only browser_tools (the meta tool) is visible by default. The agent discovers
+  // and activates other tools on demand via browser_tools {action:"details"}.
+  // Set BROWSER_CONTROLLER_FULL_TOOLS=1 to disable this and register all tools
+  // upfront (backward-compat for clients that expect the full list immediately).
+  const fullMode = !!process.env.BROWSER_CONTROLLER_FULL_TOOLS;
+
+  // Track which tools are enabled (for the meta tool's isActive callback).
+  const activeTools = new Set<string>();
+
+  // Register the meta tool's dependencies first (closures capture these).
+  const metaDeps = {
+    onActivate: (toolName: string) => {
+      if (activeTools.has(toolName)) return; // already active
+      const handle = toolHandles.get(toolName);
+      if (handle) {
+        handle.enable();
+        activeTools.add(toolName);
+        server.server.sendToolListChanged();
+        console.error(`[${SERVER_NAME}] progressive disclosure: activated "${toolName}"`);
+      }
+    },
+    isActive: (toolName: string) => activeTools.has(toolName),
+  };
+
+  // Register all browser tools, keeping handles for enable/disable control.
+  const toolHandles = new Map<string, ReturnType<typeof server.tool>>();
+
   for (const tool of allTools) {
-    server.tool(
+    const handle = server.tool(
       tool.name,
       tool.description,
       tool.inputSchema.shape,
@@ -381,6 +410,38 @@ async function main(): Promise<void> {
         }
       },
     );
+    toolHandles.set(tool.name, handle);
+    if (fullMode) {
+      activeTools.add(tool.name);
+    } else {
+      handle.disable(); // hidden until the agent activates it via browser_tools
+    }
+  }
+
+  // Register the meta tool LAST (always enabled — it's the discovery entry point).
+  const { createMetaTool } = await import('./tools/meta.js');
+  const metaTool = createMetaTool(metaDeps);
+  server.tool(
+    metaTool.name,
+    metaTool.description,
+    metaTool.inputSchema.shape,
+    async (params: Record<string, unknown>) => {
+      try {
+        return await metaTool.handler(client, params);
+      } catch (err) {
+        return {
+          content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  if (!fullMode) {
+    console.error(`[${SERVER_NAME}] progressive disclosure: ON (${allTools.length} tools hidden, use browser_tools to discover)`);
+    console.error(`[${SERVER_NAME}] set BROWSER_CONTROLLER_FULL_TOOLS=1 to show all tools upfront`);
+  } else {
+    console.error(`[${SERVER_NAME}] full tool mode: ON (${allTools.length + 1} tools visible)`);
   }
 
   const transport = new StdioServerTransport();

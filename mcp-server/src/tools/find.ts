@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const findTool: ToolDefinition = {
   name: 'browser_find',
-  description:
+  summary: 'Find elements by natural language description',  description:
     'Find elements on the page using natural language (e.g. "login button", "search input"). Returns refs you can use with click/type.',
   inputSchema: z.object({
     tabId: requireTabId(),

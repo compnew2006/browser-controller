@@ -4,7 +4,7 @@ import { requireTabId, textResult } from './types.js';
 
 export const textTool: ToolDefinition = {
   name: 'browser_text',
-  description: 'Extract raw text content from the page or a specific element',
+  summary: 'Extract raw text content from a page',  description: 'Extract raw text content from the page or a specific element',
   inputSchema: z.object({
     tabId: requireTabId(),
     selector: z.string().optional().describe('CSS selector to scope text extraction'),
