@@ -6,3 +6,4 @@ graphify-out/
 # daemon runtime state (task 1.0 / 3.1)
 daemon.log
 .serena/
+Archive.zip

@@ -373,9 +373,9 @@ async function main(): Promise<void> {
   //
   // Default is FULL mode (all tools visible) for safety — existing agents that
   // call browser_click directly will work without changes. Opt INTO progressive
-  // disclosure with BROWSER_CONTROLLER_PROGRESSIVE=1 to save ~82% tool-definition
-  // tokens (the agent discovers tools via browser_tools instead of seeing all 22
-  // upfront).
+  // disclosure with BROWSER_CONTROLLER_PROGRESSIVE=1: the initial tools/list
+  // drops ~96% (~150 vs ~4200 tokens); a typical task that activates 3-5 tools
+  // via browser_tools still nets ~75-80% savings.
   const fullMode = !process.env.BROWSER_CONTROLLER_PROGRESSIVE;
 
   // Registration logic lives in register-tools.ts so the disable/enable wiring
@@ -385,7 +385,7 @@ async function main(): Promise<void> {
   if (!fullMode) {
     console.error(`[${SERVER_NAME}] progressive disclosure: ON (${allTools.length} tools hidden, use browser_tools to discover)`);
   } else {
-    console.error(`[${SERVER_NAME}] full tool mode: ${allTools.length + 1} tools visible (set BROWSER_CONTROLLER_PROGRESSIVE=1 to save ~82% tokens)`);
+    console.error(`[${SERVER_NAME}] full tool mode: ${allTools.length + 1} tools visible (set BROWSER_CONTROLLER_PROGRESSIVE=1 to cut initial tool tokens ~96%)`);
   }
 
   const transport = new StdioServerTransport();
