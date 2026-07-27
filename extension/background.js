@@ -1404,14 +1404,14 @@ async function handleRunAction(params) {
     // found", making the tool unusable for simple extraction tasks.
     const expression = `(async function() {
       try {
-        var tool = (${code});
-        if (tool && typeof tool.execute === "function") {
-          return await tool.execute(${paramsJson});
+        var result = await (${code});
+        if (result && typeof result.execute === "function") {
+          result = await result.execute(${paramsJson});
         }
-        if (tool && Array.isArray(tool.content)) {
-          return tool;
+        if (result && Array.isArray(result.content)) {
+          return result;
         }
-        var raw = (typeof tool === 'object' && tool !== null) ? JSON.stringify(tool) : String(tool);
+        var raw = (typeof result === 'object' && result !== null) ? JSON.stringify(result) : String(result);
         return { content: [{ type: 'text', text: raw }] };
       } catch(e) {
         return { error: e.message, stack: e.stack };
