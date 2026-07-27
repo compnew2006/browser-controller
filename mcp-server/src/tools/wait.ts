@@ -19,6 +19,6 @@ export const waitTool: ToolDefinition = {
   }),
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_wait', params);
-    return textResult(JSON.stringify(result, null, 2));
+    return textResult(JSON.stringify(result));
   },
 };

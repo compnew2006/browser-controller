@@ -16,6 +16,6 @@ export const scrollTool: ToolDefinition = {
   }),
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_scroll', params);
-    return textResult(JSON.stringify(result, null, 2));
+    return textResult(JSON.stringify(result));
   },
 };

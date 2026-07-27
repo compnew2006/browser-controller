@@ -18,6 +18,6 @@ export const uploadFileTool: ToolDefinition = {
   }),
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_upload_file', params);
-    return textResult(JSON.stringify(result, null, 2));
+    return textResult(JSON.stringify(result));
   },
 };

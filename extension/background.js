@@ -557,7 +557,7 @@ async function getActiveTab() {
 }
 
 async function handleNavigate(params) {
-  const { url, waitUntil = 'load', tabId } = params;
+  const { url, waitUntil = 'load', tabId, snapshot: wantSnapshot = true } = params;
   // navigate is the one page tool allowed to omit tabId → active tab fallback.
   const tab = tabId != null ? await resolveTab(tabId) : await getActiveTab();
 
@@ -588,7 +588,12 @@ async function handleNavigate(params) {
   // client-rendered apps without making navigation feel slow for static pages.
   await new Promise((r) => setTimeout(r, 500));
 
-  // Return the snapshot inline — saves the agent a step (no separate call).
+  // Return the snapshot inline ONLY if the caller asked for it (default true).
+  // Skipping it (snapshot:false) saves a large chunk of tokens when the agent
+  // intends to call browser_snapshot itself or doesn't need the tree yet.
+  if (!wantSnapshot) {
+    return { url, status: 'navigated', tabId: tab.id };
+  }
   try {
     const snap = await handleSnapshot({ tabId: tab.id, compact: true });
     const snapObj = typeof snap === 'string' ? JSON.parse(snap) : snap;
@@ -596,8 +601,6 @@ async function handleNavigate(params) {
       url,
       status: 'navigated',
       tabId: tab.id,
-      // The tool returns textResult(JSON.stringify(...)); inline the snapshot
-      // under `snapshot` so it's visible to the agent alongside nav status.
       snapshot: snapObj && snapObj.content ? snapObj.content : snapObj,
     };
   } catch {
@@ -1152,13 +1155,16 @@ async function handleTabs(params, sessionId, agentName) {
       const tabs = await chrome.tabs.query({ currentWindow: true });
       return {
         success: true,
-        tabs: tabs.map((t) => ({
-          id: t.id,
-          url: t.url,
-          title: t.title,
-          active: t.active,
-          lockedBy: tabLocks.owner(t.id) || null,
-        })),
+        // Compact: truncate long tracking URLs, omit lockedBy when null (saves
+        // tokens — a 20-tab list with full FB/Google URLs was ~3K tokens).
+        tabs: tabs.map((t) => {
+          const entry = { id: t.id, title: t.title, active: t.active };
+          const url = String(t.url || '');
+          entry.url = url.length > 80 ? url.slice(0, 77) + '...' : url;
+          const owner = tabLocks.owner(t.id);
+          if (owner) entry.lockedBy = owner; // omit when null — saves tokens
+          return entry;
+        }),
       };
     }
     case 'create': {

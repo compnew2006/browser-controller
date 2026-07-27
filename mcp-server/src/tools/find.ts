@@ -17,6 +17,6 @@ export const findTool: ToolDefinition = {
   idempotent: true,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_find', params);
-    return textResult(JSON.stringify(result, null, 2));
+    return textResult(JSON.stringify(result));
   },
 };

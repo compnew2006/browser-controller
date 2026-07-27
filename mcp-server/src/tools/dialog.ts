@@ -12,6 +12,6 @@ export const dialogTool: ToolDefinition = {
   }),
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_handle_dialog', params);
-    return textResult(JSON.stringify(result, null, 2));
+    return textResult(JSON.stringify(result));
   },
 };
