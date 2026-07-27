@@ -53,6 +53,7 @@ import fs from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { allTools } from './tools/index.js';
+import { registerTools } from './register-tools.js';
 import {
   DAEMON_INFO_FILE,
   IPC_SOCKET_PATH,
@@ -377,69 +378,9 @@ async function main(): Promise<void> {
   // upfront).
   const fullMode = !process.env.BROWSER_CONTROLLER_PROGRESSIVE;
 
-  // Track which tools are enabled (for the meta tool's isActive callback).
-  const activeTools = new Set<string>();
-
-  // Register the meta tool's dependencies first (closures capture these).
-  const metaDeps = {
-    onActivate: (toolName: string) => {
-      if (activeTools.has(toolName)) return; // already active
-      const handle = toolHandles.get(toolName);
-      if (handle) {
-        handle.enable();
-        activeTools.add(toolName);
-        server.server.sendToolListChanged();
-        console.error(`[${SERVER_NAME}] progressive disclosure: activated "${toolName}"`);
-      }
-    },
-    isActive: (toolName: string) => activeTools.has(toolName),
-  };
-
-  // Register all browser tools, keeping handles for enable/disable control.
-  const toolHandles = new Map<string, ReturnType<typeof server.tool>>();
-
-  for (const tool of allTools) {
-    const handle = server.tool(
-      tool.name,
-      tool.description,
-      tool.inputSchema.shape,
-      async (params: Record<string, unknown>) => {
-        try {
-          return await tool.handler(client, params);
-        } catch (err) {
-          return {
-            content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
-            isError: true,
-          };
-        }
-      },
-    );
-    toolHandles.set(tool.name, handle);
-    if (fullMode) {
-      activeTools.add(tool.name);
-    } else {
-      handle.disable(); // hidden until the agent activates it via browser_tools
-    }
-  }
-
-  // Register the meta tool LAST (always enabled — it's the discovery entry point).
-  const { createMetaTool } = await import('./tools/meta.js');
-  const metaTool = createMetaTool(metaDeps);
-  server.tool(
-    metaTool.name,
-    metaTool.description,
-    metaTool.inputSchema.shape,
-    async (params: Record<string, unknown>) => {
-      try {
-        return await metaTool.handler(client, params);
-      } catch (err) {
-        return {
-          content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
-          isError: true,
-        };
-      }
-    },
-  );
+  // Registration logic lives in register-tools.ts so the disable/enable wiring
+  // is covered by tests/register-tools.test.ts (this main() needs a live daemon).
+  registerTools(server, client, fullMode, (msg) => console.error(`[${SERVER_NAME}] ${msg}`));
 
   if (!fullMode) {
     console.error(`[${SERVER_NAME}] progressive disclosure: ON (${allTools.length} tools hidden, use browser_tools to discover)`);

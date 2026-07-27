@@ -14,6 +14,8 @@
 - Default is FULL mode (all tools visible) for backward compatibility
 - `details` action uses `z.toJSONSchema()` for clean JSON Schema with parameter descriptions
 - All 22 tools now carry a `summary` field (one-line description for search/list)
+- Registration logic extracted to `register-tools.ts` and covered by integration tests over `InMemoryTransport` (both modes: full + progressive disable/enable/list_changed)
+- Docs updated: README config table, agent-config rules/skill, llms.txt (tool list was stale at 17; actual is 22 + meta)
 
 ### Other improvements
 - `browser_run_action`: dual mode — accepts both tool wrappers AND plain JS expressions/IIFEs
@@ -22,7 +24,7 @@
 - LaunchAgent auto-start for daemon (launchd, macOS)
 - Locks auto-release when owning agent disconnects
 
-Test count: 115 → 134 (all green)
+Test count: 115 → 143 (all green)
 
 ## [2.1.0] — 2026-07-25 — Architecture hardening
 

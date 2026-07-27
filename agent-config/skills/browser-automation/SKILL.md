@@ -24,6 +24,10 @@ If `tabId` is missing you'll get: *"tabId is required. Call browser_tabs list fi
 2. If disconnected, ask the user to check the extension icon (should show green "ON")
 3. Never close tabs you didn't create
 
+### If only `browser_tools` is visible (progressive mode)
+
+The server hides tool definitions until needed (`BROWSER_CONTROLLER_PROGRESSIVE=1`). Use `browser_tools { action: "list" }` or `{ action: "search", query: "…" }` to discover tools, then `{ action: "details", tool: "browser_click" }` to get the schema and activate it. A `"Tool X disabled"` error means activate it via `details` first; once activated it stays callable for the session.
+
 ## Reading Pages
 
 `browser_snapshot { tabId }` returns the accessibility tree with refs like "e12" that you use for interaction.

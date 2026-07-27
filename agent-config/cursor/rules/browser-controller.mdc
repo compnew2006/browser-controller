@@ -37,6 +37,16 @@ If `tabId` is missing on a page tool, you'll get: *"tabId is required. Call brow
 
 Every page-interaction tool takes `tabId` (number, required). Listed below.
 
+### Tool discovery (progressive mode)
+
+If only `browser_tools` appears in your tool list, the server is running in progressive-disclosure mode (`BROWSER_CONTROLLER_PROGRESSIVE=1`). Discover and activate tools before calling them:
+
+1. `browser_tools { action: "list" }` — all tool names + one-line summaries
+2. `browser_tools { action: "search", query: "click" }` — find tools by keyword
+3. `browser_tools { action: "details", tool: "browser_click" }` — full schema AND activates the tool (callable directly afterwards, stays active for the session)
+
+A `"Tool X disabled"` error means you must activate it via `browser_tools {action:"details"}` first.
+
 ### Navigation & Tabs
 - `browser_navigate` - Go to URL in a tab. Params: `url`, `tabId` (optional, defaults to active), `waitUntil`
 - `browser_tabs` - List/create/close/focus/lock tabs. Params: `action` (list|create|close|focus|lock|unlock), `tabId`, `url`

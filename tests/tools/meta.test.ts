@@ -73,11 +73,25 @@ describe('browser_tools meta tool (progressive disclosure)', () => {
     const data = JSON.parse((result.content[0] as { text: string }).text);
     expect(data.name).toBe('browser_click');
     expect(data.description).toBeTruthy();
-    expect(data.inputSchema).toBeTruthy();
     expect(data.activated).toBe(true);
     expect(data.message).toContain('browser_click');
     // the activation callback should have fired
     expect(activated).toContain('browser_click');
+  });
+
+  it('action "details" returns clean JSON Schema, not Zod internals', async () => {
+    const result = await metaTool.handler(fakeHost, { action: 'details', tool: 'browser_click' });
+    const data = JSON.parse((result.content[0] as { text: string }).text);
+    const schema = data.inputSchema;
+    // proper JSON Schema shape (z.toJSONSchema output)
+    expect(schema.type).toBe('object');
+    expect(schema.properties).toBeTruthy();
+    expect(schema.properties.tabId).toBeTruthy();
+    // .describe() text must survive serialization — the agent needs param docs
+    expect(schema.properties.tabId.description).toContain('tab id');
+    // regression guard: Zod v4 internals leak as a "def" key per property
+    expect(schema.properties.tabId.def).toBeUndefined();
+    expect(JSON.stringify(schema)).not.toContain('"checks"');
   });
 
   it('action "details" with unknown tool returns error + available list', async () => {
