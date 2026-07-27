@@ -3,7 +3,7 @@
   "name": "io.github.noiemany/browser-controller",
   "description": "MCP server + Chrome extension for AI browser control with real sessions.",
   "repository": {
-    "url": "https://github.com/ofershap/real-browser-mcp",
+    "url": "https://github.com/compnew2006/browser-controller",
     "source": "github"
   },
   "version": "2.0.0",

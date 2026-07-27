@@ -10,7 +10,7 @@ The daemon runs on `127.0.0.1:7225` (WS + HTTP). The Chrome extension auto-pairs
 
 By default, all 22 browser tools are visible directly (`browser_click`, `browser_snapshot`, etc.). No discovery step needed.
 
-To save ~82% tool-definition tokens, set `BROWSER_CONTROLLER_PROGRESSIVE=1` in the agent's env. Then only `browser_tools` is visible, and you discover + activate others on demand:
+To cut tool-definition tokens, set `BROWSER_CONTROLLER_PROGRESSIVE=1` in the agent's env: the initial tools/list drops ~96% (~150 vs ~4200 tokens); a typical task that activates 3-5 tools still nets ~75-80%. Then only `browser_tools` is visible, and you discover + activate others on demand:
 
 1. `browser_tools { action: "list" }` — see all tool names + short summaries (~400 tokens vs ~4200)
 2. `browser_tools { action: "search", query: "click" }` — find tools by keyword

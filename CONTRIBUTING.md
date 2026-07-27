@@ -6,7 +6,7 @@ Contributions are welcome! Here's how to get started.
 
 ```bash
 git clone https://github.com/compnew2006/browser-controller.git
-cd real-browser-mcp
+cd browser-controller
 npm install
 ```
 

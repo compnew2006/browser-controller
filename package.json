@@ -45,11 +45,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ofershap/real-browser-mcp.git"
+    "url": "git+https://github.com/compnew2006/browser-controller.git"
   },
-  "homepage": "https://github.com/ofershap/real-browser-mcp",
+  "homepage": "https://github.com/compnew2006/browser-controller",
   "bugs": {
-    "url": "https://github.com/ofershap/real-browser-mcp/issues"
+    "url": "https://github.com/compnew2006/browser-controller/issues"
   },
   "files": [
     "mcp-server/dist/",
