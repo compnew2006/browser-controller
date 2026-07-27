@@ -371,7 +371,12 @@ async function main(): Promise<void> {
   // and activates other tools on demand via browser_tools {action:"details"}.
   // Set BROWSER_CONTROLLER_FULL_TOOLS=1 to disable this and register all tools
   // upfront (backward-compat for clients that expect the full list immediately).
-  const fullMode = !!process.env.BROWSER_CONTROLLER_FULL_TOOLS;
+  // Default is FULL mode (all tools visible) for safety — existing agents that
+  // call browser_click directly will work without changes. Opt INTO progressive
+  // disclosure with BROWSER_CONTROLLER_PROGRESSIVE=1 to save ~82% tool-definition
+  // tokens (the agent discovers tools via browser_tools instead of seeing all 22
+  // upfront).
+  const fullMode = !process.env.BROWSER_CONTROLLER_PROGRESSIVE;
 
   // Track which tools are enabled (for the meta tool's isActive callback).
   const activeTools = new Set<string>();
@@ -439,9 +444,8 @@ async function main(): Promise<void> {
 
   if (!fullMode) {
     console.error(`[${SERVER_NAME}] progressive disclosure: ON (${allTools.length} tools hidden, use browser_tools to discover)`);
-    console.error(`[${SERVER_NAME}] set BROWSER_CONTROLLER_FULL_TOOLS=1 to show all tools upfront`);
   } else {
-    console.error(`[${SERVER_NAME}] full tool mode: ON (${allTools.length + 1} tools visible)`);
+    console.error(`[${SERVER_NAME}] full tool mode: ${allTools.length + 1} tools visible (set BROWSER_CONTROLLER_PROGRESSIVE=1 to save ~82% tokens)`);
   }
 
   const transport = new StdioServerTransport();
