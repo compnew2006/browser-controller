@@ -38,6 +38,7 @@ let lastError = null;
 
 import { TabMutexMap, TabLockMap, runOnTab as runOnTabLib } from './lib/tab-concurrency.js';
 import { PAGE_FALLBACK_FN, PAGE_RESOLVE_FALLBACK_FN } from './utils/smart-selector.js';
+import { isHashOnlyChange } from './utils/navigation.js';
 
 // --- Per-tab state (tasks 1.3, 1.4) ---------------------------------------
 // Map<tabId, Array<{level,text,timestamp,url}>> and Map<tabId, Array<req>>.
@@ -63,6 +64,17 @@ const fallbackByTab = new Map();
  */
 const lastSnapshotFingerprints = new Map();
 let currentActivity = null; // tool currently running (single overlay label source)
+
+/**
+ * In-flight call abort controllers, keyed by request id. The bridge forwards a
+ * `cancel` control message when a call is aborted (client gone / timeout), and
+ * the `cancel` handler aborts the matching controller so the in-flight handler
+ * short-circuits and releases the tab mutex immediately. Without this, a slow
+ * navigate (55s onUpdated wait) keeps the tab mutex pinned after the caller is
+ * already gone, blocking every later call on the same tab. Set/cleared in
+ * handleMessage's try/finally so it can't leak.
+ */
+const activeControllers = new Map();
 
 // --- Per-tab mutex (task 2.1) + per-agent tab locks (task 2.2) ------------
 // Pure, unit-tested primitives in lib/tab-concurrency.js.
@@ -337,6 +349,19 @@ async function handleMessage(msg) {
     }
     return; // control message — no response expected
   }
+  if (msg.type === 'cancel') {
+    // The daemon/bridge aborted a call (client gone / timeout). Abort the
+    // in-flight handler so it short-circuits and releases the tab mutex NOW —
+    // otherwise a slow navigate (55s) blocks every later call on the same tab
+    // even though the originating client is already gone. The handler's own
+    // try/finally still runs (CDP detach, overlay hide), only its long await is
+    // interrupted via the AbortSignal it was given.
+    const cancelledId = msg.id;
+    if (cancelledId && activeControllers.has(cancelledId)) {
+      try { activeControllers.get(cancelledId).abort(); } catch { /* already settled */ }
+    }
+    return; // control message — no response expected
+  }
   if (msg.type === 'ping') {
     // already handled in onmessage, but be defensive
     return;
@@ -354,17 +379,23 @@ async function handleMessage(msg) {
 
   // Tools without a tabId (tabs list/create, console-less) run directly.
   if (tabId == null) {
+    const controller = new AbortController();
+    activeControllers.set(id, controller);
     try {
-      const result = await dispatch(tool, p, sessionId, agentName);
+      const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
       sendResponse(id, { success: true, result });
     } catch (err) {
       sendResponse(id, { success: false, error: err.message || String(err) });
+    } finally {
+      activeControllers.delete(id);
     }
     return;
   }
 
   // Acquire this tab's mutex (2.1) and honor per-agent locks (2.2). Locks are
   // keyed by agentName (stable across reconnects), so waitFor checks agentName.
+  const controller = new AbortController();
+  activeControllers.set(id, controller);
   runOnTabLib(
     tabLocks,
     tabMutex,
@@ -375,7 +406,7 @@ async function handleMessage(msg) {
       updateBadge('active');
       await showOverlay(tabId, tool.replace('browser_', ''));
       try {
-        const result = await dispatch(tool, p, sessionId, agentName);
+        const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
         sendResponse(id, { success: true, result });
       } catch (err) {
         sendResponse(id, { success: false, error: err.message || String(err) });
@@ -385,9 +416,13 @@ async function handleMessage(msg) {
         await hideOverlay(tabId);
       }
     },
-  ).catch((err) => {
-    sendResponse(id, { success: false, error: err.message || String(err) });
-  });
+  )
+    .catch((err) => {
+      sendResponse(id, { success: false, error: err.message || String(err) });
+    })
+    .finally(() => {
+      activeControllers.delete(id);
+    });
 }
 
 function sendResponse(id, response) {
@@ -412,7 +447,7 @@ function extractTabId(tool, params) {
 
 // --- Tool Dispatch --------------------------------------------------------
 
-async function dispatch(tool, params, sessionId, agentName) {
+async function dispatch(tool, params, sessionId, agentName, signal) {
   const handlers = {
     browser_navigate: handleNavigate,
     browser_click: handleClick,
@@ -443,7 +478,7 @@ async function dispatch(tool, params, sessionId, agentName) {
 
   const handler = handlers[tool];
   if (!handler) throw new Error(`Unknown tool: ${tool}`);
-  return handler(params, sessionId, agentName);
+  return handler(params, sessionId, agentName, signal);
 }
 
 // --- Tab resolution (task 1.2) -------------------------------------------
@@ -556,10 +591,28 @@ async function getActiveTab() {
   return tab;
 }
 
-async function handleNavigate(params) {
+async function handleNavigate(params, _sessionId, _agentName, signal) {
   const { url, waitUntil = 'load', tabId, snapshot: wantSnapshot = true } = params;
   // navigate is the one page tool allowed to omit tabId → active tab fallback.
   const tab = tabId != null ? await resolveTab(tabId) : await getActiveTab();
+
+  // Fix #2 (hash-aware): a hash-only navigation does NOT reload the document,
+  // so `chrome.tabs.onUpdated` never fires `status === 'complete'` and the wait
+  // below would hang for the full 55s timeout. Detect this case and skip the
+  // wait entirely — the SPA router updates client-side near-instantly.
+  const currentTab = await chrome.tabs.get(tab.id);
+  const hashOnly = isHashOnlyChange(currentTab.url, url);
+
+  // A promise that rejects when this call is cancelled (client gone / timeout
+  // forwarded from the bridge). Handlers that await long-running operations
+  // race against this so a cancelled call releases the tab mutex immediately
+  // instead of blocking later calls on the same tab.
+  const cancelRace = signal
+    ? new Promise((_, reject) => {
+        if (signal.aborted) reject(new Error('aborted'));
+        else signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      })
+    : null;
 
   // Fix #1 (SPA-ready): Chrome fires `complete` as soon as the HTML loads, but
   // SPAs (React/Vue/...) render content via JS AFTER that — so a snapshot taken
@@ -568,21 +621,37 @@ async function handleNavigate(params) {
   // waste a separate browser_snapshot call on a still-empty page. On a protected
   // page (chrome://, 401 Basic auth) the snapshot will surface a clear error
   // instead of silently returning empty.
-  await new Promise((resolve, reject) => {
-    const listener = (tId, changeInfo) => {
-      if (tId !== tab.id) return;
-      if (changeInfo.status === 'complete' || (waitUntil === 'domcontentloaded' && changeInfo.status === 'complete')) {
+  if (!hashOnly) {
+    const onUpdatedWait = new Promise((resolve, reject) => {
+      const listener = (tId, changeInfo) => {
+        if (tId !== tab.id) return;
+        if (changeInfo.status === 'complete' || (waitUntil === 'domcontentloaded' && changeInfo.status === 'complete')) {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      chrome.tabs.update(tab.id, { url }).catch((err) => {
         chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    };
-    chrome.tabs.onUpdated.addListener(listener);
-    chrome.tabs.update(tab.id, { url }).catch(reject);
-    setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      resolve(); // timeout — still proceed to settle + snapshot
-    }, 55000);
-  });
+        reject(err);
+      });
+      setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(); // timeout — still proceed to settle + snapshot
+      }, 55000);
+    });
+    // Race the load wait against cancellation so a closed client doesn't pin
+    // the tab mutex for up to 55s.
+    if (cancelRace) {
+      await Promise.race([onUpdatedWait, cancelRace]);
+    } else {
+      await onUpdatedWait;
+    }
+  } else {
+    // Hash-only: apply the URL (updates location.hash, no reload) and skip the
+    // onUpdated wait. SPA routers update synchronously on hashchange.
+    await chrome.tabs.update(tab.id, { url });
+  }
 
   // SPA settle window. 500ms is a cheap, robust default that covers most
   // client-rendered apps without making navigation feel slow for static pages.
@@ -1285,19 +1354,38 @@ async function handleEvaluate(params) {
     throw new Error(`Cannot evaluate on protected page (${tab.url}).`);
   }
 
-  // Wrap the user expression in an async IIFE so `await` works, then stringify
-  // the function and run it in the MAIN world (page's own JS context).
+  // Wrap the user expression in an async IIFE so `await` works, then run it in
+  // the MAIN world (page's own JS context). We serialize the result to a JSON
+  // string INSIDE the page and parse it back here, because Manifest V3's
+  // chrome.scripting.executeScript loses the resolved value of an async IIFE
+  // across the world boundary (it comes back as null — crbug 1304272). A plain
+  // string survives the structured clone reliably.
   const wrapped = `(async () => { ${expression} })()`;
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
     func: async (code) => {
-      // eslint-disable-next-line no-eval
-      return await eval(code);
+      try {
+        // eslint-disable-next-line no-eval
+        const value = await eval(code);
+        return { ok: true, json: JSON.stringify(value) };
+      } catch (err) {
+        return { ok: false, error: String(err && err.message || err) };
+      }
     },
     args: [wrapped],
   });
-  const value = results?.[0]?.result;
+  const out = results?.[0]?.result;
+  if (!out) return { success: false, error: 'evaluate returned no result' };
+  if (out.ok === false) return { success: false, error: out.error };
+  let value;
+  try {
+    value = out.json === undefined ? undefined : JSON.parse(out.json);
+  } catch {
+    // JSON.stringify can fail for values it can't represent (functions, etc.);
+    // fall back to the raw string so the caller still gets something useful.
+    value = out.json;
+  }
   return { success: true, result: value };
 }
 
@@ -1387,7 +1475,7 @@ async function handleDialog(params) {
   }, [action, promptText]);
 }
 
-async function handleRunAction(params) {
+async function handleRunAction(params, _sessionId, _agentName, signal) {
   const { tabId, code, actionParams = {} } = params;
   if (!code) throw new Error('code is required');
   const tab = await resolveTab(tabId);
@@ -1424,6 +1512,13 @@ async function handleRunAction(params) {
       { expression, awaitPromise: true, returnByValue: true },
     );
 
+    // Cancellation: if the caller (daemon/bridge) aborted while the page was
+    // evaluating (e.g. a long IIFE), the result is now useless — drop it so the
+    // tab mutex releases immediately and the next caller isn't queued behind a
+    // dead request.
+    if (signal?.aborted) {
+      return { success: false, error: 'aborted' };
+    }
     if (exceptionDetails) {
       return { success: false, error: exceptionDetails.exception?.description || exceptionDetails.text };
     }

@@ -403,6 +403,11 @@ export class ExtensionBridge {
 
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(id);
+        // Notify the extension to abort this id's in-flight handler. This id is
+        // being abandoned (retry gets a new id, or the call is rejected), so the
+        // old handler must stop to free the tab mutex. Without this a timed-out
+        // navigate pins its tab for up to 55s.
+        this.sendControl('cancel', { id });
         if (canRetry && retryCount < this.maxRetries) {
           console.error(`[Bridge] Timeout on ${tool}, retry ${retryCount + 1}/${this.maxRetries}`);
           this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName).then(resolve, reject);
@@ -421,6 +426,12 @@ export class ExtensionBridge {
         clearTimeout(timeout);
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
+          // Forward the cancellation to the extension so its in-flight handler
+          // short-circuits via its AbortSignal. Without this the handler runs to
+          // completion (up to 55s for navigate) and keeps the tab mutex pinned,
+          // blocking every later call on the same tab even though the caller is
+          // already gone. Opt-in: old extensions simply ignore the message.
+          this.sendControl('cancel', { id });
           reject(new Error(`Call aborted: ${tool} (originating client gone)`));
         }
       };

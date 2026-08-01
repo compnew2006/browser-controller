@@ -170,6 +170,57 @@ describe('ExtensionBridge', () => {
     await expect(promise).rejects.toThrow(/aborted/i);
   });
 
+  // --- Cancellation forwarding (cancel control message) ---------------------
+  // When a call is aborted, the bridge must tell the extension to abort the
+  // matching in-flight handler so it releases the tab mutex immediately. Without
+  // this, a slow navigate (55s) keeps the tab pinned after the caller is gone.
+  it('forwards a cancel control message to the extension on abort', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const client = await connectClient(port);
+    const received: any[] = [];
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      received.push(msg);
+    });
+
+    const controller = new AbortController();
+    const promise = bridge.callTool('browser_navigate', { url: 'http://x' }, undefined, controller.signal);
+    await new Promise((r) => setTimeout(r, 30));
+    controller.abort();
+    await expect(promise).rejects.toThrow(/aborted/i);
+    // Give the control message a tick to land.
+    await new Promise((r) => setTimeout(r, 30));
+
+    const cancelMsg = received.find((m) => m.type === 'cancel');
+    expect(cancelMsg).toBeTruthy();
+    expect(typeof cancelMsg.id).toBe('string');
+  });
+
+  it('forwards a cancel control message on timeout', async () => {
+    const port = nextPort();
+    // Non-idempotent tool with a tiny timeout so it fires deterministically.
+    const bridge = new ExtensionBridge({ port, maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 60 });
+    bridges.push(bridge);
+    await bridge.start();
+
+    const client = await connectClient(port);
+    const received: any[] = [];
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      received.push(msg);
+    });
+
+    await expect(bridge.callTool('browser_click', { ref: 'e1' })).rejects.toThrow(/timed out/i);
+    // Give the control message a tick to flush through the WS.
+    await new Promise((r) => setTimeout(r, 50));
+    const cancelMsg = received.find((m) => m.type === 'cancel');
+    expect(cancelMsg).toBeTruthy();
+    expect(typeof cancelMsg.id).toBe('string');
+  }, 15_000);
+
   it('rejects immediately if the signal is already aborted before send', async () => {
     const port = nextPort();
     const bridge = createBridge(port);
