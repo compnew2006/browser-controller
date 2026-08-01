@@ -1,5 +1,62 @@
 # Changelog
 
+## [2.3.0] — 2026-08-01 — Runtime correctness fixes (hash-nav, cancel, evaluate)
+
+Three runtime bugs found by driving a Vue SPA (Whatomate) end-to-end through
+the MCP and observing hangs / nulls / stuck tabs. All verified live in the
+running browser. Test count: 143 → 151 (all green).
+
+### CRITICAL (correctness bugs)
+
+- **C1 — `browser_navigate` hung ~55s on hash-only routes.** A hash-only
+  change (e.g. `/login` → `/login#section`) does **not** reload the document,
+  so Chrome never fires `tabs.onUpdated` `complete` and the wait timed out at
+  the full call budget. **Spec:** a navigation whose target differs from the
+  current URL only in `hash` must resolve once `chrome.tabs.update` settles,
+  without waiting for a `complete` event that will never come. **Fix:**
+  extracted a pure, tested helper `isHashOnlyChange(fromUrl, toUrl)`
+  (`extension/utils/navigation.js`) that compares protocol/host/port/pathname/
+  search (equal) and hash (different); `handleNavigate` calls it and skips the
+  `onUpdated` listener for hash-only changes. **Verify:** runtime 55s → 512ms;
+  6 unit tests cover hash-only, pathname-differs, query-differs, host-differs,
+  identical, and invalid-input cases.
+
+- **C2 — In-flight tool calls weren't cancelled when the daemon aborted a
+  client.** The bridge rejected the caller's promise on abort/timeout but
+  never told the extension, so the handler kept running and held the per-tab
+  `TabMutexMap` queue — every later call on the same tab blocked behind a
+  dead request for its full budget. **Spec:** when the daemon aborts a call
+  (client disconnect, timeout, or `/kill`), the extension's in-flight handler
+  for that call id must abort promptly and release the tab. **Fix (3 layers):**
+  (A) `bridge.ts` sends a new `sendControl('cancel', { id })` on the abort and
+  timeout paths before rejecting; (B) `background.js` keeps an
+  `activeControllers: Map<id, AbortController>`, registers each in-flight call,
+  and a `cancel` control-message handler aborts it; (C) `handleNavigate`
+  races its `onUpdated` wait against the signal and `handleRunAction` drops a
+  result computed after abort. `dispatch()` threads `signal` through to
+  handlers. **Verify:** tab reusable in 4ms after abort (was blocked until the
+  handler finished); 2 new bridge tests prove cancel is forwarded on both
+  timeout and abort. **Backward compatible:** the `cancel` control message is
+  opt-in — an old extension ignores it; an old bridge never sends it.
+
+- **C3 — `browser_evaluate` returned `null` for every expression.** Even
+  `"hello"` and `42` came back null. **Root cause:** Manifest V3
+  `chrome.scripting.executeScript` with `world: 'MAIN'` + an async `func` that
+  `eval`s the user expression loses the resolved value across the world
+  boundary (the async-IIFE result is dropped by structured clone —
+  crbug 1304272). **Fix:** `handleEvaluate` now serializes the value to a JSON
+  string **inside** the MAIN world (`{ok, json: JSON.stringify(value)}`) and
+  parses it back in the background — a plain string survives the structured
+  clone reliably. Errors surface as `{ok:false, error}` instead of a hung
+  promise. **Verify:** all expression types (string, number, DOM reads,
+  `await fetch`, objects) now return real values. No test change needed — the
+  fix is in the page-world serialization, exercised by every live call.
+
+### Docs
+- README: `browser_evaluate` note (null-return fix), `browser_navigate` (hash).
+- ARCHITECTURE: invariant #4 expanded (cancel now forwarded to extension), test
+  count 115 → 151, new extension point for cancellation.
+
 ## [2.2.0] — 2026-07-27 — Progressive disclosure + token optimization
 
 ### Token optimization (46-90% reduction across all tools)

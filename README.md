@@ -50,7 +50,7 @@ v1 was a single-client server: one agent, one active tab. If you switched tabs o
 - **Per-tab concurrency.** Two actions on the *same* tab serialize (no races); actions on *different* tabs run in parallel.
 - **Tab locking.** An agent can claim a tab so others queue behind it instead of racing (`browser_tabs { action: "lock" }`).
 - **Authenticated WebSocket.** The extension↔daemon connection requires a token, so no other local process can silently drive your browser.
-- **No debugger banner.** `browser_evaluate` now runs in the page's MAIN world via `chrome.scripting` — no yellow "this tab is being debugged" banner.
+- **No debugger banner.** `browser_evaluate` runs in the page's MAIN world via `chrome.scripting` — no yellow "this tab is being debugged" banner. (The result is JSON-serialized inside the page and parsed back in the background to survive the MV3 structured-clone boundary — earlier versions returned `null` for every expression.)
 
 <p align="center">
   <img src="assets/preview.png" alt="Browser Controller" width="100%" />
@@ -236,8 +236,8 @@ The popup is your control panel for all of this:
 
 - **Forgot `tabId`?** You'll get a clear error: `tabId is required. Call browser_tabs list first.`
 - **Protected pages** (`chrome://`, the Web Store, devtools) can't be scripted — you'll get `Cannot access protected page (chrome://...)` instead of a silent hang.
-- **`browser_navigate`** is the one tool where `tabId` is optional (defaults to the active tab) — but for multi-agent safety, pass it explicitly.
-- **`browser_evaluate`** now runs in the page's MAIN world (no debugger banner, CSP-safe). It's powerful but **non-idempotent** — it won't be auto-retried on timeout.
+- **`browser_navigate`** is the one tool where `tabId` is optional (defaults to the active tab) — but for multi-agent safety, pass it explicitly. **Hash-only changes** (e.g. `/page` → `/page#section`) resolve as soon as the URL is set, without waiting for a `complete` event (SPAs don't reload on hash change, so that event never fires).
+- **`browser_evaluate`** runs in the page's MAIN world (no debugger banner, CSP-safe) and returns real values (JSON-serialized across the world boundary). It's powerful but **non-idempotent** — it won't be auto-retried on timeout.
 - **Scrolling virtualized feeds** (Facebook/Instagram/Twitter): `browser_scroll` returns `refsMayBeStale: true` because those sites recycle DOM nodes. Re-snapshot before your next interaction.
 - **Duplicate elements**: when several elements share text+role (e.g. 3 "Like" buttons), the fallback resolver picks the correct one by ordinal (`nth`), not just the first match.
 

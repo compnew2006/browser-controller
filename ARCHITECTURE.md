@@ -41,13 +41,21 @@ Agent (stdio MCP) ─► thin client (index.ts) ─IPC socket─► daemon (daem
    daemon stays a pure `{tool, params}` forwarder.
 3. **Non-idempotent tools never retry.** Click/type/navigate/evaluate/tabs are
    not in the idempotent set; the bridge rejects on timeout instead of resending.
-4. **Eviction cancels in-flight calls.** Each `routeCall` gets an
-   `AbortController`; the close handler aborts it so a non-idempotent action
-   can't keep running after the agent is gone.
+4. **Eviction cancels in-flight calls — end to end.** Each `routeCall` gets an
+   `AbortController`; the daemon's close handler aborts it so a non-idempotent
+   action can't keep running after the agent is gone. **The abort is also
+   forwarded to the extension** via a `cancel` control message
+   (`bridge.sendControl('cancel', { id })` on abort + timeout), and
+   `background.js` aborts the matching `activeControllers` entry so the
+   handler releases the per-tab mutex immediately — without this, a slow
+   navigate (e.g. a hung host) kept the tab locked for its full budget and
+   every later call on that tab queued behind it. Handlers opt in by accepting
+   a `signal` (`handleNavigate` races its wait; `handleRunAction` drops a
+   post-abort result).
 5. **Pure modules are injected, not duplicated.** `smart-selector.js`,
-   `tab-concurrency.js`, `snapshot-tree.js` are framework-free; their page-world
-   functions are stringified + `eval`'d across the `chrome.scripting` boundary
-   (which can't serialize functions).
+   `tab-concurrency.js`, `snapshot-tree.js`, `navigation.js` are framework-free;
+   their page-world functions are stringified + `eval`'d across the
+   `chrome.scripting` boundary (which can't serialize functions).
 
 ## Extension points
 
@@ -59,6 +67,11 @@ Agent (stdio MCP) ─► thin client (index.ts) ─IPC socket─► daemon (daem
   than editing a parallel string table.
 - **New fallback layer:** add to `smart-selector.js`; `handleClick`/`handleType`
   consume the resolver chain.
+- **New cancellation-aware handler:** accept the `signal` arg threaded by
+  `dispatch()`; race any wait against it and drop results computed after abort.
+  Register the call in `activeControllers` (done centrally in `handleMessage`)
+  and the `cancel` control message will abort it on daemon/timeout — no handler
+  code needed beyond respecting `signal`.
 
 ## Where state lives
 
@@ -71,7 +84,8 @@ Agent (stdio MCP) ─► thin client (index.ts) ─IPC socket─► daemon (daem
 
 ## Testing
 
-115 tests across 5 files. Pure modules (`smart-selector`, `tab-concurrency`)
-are unit-tested without a browser. `bridge.test.ts` proves WS auth + retry +
-abort-cancellation. `daemon.test.ts` runs the real daemon in a subprocess with
+151 tests across 8 files. Pure modules (`smart-selector`, `tab-concurrency`,
+`navigation`) are unit-tested without a browser. `bridge.test.ts` proves WS
+auth + retry + abort-cancellation **+ cancel-control forwarding** (on both
+timeout and abort). `daemon.test.ts` runs the real daemon in a subprocess with
 an isolated `BC_STATE_DIR` and proves heartbeat eviction, dedup, `/kill`.
