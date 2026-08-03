@@ -1,0 +1,19 @@
+import { z } from 'zod';
+import type { ToolDefinition } from './types.js';
+import { requireTabId, textResult } from './types.js';
+
+export const networkTool: ToolDefinition = {
+  name: 'browser_network',
+  summary: 'Read network requests captured from a tab',  description: 'Read network requests made by a specific tab. Filter by URL pattern.',
+  inputSchema: z.object({
+    tabId: requireTabId(),
+    filter: z.string().optional().describe('URL regex pattern to filter requests'),
+    clear: z.boolean().optional().default(false).describe('Clear this tab\'s requests after reading'),
+  }),
+  // NOT idempotent: `clear:true` mutates the buffer (same reasoning as console — M2).
+  idempotent: false,
+  async handler(bridge, params) {
+    const result = await bridge.callTool('browser_network', params);
+    return textResult(JSON.stringify(result));
+  },
+};

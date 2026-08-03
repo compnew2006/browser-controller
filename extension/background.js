@@ -28,6 +28,12 @@ const PER_TAB_CAP = 200;
 
 let wsPort = DEFAULT_WS_PORT;
 let wsToken = ''; // auth token (3.1); appended as ?token=
+// Enrollment secret the daemon gates /pair behind. The popup owns the
+// user-facing entry of it; the background re-reads it from storage on every
+// service-worker recycle (MV3 kills the worker ~30s idle, so this re-load is
+// not optional) and sends it on /pair. Without this, the background's own
+// autoPairToken() 403s under the enrollment gate and reconnect dies.
+let enrollmentSecret = '';
 let ws = null;
 let isConnected = false;
 let reconnectAttempts = 0;
@@ -92,7 +98,12 @@ const tabLocks = new TabLockMap();
  */
 async function autoPairToken() {
   try {
-    const res = await fetch(`http://127.0.0.1:${wsPort}/pair`, { cache: 'no-store' });
+    // The daemon gates /pair behind the enrollment secret (X-BC-Enrollment).
+    // Without this header the call 403s and we'd never pair — so this is the
+    // one daemon HTTP call the background makes, and it must carry the secret.
+    const headers = {};
+    if (enrollmentSecret) headers['X-BC-Enrollment'] = enrollmentSecret;
+    const res = await fetch(`http://127.0.0.1:${wsPort}/pair`, { cache: 'no-store', headers });
     if (!res.ok) return '';
     const data = await res.json();
     if (data && typeof data.token === 'string' && data.token) {
@@ -110,9 +121,10 @@ async function autoPairToken() {
 
 async function initConnection() {
   try {
-    const stored = await chrome.storage.local.get(['wsPort', 'wsToken']);
+    const stored = await chrome.storage.local.get(['wsPort', 'wsToken', 'enrollmentSecret']);
     if (stored.wsPort) wsPort = stored.wsPort;
     if (stored.wsToken) wsToken = stored.wsToken;
+    if (stored.enrollmentSecret) enrollmentSecret = stored.enrollmentSecret;
   } catch {}
 
   chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: KEEPALIVE_INTERVAL_MIN });
@@ -120,13 +132,46 @@ async function initConnection() {
   // the daemon rotated it or storage is empty.
   await autoPairToken();
   connect();
+
+  // Best-effort: clear stale shields left on tabs whose lock state was wiped
+  // by a service-worker recycle (tabLocks is in-memory — see the limitation
+  // note near the top of this file). Swallow per-tab errors for protected /
+  // closed tabs. A lock taken during the sweep sets tabLocks.owner, so the
+  // `if (!tabLocks.owner(t.id))` check skips it; even if it races, the next
+  // onUpdated 'complete' re-injects the shield (self-healing, review NOTE 7d).
+  try {
+    const all = await chrome.tabs.query({});
+    for (const t of all) {
+      if (!tabLocks.owner(t.id)) {
+        try { await hideLockShield(t.id); } catch {}
+      }
+    }
+  } catch {}
 }
 
 function wsUrl() {
   // 127.0.0.1 (not 'localhost') so it matches the daemon's IPv4 bind.
   // On macOS 'localhost' can resolve to IPv6 ::1 and refuse.
   const base = `ws://127.0.0.1:${wsPort}`;
+  // ?token= stays for backward-compat with a daemon that has not yet picked up
+  // the subprotocol auth. The token is ALSO sent via Sec-WebSocket-Protocol
+  // (see connect()), which is the preferred path because query strings leak
+  // into access logs / browser history. Once all shipped daemons accept the
+  // subprotocol, the query param below can be dropped.
   return wsToken ? `${base}?token=${encodeURIComponent(wsToken)}` : base;
+}
+
+/**
+ * Subprotocols to offer on the WS handshake. The daemon extracts the auth token
+ * from the `bc-auth.<token>` offer (kept out of the URL query string) and ACKs
+ * the bare `bc-auth` in return — so we MUST offer both: the token-bearing one
+ * (for the daemon to read) AND the bare prefix (for the daemon to ACK without
+ * echoing the token back to the page via ws.protocol). Offering only the
+ * token-bearing one makes the server's `bc-auth` reply an invalid-subprotocol
+ * error on the client side.
+ */
+function wsSubprotocols() {
+  return wsToken ? [`bc-auth.${wsToken}`, 'bc-auth'] : [];
 }
 
 /**
@@ -147,7 +192,10 @@ async function connect() {
 
   let opened = false;
   try {
-    ws = new WebSocket(wsUrl());
+    // Pass the auth token via subprotocol (preferred) so it stays out of the
+    // URL query. wsUrl() still appends ?token= for compat with older daemons.
+    const subs = wsSubprotocols();
+    ws = subs.length ? new WebSocket(wsUrl(), subs) : new WebSocket(wsUrl());
 
     ws.onopen = () => {
       opened = true;
@@ -267,6 +315,91 @@ async function hideOverlay(tabId) {
   } catch {}
 }
 
+// Lock-shield: a full-viewport transparent input-capture layer + a blue inner
+// frame, shown for the lifetime of a tab lock (not the transient per-action
+// badge above). It blocks REAL user input on the top frame; the agent's own
+// synthetic events bypass hit-testing by construction (handleClick / handleType
+// dispatch directly on the resolved element). See specs/tab-control-lock/.
+async function showLockShield(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        let el = document.getElementById('__bc-lock-shield');
+        if (el) return; // idempotent — no stacked duplicates
+        el = document.createElement('div');
+        el.id = '__bc-lock-shield';
+        el.style.cssText =
+          'position:fixed;inset:0;z-index:2147483647;pointer-events:auto;' +
+          'background:transparent;box-shadow:inset 0 0 0 4px #2563eb;';
+        const block = (e) => {
+          // Agent's own synthetic events (handleType/handlePressKey dispatch
+          // KeyboardEvent directly on the target) have isTrusted===false and
+          // MUST pass through — otherwise the capture-phase document listener
+          // would swallow them before they reach the input, breaking typing on
+          // locked tabs. Real user input is isTrusted===true (DOM invariant,
+          // unforgeable) and gets blocked. (Fix-loop 3: audit C2.)
+          if (e.isTrusted === false) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        };
+        // Mouse/pointer listeners attach to `el` (the overlay is the top-most
+        // hit-target for pointer events, so capture listeners on `el` fire).
+        for (const type of ['pointerdown', 'click', 'mousedown', 'mouseup', 'contextmenu']) {
+          el.addEventListener(type, block, { capture: true });
+        }
+        // Keyboard/wheel/focus listeners attach to `document` instead: these
+        // events target elements INSIDE <body> (e.g. document.activeElement),
+        // and `el` is a SIBLING of <body> under <html> — NOT an ancestor — so a
+        // capture-phase listener on `el` would never be on the propagation path.
+        // `document` IS an ancestor of everything in <body>, so capture listeners
+        // there fire site-wide. wheel/keydown/keyup need passive:false so
+        // preventDefault() is honored.
+        const docTypes = ['keydown', 'keyup', 'focus', 'wheel'];
+        for (const type of docTypes) {
+          const opts = type === 'wheel' || type === 'keydown' || type === 'keyup'
+            ? { capture: true, passive: false }
+            : { capture: true };
+          document.addEventListener(type, block, opts);
+        }
+        // Stash the handler + types on `el` so hideLockShield can detach the
+        // document-level listeners before removing `el` (el.remove() does NOT
+        // auto-remove listeners bound to `document` — they would leak + keep
+        // blocking keyboard/wheel/focus on the tab after unlock).
+        el.__bcShieldDocListeners = { fn: block, types: docTypes };
+        // document.documentElement exists even before <body> (early injection).
+        document.documentElement.appendChild(el);
+      },
+    });
+  } catch {} // swallow chrome:// / closed-tab / protected-page errors
+}
+
+async function hideLockShield(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const el = document.getElementById('__bc-lock-shield');
+        if (!el) return; // no-op if absent
+        // Detach document-level listeners (mouse/pointer listeners on `el`
+        // auto-remove with the element; document listeners do NOT, so detach
+        // them explicitly to avoid leaking keyboard/wheel/focus blocks).
+        const bound = el.__bcShieldDocListeners;
+        if (bound && typeof bound.fn === 'function' && Array.isArray(bound.types)) {
+          for (const type of bound.types) {
+            const opts = type === 'wheel' || type === 'keydown' || type === 'keyup'
+              ? { capture: true, passive: false }
+              : { capture: true };
+            document.removeEventListener(type, bound.fn, opts);
+          }
+          el.__bcShieldDocListeners = null;
+        }
+        el.remove();
+      },
+    });
+  } catch {}
+}
+
 function getConnectionState() {
   if (isConnected) return 'connected';
   if (reconnectAttempts > 0) return 'reconnecting';
@@ -342,7 +475,10 @@ async function handleMessage(msg) {
     // when NO surviving connection shares the agentName — see daemon close handler).
     const owner = msg.agentName || msg.sessionId;
     if (owner) {
+      // releaseByOwner is synchronous and returns the released tabIds before
+      // any shield calls below run — no async race (review NOTE 7a).
       const released = tabLocks.releaseByOwner(owner);
+      for (const tabId of released) hideLockShield(tabId);
       if (released.length) {
         broadcastStatus(`Released ${released.length} lock(s) from disconnected agent ${owner}`);
       }
@@ -1191,11 +1327,24 @@ async function handleScreenshot(params) {
     await chrome.tabs.update(tabId, { active: true }).catch(() => {});
     await new Promise((r) => setTimeout(r, 150)); // let the paint settle
   }
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-    format,
-    quality: format === 'jpeg' ? quality : undefined,
-  });
-  return { success: true, format, data: dataUrl.split(',')[1] };
+  // If the tab is locked, hide the blue frame for the capture so the agent's
+  // screenshot matches the real page (the human's blocked view still has the
+  // border at all other times). Restore it afterwards, even on capture error.
+  const wasLocked = !!tabLocks.owner(tabId);
+  if (wasLocked) {
+    try { await hideLockShield(tabId); } catch {}
+  }
+  try {
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+      format,
+      quality: format === 'jpeg' ? quality : undefined,
+    });
+    return { success: true, format, data: dataUrl.split(',')[1] };
+  } finally {
+    if (wasLocked) {
+      try { showLockShield(tabId); } catch {}
+    }
+  }
 }
 
 async function handleConsole(params) {
@@ -1244,6 +1393,7 @@ async function handleTabs(params, sessionId, agentName) {
       if (!tabId) throw new Error('tabId required');
       await chrome.tabs.remove(tabId);
       tabLocks.release(tabId);
+      hideLockShield(tabId); // defensive — onRemoved will also fire, but explicit is cheap
       return { success: true, closed: tabId };
     }
     case 'focus': {
@@ -1258,6 +1408,7 @@ async function handleTabs(params, sessionId, agentName) {
       const owner = agentName || sessionId;
       if (!owner) throw new Error('lock requires a session (called outside daemon?)');
       tabLocks.lock(tabId, owner);
+      showLockShield(tabId); // show blue frame + input block for the lock lifetime
       broadcastStatus(`Tab ${tabId} locked by ${owner}`);
       return { success: true, locked: tabId, owner };
     }
@@ -1265,6 +1416,7 @@ async function handleTabs(params, sessionId, agentName) {
       if (!tabId) throw new Error('tabId required');
       const was = tabLocks.owner(tabId);
       tabLocks.release(tabId);
+      hideLockShield(tabId);
       broadcastStatus(`Tab ${tabId} unlocked (was ${was || '-'})`);
       return { success: true, unlocked: tabId, previousSession: was || null };
     }
@@ -1724,8 +1876,27 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     respond({ success: true });
     return false;
   }
+  if (msg.type === 'setEnrollment') {
+    // The popup owns the user-facing entry of the enrollment secret. Persist
+    // it, re-pair (so /pair runs under the new secret and refreshes wsToken),
+    // then reconnect. Mirrors setToken's teardown so a stale WS doesn't linger.
+    enrollmentSecret = (msg.enrollment || '').trim();
+    chrome.storage.local.set({ enrollmentSecret });
+    await autoPairToken();
+    ws?.close();
+    ws = null;
+    isConnected = false;
+    reconnectAttempts = 0;
+    connect();
+    respond({ success: true });
+    return false;
+  }
   if (msg.type === 'unlockAll') {
+    // Snapshot BEFORE unlockAll() — unlockAll clears the map, so reading after
+    // would lose the list of tabs whose shields need removing.
+    const prev = tabLocks.snapshot();
     tabLocks.unlockAll();
+    for (const { tabId } of prev) hideLockShield(tabId);
     broadcastStatus('All tab locks cleared');
     respond({ success: true });
     return false;
@@ -1740,6 +1911,7 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
       return false;
     }
     tabLocks.lock(msg.tabId, owner);
+    showLockShield(msg.tabId); // popup-driven lock path mirrors the tool path
     broadcastStatus(`Tab ${msg.tabId} pinned to ${owner}`);
     respond({ success: true });
     return false;
@@ -1752,6 +1924,7 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     }
     const was = tabLocks.owner(msg.tabId);
     tabLocks.release(msg.tabId);
+    hideLockShield(msg.tabId);
     broadcastStatus(`Tab ${msg.tabId} unpinned (was ${was || '-'})`);
     respond({ success: true, previousSession: was || null });
     return false;
@@ -1775,12 +1948,30 @@ chrome.webRequest.onCompleted.addListener(
 );
 
 // A tab closing should release its lock and drop its buffers.
+// NOTE: no hideLockShield here — the tab/page is already gone, so a shield
+// inject would just throw (swallowed) and there is nothing to remove.
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabLocks.release(tabId);
   consoleByTab.delete(tabId);
   networkByTab.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
+});
+
+// Re-inject the lock shield after a FULL navigation on a locked tab. A full
+// navigation destroys the injected DOM (new document), so without this the
+// page would be user-controllable again even though tabLocks still holds the
+// lock. A hash-only / SPA navigation does NOT reload the document, so the
+// shield survives and onUpdated does not fire a new 'complete' for it (see
+// isHashOnlyChange in utils/navigation.js + handleNavigate). showLockShield is
+// idempotent (the __bc-lock-shield guard), so re-injecting on a tab whose
+// shield is still present is a no-op. This module-level listener is SEPARATE
+// from the short-lived per-call listener inside handleNavigate — they share no
+// state and Chrome supports multiple onUpdated listeners (review NOTE 7c).
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'complete' && tabLocks.owner(tabId)) {
+    showLockShield(tabId);
+  }
 });
 
 initConnection();

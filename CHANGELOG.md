@@ -1,5 +1,59 @@
 # Changelog
 
+## [Unreleased] — Security hardening (HTTP endpoints, auth protocol, co-installed-extension threat)
+
+A multi-pass security hardening of the daemon's control plane. Four layers of
+fix, each addressing a distinct threat in `SECURITY.md`. Test count: 151 → 167.
+
+### SECURITY (authentication / authorization)
+
+- **S1 — Constant-time token compare + auth token moved out of the URL query.**
+  The WS upgrade previously compared the auth token with `!==` (timing leak) and
+  the token traveled in `?token=` (logged in access logs / browser history). Now:
+  `crypto.timingSafeEqual` (padded), and the token is sent via the
+  `Sec-WebSocket-Protocol` subprotocol (`bc-auth.<token>`). `?token=` stays as a
+  legacy fallback for already-installed extensions.
+- **S2 — Per-session rate limiting.** A `BC_RATE_LIMIT_PER_MIN` budget
+  (default 120) caps tool calls per agent over a rolling 60s window. Protects
+  the browser from a runaway agent (infinite click/type loop). Set to 0 to
+  disable.
+- **S3 — HTTP endpoints no longer leak the auth token to any web page.** The
+  daemon served `/pair` (which returns the token), `/status`, `/kill` with
+  `Access-Control-Allow-Origin: '*'` and no Origin check on the HTTP path (only
+  the WS upgrade checked Origin). Any site open in a tab could `fetch('/pair')`
+  and read the token. Fixed: a single Origin gate (`isAllowedOrigin`) now runs
+  upstream of all HTTP routes; CORS reflects only the pinned extension origin.
+- **S4 — Exact-match extension-ID pin + enrollment secret (closes the
+  co-installed-extension threat).** Two residual gaps remained after S3:
+  (a) the Origin check was a substring match (`startsWith('chrome-extension://')`),
+  so any *other* extension co-installed on the same machine passed it; (b) even
+  with an exact-match pin, a hostile extension that reached the daemon *first*
+  (winning the TOFU first-contact race) would get pinned, obtain the token via
+  `/pair`, and gain full MCP control. **Fixed:** the daemon pins the first
+  extension Origin it sees and exact-matches thereafter (closes gap a), AND
+  every HTTP endpoint now requires an out-of-band **enrollment secret**
+  (`X-BC-Enrollment` header) that `/pair` itself cannot bootstrap — so a hostile
+  extension that wins the pin still cannot get the token without the secret
+  (closes gap b). The secret is generated at
+  `~/.browser-controller/enrollment.json` (0600), printed by
+  `npx browser-controller`, and pasted once into the popup.
+
+### BREAKING
+
+- **Enrollment secret is now mandatory.** Upgrading users will see the popup
+  "disconnected" until they paste the secret (from `npx browser-controller`
+  output) into the new "Enrollment Secret" field. One-time UX cost to close the
+  first-contact race; documented in `SECURITY.md`.
+
+### ADDED
+
+- `.env.example` documenting all environment variables (incl. new
+  `BC_RATE_LIMIT_PER_MIN`).
+- `SECURITY.md` rewritten: honest "Security Model" + "Known Limitations" +
+  residual-attack analysis.
+- 16 new tests (subprotocol auth, HTTP origin gate, exact-match pin,
+  enrollment gate, rate limiting).
+
 ## [2.3.0] — 2026-08-01 — Runtime correctness fixes (hash-nav, cancel, evaluate)
 
 Three runtime bugs found by driving a Vue SPA (Whatomate) end-to-end through

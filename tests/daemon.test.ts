@@ -33,9 +33,11 @@ const DIST_INDEX = path.join(ROOT, 'mcp-server', 'dist', 'index.js');
 const TMP_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-test-'));
 const SOCK = path.join(TMP_STATE, 'daemon.sock');
 const TOKEN_FILE = path.join(TMP_STATE, 'token.json');
+const ENROLLMENT_FILE = path.join(TMP_STATE, 'enrollment.json');
 const WS_PORT = 19240 + Math.floor(Math.random() * 50);
 
 let token = '';
+let enrollment = '';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -84,6 +86,12 @@ async function startDaemon(): Promise<void> {
       });
       if (ok) {
         token = tokenFromDisk();
+        // the daemon also writes enrollment.json on start; read it so the
+        // HTTP helpers can send X-BC-Enrollment (required since the gate landed).
+        try {
+          const eparsed = JSON.parse(fs.readFileSync(ENROLLMENT_FILE, 'utf8'));
+          enrollment = eparsed.secret ?? '';
+        } catch { /* not yet */ }
         return;
       }
     }
@@ -134,12 +142,14 @@ function connectClient(name: string, opts?: { replyToPing?: boolean }): Promise<
   });
 }
 
-function httpGet(pathAndQuery: string): Promise<any> {
+function httpGet(pathAndQuery: string, opts?: { headers?: http.OutgoingHttpHeaders; raw?: boolean }): Promise<any> {
   return new Promise((resolve, reject) => {
-    const req = http.get(`http://127.0.0.1:${WS_PORT}${pathAndQuery}`, (res) => {
+    const headers: http.OutgoingHttpHeaders = { 'X-BC-Enrollment': enrollment, ...(opts?.headers ?? {}) };
+    const req = http.get(`http://127.0.0.1:${WS_PORT}${pathAndQuery}`, { headers }, (res) => {
       let data = '';
       res.on('data', (c) => (data += c));
       res.on('end', () => {
+        if (opts?.raw) { resolve({ status: res.statusCode, body: data }); return; }
         try { resolve(JSON.parse(data)); } catch { resolve(null); }
       });
     });
@@ -283,5 +293,268 @@ describe('--agent flag naming', { timeout: 15_000 }, () => {
     } finally {
       child.kill('SIGTERM');
     }
+  });
+});
+
+describe('daemon per-session rate limiting', { timeout: 30_000 }, () => {
+  // Separate daemon instance with a tiny budget so the test is fast and doesn't
+  // interfere with the shared daemon's clients above.
+  const RL_PORT = 19310 + Math.floor(Math.random() * 50);
+  const RL_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-rl-'));
+  const RL_SOCK = path.join(RL_STATE, 'daemon.sock');
+  const RL_TOKEN_FILE = path.join(RL_STATE, 'token.json');
+  const BUDGET = 2;
+  let rlDaemon: ChildProcess | null = null;
+  let rlToken = '';
+
+  beforeAll(async () => {
+    rlDaemon = spawn(process.execPath, [DIST_DAEMON], {
+      env: {
+        ...process.env,
+        BC_STATE_DIR: RL_STATE,
+        BC_HEARTBEAT_MS: '60000',   // don't evict mid-test
+        BC_HEARTBEAT_MAX_MISSED: '3',
+        WS_PORT: String(RL_PORT),
+        WS_HOST: '127.0.0.1',
+        BC_RATE_LIMIT_PER_MIN: String(BUDGET),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    rlDaemon.stderr?.on('data', (c) => { stderr += c.toString(); });
+    for (let i = 0; i < 80; i++) {
+      if (fs.existsSync(RL_SOCK)) {
+        const ok = await new Promise<boolean>((resolve) => {
+          const s = net.createConnection(RL_SOCK);
+          s.once('connect', () => { s.destroy(); resolve(true); });
+          s.once('error', () => resolve(false));
+        });
+        if (ok) {
+          // token from disk (mirrors tokenFromDisk, scoped to this instance)
+          const born = Date.now();
+          while (Date.now() - born < 4000) {
+            try {
+              const parsed = JSON.parse(fs.readFileSync(RL_TOKEN_FILE, 'utf8'));
+              if (parsed.token) { rlToken = parsed.token; break; }
+            } catch { /* not yet */ }
+            const end = Date.now() + 50; while (Date.now() < end) { /* spin */ }
+          }
+          if (rlToken) return;
+        }
+      }
+      await sleep(50);
+    }
+    throw new Error(`rate-limit daemon never came up. stderr:\n${stderr}`);
+  });
+
+  afterAll(async () => {
+    if (rlDaemon && !rlDaemon.killed) {
+      rlDaemon.kill('SIGTERM');
+      await sleep(150);
+    }
+    try { fs.rmSync(RL_STATE, { recursive: true, force: true }); } catch {}
+  });
+
+  /**
+   * Connect, handshake, then send N `browser_snapshot` calls. Calls don't need
+   * the extension connected — the daemon replies with a timeout error after the
+   * rate check. We only care whether the rejection is the rate-limit message
+   * (refused before the bridge hop) vs. a normal timeout/extension error
+   * (allowed through and then failed downstream).
+   */
+  function connectAndFireCalls(count: number): Promise<{ sessionId: string; results: string[] }> {
+    return new Promise((resolve, reject) => {
+      const socket = net.createConnection(RL_SOCK);
+      socket.setEncoding('utf8');
+      let buf = '';
+      let sessionId = '';
+      const results: string[] = [];
+      let callsSent = 0;
+      const timer = setTimeout(() => reject(new Error('rate-limit test timed out')), 8000);
+      socket.on('data', (chunk) => {
+        buf += chunk;
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let msg: any;
+          try { msg = JSON.parse(line); } catch { continue; }
+          if (msg.kind === 'welcome' && !sessionId) {
+            sessionId = msg.sessionId;
+            // Send all calls back-to-back. No pongs needed (heartbeat is 60s).
+            for (let i = 0; i < count; i++) {
+              socket.write(JSON.stringify({ kind: 'call', id: `c${i}`, tool: 'browser_snapshot', params: { tabId: 1 } }) + '\n');
+              callsSent++;
+            }
+            continue;
+          }
+          if (msg.kind === 'result') {
+            results.push(msg.success ? 'ok' : msg.error || 'error');
+            if (results.length === callsSent) {
+              clearTimeout(timer);
+              socket.destroy();
+              resolve({ sessionId, results });
+            }
+          }
+        }
+      });
+      socket.on('error', (e) => { clearTimeout(timer); reject(e); });
+      socket.write(JSON.stringify({ kind: 'hello', token: rlToken, agentName: 'RlAgent' }) + '\n');
+    });
+  }
+
+  it(`refuses calls past the per-minute budget (${BUDGET}) with a rate-limit error`, async () => {
+    // Budget = 2 → first 2 calls are admitted (then fail as no extension),
+    // the 3rd+ are refused outright with the rate-limit message.
+    const { results } = await connectAndFireCalls(BUDGET + 2);
+    expect(results.length).toBe(BUDGET + 2);
+    const rateLimited = results.filter((r) => r.startsWith('Rate limit exceeded'));
+    const admitted = results.filter((r) => !r.startsWith('Rate limit exceeded'));
+    // Exactly the overflow count was refused on rate grounds...
+    expect(rateLimited.length).toBe(2);
+    // ...and the admitted ones are NOT rate-limit errors (they fail downstream).
+    expect(admitted.length).toBe(BUDGET);
+    admitted.forEach((r) => expect(r.startsWith('Rate limit exceeded')).toBe(false));
+  });
+
+  it('fresh budget after reconnect (new session = new window)', async () => {
+    // A brand-new client should get its own full budget, proving the limit is
+    // per-session, not global.
+    const { results } = await connectAndFireCalls(BUDGET);
+    expect(results.length).toBe(BUDGET);
+    results.forEach((r) => expect(r.startsWith('Rate limit exceeded')).toBe(false));
+  });
+});
+
+describe('daemon enrollment gate (closes first-contact TOFU race)', { timeout: 30_000 }, () => {
+  // Self-contained daemon instance (own state dir + own port + own
+  // enrollment.json), so this describe block can be run in isolation — the
+  // gate must NOT depend on the shared lifecycle daemon above being booted.
+  const E_PORT = 19410 + Math.floor(Math.random() * 50);
+  const E_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-enr-'));
+  const E_SOCK = path.join(E_STATE, 'daemon.sock');
+  const E_TOKEN_FILE = path.join(E_STATE, 'token.json');
+  const E_ENROLLMENT_FILE = path.join(E_STATE, 'enrollment.json');
+  let eDaemon: ChildProcess | null = null;
+  let eToken = '';
+  let eEnrollment = '';
+
+  beforeAll(async () => {
+    eDaemon = spawn(process.execPath, [DIST_DAEMON], {
+      env: {
+        ...process.env,
+        BC_STATE_DIR: E_STATE,
+        BC_HEARTBEAT_MS: '60000',
+        BC_HEARTBEAT_MAX_MISSED: '3',
+        WS_PORT: String(E_PORT),
+        WS_HOST: '127.0.0.1',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    eDaemon.stderr?.on('data', (c) => { stderr += c.toString(); });
+    for (let i = 0; i < 80; i++) {
+      if (fs.existsSync(E_SOCK)) {
+        const ok = await new Promise<boolean>((resolve) => {
+          const s = net.createConnection(E_SOCK);
+          s.once('connect', () => { s.destroy(); resolve(true); });
+          s.once('error', () => resolve(false));
+        });
+        if (ok) {
+          // Read both token and enrollment from disk (both written on start).
+          const born = Date.now();
+          while (Date.now() - born < 4000) {
+            try {
+              if (!eToken) {
+                const tp = JSON.parse(fs.readFileSync(E_TOKEN_FILE, 'utf8'));
+                if (tp.token) eToken = tp.token;
+              }
+              if (!eEnrollment) {
+                const ep = JSON.parse(fs.readFileSync(E_ENROLLMENT_FILE, 'utf8'));
+                if (ep.secret) eEnrollment = ep.secret;
+              }
+              if (eToken && eEnrollment) break;
+            } catch { /* not yet */ }
+            const end = Date.now() + 50; while (Date.now() < end) { /* spin */ }
+          }
+          if (eToken && eEnrollment) return;
+        }
+      }
+      await sleep(50);
+    }
+    throw new Error(`enrollment daemon never came up. stderr:\n${stderr}`);
+  });
+
+  afterAll(async () => {
+    if (eDaemon && !eDaemon.killed) {
+      eDaemon.kill('SIGTERM');
+      await sleep(150);
+    }
+    try { fs.rmSync(E_STATE, { recursive: true, force: true }); } catch {}
+  });
+
+  // Local http helper (separate port/state from the shared daemon's httpGet).
+  function eHttp(pathAndQuery: string, opts?: { headers?: http.OutgoingHttpHeaders; raw?: boolean }): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const headers: http.OutgoingHttpHeaders = { 'X-BC-Enrollment': eEnrollment, ...(opts?.headers ?? {}) };
+      const req = http.get(`http://127.0.0.1:${E_PORT}${pathAndQuery}`, { headers }, (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => {
+          if (opts?.raw) { resolve({ status: res.statusCode, body: data }); return; }
+          try { resolve(JSON.parse(data)); } catch { resolve(null); }
+        });
+      });
+      req.on('error', reject);
+      setTimeout(() => reject(new Error('http timeout')), 4000);
+    });
+  }
+
+  it('/pair WITHOUT the X-BC-Enrollment header is rejected (403)', async () => {
+    const res = await eHttp('/pair', { headers: { 'X-BC-Enrollment': '' }, raw: true });
+    expect(res.status).toBe(403);
+    expect(res.body).not.toContain(eToken);
+  });
+
+  it('/pair WITH a WRONG enrollment secret is rejected (403)', async () => {
+    const res = await eHttp('/pair', { headers: { 'X-BC-Enrollment': 'wrong-secret' }, raw: true });
+    expect(res.status).toBe(403);
+    expect(res.body).not.toContain(eToken);
+  });
+
+  it('/pair WITH the CORRECT enrollment secret returns the token', async () => {
+    const res = await eHttp('/pair', { headers: { 'X-BC-Enrollment': eEnrollment }, raw: true });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body).token).toBe(eToken);
+  });
+
+  it('/status and /kill also require the enrollment secret (no bypass via other routes)', async () => {
+    const statusNoKey = await eHttp('/status', { headers: { 'X-BC-Enrollment': '' }, raw: true });
+    expect(statusNoKey.status).toBe(403);
+
+    const killWrongKey = await eHttp('/kill?sessionId=s1', { headers: { 'X-BC-Enrollment': 'wrong' }, raw: true });
+    expect(killWrongKey.status).toBe(403);
+
+    const statusOk = await eHttp('/status', { headers: { 'X-BC-Enrollment': eEnrollment }, raw: true });
+    expect(statusOk.status).toBe(200);
+  });
+
+  it('a hostile extension that wins the Origin-pin race STILL cannot get the token (the whole point)', async () => {
+    // Simulate a hostile extension that reaches the daemon first with its OWN
+    // chrome-extension://<hostile-id> Origin (which the browser would set for it
+    // and which it cannot forge to be OUR id). It wins the pin. But it does NOT
+    // know the enrollment secret, so /pair must still reject it.
+    const hostileOrigin = 'chrome-extension://hostileID';
+    const res = await eHttp('/pair', {
+      headers: {
+        Origin: hostileOrigin,            // hostile wins the pin
+        'X-BC-Enrollment': '',            // but has no enrollment secret
+      },
+      raw: true,
+    });
+    expect(res.status).toBe(403);
+    expect(res.body).not.toContain(eToken);
+    // The hostile extension leaves empty-handed: no token, no WS, no control.
   });
 });

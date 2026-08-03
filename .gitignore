@@ -3,6 +3,9 @@ mcp-server/dist/
 *.tsbuildinfo
 .DS_Store
 graphify-out/
+# local env (may hold real tokens / secrets if populated) — keep .env.example
+.env
+.env.local
 # daemon runtime state (task 1.0 / 3.1)
 daemon.log
 .serena/

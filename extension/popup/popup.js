@@ -3,6 +3,11 @@ const statusEl = document.getElementById('status');
 const detailEl = document.getElementById('detail');
 const portInput = document.getElementById('port');
 const tokenInput = document.getElementById('token');
+const enrollmentInput = document.getElementById('enrollment');
+// Enrollment secret the daemon gates /pair, /status, /kill behind. Loaded from
+// chrome.storage.local so the popup remembers it across reopens (the user
+// pastes it once on first setup — see SECURITY.md "First-contact TOFU window").
+let enrollment = '';
 const logEl = document.getElementById('log');
 const versionEl = document.getElementById('version');
 const locksEl = document.getElementById('locks');
@@ -28,13 +33,33 @@ function daemonHttpBase() {
 }
 
 /**
+ * Authenticated fetch wrapper: sends the enrollment secret in the
+ * X-BC-Enrollment header on every daemon HTTP call. Without this, /pair
+ * (and /status, /kill) return 403 — the daemon gates all HTTP behind the
+ * secret to stop a co-installed hostile extension from obtaining the token
+ * even if it wins the Origin-pin race. See SECURITY.md.
+ */
+async function daemonFetch(pathAndQuery) {
+  return fetch(`${daemonHttpBase()}${pathAndQuery}`, {
+    cache: 'no-store',
+    headers: { 'X-BC-Enrollment': enrollment },
+  });
+}
+
+/**
  * Auto-pair: fetch the daemon's token over localhost and hand it to the
  * background worker so the WS connection carries ?token=. Runs once on popup
  * open; safe to re-run. Silent if the daemon isn't up yet (it'll retry).
+ *
+ * Requires the enrollment secret to be set first — without it /pair returns
+ * 403 and there is nothing to pair. On a fresh install the user pastes the
+ * secret (printed by `npx browser-controller`) once; thereafter it's recalled
+ * from chrome.storage.local.
  */
 async function autoPairToken() {
+  if (!enrollment) return; // can't pair without the enrollment secret
   try {
-    const res = await fetch(`${daemonHttpBase()}/pair`, { cache: 'no-store' });
+    const res = await daemonFetch('/pair');
     if (!res.ok) return;
     const data = await res.json();
     if (data && data.token && data.token !== tokenInput.value) {
@@ -48,8 +73,9 @@ async function autoPairToken() {
 
 /** Poll the daemon for connected agents and render them. */
 async function refreshAgents() {
+  if (!enrollment) { setAgents([]); return; } // daemon will 403 anyway
   try {
-    const res = await fetch(`${daemonHttpBase()}/status`, { cache: 'no-store' });
+    const res = await daemonFetch('/status');
     if (!res.ok) { setAgents([]); return; }
     const data = await res.json();
     setAgents(Array.isArray(data.agents) ? data.agents : []);
@@ -102,7 +128,7 @@ function renderAgents() {
  */
 async function disconnectAgent(sessionId) {
   try {
-    const res = await fetch(`${daemonHttpBase()}/kill?sessionId=${encodeURIComponent(sessionId)}`, { cache: 'no-store' });
+    const res = await daemonFetch(`/kill?sessionId=${encodeURIComponent(sessionId)}`);
     const data = await res.json();
     if (data && data.ok) {
       addLog(`Disconnected ${sessionId}`, 'warn');
@@ -265,12 +291,23 @@ function refreshStatus() {
 
 refreshStatus();
 
-// On open: auto-pair the token (so the WS carries ?token=) and start polling
-// the daemon for connected agents AND the background for tabs/locks. Both
-// polls stop when the popup is hidden (closes) to avoid leaking timers.
-autoPairToken();
-refreshAgents();
-let agentsTimer = setInterval(refreshAgents, 2000);
+// On open: recall the enrollment secret from storage (required before any
+// daemon HTTP call, since the daemon gates /pair, /status, /kill behind it).
+// Until the user has entered it once, the popup shows the daemon as
+// unreachable — the enrollment field is the first thing to set up.
+chrome.storage.local.get(['enrollmentSecret'], (stored) => {
+  if (typeof stored.enrollmentSecret === 'string') {
+    enrollment = stored.enrollmentSecret;
+    enrollmentInput.value = enrollment;
+  }
+  // Now that enrollment is restored (or known-empty), kick off pairing + polling.
+  autoPairToken();
+  refreshAgents();
+});
+let agentsTimer = setInterval(() => {
+  // only poll the daemon if we can actually auth to it
+  if (enrollment) refreshAgents();
+}, 2000);
 let statusTimer = setInterval(refreshStatus, 2000);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
@@ -313,6 +350,30 @@ tokenInput.addEventListener('input', () => {
       if (resp?.success) addLog('Token updated, reconnecting', 'warn');
     });
   }, 600);
+});
+
+// Enrollment secret: persists to chrome.storage.local so it survives popup
+// reopens. Changing it re-attempts /pair (the token is re-fetched under the
+// new secret) — this is how the user recovers after pasting the wrong value
+// or after rotating the daemon's enrollment.json.
+let enrollmentDebounce = null;
+enrollmentInput.addEventListener('input', () => {
+  clearTimeout(enrollmentDebounce);
+  enrollmentDebounce = setTimeout(() => {
+    enrollment = enrollmentInput.value.trim();
+    // Persist under the same key the background reads ('enrollmentSecret') so
+    // its service-worker-recycle reload stays in sync, AND notify the background
+    // via setEnrollment so it re-pairs /pair under the new secret and reconnects
+    // the WS (the popup's own autoPairToken only refreshes the token field —
+    // the background owns the WS lifecycle).
+    chrome.storage.local.set({ enrollmentSecret: enrollment }, () => {
+      addLog(enrollment ? 'Enrollment updated, pairing…' : 'Enrollment cleared', 'warn');
+      chrome.runtime.sendMessage({ type: 'setEnrollment', enrollment }, (resp) => {
+        // background re-paired + reconnected; refresh the popup's token view too.
+        if (resp?.success && enrollment) autoPairToken();
+      });
+    });
+  }, 400);
 });
 
 // Unlock All (task 3.3)
