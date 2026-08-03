@@ -10,3 +10,4 @@ graphify-out/
 daemon.log
 .serena/
 Archive.zip
+.changes/
