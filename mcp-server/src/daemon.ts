@@ -214,15 +214,27 @@ class Daemon {
           }
           authed = true;
           const name = msg.agentName || 'agent';
-          // Dedup by agentName: when an IDE respawns the MCP client (Cursor does
-          // this on every reload), the old socket may not have delivered `close`
-          // yet. Without this, N restarts produce N zombie rows with the same
-          // name in the popup. Replace the stale entry rather than accumulating.
+          // Liveness-based dedup by agentName. When an IDE respawns the MCP
+          // client (Cursor does this on every reload), the old socket may not
+          // have delivered `close` yet and is typically a half-open (dead)
+          // connection that has missed several heartbeats. We only destroy an
+          // existing same-name connection if it looks dead (missedPongs at/over
+          // the eviction threshold). A LIVE sibling (missedPongs below the
+          // threshold — i.e. it is actively replying to pings) is left alone so
+          // multiple genuine MCP processes with the same agent name can
+          // co-exist (each gets its own unique sessionId). The popup lists each
+          // by sessionId; the close handler releases tab locks only when no
+          // same-name connection survives. This preserves the IDE-respawn fix
+          // while ending the destructive sibling race.
           for (const [existingSocket, existing] of this.clients) {
-            if (existing.agentName === name) {
-              console.error(`[${SERVER_NAME}] replacing stale client ${existing.sessionId} (${name})`);
+            if (existing.agentName !== name) continue;
+            const stale = existing.missedPongs >= HEARTBEAT_MAX_MISSED;
+            if (stale) {
+              console.error(`[${SERVER_NAME}] replacing dead client ${existing.sessionId} (${name}, ${existing.missedPongs} missed pongs)`);
               existingSocket.destroy();
               this.clients.delete(existingSocket);
+            } else {
+              console.error(`[${SERVER_NAME}] co-existing session ${existing.sessionId} (${name}, missedPongs=${existing.missedPongs}) — new connection accepted as s${this.sessionIdCounter + 1}`);
             }
           }
           client = {

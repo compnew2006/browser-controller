@@ -187,21 +187,52 @@ describe('daemon client lifecycle', { timeout: 30_000 }, () => {
     socket.destroy();
   });
 
-  it('dedups by agentName: a second client with the same name replaces the first', async () => {
-    const first = await connectClient('Dedup');
-    const before = await fetchStatus();
-    const countBefore = before.agents.filter((a: any) => a.name === 'Dedup').length;
+  it('replaces a DEAD client (missed pongs) when a new one with the same name connects', async () => {
+    // First client deliberately ignores pings → its missedPongs climbs toward
+    // HEARTBEAT_MAX_MISSED. We wait long enough for it to be flagged dead, then
+    // connect a second client with the same name — the dead one must be replaced.
+    const first = await connectClient('DedupDead', { replyToPing: false });
+    const countBefore = (await fetchStatus()).agents.filter((a: any) => a.name === 'DedupDead').length;
     expect(countBefore).toBe(1);
 
-    const second = await connectClient('Dedup');
+    // Wait for the heartbeat to mark first as dead (BC_HEARTBEAT_MAX_MISSED=3
+    // × BC_HEARTBEAT_MS=200ms ≈ 600ms + buffer).
+    await sleep(200 * (3 + 1) + 250);
+
+    const second = await connectClient('DedupDead');
     await sleep(150);
-    const after = await fetchStatus();
-    const dedupRows = after.agents.filter((a: any) => a.name === 'Dedup');
-    expect(dedupRows.length).toBe(1);
-    expect(dedupRows[0].sessionId).toBe(second.sessionId);
+    const rows = (await fetchStatus()).agents.filter((a: any) => a.name === 'DedupDead');
+    expect(rows.length).toBe(1);
+    expect(rows[0].sessionId).toBe(second.sessionId);
 
     second.socket.destroy();
     first.socket.destroy();
+  });
+
+  it('co-exists multiple LIVE clients with the same agentName (multi-process support)', async () => {
+    // Two genuinely live clients (replying to pings) with the same name must
+    // BOTH stay connected — this is the fix for the destructive sibling race
+    // where 3 concurrent MCP processes sharing one agentName kept destroying
+    // each other. Each gets its own unique sessionId.
+    const a = await connectClient('Coexist');
+    const b = await connectClient('Coexist');
+    await sleep(150);
+    const rows = (await fetchStatus()).agents.filter((x: any) => x.name === 'Coexist');
+    expect(rows.length).toBe(2);
+    const ids = rows.map((r: any) => r.sessionId).sort();
+    expect(ids[0]).not.toBe(ids[1]);
+    expect(ids).toContain(a.sessionId);
+    expect(ids).toContain(b.sessionId);
+
+    // Closing one must NOT evict the other (the close handler's stillAlive
+    // check keeps the survivor's tab locks intact).
+    a.socket.destroy();
+    await sleep(150);
+    const after = (await fetchStatus()).agents.filter((x: any) => x.name === 'Coexist');
+    expect(after.length).toBe(1);
+    expect(after[0].sessionId).toBe(b.sessionId);
+
+    b.socket.destroy();
   });
 
   it('evicts a silent client via the heartbeat after the max-missed count', async () => {
