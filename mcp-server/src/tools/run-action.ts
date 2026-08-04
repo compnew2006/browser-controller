@@ -4,8 +4,9 @@ import { requireTabId, textResult } from './types.js';
 
 export const runActionTool: ToolDefinition = {
   name: 'browser_run_action',
-  summary: 'Run arbitrary JS via CDP (bypasses CSP)',  description:
-    'Run a self-contained JavaScript action object in the page context via CDP. The code must be an expression that evaluates to an object with an execute(params) method. Returns the action result directly. Bypasses CSP restrictions.',
+  summary: 'Run arbitrary JS via CDP (bypasses CSP)',
+  description:
+    'Run a self-contained JavaScript action object in the page context via CDP. The code must be an expression that evaluates to an object with an execute(params) method. Returns the action result directly. Bypasses CSP restrictions. USE THIS (not browser_evaluate) when you must read/write DOM, call an internal API (fetch), or read cookies on a strict-CSP SPA where browser_evaluate returns null. Shows a yellow "is being debugged" banner — if you must avoid it, try browser_evaluate first. Prefer the dedicated tools (browser_click/browser_type/browser_snapshot) over hand-written JS for those specific tasks.',
   inputSchema: z.object({
     tabId: requireTabId(),
     code: z

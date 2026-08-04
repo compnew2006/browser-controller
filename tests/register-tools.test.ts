@@ -62,6 +62,31 @@ describe('registerTools — full mode (default)', () => {
     const data = JSON.parse((result.content as Array<{ text: string }>)[0].text);
     expect(data.tools.every((t: { active: boolean }) => t.active)).toBe(true);
   });
+
+  it('meta tool list returns a task→tool preamble and per-tool guidance', async () => {
+    const { client } = await setup(true);
+    const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'list' } });
+    const data = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+    // preamble is the first-read orientation string for a first-time agent
+    expect(typeof data.preamble).toBe('string');
+    expect(data.preamble.length).toBeGreaterThan(200);
+    // every tool entry carries a non-empty guidance sentence
+    expect(data.tools.every((t: { guidance?: string }) => typeof t.guidance === 'string' && t.guidance.length > 0)).toBe(true);
+    // the high-value evaluate↔run_action distinction is surfaced
+    const evalG = data.tools.find((t: { name: string }) => t.name === 'browser_evaluate');
+    const runG = data.tools.find((t: { name: string }) => t.name === 'browser_run_action');
+    expect(/CSP|null/i.test(evalG.guidance)).toBe(true);
+    expect(/bypasses CSP|CSP/i.test(runG.guidance)).toBe(true);
+  });
+
+  it('meta tool details returns guidance for the requested tool', async () => {
+    const { client } = await setup(false); // progressive mode so details also activates
+    const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'details', tool: 'browser_click' } });
+    const data = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+    expect(typeof data.guidance).toBe('string');
+    expect(data.guidance.length).toBeGreaterThan(0);
+    expect(data.activated).toBe(true);
+  });
 });
 
 describe('registerTools — progressive mode', () => {
