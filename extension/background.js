@@ -22,6 +22,11 @@
 const DEFAULT_WS_PORT = 7225;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
+// After this many reconnect attempts (≈ a few minutes of backoff), the daemon
+// is genuinely down, not just recycling — surface a real 'error' badge so the
+// user knows it's not a silent failure. Below this threshold, the badge stays
+// grey (disconnected) to avoid crying-wolf on every transient restart.
+const RECONNECT_GIVEUP_ATTEMPTS = 10;
 const KEEPALIVE_ALARM = 'keepalive';
 const KEEPALIVE_INTERVAL_MIN = 0.4; // ~24s, under Chrome's 30s limit
 const PER_TAB_CAP = 200;
@@ -213,16 +218,27 @@ async function connect() {
       isConnected = false;
       connectedSince = null;
       ws = null;
+      // Grey badge (not red) — a dropped/reconnecting socket is a normal state,
+      // not an extension fault. scheduleReconnect() will broadcast the
+      // "Retry #N in Xs" message; broadcastStatus here tells the popup it's
+      // disconnected-but-trying, not broken.
       updateBadge('disconnected');
       broadcastStatus('Disconnected');
       scheduleReconnect();
     };
 
     ws.onerror = () => {
+      // Do NOT flip the badge to red ('error') here. ws.onerror fires on every
+      // transient connection failure — most commonly during daemon restart, MV3
+      // service-worker recycle, or the first attempt of an exponential-backoff
+      // reconnect sequence. Flagging it as a hard error makes a benign, self-
+      // healing retry look like the extension is broken (red "!" badge).
+      // `ws.onclose` fires right after this and owns the state transition:
+      // it sets the disconnected (grey) badge and schedules a reconnect. We only
+      // stash the reason so the popup can show "why" if the user inspects it.
       isConnected = false;
       lastError = `Connection refused on port ${wsPort}`;
-      updateBadge('error');
-      broadcastStatus(lastError);
+      // No updateBadge('error'), no broadcastStatus — onclose handles both.
     };
 
     ws.onmessage = async (event) => {
@@ -258,7 +274,17 @@ function scheduleReconnect() {
   const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts) + jitter, RECONNECT_MAX_MS);
   reconnectAttempts++;
   nextRetryMs = delay;
-  broadcastStatus(`Retry #${reconnectAttempts} in ${Math.round(delay / 1000)}s`);
+  // Below the give-up threshold: grey 'disconnected' badge + "retry in Ns"
+  // (transient — daemon restarting / SW recycling / first backoff attempt).
+  // At/above the threshold: the daemon has been unreachable for minutes, so
+  // flip to a real red 'error' badge — this is the one case where red is honest.
+  if (reconnectAttempts >= RECONNECT_GIVEUP_ATTEMPTS) {
+    updateBadge('error');
+    broadcastStatus(`Daemon unreachable after ${reconnectAttempts} attempts. Is it running?`);
+  } else {
+    updateBadge('disconnected');
+    broadcastStatus(`Retry #${reconnectAttempts} in ${Math.round(delay / 1000)}s`);
+  }
   reconnectTimeout = setTimeout(connect, delay);
 }
 
@@ -1880,16 +1906,19 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     // The popup owns the user-facing entry of the enrollment secret. Persist
     // it, re-pair (so /pair runs under the new secret and refreshes wsToken),
     // then reconnect. Mirrors setToken's teardown so a stale WS doesn't linger.
+    // NOTE: the onMessage listener is NOT async, so we .then() the re-pair and
+    // return true (Chrome keeps the respond() channel open for the async reply).
     enrollmentSecret = (msg.enrollment || '').trim();
     chrome.storage.local.set({ enrollmentSecret });
-    await autoPairToken();
-    ws?.close();
-    ws = null;
-    isConnected = false;
-    reconnectAttempts = 0;
-    connect();
-    respond({ success: true });
-    return false;
+    autoPairToken().then(() => {
+      ws?.close();
+      ws = null;
+      isConnected = false;
+      reconnectAttempts = 0;
+      connect();
+      respond({ success: true });
+    });
+    return true; // async response — respond() fires from the .then()
   }
   if (msg.type === 'unlockAll') {
     // Snapshot BEFORE unlockAll() — unlockAll clears the map, so reading after
