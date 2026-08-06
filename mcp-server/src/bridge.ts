@@ -227,6 +227,38 @@ export function findListenersOnPort(port: number): number[] {
   }
 }
 
+/**
+ * Probe whether the process listening on `host:port` is a RESPONSIVE daemon
+ * (vs a hung/crashed process still holding the port, or a totally unrelated
+ * server). GETs `/pair` with a short timeout: our daemon answers with the
+ * token JSON; anything else (reset, timeout, non-JSON, or a server that
+ * doesn't speak our protocol) means the holder is NOT a healthy daemon we
+ * should preserve.
+ *
+ * Used by `killStaleProcess` so a second MCP client that hits EADDRINUSE
+ * does NOT SIGTERM a perfectly healthy daemon just because it couldn't
+ * listen — the documented stale-kill is only for a port wedged by a
+ * CRASHED previous daemon. Without this gate, N concurrent MCP clients
+ * would each kill the others' daemon on startup (a destructive race).
+ */
+export async function isDaemonResponsiveOnPort(host: string, port: number, timeoutMs = 1200): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // Use 127.0.0.1 explicitly (the daemon only listens there).
+    const res = await fetch(`http://${host}:${port}/pair`, { signal: controller.signal });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { token?: unknown };
+    // /pair returns { token: "<hex>" }. A 403 (wrong enrollment) would not be ok,
+    // and an unrelated server would not return this shape.
+    return typeof body?.token === 'string' && body.token.length > 0;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class ExtensionBridge {
   private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
@@ -301,6 +333,17 @@ export class ExtensionBridge {
   private async killStaleProcess(): Promise<void> {
     const inUse = await isPortInUse(this.host, this.port);
     if (!inUse) return;
+    // CRITICAL: before SIGTERMing, confirm the holder is actually unresponsive.
+    // A second MCP client that hits EADDRINUSE must NOT kill a healthy daemon
+    // that's serving the extension — only one wedged by a crashed previous
+    // daemon. Without this gate, N concurrent clients each kill the others'
+    // daemon on startup (destructive race: the extension disconnects every time
+    // a new client spawns). If /pair responds with a token, the holder is one of
+    // our daemons and alive → back off and let the existing daemon keep running.
+    if (await isDaemonResponsiveOnPort(this.host, this.port)) {
+      console.error(`[Bridge] ${this.host}:${this.port} held by a RESPONSIVE daemon — not killing (this client will attach as an IPC client instead of listening)`);
+      return;
+    }
     const pids = findListenersOnPort(this.port);
     if (pids.length === 0) {
       console.error(`[Bridge] Port ${this.port} still occupied but no PID found (permission/platform). Manual cleanup may be needed.`);
@@ -308,7 +351,7 @@ export class ExtensionBridge {
     }
     for (const pid of pids) {
       if (pid === process.pid) continue;
-      console.error(`[Bridge] Killing stale listener PID ${pid} on port ${this.port}`);
+      console.error(`[Bridge] Killing UNRESPONSIVE stale listener PID ${pid} on port ${this.port}`);
       try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
     }
     // give the OS a moment to release the socket

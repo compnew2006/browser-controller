@@ -234,13 +234,29 @@ class DaemonClient {
 }
 
 /** True if a daemon appears to be live (socket file + info file present). */
-function daemonLooksAlive(): boolean {
+/**
+ * Whether a daemon is worth reusing: the IPC socket file exists, the info file
+ * is fresh (< 1h), AND — critically — the socket actually ACCEPTS a connection.
+ * The connect-probe is what stops a second MCP client from spawning a NEW
+ * daemon on top of one that's hung in `accept()` (the info file is stale-proof
+ * but a crashed-but-not-yet-reaped daemon leaves the socket file behind for a
+ * few seconds). Combining the cheap file check with a 250ms TCP probe gives a
+ * reliable signal without blocking startup when no daemon exists.
+ */
+async function daemonLooksAlive(): Promise<boolean> {
   try {
     if (!fs.existsSync(IPC_SOCKET_PATH)) return false;
     const info = JSON.parse(fs.readFileSync(DAEMON_INFO_FILE, 'utf8'));
-    // best-effort liveness: info file written within the last hour
     if (Date.now() - info.startedAt > 60 * 60 * 1000) return false;
-    return true;
+    // Active probe: try to open+close the IPC socket. A live daemon accepts
+    // immediately; a crashed-but-not-reaped process refuses or hangs. 250ms is
+    // plenty on localhost and far below the spawn-daemon startup cost.
+    return await new Promise<boolean>((resolve) => {
+      const s = net.createConnection(IPC_SOCKET_PATH);
+      const t = setTimeout(() => { s.destroy(); resolve(false); }, 250);
+      s.once('connect', () => { clearTimeout(t); s.destroy(); resolve(true); });
+      s.once('error', () => { clearTimeout(t); resolve(false); });
+    });
   } catch {
     return false;
   }
@@ -327,7 +343,7 @@ async function main(): Promise<void> {
   }
 
   // 2) ensure daemon is up
-  if (!daemonLooksAlive()) {
+  if (!(await daemonLooksAlive())) {
     spawnDaemon();
     await waitForDaemon();
   }

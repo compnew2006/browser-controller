@@ -1,9 +1,53 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
-import { ExtensionBridge } from '../mcp-server/src/bridge.js';
+import http from 'node:http';
+import { ExtensionBridge, isDaemonResponsiveOnPort } from '../mcp-server/src/bridge.js';
 
 let portCounter = 19230;
 function nextPort() { return portCounter++; }
+
+describe('isDaemonResponsiveOnPort', () => {
+  let servers: http.Server[] = [];
+  afterEach(async () => {
+    await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
+    servers = [];
+  });
+
+  it('returns true when /pair answers with a token (a healthy daemon)', async () => {
+    const port = nextPort();
+    const s = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ token: 'abc123' }));
+    });
+    servers.push(s);
+    await new Promise<void>((r) => s.listen(port, '127.0.0.1', r));
+    await expect(isDaemonResponsiveOnPort('127.0.0.1', port)).resolves.toBe(true);
+  });
+
+  it('returns false when nothing is listening on the port', async () => {
+    const port = nextPort(); // nothing bound
+    await expect(isDaemonResponsiveOnPort('127.0.0.1', port)).resolves.toBe(false);
+  });
+
+  it('returns false when a non-daemon server holds the port (wrong body shape)', async () => {
+    const port = nextPort();
+    const s = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ hello: 'world' })); // no `token` field
+    });
+    servers.push(s);
+    await new Promise<void>((r) => s.listen(port, '127.0.0.1', r));
+    await expect(isDaemonResponsiveOnPort('127.0.0.1', port)).resolves.toBe(false);
+  });
+
+  it('returns false when the server hangs (timeout, no response)', async () => {
+    const port = nextPort();
+    const s = http.createServer(() => { /* never responds */ });
+    servers.push(s);
+    await new Promise<void>((r) => s.listen(port, '127.0.0.1', r));
+    await expect(isDaemonResponsiveOnPort('127.0.0.1', port, 300)).resolves.toBe(false);
+  }, 5000);
+});
 
 describe('ExtensionBridge', () => {
   const bridges: ExtensionBridge[] = [];
