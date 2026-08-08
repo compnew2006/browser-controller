@@ -6,6 +6,8 @@ This project has `browser-controller` configured. Use it to interact with the us
 
 The daemon runs on `127.0.0.1:7225` (WS + HTTP). The Chrome extension auto-pairs a token and connects automatically. Multiple agents can connect at once — they share a single daemon, each getting its own sessionId (visible in the popup alongside its agent name and uptime). Reconnecting with the same agent name replaces the old session (no duplicates), and dead connections are evicted by a heartbeat after ~45s. Name the agent explicitly with `--agent <name>` in the MCP config args, or `MCP_AGENT_NAME` env.
 
+**Daemon lifecycle:** the daemon is **spawned by the first MCP client that starts** (and respawned on disconnect). Do NOT load a LaunchAgent/KeepAlive alongside the MCP clients — two spawners fighting over port 7225 causes a kill loop (each new client's spawned daemon SIGTERMs the running one on EADDRINUSE, and the auto-restarter respawns it, looping). If you previously set up `~/Library/LaunchAgents/com.noiemany.browser-controller.plist`, unload it: `launchctl unload ~/Library/LaunchAgents/com.noiemany.browser-controller.plist`.
+
 ## Tool discovery (progressive disclosure)
 
 By default, all 22 browser tools are visible directly (`browser_click`, `browser_snapshot`, etc.). No discovery step needed.

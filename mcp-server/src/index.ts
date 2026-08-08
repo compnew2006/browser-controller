@@ -242,21 +242,45 @@ class DaemonClient {
  * but a crashed-but-not-yet-reaped daemon leaves the socket file behind for a
  * few seconds). Combining the cheap file check with a 250ms TCP probe gives a
  * reliable signal without blocking startup when no daemon exists.
+ *
+ * Retry-once-on-failure: when the info file is FRESH (startedAt < 10s ago) but
+ * the IPC connect probe failed, the daemon is likely still mid-startup (the
+ * socket file may exist before the daemon calls listen() on it, or a sibling
+ * MCP client just spawned one). We wait 300ms and probe again before declaring
+ * the daemon dead and spawning a competitor. This closes the
+ * spawn-kill-restart loop where N concurrent clients each spawned a daemon,
+ * hit EADDRINUSE, and SIGTERM'd each other's healthy daemon.
  */
 async function daemonLooksAlive(): Promise<boolean> {
-  try {
-    if (!fs.existsSync(IPC_SOCKET_PATH)) return false;
-    const info = JSON.parse(fs.readFileSync(DAEMON_INFO_FILE, 'utf8'));
-    if (Date.now() - info.startedAt > 60 * 60 * 1000) return false;
-    // Active probe: try to open+close the IPC socket. A live daemon accepts
-    // immediately; a crashed-but-not-reaped process refuses or hangs. 250ms is
-    // plenty on localhost and far below the spawn-daemon startup cost.
-    return await new Promise<boolean>((resolve) => {
+  // Active probe: try to open+close the IPC socket. A live daemon accepts
+  // immediately; a crashed-but-not-reaped process refuses or hangs. 250ms is
+  // plenty on localhost and far below the spawn-daemon startup cost.
+  const connectProbe = (): Promise<boolean> =>
+    new Promise<boolean>((resolve) => {
       const s = net.createConnection(IPC_SOCKET_PATH);
       const t = setTimeout(() => { s.destroy(); resolve(false); }, 250);
       s.once('connect', () => { clearTimeout(t); s.destroy(); resolve(true); });
       s.once('error', () => { clearTimeout(t); resolve(false); });
     });
+
+  try {
+    if (!fs.existsSync(IPC_SOCKET_PATH)) return false;
+    const info = JSON.parse(fs.readFileSync(DAEMON_INFO_FILE, 'utf8'));
+    const ageMs = Date.now() - info.startedAt;
+    if (ageMs > 60 * 60 * 1000) return false;
+
+    if (await connectProbe()) return true;
+
+    // First probe failed. If the daemon is brand new (< 10s old) it may simply
+    // not have finished binding the IPC socket yet — retry once instead of
+    // spawning a competitor. This is the cheap, deterministic fix for the
+    // spawn race that previously caused mutual SIGTERM between concurrent
+    // MCP clients.
+    if (ageMs < 10_000) {
+      await new Promise((r) => setTimeout(r, 300));
+      return await connectProbe();
+    }
+    return false;
   } catch {
     return false;
   }
