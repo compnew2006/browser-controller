@@ -2,7 +2,7 @@
 
 ## Browser Control
 
-This project has `browser-controller` configured (renamed from `real-browser-mcp`). Use it to interact with the user's real browser.
+This project has `browser-controller` configured. Use it to interact with the user's real browser.
 
 The daemon runs on `127.0.0.1:7225` (WS + HTTP). The Chrome extension auto-pairs a token and connects automatically. Multiple agents can connect at once — they share a single daemon, each getting its own sessionId (visible in the popup alongside its agent name and uptime). Reconnecting with the same agent name replaces the old session (no duplicates), and dead connections are evicted by a heartbeat after ~45s. Name the agent explicitly with `--agent <name>` in the MCP config args, or `MCP_AGENT_NAME` env.
 

@@ -3,7 +3,7 @@
 /**
  * Thin MCP client (plan task 1.0).
  *
- * This is what `npx real-browser-mcp` runs. It does NOT open a WebSocket server
+ * This is what `npx browser-controller` runs. It does NOT open a WebSocket server
  * — the daemon owns that. Instead it:
  *   1. Speaks MCP over stdio to the agent (Cursor / Claude).
  *   2. Forwards every tool call to the daemon over the local IPC socket.
@@ -61,7 +61,7 @@ import {
   readToken,
 } from './daemon-config.js';
 
-const SERVER_NAME = 'real-browser-mcp';
+const SERVER_NAME = 'browser-controller';
 const SERVER_VERSION = '2.0.0';
 const DAEMON_STARTUP_MS = 8_000;
 const CONNECT_RETRY_MS = 250;

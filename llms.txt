@@ -4,7 +4,7 @@
 
 ## What it does
 
-browser-controller (formerly real-browser-mcp) is a Model Context Protocol (MCP) server paired with a Chrome extension. It lets AI coding agents (Cursor, Claude, Windsurf, and any MCP client) interact with the user's actual browser - not a headless copy, not a new instance. The browser the user already has open, with their tabs, cookies, sessions, and logins intact.
+browser-controller is a Model Context Protocol (MCP) server paired with a Chrome extension. It lets AI coding agents (Cursor, Claude, Windsurf, and any MCP client) interact with the user's actual browser - not a headless copy, not a new instance. The browser the user already has open, with their tabs, cookies, sessions, and logins intact.
 
 ## Key differentiator
 
