@@ -16,6 +16,7 @@ export const pressKeyTool: ToolDefinition = {
     ref: z.string().optional().describe('Element ref to focus before pressing'),
     selector: z.string().optional().describe('CSS selector to focus before pressing'),
   }),
+  timeoutMs: 5_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_press_key', params);
     return textResult(JSON.stringify(result));

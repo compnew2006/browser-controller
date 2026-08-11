@@ -14,6 +14,7 @@ export const scrollTool: ToolDefinition = {
     toElement: z.string().optional().describe('Ref or CSS selector to scroll into view'),
     position: z.enum(['top', 'bottom']).optional().describe('Scroll to top or bottom of page'),
   }),
+  timeoutMs: 10_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_scroll', params);
     return textResult(JSON.stringify(result));

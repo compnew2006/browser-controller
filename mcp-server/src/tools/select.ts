@@ -13,6 +13,7 @@ export const selectTool: ToolDefinition = {
     label: z.string().optional().describe('Option label text to select'),
     index: z.number().optional().describe('Option index to select (0-based)'),
   }),
+  timeoutMs: 10_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_select', params);
     return textResult(JSON.stringify(result));

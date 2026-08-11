@@ -13,6 +13,7 @@ export const consoleTool: ToolDefinition = {
   // return an empty buffer (first call already cleared it) and silently lose
   // the original messages. See audit M2.
   idempotent: false,
+  timeoutMs: 5_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_console', params);
     return textResult(JSON.stringify(result));

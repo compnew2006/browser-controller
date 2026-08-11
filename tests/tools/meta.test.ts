@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createMetaTool } from '../../mcp-server/src/tools/meta.js';
+import { allTools } from '../../mcp-server/src/tools/index.js';
 import type { ToolHost } from '../../mcp-server/src/tools/types.js';
 
 /**
@@ -32,7 +33,7 @@ describe('browser_tools meta tool (progressive disclosure)', () => {
     const text = (result.content[0] as { text: string }).text;
     const data = JSON.parse(text);
     expect(data.tools).toBeInstanceOf(Array);
-    expect(data.tools.length).toBe(22); // all browser tools (meta excluded)
+    expect(data.tools.length).toBe(allTools.length); // all browser tools (meta excluded)
     // each entry has the progressive-disclosure shape
     for (const t of data.tools) {
       expect(t.name).toBeTruthy();
@@ -99,16 +100,19 @@ describe('browser_tools meta tool (progressive disclosure)', () => {
     const data = JSON.parse((result.content[0] as { text: string }).text);
     expect(data.error).toContain('Unknown tool');
     expect(data.available).toBeInstanceOf(Array);
-    expect(data.available.length).toBe(22);
+    expect(data.available.length).toBe(allTools.length);
   });
 
   it('action "list" shows active flag correctly after activation', async () => {
-    // browser_click was activated in the previous test; check it shows as active
+    // Self-contained: activate a tool HERE (order-independent — previously this
+    // relied on browser_click being activated by an earlier test, which broke
+    // when tests were run in isolation or reordered).
+    await metaTool.handler(fakeHost, { action: 'details', tool: 'browser_hover' });
     const result = await metaTool.handler(fakeHost, { action: 'list' });
     const data = JSON.parse((result.content[0] as { text: string }).text);
-    const click = data.tools.find((t: any) => t.name === 'browser_click');
-    expect(click.active).toBe(true);
-    // a tool NOT yet activated should be false
+    const hover = data.tools.find((t: any) => t.name === 'browser_hover');
+    expect(hover.active).toBe(true);
+    // a tool NOT activated in this test should be false
     const navigate = data.tools.find((t: any) => t.name === 'browser_navigate');
     expect(navigate.active).toBe(false);
   });

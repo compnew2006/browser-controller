@@ -20,6 +20,7 @@ export const fillFormTool: ToolDefinition = {
       .describe('Array of fields to fill'),
     submit: z.boolean().optional().default(false).describe('Submit the form after filling all fields'),
   }),
+  timeoutMs: 15_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_fill_form', params);
     return textResult(JSON.stringify(result));

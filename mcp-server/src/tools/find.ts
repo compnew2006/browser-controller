@@ -15,6 +15,7 @@ export const findTool: ToolDefinition = {
   // callTool('find') disagreed with .name 'browser_find' and silently disabled
   // this retry — see audit C1.)
   idempotent: true,
+  timeoutMs: 15_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_find', params);
     return textResult(JSON.stringify(result));

@@ -12,6 +12,7 @@ export const textTool: ToolDefinition = {
   }),
   // Read-only: safe to retry on timeout. (Fixes prior wire-name drift — C1.)
   idempotent: true,
+  timeoutMs: 15_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_text', params);
     return textResult(JSON.stringify(result));

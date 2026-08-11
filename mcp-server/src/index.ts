@@ -196,11 +196,11 @@ class DaemonClient {
         return;
       }
       // Client-side safety-net timeout (audit M4). The BRIDGE owns the real
-      // per-tool timeout (TOOL_TIMEOUTS, up to 60s) + retries (×3 = 180s worst
-      // case for idempotent reads). This client timer must always outlive the
-      // bridge's worst case so the bridge's own rejection (with an actionable
-      // message) wins; the client timer is only a backstop if the daemon itself
-      // hangs. 210s = 60s × 3 + 30s slack.
+      // per-tool timeout (each tool's `timeoutMs`, up to 60s) + retries
+      // (×3 = 180s worst case for idempotent reads). This client timer must
+      // always outlive the bridge's worst case so the bridge's own rejection
+      // (with an actionable message) wins; the client timer is only a backstop
+      // if the daemon itself hangs. 210s = 60s × 3 + 30s slack.
       const t = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Tool call timed out (client side): ${tool}`));
@@ -266,7 +266,14 @@ async function daemonLooksAlive(): Promise<boolean> {
     });
 
   try {
-    if (!fs.existsSync(IPC_SOCKET_PATH)) return false;
+    // Fast-fail when no daemon was ever started here. We check the INFO file
+    // (daemon.json), NOT the socket: the IPC socket path can exceed the
+    // kernel's AF_UNIX sun_path limit on macOS (104 bytes), in which case the
+    // kernel truncates the on-disk name and fs.existsSync reports false
+    // FOREVER — even though net.createConnection still connects (both sides
+    // truncate identically). The connect-probe below is the ground truth; the
+    // info file is just a cheap "was a daemon ever spawned here" pre-check.
+    if (!fs.existsSync(DAEMON_INFO_FILE)) return false;
     const info = JSON.parse(fs.readFileSync(DAEMON_INFO_FILE, 'utf8'));
     const ageMs = Date.now() - info.startedAt;
     if (ageMs > 60 * 60 * 1000) return false;
@@ -343,15 +350,16 @@ function spawnDaemon(): void {
 /** Wait until the IPC socket becomes connectable. */
 async function waitForDaemon(): Promise<void> {
   for (let i = 0; i < MAX_CONNECT_TRIES; i++) {
-    if (fs.existsSync(IPC_SOCKET_PATH)) {
-      // probe it really accepts a connection
-      const ok = await new Promise<boolean>((resolve) => {
-        const s = net.createConnection(IPC_SOCKET_PATH);
-        s.once('connect', () => { s.destroy(); resolve(true); });
-        s.once('error', () => resolve(false));
-      });
-      if (ok) return;
-    }
+    // Probe the socket directly rather than gating on fs.existsSync: the IPC
+    // socket path can exceed the kernel's AF_UNIX sun_path limit on macOS
+    // (104 bytes), truncating the on-disk name so existsSync never sees it —
+    // while createConnection still succeeds (both sides truncate identically).
+    const ok = await new Promise<boolean>((resolve) => {
+      const s = net.createConnection(IPC_SOCKET_PATH);
+      s.once('connect', () => { s.destroy(); resolve(true); });
+      s.once('error', () => resolve(false));
+    });
+    if (ok) return;
     await new Promise(r => setTimeout(r, CONNECT_RETRY_MS));
   }
   throw new Error(`Daemon did not become reachable within ${DAEMON_STARTUP_MS / 1000}s`);

@@ -69,10 +69,11 @@ export function isIdempotent(tool: string): boolean {
 
 /**
  * Per-tool transport timeout (bridge → extension round-trip). Derived from
- * each tool's `timeoutMs` when set; tools without one fall back to the caller's
- * default. This co-locates transport policy with the tool registry so a new
- * tool forces the author to consider its timeout (audit M3), rather than
- * relying on a parallel TOOL_TIMEOUTS table that can drift.
+ * each tool's `timeoutMs`; tools without one fall back to the caller's default.
+ * This co-locates transport policy with the tool registry so a new tool forces
+ * the author to consider its timeout (audit M3), rather than relying on a
+ * parallel table that can drift. The registry guard test
+ * (registry.test.ts) requires every tool to declare a `timeoutMs`.
  */
 const timeoutByToolName = new Map(
   allTools

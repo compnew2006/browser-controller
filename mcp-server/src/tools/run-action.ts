@@ -20,6 +20,7 @@ export const runActionTool: ToolDefinition = {
       .default({})
       .describe('Parameters to pass to the action execute() function'),
   }),
+  timeoutMs: 30_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_run_action', params);
     return textResult(JSON.stringify(result));

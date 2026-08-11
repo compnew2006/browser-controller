@@ -12,6 +12,7 @@ export const screenshotTool: ToolDefinition = {
   }),
   // Read-only: safe to retry.
   idempotent: true,
+  timeoutMs: 10_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_screenshot', params) as {
       success: boolean;

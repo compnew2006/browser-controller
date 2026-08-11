@@ -12,6 +12,7 @@ export const typeTool: ToolDefinition = {
     text: z.string().describe('Text to type'),
     clear: z.boolean().optional().default(false).describe('Clear the field before typing'),
   }),
+  timeoutMs: 15_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_type', params);
     return textResult(JSON.stringify(result));

@@ -12,6 +12,7 @@ export const networkTool: ToolDefinition = {
   }),
   // NOT idempotent: `clear:true` mutates the buffer (same reasoning as console — M2).
   idempotent: false,
+  timeoutMs: 5_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_network', params);
     return textResult(JSON.stringify(result));

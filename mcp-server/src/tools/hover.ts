@@ -10,6 +10,7 @@ export const hoverTool: ToolDefinition = {
     ref: z.string().optional().describe('Element reference from snapshot'),
     selector: z.string().optional().describe('CSS selector for the element'),
   }),
+  timeoutMs: 5_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_hover', params);
     return textResult(JSON.stringify(result));

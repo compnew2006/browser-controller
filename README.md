@@ -21,7 +21,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-strict-blue" alt="TypeScript" /></a>
-  <img src="https://img.shields.io/badge/agents-122%20tests%20green-22c55e" alt="122 tests green" />
+  <img src="https://img.shields.io/badge/tests-vitest%20covered-22c55e" alt="Vitest test suite" />
 </p>
 
 <p align="center">
@@ -358,9 +358,9 @@ To fully reset: stop your MCP clients, delete the folder, and the next run recre
 
 - The daemon is **auto-spawned** the first time any client runs and left running detached.
 - Connection drops use exponential backoff (1s → 30s), ping/pong health checks every 10s.
-- Per-tool timeouts (5s for clicks, 60s for navigation).
-- **Read-only tools** (snapshot, screenshot, text, find, console, network) are retried on timeout; **side-effecting tools** (click, type, navigate, evaluate) are **never** retried — a click can't fire twice.
-- If a previous daemon crashed while holding port 7225, the new one finds and evicts the stale PID (cross-platform: `lsof` on mac/linux, `Get-NetTCPConnection` on Windows).
+- Per-tool timeouts (10s for clicks, 60s for navigation), co-located with each tool's definition so they can't drift from the registry.
+- **Idempotent read tools** (snapshot, screenshot, text, find) are retried on timeout; **side-effecting tools** (click, type, navigate, evaluate) — and `console`/`network` (which mutate on `clear:true`) — are **never** retried, so a click can't fire twice.
+- If another process already holds port 7225, the daemon refuses to start rather than killing a process it didn't spawn — it reports the conflict (and whether the owner is an authenticated daemon) so you can resolve it deliberately.
 
 <details>
 <summary>Multiple Chrome profiles</summary>
@@ -397,7 +397,7 @@ browser-controller/
 ├── mcp-server/          MCP server (npm package, TypeScript)
 │   └── src/
 │       ├── daemon.ts        Single multi-client daemon (owns WS :7225)
-│       ├── daemon-config.ts IPC protocol, paths, auth token, idempotency set
+│       ├── daemon-config.ts IPC protocol, paths, auth/enrollment tokens
 │       ├── index.ts         Thin stdio MCP client (spawns daemon, multiplexes)
 │       ├── bridge.ts        Extension WS server + cross-platform port probe
 │       └── tools/           One file per tool (22), registry pattern
@@ -410,7 +410,7 @@ browser-controller/
 │   ├── cursor/              Rules and commands
 │   ├── skills/              Browser automation skill
 │   └── setup.mjs            One-command installer
-└── tests/               Bridge + registry + concurrency tests (45 passing)
+└── tests/               Bridge + registry + concurrency + daemon tests
 ```
 
 **Stack:** TypeScript (strict) · MCP SDK · WebSocket · Chrome Extension Manifest V3 · Vitest
@@ -432,7 +432,7 @@ npm test
 |---------|---------|
 | `npm run build` | Compile TypeScript → `mcp-server/dist/` |
 | `npm run dev` | Watch mode |
-| `npm test` | Run the full test suite (45 tests) |
+| `npm test` | Run the full test suite (bridge, registry, daemon lifecycle, concurrency) |
 | `npm run typecheck` | Type check without emitting |
 | `npm run setup:cursor` | Install Cursor rule + command |
 
@@ -452,7 +452,7 @@ That's the whole point. The extension runs inside your actual Chrome — same co
 <details>
 <summary>Does it send data anywhere?</summary>
 
-No. The MCP clients, the daemon, and the extension all talk over localhost (IPC socket + WebSocket). Nothing leaves your machine. There's no analytics, no telemetry, no cloud component. [Privacy policy.](PRIVACY.md)
+No. The MCP clients, the daemon, and the extension all talk over localhost (IPC socket + WebSocket). Nothing leaves your machine. There's no analytics, no telemetry, no cloud component. See [SECURITY.md](SECURITY.md) for the threat model, auth design, and the first-contact TOFU window.
 
 </details>
 

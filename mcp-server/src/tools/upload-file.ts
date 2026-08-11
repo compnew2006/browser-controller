@@ -16,6 +16,7 @@ export const uploadFileTool: ToolDefinition = {
       .optional()
       .describe('Array of local file paths to upload (multiple files)'),
   }),
+  timeoutMs: 15_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_upload_file', params);
     return textResult(JSON.stringify(result));

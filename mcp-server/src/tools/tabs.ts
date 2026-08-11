@@ -18,6 +18,7 @@ export const tabsTool: ToolDefinition = {
       ctx.addIssue({ code: 'custom', path: ['tabId'], message: `tabId is required for ${params.action}` });
     }
   }),
+  timeoutMs: 5_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_tabs', params);
     return textResult(JSON.stringify(result));

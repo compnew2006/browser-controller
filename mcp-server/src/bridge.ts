@@ -159,31 +159,6 @@ interface BridgeOptions {
   defaultTimeoutMs?: number;
 }
 
-const TOOL_TIMEOUTS: Record<string, number> = {
-  browser_navigate: 60_000,
-  browser_wait: 60_000,
-  browser_screenshot: 10_000,
-  browser_click: 10_000,
-  browser_type: 15_000,
-  browser_press_key: 5_000,
-  browser_hover: 5_000,
-  browser_select: 10_000,
-  browser_console: 5_000,
-  browser_network: 5_000,
-  browser_tabs: 5_000,
-  browser_scroll: 10_000,
-  browser_upload_file: 15_000,
-  browser_run_action: 30_000,
-  browser_drag: 10_000,
-  browser_fill_form: 15_000,
-  browser_evaluate: 15_000,
-  browser_snapshot: 15_000,
-  browser_text: 15_000,
-  browser_find: 15_000,
-  browser_click_text: 10_000,
-  browser_handle_dialog: 5_000,
-};
-
 /** Probe the authenticated daemon endpoint without trusting the port owner. */
 export async function isDaemonResponsiveOnPort(
   host: string,
@@ -519,7 +494,7 @@ export class ExtensionBridge {
         await this.waitForConnection(5_000);
       } catch {
         throw new Error(
-          'Chrome extension not connected. Make sure the Real Browser MCP extension is installed and enabled.',
+          'Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.',
         );
       }
     }
@@ -535,11 +510,12 @@ export class ExtensionBridge {
     }
     return new Promise((resolve, reject) => {
       const id = String(++this.requestId);
-      // Timeout policy: the tool registry is the source of truth (audit M3).
-      // A tool's `timeoutMs` wins; otherwise the legacy TOOL_TIMEOUTS table;
-      // otherwise the bridge default (30s). New tools should set `timeoutMs`
-      // rather than adding to TOOL_TIMEOUTS.
-      const timeoutMs = toolTimeoutMs(tool) ?? TOOL_TIMEOUTS[tool] ?? this.defaultTimeoutMs;
+      // Timeout policy (audit M3): the tool registry is the single source of
+      // truth — each tool declares its own `timeoutMs`. The bridge default
+      // (30s) is only a backstop if a tool ever omits it; the registry guard
+      // test (registry.test.ts) keeps every tool honest so this never silently
+      // falls back.
+      const timeoutMs = toolTimeoutMs(tool) ?? this.defaultTimeoutMs;
 
       // Task 2.3: non-idempotent tools (click, type, navigate, …) must never be
       // retried on timeout — re-sending could double-fire the action. Only

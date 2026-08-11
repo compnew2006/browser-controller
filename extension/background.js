@@ -786,22 +786,46 @@ async function handleNavigate(params, _sessionId, _agentName, signal) {
   // instead of silently returning empty.
   if (!hashOnly) {
     const onUpdatedWait = new Promise((resolve, reject) => {
+      let settled = false;
+      let pollTimer = null;
+      // `navigated` gates the readyState probe so we never sample the OLD
+      // document (which is already 'complete' and would resolve instantly
+      // before the new page even commits).
+      let navigated = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        chrome.tabs.onUpdated.removeListener(listener);
+        if (pollTimer) clearInterval(pollTimer);
+        resolve();
+      };
+      // domcontentloaded resolves as soon as the HTML is parsed (readyState
+      // reaches 'interactive') — strictly earlier than 'complete'. Chrome's
+      // tabs.onUpdated only reports 'loading' and 'complete', never
+      // 'interactive', so for that mode we poll readyState in the page via
+      // the already-granted scripting permission (no new permission needed).
+      // 'load' (default) keeps waiting for status === 'complete'.
+      const wantDcl = waitUntil === 'domcontentloaded';
+      const probeReady = async () => {
+        if (!navigated) return; // don't probe the pre-navigation document
+        try {
+          const rs = await safeExec(tab.id, () => document.readyState, []);
+          if (rs === 'interactive' || rs === 'complete') finish();
+        } catch { /* new document not commit-able yet */ }
+      };
       const listener = (tId, changeInfo) => {
         if (tId !== tab.id) return;
-        if (changeInfo.status === 'complete' || (waitUntil === 'domcontentloaded' && changeInfo.status === 'complete')) {
-          chrome.tabs.onUpdated.removeListener(listener);
-          resolve();
-        }
+        if (changeInfo.status === 'loading') navigated = true;
+        if (changeInfo.status === 'complete') finish();
       };
       chrome.tabs.onUpdated.addListener(listener);
+      if (wantDcl) pollTimer = setInterval(probeReady, 150);
       chrome.tabs.update(tab.id, { url }).catch((err) => {
         chrome.tabs.onUpdated.removeListener(listener);
+        if (pollTimer) clearInterval(pollTimer);
         reject(err);
       });
-      setTimeout(() => {
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve(); // timeout — still proceed to settle + snapshot
-      }, 55000);
+      setTimeout(finish, 55000); // timeout — still proceed to settle + snapshot
     });
     // Race the load wait against cancellation so a closed client doesn't pin
     // the tab mutex for up to 55s.
@@ -1063,11 +1087,26 @@ async function handlePressKey(params) {
   }, [key, modifiers, ref, selector]);
 }
 
-async function handleWait(params) {
+async function handleWait(params, _sessionId, _agentName, signal) {
   const { tabId, selector, state = 'visible', timeout = 10000, delay } = params;
 
+  // A promise that rejects when this call is cancelled (client gone / bridge
+  // timeout forwarded). Long waits race against it so a cancelled call releases
+  // the tab mutex immediately instead of blocking later calls on the same tab.
+  const abortRace = signal
+    ? new Promise((_, reject) => {
+        if (signal.aborted) reject(new Error('aborted'));
+        else signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      })
+    : null;
+
   if (delay) {
-    await new Promise((r) => setTimeout(r, Math.min(delay, 30000)));
+    const sleep = new Promise((r) => setTimeout(r, Math.min(delay, 30000)));
+    try {
+      await (abortRace ? Promise.race([sleep, abortRace]) : sleep);
+    } catch {
+      return { success: false, error: 'aborted', waited: 0 };
+    }
     return { success: true, waited: delay };
   }
 
@@ -1076,6 +1115,10 @@ async function handleWait(params) {
   const start = Date.now();
 
   while (Date.now() - start < timeout) {
+    // Bail the moment the caller is gone so we don't pin the tab mutex for the
+    // full timeout window after the originating agent was evicted (consistent
+    // with handleNavigate / handleRunAction).
+    if (signal?.aborted) return { success: false, error: 'aborted', selector, state };
     const found = await safeExec(tabId, (_sel, _state) => {
       const el = document.querySelector(_sel);
       if (_state === 'hidden') return !el || el.offsetParent === null;

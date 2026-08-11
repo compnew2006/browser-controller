@@ -17,6 +17,7 @@ export const waitTool: ToolDefinition = {
     timeout: z.number().optional().default(10000).describe('Max wait time in ms'),
     delay: z.number().optional().describe('Fixed delay in ms (ignores selector)'),
   }),
+  timeoutMs: 60_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_wait', params);
     return textResult(JSON.stringify(result));

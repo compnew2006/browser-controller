@@ -12,6 +12,7 @@ export const clickTextTool: ToolDefinition = {
     index: z.number().optional().describe('Which match to click if multiple (0-based, default 0)'),
     exact: z.boolean().optional().describe('Require exact match instead of substring (default false)'),
   }),
+  timeoutMs: 10_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_click_text', params);
     return textResult(JSON.stringify(result));

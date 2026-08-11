@@ -2,8 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { allTools, toolMap, isIdempotent, toolTimeoutMs } from '../../mcp-server/src/tools/index.js';
 
 describe('Tool Registry', () => {
-  it('has 22 tools registered', () => {
-    expect(allTools.length).toBe(22);
+  // Single source of truth for the expected tool set. Both the count test and
+  // the per-tool presence loop below derive from this list, so adding a tool
+  // only requires appending its name here (no fragile hard-coded count).
+  const expectedTools = [
+    'browser_navigate', 'browser_click', 'browser_type', 'browser_scroll',
+    'browser_press_key', 'browser_wait', 'browser_snapshot', 'browser_screenshot',
+    'browser_console', 'browser_network', 'browser_tabs', 'browser_find',
+    'browser_text', 'browser_hover', 'browser_select', 'browser_evaluate',
+    'browser_click_text', 'browser_handle_dialog',
+    'browser_upload_file', 'browser_run_action',
+    'browser_drag', 'browser_fill_form',
+  ];
+
+  it(`registers every expected tool (${expectedTools.length})`, () => {
+    expect(allTools.length).toBe(expectedTools.length);
   });
 
   it('all tools have unique names', () => {
@@ -76,24 +89,21 @@ describe('Tool Registry', () => {
     });
   });
 
-  // --- timeoutMs registry plumbing (audit M3) -------------------------------
-  it('toolTimeoutMs returns undefined for tools without an explicit timeout (falls back to bridge default)', () => {
-    // No tool is forced to declare one; the lookup must be total-safe.
+  // --- timeoutMs registry guard (audit M3) ----------------------------------
+  // Every tool MUST declare a numeric `timeoutMs`. This is the guard that keeps
+  // the registry the single source of transport-timeout truth: without it, a
+  // tool that forgets `timeoutMs` silently falls back to the bridge default
+  // (30s) and nobody notices until a too-short/long timeout misbehaves in
+  // production. The lookup helper is total-safe, but that's no substitute for
+  // every tool being explicit.
+  it('every tool declares a positive numeric timeoutMs', () => {
     for (const tool of allTools) {
-      const v = toolTimeoutMs(tool.name);
-      expect(v === undefined || (typeof v === 'number' && v > 0)).toBe(true);
+      expect(typeof tool.timeoutMs, `${tool.name} must declare timeoutMs`).toBe('number');
+      expect(tool.timeoutMs!, `${tool.name} timeoutMs must be > 0`).toBeGreaterThan(0);
+      // and the lookup helper must agree with the declared value
+      expect(toolTimeoutMs(tool.name)).toBe(tool.timeoutMs);
     }
   });
-
-  const expectedTools = [
-    'browser_navigate', 'browser_click', 'browser_type', 'browser_scroll',
-    'browser_press_key', 'browser_wait', 'browser_snapshot', 'browser_screenshot',
-    'browser_console', 'browser_network', 'browser_tabs', 'browser_find',
-    'browser_text', 'browser_hover', 'browser_select', 'browser_evaluate',
-    'browser_click_text', 'browser_handle_dialog',
-    'browser_upload_file', 'browser_run_action',
-    'browser_drag', 'browser_fill_form',
-  ];
 
   for (const name of expectedTools) {
     it(`includes ${name}`, () => {

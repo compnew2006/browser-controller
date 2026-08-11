@@ -78,22 +78,24 @@ async function startDaemon(): Promise<void> {
   let stderr = '';
   daemonProc.stderr?.on('data', (c) => { stderr += c.toString(); });
   for (let i = 0; i < 80; i++) {
-    if (fs.existsSync(SOCK)) {
-      const ok = await new Promise<boolean>((resolve) => {
-        const s = net.createConnection(SOCK);
-        s.once('connect', () => { s.destroy(); resolve(true); });
-        s.once('error', () => resolve(false));
-      });
-      if (ok) {
-        token = tokenFromDisk();
-        // the daemon also writes enrollment.json on start; read it so the
-        // HTTP helpers can send X-BC-Enrollment (required since the gate landed).
-        try {
-          const eparsed = JSON.parse(fs.readFileSync(ENROLLMENT_FILE, 'utf8'));
-          enrollment = eparsed.secret ?? '';
-        } catch { /* not yet */ }
-        return;
-      }
+    // Probe the socket directly rather than gating on fs.existsSync(SOCK): the
+    // socket path can exceed macOS's AF_UNIX sun_path limit (104 bytes) on deep
+    // TMPDIR/HOME paths, truncating the on-disk name so existsSync never sees
+    // it — while createConnection still succeeds (both sides truncate the same).
+    const ok = await new Promise<boolean>((resolve) => {
+      const s = net.createConnection(SOCK);
+      s.once('connect', () => { s.destroy(); resolve(true); });
+      s.once('error', () => resolve(false));
+    });
+    if (ok) {
+      token = tokenFromDisk();
+      // the daemon also writes enrollment.json on start; read it so the
+      // HTTP helpers can send X-BC-Enrollment (required since the gate landed).
+      try {
+        const eparsed = JSON.parse(fs.readFileSync(ENROLLMENT_FILE, 'utf8'));
+        enrollment = eparsed.secret ?? '';
+      } catch { /* not yet */ }
+      return;
     }
     await sleep(50);
   }
@@ -354,24 +356,24 @@ describe('daemon per-session rate limiting', { timeout: 30_000 }, () => {
     let stderr = '';
     rlDaemon.stderr?.on('data', (c) => { stderr += c.toString(); });
     for (let i = 0; i < 80; i++) {
-      if (fs.existsSync(RL_SOCK)) {
-        const ok = await new Promise<boolean>((resolve) => {
-          const s = net.createConnection(RL_SOCK);
-          s.once('connect', () => { s.destroy(); resolve(true); });
-          s.once('error', () => resolve(false));
-        });
-        if (ok) {
-          // token from disk (mirrors tokenFromDisk, scoped to this instance)
-          const born = Date.now();
-          while (Date.now() - born < 4000) {
-            try {
-              const parsed = JSON.parse(fs.readFileSync(RL_TOKEN_FILE, 'utf8'));
-              if (parsed.token) { rlToken = parsed.token; break; }
-            } catch { /* not yet */ }
-            const end = Date.now() + 50; while (Date.now() < end) { /* spin */ }
-          }
-          if (rlToken) return;
+      // Probe directly (no fs.existsSync gate) — see startDaemon for the
+      // macOS sun_path truncation rationale.
+      const ok = await new Promise<boolean>((resolve) => {
+        const s = net.createConnection(RL_SOCK);
+        s.once('connect', () => { s.destroy(); resolve(true); });
+        s.once('error', () => resolve(false));
+      });
+      if (ok) {
+        // token from disk (mirrors tokenFromDisk, scoped to this instance)
+        const born = Date.now();
+        while (Date.now() - born < 4000) {
+          try {
+            const parsed = JSON.parse(fs.readFileSync(RL_TOKEN_FILE, 'utf8'));
+            if (parsed.token) { rlToken = parsed.token; break; }
+          } catch { /* not yet */ }
+          const end = Date.now() + 50; while (Date.now() < end) { /* spin */ }
         }
+        if (rlToken) return;
       }
       await sleep(50);
     }
@@ -486,31 +488,31 @@ describe('daemon enrollment gate (closes first-contact TOFU race)', { timeout: 3
     let stderr = '';
     eDaemon.stderr?.on('data', (c) => { stderr += c.toString(); });
     for (let i = 0; i < 80; i++) {
-      if (fs.existsSync(E_SOCK)) {
-        const ok = await new Promise<boolean>((resolve) => {
-          const s = net.createConnection(E_SOCK);
-          s.once('connect', () => { s.destroy(); resolve(true); });
-          s.once('error', () => resolve(false));
-        });
-        if (ok) {
-          // Read both token and enrollment from disk (both written on start).
-          const born = Date.now();
-          while (Date.now() - born < 4000) {
-            try {
-              if (!eToken) {
-                const tp = JSON.parse(fs.readFileSync(E_TOKEN_FILE, 'utf8'));
-                if (tp.token) eToken = tp.token;
-              }
-              if (!eEnrollment) {
-                const ep = JSON.parse(fs.readFileSync(E_ENROLLMENT_FILE, 'utf8'));
-                if (ep.secret) eEnrollment = ep.secret;
-              }
-              if (eToken && eEnrollment) break;
-            } catch { /* not yet */ }
-            const end = Date.now() + 50; while (Date.now() < end) { /* spin */ }
-          }
-          if (eToken && eEnrollment) return;
+      // Probe directly (no fs.existsSync gate) — see startDaemon for the
+      // macOS sun_path truncation rationale.
+      const ok = await new Promise<boolean>((resolve) => {
+        const s = net.createConnection(E_SOCK);
+        s.once('connect', () => { s.destroy(); resolve(true); });
+        s.once('error', () => resolve(false));
+      });
+      if (ok) {
+        // Read both token and enrollment from disk (both written on start).
+        const born = Date.now();
+        while (Date.now() - born < 4000) {
+          try {
+            if (!eToken) {
+              const tp = JSON.parse(fs.readFileSync(E_TOKEN_FILE, 'utf8'));
+              if (tp.token) eToken = tp.token;
+            }
+            if (!eEnrollment) {
+              const ep = JSON.parse(fs.readFileSync(E_ENROLLMENT_FILE, 'utf8'));
+              if (ep.secret) eEnrollment = ep.secret;
+            }
+            if (eToken && eEnrollment) break;
+          } catch { /* not yet */ }
+          const end = Date.now() + 50; while (Date.now() < end) { /* spin */ }
         }
+        if (eToken && eEnrollment) return;
       }
       await sleep(50);
     }

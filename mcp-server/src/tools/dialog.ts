@@ -10,6 +10,7 @@ export const dialogTool: ToolDefinition = {
     action: z.enum(['accept', 'dismiss']).describe('Accept or dismiss the dialog'),
     promptText: z.string().optional().describe('Text to enter for prompt() dialogs'),
   }),
+  timeoutMs: 5_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_handle_dialog', params);
     return textResult(JSON.stringify(result));

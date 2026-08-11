@@ -11,6 +11,7 @@ export const evaluateTool: ToolDefinition = {
     tabId: requireTabId(),
     expression: z.string().describe('JavaScript expression or code to evaluate in the page context'),
   }),
+  timeoutMs: 15_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_evaluate', params);
     return textResult(JSON.stringify(result));

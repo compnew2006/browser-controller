@@ -18,6 +18,7 @@ export const dragTool: ToolDefinition = {
     endY: z.number().optional().describe('End Y coordinate (if not using ref/selector)'),
     steps: z.number().optional().default(10).describe('Number of intermediate mouse move steps'),
   }),
+  timeoutMs: 10_000,
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_drag', params);
     return textResult(JSON.stringify(result));
