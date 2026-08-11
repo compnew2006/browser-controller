@@ -6,6 +6,7 @@ import {
   pickNthMatch,
   computeNewFingerprints,
   isPreciseTextMatch,
+  PAGE_FALLBACK_FN,
 } from '../extension/utils/smart-selector.js';
 
 /**
@@ -159,11 +160,40 @@ describe('buildRobustSelectorFromPath', () => {
   });
 });
 
+describe('PAGE_FALLBACK_FN injection contract', () => {
+  it('rebuilds from source without depending on extension-scope functions', () => {
+    const originalDocument = globalThis.document;
+    const originalNodeFilter = globalThis.NodeFilter;
+    const target = {
+      tagName: 'BUTTON',
+      id: '',
+      parentElement: null,
+      innerText: '',
+      getAttribute(name: string) {
+        return name === 'aria-label' ? 'Like' : null;
+      },
+    };
+    globalThis.document = {
+      body: {},
+      createTreeWalker: () => ({ nextNode: () => target }),
+    } as any;
+    globalThis.NodeFilter = { SHOW_ELEMENT: 1 } as any;
+
+    try {
+      const rebuilt = Function(`return (${PAGE_FALLBACK_FN.toString()})`)();
+      expect(rebuilt(target)).toMatchObject({ text: 'Like', nth: 0, tag: 'BUTTON' });
+    } finally {
+      globalThis.document = originalDocument;
+      globalThis.NodeFilter = originalNodeFilter;
+    }
+  });
+});
+
 // --- nth recovery (Feature 2, borrowed from BrowserOS) ---------------------
 
 describe('pickNthMatch', () => {
   it('picks the first match by default (nth omitted)', () => {
-    expect(pickNthMatch(['a', 'b', 'c'])).toBe('a');
+    expect(pickNthMatch(['a', 'b', 'c'], undefined as any)).toBe('a');
   });
 
   it('picks the nth match (0-based)', () => {
@@ -227,9 +257,9 @@ describe('computeNewFingerprints', () => {
   });
 
   it('handles null/undefined inputs safely', () => {
-    expect(computeNewFingerprints(null, ['a']).size).toBe(1);
-    expect(computeNewFingerprints(['a'], null).size).toBe(0);
-    expect(computeNewFingerprints(null, null).size).toBe(0);
+    expect(computeNewFingerprints(null as any, ['a']).size).toBe(1);
+    expect(computeNewFingerprints(['a'], null as any).size).toBe(0);
+    expect(computeNewFingerprints(null as any, null as any).size).toBe(0);
   });
 
   it('deduplicates repeated fingerprints in current', () => {

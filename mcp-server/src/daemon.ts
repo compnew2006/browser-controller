@@ -105,7 +105,7 @@ class Daemon {
   }
 
   async start(): Promise<void> {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 
     // 1) extension-facing WS server (task 1.0). The bridge handles the stale-
     //    port eviction already (lsof replaced by net-based probe in bridge).
@@ -128,11 +128,7 @@ class Daemon {
 
     console.error(`[${SERVER_NAME}] listening. WS=${DEFAULT_WS_HOST}:${DEFAULT_WS_PORT} IPC=${IPC_SOCKET_PATH}`);
     console.error(`[${SERVER_NAME}] auth token at ${TOKEN_FILE}`);
-    // Enrollment secret banner — printed every start so the user can pair the
-    // extension. The secret is stable (persisted), so existing pairings keep
-    // working; this line is mainly for first-run and for re-pairing after
-    // deleting enrollment.json. See SECURITY.md "First-contact TOFU window".
-    console.error(`[${SERVER_NAME}] enrollment secret (enter in the popup once): ${this.enrollmentSecret}`);
+    console.error(`[${SERVER_NAME}] enrollment secret stored at ${ENROLLMENT_FILE}`);
 
     // graceful shutdown
     const shutdown = (sig: string) => {
@@ -279,22 +275,12 @@ class Daemon {
           this.pendingCalls.delete(entry.daemonCallId);
           try { entry.controller.abort(); } catch { /* already settled */ }
         }
-        // Release this session's tab locks so a crashed/quit agent doesn't leave
-        // orphaned locks that block other agents forever. BUT: only do this if
-        // no OTHER live connection shares the same agentName. MCP clients
-        // (Cursor/Hermes/...) reconnect 2-3x on startup, and the dedup-by-name
-        // logic replaces the old session — the old socket's close fires and
-        // would wrongly clear locks that belong to the NEW (surviving) session
-        // of the same agent. Keying the check on agentName (not sessionId) makes
-        // locks survive the reconnect churn. Only a true agent exit (no same-name
-        // connection remains) releases the locks.
-        const name = client.agentName;
-        const stillAlive = Array.from(this.clients.values()).some(
-          (c) => c !== client && c.agentName === name,
-        );
-        if (!stillAlive) {
-          this.bridge.sendControl('releaseSession', { sessionId: client.sessionId, agentName: name });
-        }
+        // Lock ownership uses the unique session id. Releasing exactly this
+        // session cannot affect a same-name sibling that is still connected.
+        this.bridge.sendControl('releaseSession', {
+          sessionId: client.sessionId,
+          agentName: client.agentName,
+        });
         this.clients.delete(socket);
       }
     });

@@ -90,6 +90,7 @@ const activeControllers = new Map();
 // --- Per-tab mutex (task 2.1) + per-agent tab locks (task 2.2) ------------
 // Pure, unit-tested primitives in lib/tab-concurrency.js.
 const tabMutex = new TabMutexMap();
+const windowCaptureMutex = new TabMutexMap();
 const tabLocks = new TabLockMap();
 
 // --- Connection Management ------------------------------------------------
@@ -186,7 +187,7 @@ function wsSubprotocols() {
 let lastWasHandshakeClose = false;
 
 async function connect() {
-  if (ws && ws.readyState === WebSocket.OPEN) return;
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
   // If the last attempt died mid-handshake, the token is likely stale/empty —
   // re-fetch it before reconnecting so we don't loop on a bad token.
@@ -200,9 +201,11 @@ async function connect() {
     // Pass the auth token via subprotocol (preferred) so it stays out of the
     // URL query. wsUrl() still appends ?token= for compat with older daemons.
     const subs = wsSubprotocols();
-    ws = subs.length ? new WebSocket(wsUrl(), subs) : new WebSocket(wsUrl());
+    const socket = subs.length ? new WebSocket(wsUrl(), subs) : new WebSocket(wsUrl());
+    ws = socket;
 
-    ws.onopen = () => {
+    socket.onopen = () => {
+      if (ws !== socket) return;
       opened = true;
       isConnected = true;
       reconnectAttempts = 0;
@@ -212,7 +215,8 @@ async function connect() {
       broadcastStatus('Connected');
     };
 
-    ws.onclose = () => {
+    socket.onclose = () => {
+      if (ws !== socket) return;
       // closed before open = the daemon destroyed the upgrade (bad/no token)
       if (!opened) lastWasHandshakeClose = true;
       isConnected = false;
@@ -227,7 +231,8 @@ async function connect() {
       scheduleReconnect();
     };
 
-    ws.onerror = () => {
+    socket.onerror = () => {
+      if (ws !== socket) return;
       // Do NOT flip the badge to red ('error') here. ws.onerror fires on every
       // transient connection failure — most commonly during daemon restart, MV3
       // service-worker recycle, or the first attempt of an exponential-backoff
@@ -241,13 +246,14 @@ async function connect() {
       // No updateBadge('error'), no broadcastStatus — onclose handles both.
     };
 
-    ws.onmessage = async (event) => {
+    socket.onmessage = async (event) => {
+      if (ws !== socket) return;
       let msgId = null;
       try {
         const msg = JSON.parse(event.data);
         msgId = msg.id ?? null;
         if (msg.type === 'ping') {
-          ws.send(JSON.stringify({ type: 'pong' }));
+          socket.send(JSON.stringify({ type: 'pong' }));
           return;
         }
         await handleMessage(msg);
@@ -256,9 +262,9 @@ async function connect() {
         // Audit C4/6d: a throw inside handleMessage (e.g. bad params, a handler
         // bug) used to leave the daemon hanging until its timeout. Reply with
         // an explicit error so the agent gets an actionable message fast.
-        if (msgId && ws && ws.readyState === WebSocket.OPEN) {
+        if (msgId && ws === socket && socket.readyState === WebSocket.OPEN) {
           try {
-            ws.send(JSON.stringify({ id: msgId, success: false, error: err?.message || String(err) }));
+            socket.send(JSON.stringify({ id: msgId, success: false, error: err?.message || String(err) }));
           } catch { /* ws gone — close path will reject pending on the daemon */ }
         }
       }
@@ -495,11 +501,9 @@ async function handleMessage(msg) {
   // Control messages (non-tool) from the daemon. These carry a `type` and no
   // `tool`; handle them here before the tool-dispatch path assumes a tool call.
   if (msg.type === 'releaseSession') {
-    // An agent disconnected — release any tabs it had locked, so a crashed/quit
-    // agent doesn't leave orphaned locks blocking other agents forever. Locks
-    // are keyed by agentName, so release by that (the daemon only sends this
-    // when NO surviving connection shares the agentName — see daemon close handler).
-    const owner = msg.agentName || msg.sessionId;
+    // Session ids are unique even when two live clients share a display name.
+    // Releasing one session therefore cannot unlock its sibling's tabs.
+    const owner = msg.sessionId;
     if (owner) {
       // releaseByOwner is synchronous and returns the released tabIds before
       // any shield calls below run — no async race (review NOTE 7a).
@@ -530,13 +534,15 @@ async function handleMessage(msg) {
   }
 
   const { id, tool, params } = msg;
-  const p = params || {};
+  const p = { ...(params || {}) };
   const sessionId = msg.sessionId || null;
-  // agentName is the STABLE identity for tab locks (survives MCP-client
-  // reconnects where sessionId churns s3→s4). Locks are keyed by agentName;
-  // sessionId is kept only for logging/UI.
   const agentName = msg.agentName || null;
 
+  // Resolve navigate's documented active-tab fallback before lock/mutex routing.
+  // This freezes the target even if the user changes focus while the call waits.
+  if (tool === 'browser_navigate' && typeof p.tabId !== 'number') {
+    p.tabId = (await getActiveTab()).id;
+  }
   const tabId = extractTabId(tool, p);
 
   // Tools without a tabId (tabs list/create, console-less) run directly.
@@ -554,15 +560,14 @@ async function handleMessage(msg) {
     return;
   }
 
-  // Acquire this tab's mutex (2.1) and honor per-agent locks (2.2). Locks are
-  // keyed by agentName (stable across reconnects), so waitFor checks agentName.
+  // Acquire this tab's mutex and honor the unique session's lock ownership.
   const controller = new AbortController();
   activeControllers.set(id, controller);
   runOnTabLib(
     tabLocks,
     tabMutex,
     tabId,
-    agentName,
+    sessionId,
     async () => {
       currentActivity = tool;
       updateBadge('active');
@@ -594,12 +599,8 @@ function sendResponse(id, response) {
 }
 
 /** Which tabId does this call target? null = tab-agnostic (tabs list/create). */
-function extractTabId(tool, params) {
-  if (typeof params.tabId === 'number') return params.tabId;
-  // navigate allows omitting tabId → falls back to active tab inside its handler.
-  if (tool === 'browser_navigate') return null; // handled in-handler
-  if (tool === 'browser_tabs') return null; // create/list don't target; close/focus read their own tabId
-  return null;
+function extractTabId(_tool, params) {
+  return typeof params.tabId === 'number' ? params.tabId : null;
 }
 
 // --- Per-tab mutex + tab lock: see lib/tab-concurrency.js (tasks 2.1, 2.2) -
@@ -846,7 +847,7 @@ async function handleClick(params) {
   const fb = getFallback(tabId, ref);
   const resolveFallbackSrc = PAGE_RESOLVE_FALLBACK_FN.toString();
 
-  return safeExec(tabId, async (_ref, _sel, _btn, _dbl, _fb, resolveFallbackSrc) => {
+  const res = await safeExec(tabId, async (_ref, _sel, _btn, _dbl, _fb, resolveFallbackSrc) => {
     let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
     let via = 'ref';
     if (!el && _sel) { el = document.querySelector(_sel); via = 'selector'; }
@@ -923,7 +924,7 @@ async function handleType(params) {
   const fb = getFallback(tabId, ref);
   const resolveFallbackSrc = PAGE_RESOLVE_FALLBACK_FN.toString();
 
-  return safeExec(tabId, (_ref, _sel, _text, _clear, _fb, resolveFallbackSrc) => {
+  const res = await safeExec(tabId, (_ref, _sel, _text, _clear, _fb, resolveFallbackSrc) => {
     let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
     let via = 'ref';
     if (!el && _sel) { el = document.querySelector(_sel); via = 'selector'; }
@@ -938,12 +939,18 @@ async function handleType(params) {
 
     el.focus();
 
+    const setNativeValue = (target, nextValue) => {
+      const prototype = target instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+      if (setter) setter.call(target, nextValue);
+      else target.value = nextValue;
+    };
+
     if (_clear) {
-      if (el.isContentEditable) {
-        el.textContent = '';
-      } else {
-        el.value = '';
-      }
+      if (el.isContentEditable) el.textContent = '';
+      else setNativeValue(el, '');
       el.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
@@ -951,8 +958,8 @@ async function handleType(params) {
       document.execCommand('insertText', false, _text);
     } else {
       for (const ch of _text) {
-        el.value += ch;
         el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+        setNativeValue(el, `${el.value}${ch}`);
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
       }
@@ -1148,8 +1155,9 @@ async function handleSnapshot(params) {
   // isNew feature: pass the fingerprints seen in the PREVIOUS snapshot so the
   // page function can mark newly-appeared elements. Array is serializable.
   const prevFingerprints = lastSnapshotFingerprints.get(tabId) || [];
+  const refPrefix = `e-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-`;
 
-  return safeExec(tabId, (_sel, _compact, genFallbackSrc, _prevFingerprints) => {
+  return safeExec(tabId, (_sel, _compact, genFallbackSrc, _prevFingerprints, _refPrefix) => {
     let refCount = 0;
     /** @type {Record<string, object>} ref -> fallback, returned to background */
     const fallbacks = {};
@@ -1246,7 +1254,7 @@ async function handleSnapshot(params) {
         return kids.length === 0 ? null : kids.length === 1 ? kids[0] : kids;
       }
 
-      const ref = `e${refCount++}`;
+      const ref = `${_refPrefix}${refCount++}`;
       el.setAttribute('data-mcp-ref', ref);
       const n = elName(el);
       try { if (genFallback) fallbacks[ref] = genFallback(el); } catch {}
@@ -1286,7 +1294,7 @@ async function handleSnapshot(params) {
         return kids.length === 0 ? null : kids.length === 1 ? kids[0] : kids;
       }
 
-      const ref = `e${refCount++}`;
+      const ref = `${_refPrefix}${refCount++}`;
       el.setAttribute('data-mcp-ref', ref);
       try { if (genFallback) fallbacks[ref] = genFallback(el); } catch {}
 
@@ -1328,7 +1336,7 @@ async function handleSnapshot(params) {
       __fallbacks: fallbacks,
       __fingerprints: fingerprints,
     };
-  }, [selector, compact, genFallbackSrc, prevFingerprints]).then((res) => {
+  }, [selector, compact, genFallbackSrc, prevFingerprints, refPrefix]).then((res) => {
     // Store the fallbacks per-tab so click/type can resolve stale refs.
     if (res && res.__fallbacks) {
       const map = new Map(Object.entries(res.__fallbacks));
@@ -1347,30 +1355,32 @@ async function handleSnapshot(params) {
 async function handleScreenshot(params) {
   const { tabId, format = 'png', quality = 80 } = params;
   const tab = await resolveTab(tabId);
-  // captureVisibleTab is window-scoped: ensure the tab is the active one in its
-  // window first (a no-op if it already is).
-  if (!tab.active) {
-    await chrome.tabs.update(tabId, { active: true }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 150)); // let the paint settle
-  }
-  // If the tab is locked, hide the blue frame for the capture so the agent's
-  // screenshot matches the real page (the human's blocked view still has the
-  // border at all other times). Restore it afterwards, even on capture error.
-  const wasLocked = !!tabLocks.owner(tabId);
-  if (wasLocked) {
-    try { await hideLockShield(tabId); } catch {}
-  }
-  try {
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-      format,
-      quality: format === 'jpeg' ? quality : undefined,
-    });
-    return { success: true, format, data: dataUrl.split(',')[1] };
-  } finally {
-    if (wasLocked) {
-      try { showLockShield(tabId); } catch {}
+  return windowCaptureMutex.run(tab.windowId, async () => {
+    const [previousActive] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+    const changedActiveTab = previousActive?.id !== tabId;
+    if (changedActiveTab) {
+      await chrome.tabs.update(tabId, { active: true });
+      await new Promise((resolve) => setTimeout(resolve, 150));
     }
-  }
+
+    const wasLocked = !!tabLocks.owner(tabId);
+    if (wasLocked) await hideLockShield(tabId);
+    try {
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+        format,
+        quality: format === 'jpeg' ? quality : undefined,
+      });
+      return { success: true, format, data: dataUrl.split(',')[1] };
+    } finally {
+      if (wasLocked) await showLockShield(tabId);
+      if (changedActiveTab && previousActive?.id != null) {
+        const [currentActive] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+        if (currentActive?.id === tabId) {
+          await chrome.tabs.update(previousActive.id, { active: true }).catch(() => {});
+        }
+      }
+    }
+  });
 }
 
 async function handleConsole(params) {
@@ -1392,7 +1402,7 @@ async function handleNetwork(params) {
   return { success: true, requests: reqs };
 }
 
-async function handleTabs(params, sessionId, agentName) {
+async function handleTabs(params, sessionId) {
   const { action, tabId, url } = params;
   switch (action) {
     case 'list': {
@@ -1429,10 +1439,8 @@ async function handleTabs(params, sessionId, agentName) {
     }
     case 'lock': {
       if (!tabId) throw new Error('tabId required');
-      // Lock by agentName (stable across reconnects) when available; fall back
-      // to sessionId for the popup path (which only knows sessionId from /status).
-      const owner = agentName || sessionId;
-      if (!owner) throw new Error('lock requires a session (called outside daemon?)');
+      const owner = sessionId;
+      if (!owner) throw new Error('lock requires an authenticated session');
       tabLocks.lock(tabId, owner);
       showLockShield(tabId); // show blue frame + input block for the lock lifetime
       broadcastStatus(`Tab ${tabId} locked by ${owner}`);
@@ -1440,8 +1448,12 @@ async function handleTabs(params, sessionId, agentName) {
     }
     case 'unlock': {
       if (!tabId) throw new Error('tabId required');
+      if (!sessionId) throw new Error('unlock requires an authenticated session');
       const was = tabLocks.owner(tabId);
-      tabLocks.release(tabId);
+      tabLocks.unlock(tabId, sessionId);
+      if (tabLocks.owner(tabId)) {
+        throw new Error(`Tab ${tabId} is locked by another session`);
+      }
       hideLockShield(tabId);
       broadcastStatus(`Tab ${tabId} unlocked (was ${was || '-'})`);
       return { success: true, unlocked: tabId, previousSession: was || null };
@@ -1454,8 +1466,9 @@ async function handleTabs(params, sessionId, agentName) {
 async function handleFind(params) {
   const { tabId, query, limit = 10 } = params;
   await resolveTab(tabId);
+  const refPrefix = `f-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-`;
 
-  return safeExec(tabId, (_q, _lim) => {
+  return safeExec(tabId, (_q, _lim, _refPrefix) => {
     const qLow = _q.toLowerCase();
     const matches = [];
 
@@ -1488,7 +1501,7 @@ async function handleFind(params) {
       if (id.includes(qLow)) score += 3;
       if (score === 0) continue;
 
-      const ref = `f${rc++}`;
+      const ref = `${_refPrefix}${rc++}`;
       node.setAttribute('data-mcp-ref', ref);
       matches.push({
         ref, role: r, name: n.slice(0, 100), tag: node.tagName.toLowerCase(), score,
@@ -1498,7 +1511,7 @@ async function handleFind(params) {
 
     matches.sort((a, b) => b.score - a.score);
     return { success: true, query: _q, matches: matches.slice(0, _lim) };
-  }, [query, limit]);
+  }, [query, limit, refPrefix]);
 }
 
 async function handleGetPageText(params) {
@@ -1931,18 +1944,19 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     return false;
   }
   if (msg.type === 'lockTab') {
-    // { tabId, agentName?, sessionId? } — pin a tab to an agent from the popup.
-    // Prefer agentName (stable across reconnects); fall back to sessionId for
-    // backward compat. Same primitive as the browser_tabs lock tool.
-    const owner = msg.agentName || msg.sessionId;
+    const owner = msg.sessionId;
     if (msg.tabId == null || !owner) {
-      respond({ success: false, error: 'tabId and agentName/sessionId required' });
+      respond({ success: false, error: 'tabId and sessionId required' });
       return false;
     }
-    tabLocks.lock(msg.tabId, owner);
-    showLockShield(msg.tabId); // popup-driven lock path mirrors the tool path
-    broadcastStatus(`Tab ${msg.tabId} pinned to ${owner}`);
-    respond({ success: true });
+    try {
+      tabLocks.lock(msg.tabId, owner);
+      showLockShield(msg.tabId);
+      broadcastStatus(`Tab ${msg.tabId} pinned to ${owner}`);
+      respond({ success: true });
+    } catch (err) {
+      respond({ success: false, error: err?.message || String(err) });
+    }
     return false;
   }
   if (msg.type === 'unlockTab') {

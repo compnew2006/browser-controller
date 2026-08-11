@@ -189,14 +189,13 @@ function renderOpenTabs() {
           </span>
         </div>`;
       }
-      // Unlocked: dropdown of agents + Pin button. The option VALUE is the
-      // agentName (the stable lock identity — survives reconnects where the
-      // sessionId churns s3→s4). The label shows both for clarity.
+      // Unlocked: the unique session id is the lock identity. Display names
+      // are not unique when multiple clients run from the same IDE.
       const opts = ['<option value="">— free —</option>']
         .concat(agents.map((a) => {
           const name = a.name || 'agent';
           const label = escapeHtml(`${name} · ${a.sessionId}`);
-          const val = escapeHtml(name);
+          const val = escapeHtml(a.sessionId);
           return `<option value="${val}">${label}</option>`;
         }))
         .join('');
@@ -400,18 +399,17 @@ document.addEventListener('click', (e) => {
 
   if (action === 'lockTab') {
     const tabId = Number(btn.dataset.tab);
-    // find this tab row's <select> to read the chosen agent. The select's
-    // value is the agentName (stable lock identity across reconnects).
+    // Find this tab row's selected unique session.
     const row = btn.closest('.tab-row');
     const select = row && row.querySelector('select[data-action="pickAgent"]');
-    const agentName = select ? select.value : '';
-    if (!agentName) {
+    const sessionId = select ? select.value : '';
+    if (!sessionId) {
       addLog('Pick an agent first', 'warn');
       return;
     }
-    chrome.runtime.sendMessage({ type: 'lockTab', tabId, agentName }, (resp) => {
+    chrome.runtime.sendMessage({ type: 'lockTab', tabId, sessionId }, (resp) => {
       if (resp?.success) {
-        addLog(`Pinned tab ${tabId} to ${agentName}`, 'ok');
+        addLog(`Pinned tab ${tabId} to ${agentLabelFor(sessionId)}`, 'ok');
         refreshStatus();
       } else {
         addLog(`Pin failed: ${resp?.error || 'unknown'}`, 'err');

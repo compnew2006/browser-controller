@@ -34,7 +34,7 @@ const TMP_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-test-'));
 const SOCK = path.join(TMP_STATE, 'daemon.sock');
 const TOKEN_FILE = path.join(TMP_STATE, 'token.json');
 const ENROLLMENT_FILE = path.join(TMP_STATE, 'enrollment.json');
-const WS_PORT = 19240 + Math.floor(Math.random() * 50);
+const WS_PORT = 30_000 + (process.pid % 5_000);
 
 let token = '';
 let enrollment = '';
@@ -282,7 +282,7 @@ describe('daemon client lifecycle', { timeout: 30_000 }, () => {
         socket.setEncoding('utf8');
         const timer = setTimeout(() => reject(new Error('no denial')), 4000);
         socket.on('data', (chunk) => {
-          const line = chunk.trim();
+          const line = String(chunk).trim();
           try {
             const msg = JSON.parse(line);
             if (msg.kind === 'denied') {

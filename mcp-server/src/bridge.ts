@@ -1,7 +1,5 @@
-import net from 'node:net';
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { execSync } from 'node:child_process';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isIdempotent, toolTimeoutMs } from './tools/index.js';
 
@@ -69,17 +67,13 @@ function corsHeaders(req: http.IncomingMessage, pinnedOrigin: string | null): ht
  * the daemon's lifetime (re-learned on restart / reinstall — the popup always
  * sends its real ID, and a browser-asserted Origin can't be forged by JS).
  */
-function isAllowedOrigin(req: http.IncomingMessage, pinnedOrigin: string | null): { ok: boolean; pinnedOrigin: string | null } {
+function isAllowedOrigin(req: http.IncomingMessage, pinnedOrigin: string | null): { ok: boolean; origin: string | null } {
   const origin = req.headers.origin;
-  if (!origin) return { ok: true, pinnedOrigin };
+  if (!origin) return { ok: true, origin: null };
   if (typeof origin !== 'string' || !origin.startsWith(EXT_ORIGIN_PREFIX)) {
-    return { ok: false, pinnedOrigin };
+    return { ok: false, origin: null };
   }
-  // First extension Origin ever seen → pin it (TOFU). Any later request must
-  // match exactly. A co-installed hostile extension surfaces its OWN ID here
-  // and can't spoof ours, so equality is the right gate.
-  if (!pinnedOrigin) return { ok: true, pinnedOrigin: origin };
-  return { ok: origin === pinnedOrigin, pinnedOrigin };
+  return { ok: !pinnedOrigin || origin === pinnedOrigin, origin };
 }
 
 /**
@@ -190,67 +184,20 @@ const TOOL_TIMEOUTS: Record<string, number> = {
   browser_handle_dialog: 5_000,
 };
 
-/**
- * Cross-platform (no `lsof`) probe: returns true if something is listening on
- * host:port. Replaces the macOS/Linux-only `lsof` call (plan task 1.6).
- */
-export async function isPortInUse(host: string, port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const tester = net.createServer();
-    tester.once('error', () => resolve(true));
-    tester.once('listening', () => {
-      tester.close(() => resolve(false));
-    });
-    tester.listen(port, host);
-  });
-}
-
-/**
- * Find PIDs of processes LISTENing on `port`. Cross-platform:
- *   - macOS/Linux: `lsof -ti :PORT -sTCP:LISTEN`
- *   - Windows:     PowerShell `Get-NetTCPConnection -LocalPort PORT`
- * Returns [] on any failure (best-effort; callers handle the empty case).
- */
-export function findListenersOnPort(port: number): number[] {
-  const cmd =
-    process.platform === 'win32'
-      ? `powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue).OwningProcess"`
-      : `lsof -ti :${port} -sTCP:LISTEN`;
-  try {
-    const out = execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-      .split('\n')
-      .map((s) => parseInt(s.trim(), 10))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    return Array.from(new Set(out));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Probe whether the process listening on `host:port` is a RESPONSIVE daemon
- * (vs a hung/crashed process still holding the port, or a totally unrelated
- * server). GETs `/pair` with a short timeout: our daemon answers with the
- * token JSON; anything else (reset, timeout, non-JSON, or a server that
- * doesn't speak our protocol) means the holder is NOT a healthy daemon we
- * should preserve.
- *
- * Used by `killStaleProcess` so a second MCP client that hits EADDRINUSE
- * does NOT SIGTERM a perfectly healthy daemon just because it couldn't
- * listen — the documented stale-kill is only for a port wedged by a
- * CRASHED previous daemon. Without this gate, N concurrent MCP clients
- * would each kill the others' daemon on startup (a destructive race).
- */
-export async function isDaemonResponsiveOnPort(host: string, port: number, timeoutMs = 1200): Promise<boolean> {
+/** Probe the authenticated daemon endpoint without trusting the port owner. */
+export async function isDaemonResponsiveOnPort(
+  host: string,
+  port: number,
+  timeoutMs = 1200,
+  enrollmentSecret = '',
+): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = enrollmentSecret ? { 'X-BC-Enrollment': enrollmentSecret } : undefined;
   try {
-    // Use 127.0.0.1 explicitly (the daemon only listens there).
-    const res = await fetch(`http://${host}:${port}/pair`, { signal: controller.signal });
+    const res = await fetch(`http://${host}:${port}/pair`, { signal: controller.signal, headers });
     if (!res.ok) return false;
     const body = (await res.json()) as { token?: unknown };
-    // /pair returns { token: "<hex>" }. A 403 (wrong enrollment) would not be ok,
-    // and an unrelated server would not return this shape.
     return typeof body?.token === 'string' && body.token.length > 0;
   } catch {
     return false;
@@ -310,52 +257,23 @@ export class ExtensionBridge {
     try {
       await this.tryListen();
     } catch (err: unknown) {
-      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-        console.error(`[Bridge] ${this.host}:${this.port} in use — killing stale process`);
-        await this.killStaleProcess();
-        await new Promise(r => setTimeout(r, 500));
-        await this.tryListen();
-      } else {
-        throw err;
-      }
-    }
-  }
+      const code = err instanceof Error && 'code' in err
+        ? (err as NodeJS.ErrnoException).code
+        : undefined;
+      if (code !== 'EADDRINUSE') throw err;
 
-  /**
-   * Cross-platform stale-process eviction (plan task 1.6). If the port is still
-   * held after the first EADDRINUSE, find and SIGTERM the owning PID so the
-   * daemon can recover when a previous instance crashed without releasing 7225.
-   *   - macOS/Linux: `lsof -ti :PORT -sTCP:LISTEN`
-   *   - Windows:     `Get-NetTCPConnection -LocalPort PORT` (via powershell)
-   * Best-effort: if the owner can't be attributed (permission/odd platform),
-   * the listen retry will surface EADDRINUSE again with a clear message.
-   */
-  private async killStaleProcess(): Promise<void> {
-    const inUse = await isPortInUse(this.host, this.port);
-    if (!inUse) return;
-    // CRITICAL: before SIGTERMing, confirm the holder is actually unresponsive.
-    // A second MCP client that hits EADDRINUSE must NOT kill a healthy daemon
-    // that's serving the extension — only one wedged by a crashed previous
-    // daemon. Without this gate, N concurrent clients each kill the others'
-    // daemon on startup (destructive race: the extension disconnects every time
-    // a new client spawns). If /pair responds with a token, the holder is one of
-    // our daemons and alive → back off and let the existing daemon keep running.
-    if (await isDaemonResponsiveOnPort(this.host, this.port)) {
-      console.error(`[Bridge] ${this.host}:${this.port} held by a RESPONSIVE daemon — not killing (this client will attach as an IPC client instead of listening)`);
-      return;
+      const isDaemon = await isDaemonResponsiveOnPort(
+        this.host,
+        this.port,
+        1200,
+        this.enrollmentSecret,
+      );
+      const owner = isDaemon ? 'an authenticated Browser Controller daemon' : 'an unverified process';
+      throw new Error(
+        `Cannot listen on ${this.host}:${this.port}: ${owner} already owns the port. ` +
+        'Refusing to terminate another process automatically.',
+      );
     }
-    const pids = findListenersOnPort(this.port);
-    if (pids.length === 0) {
-      console.error(`[Bridge] Port ${this.port} still occupied but no PID found (permission/platform). Manual cleanup may be needed.`);
-      return;
-    }
-    for (const pid of pids) {
-      if (pid === process.pid) continue;
-      console.error(`[Bridge] Killing UNRESPONSIVE stale listener PID ${pid} on port ${this.port}`);
-      try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
-    }
-    // give the OS a moment to release the socket
-    await new Promise((r) => setTimeout(r, 400));
   }
 
   private tryListen(): Promise<void> {
@@ -368,12 +286,10 @@ export class ExtensionBridge {
         // so the OPTIONS preflight also respects it and so the pinned origin
         // propagates to corsHeaders() for ACAO reflection.
         const decision = isAllowedOrigin(req, this.pinnedExtensionOrigin);
-        if (decision.pinnedOrigin && decision.pinnedOrigin !== this.pinnedExtensionOrigin) {
-          this.pinnedExtensionOrigin = decision.pinnedOrigin;
-        }
-        // Preflight for the popup's fetch(). Answer and stop; no handler.
+        // Preflight proves only browser origin, not enrollment. Reflect a valid
+        // candidate for CORS, but pin it only after the authenticated GET.
         if (req.method === 'OPTIONS') {
-          res.writeHead(204, corsHeaders(req, this.pinnedExtensionOrigin)).end();
+          res.writeHead(204, corsHeaders(req, decision.origin)).end();
           return;
         }
         if (!decision.ok) {
@@ -396,6 +312,9 @@ export class ExtensionBridge {
             res.writeHead(403).end('Forbidden: invalid enrollment');
             return;
           }
+        }
+        if (decision.origin && !this.pinnedExtensionOrigin) {
+          this.pinnedExtensionOrigin = decision.origin;
         }
         if (req.method !== 'GET' || !this.httpHandler) {
           res.writeHead(404, corsHeaders(req, this.pinnedExtensionOrigin)).end('Not found');
@@ -438,9 +357,6 @@ export class ExtensionBridge {
         // and can't forge ours). WS upgrades carry the browser-set Origin too, so
         // the gate works identically here.
         const wsDecision = isAllowedOrigin(req, this.pinnedExtensionOrigin);
-        if (wsDecision.pinnedOrigin && wsDecision.pinnedOrigin !== this.pinnedExtensionOrigin) {
-          this.pinnedExtensionOrigin = wsDecision.pinnedOrigin;
-        }
         if (!wsDecision.ok) {
           socket.destroy();
           return;
@@ -455,6 +371,9 @@ export class ExtensionBridge {
             socket.destroy();
             return;
           }
+        }
+        if (wsDecision.origin && !this.pinnedExtensionOrigin) {
+          this.pinnedExtensionOrigin = wsDecision.origin;
         }
         this.wss!.handleUpgrade(req, socket, head, (ws) => {
           this.wss!.emit('connection', ws, req);
@@ -489,6 +408,7 @@ export class ExtensionBridge {
         });
 
         ws.on('close', () => {
+          if (this.client !== ws) return;
           console.error('[Bridge] Extension disconnected');
           this.client = null;
           this.stopPingLoop();

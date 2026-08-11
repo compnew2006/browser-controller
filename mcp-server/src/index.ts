@@ -58,6 +58,8 @@ import {
   DAEMON_INFO_FILE,
   IPC_SOCKET_PATH,
   STATE_DIR,
+  loadOrCreateEnrollment,
+  readEnrollmentSecret,
   readToken,
 } from './daemon-config.js';
 
@@ -329,8 +331,8 @@ function spawnDaemon(): void {
   // and daemon.json. (Previously this wrote to ~/.real-browser-mcp/ — the old
   // product name — splitting state across two directories.)
   const logPath = join(STATE_DIR, 'daemon.log');
-  try { fs.mkdirSync(dirname(logPath), { recursive: true }); } catch {}
-  const out = fs.openSync(logPath, 'a');
+  fs.mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
+  const out = fs.openSync(logPath, 'a', 0o600);
   const child = spawn(process.execPath, [daemonEntry], {
     detached: true,
     stdio: ['ignore', out, out],
@@ -366,6 +368,14 @@ async function main(): Promise<void> {
     token = loadOrCreateToken().token;
   }
 
+  // Enrollment is shown only by this foreground client on first creation. The
+  // detached daemon must never copy the secret into its persistent log.
+  const existingEnrollment = readEnrollmentSecret();
+  const enrollment = existingEnrollment ?? loadOrCreateEnrollment().secret;
+  if (!existingEnrollment) {
+    console.error(`[${SERVER_NAME}] enrollment secret (enter in the popup once): ${enrollment}`);
+  }
+
   // 2) ensure daemon is up
   if (!(await daemonLooksAlive())) {
     spawnDaemon();
@@ -393,14 +403,23 @@ async function main(): Promise<void> {
   // respawn loops if the daemon can't stay up.
   let respawned = false;
   client.onClose(() => {
-    if (respawned) return; // already tried once — don't loop
+    if (respawned) return;
     respawned = true;
-    console.error(`[${SERVER_NAME}] daemon connection lost — attempting one respawn`);
-    spawnDaemon();
-    waitForDaemon()
-      .then(() => client.connect())
-      .then(() => { console.error(`[${SERVER_NAME}] reconnected after respawn`); })
-      .catch((err) => { console.error(`[${SERVER_NAME}] respawn failed:`, err); });
+    void (async () => {
+      try {
+        if (await daemonLooksAlive()) {
+          console.error(`[${SERVER_NAME}] daemon connection lost — reconnecting to live daemon`);
+        } else {
+          console.error(`[${SERVER_NAME}] daemon connection lost — attempting one respawn`);
+          spawnDaemon();
+          await waitForDaemon();
+        }
+        await client.connect();
+        console.error(`[${SERVER_NAME}] reconnected to daemon`);
+      } catch (err) {
+        console.error(`[${SERVER_NAME}] reconnect failed:`, err);
+      }
+    })();
   });
 
   // 4) wire MCP <-> daemon

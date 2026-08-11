@@ -67,14 +67,18 @@ export class TabLockMap {
     return this.locks.get(tabId);
   }
 
-  /** Claim tabId for sessionId. */
+  /** Claim tabId for sessionId without stealing another session's lock. */
   lock(tabId, sessionId) {
+    const owner = this.locks.get(tabId);
+    if (owner !== undefined && owner !== sessionId) {
+      throw new Error(`Tab ${tabId} is already locked by ${owner}`);
+    }
     this.locks.set(tabId, sessionId);
   }
 
-  /** Release tabId (only if currently owned by sessionId). */
+  /** Release tabId only when the caller owns it. */
   unlock(tabId, sessionId) {
-    if (sessionId == null || this.locks.get(tabId) === sessionId) {
+    if (this.locks.get(tabId) === sessionId) {
       this.locks.delete(tabId);
     }
   }
@@ -124,11 +128,13 @@ export class TabLockMap {
     if (owner === undefined || owner === sessionId) return;
 
     const start = Date.now();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const tick = () => {
         const cur = this.locks.get(tabId);
-        if (cur === undefined || cur === sessionId || Date.now() - start > this.acquireTimeoutMs) {
+        if (cur === undefined || cur === sessionId) {
           resolve();
+        } else if (Date.now() - start > this.acquireTimeoutMs) {
+          reject(new Error(`Timed out waiting for tab ${tabId} lock owned by ${cur}`));
         } else {
           setTimeout(tick, 50);
         }

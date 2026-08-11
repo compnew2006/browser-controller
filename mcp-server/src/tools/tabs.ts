@@ -10,8 +10,13 @@ export const tabsTool: ToolDefinition = {
     action: z
       .enum(['list', 'create', 'close', 'focus', 'lock', 'unlock'])
       .describe('Tab action'),
-    tabId: z.number().optional().describe('Tab ID (required for close/focus/lock/unlock)'),
+    tabId: z.number().int().optional().describe('Tab ID (required for close/focus/lock/unlock)'),
     url: z.string().optional().describe('URL for create action'),
+  }).superRefine((params, ctx) => {
+    const targetedActions = ['close', 'focus', 'lock', 'unlock'];
+    if (targetedActions.includes(params.action) && params.tabId === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['tabId'], message: `tabId is required for ${params.action}` });
+    }
   }),
   async handler(bridge, params) {
     const result = await bridge.callTool('browser_tabs', params);

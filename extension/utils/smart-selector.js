@@ -238,6 +238,39 @@ export const PAGE_FALLBACK_FN = function generateFallback(el) {
   }
 
   const role = el.getAttribute('role') || el.tagName.toLowerCase();
+
+  function computeNth(target, wantRole, wantText) {
+    if (!wantText) return 0;
+    const textLow = wantText.trim().toLowerCase();
+    const isTextMatch = (candidate) => {
+      const normalized = candidate.trim().toLowerCase();
+      if (normalized === textLow) return true;
+      if (textLow.length > 2 && normalized.length > textLow.length && normalized.startsWith(textLow)) {
+        return !/[a-zà-ÿ]/i.test(normalized.slice(textLow.length));
+      }
+      return false;
+    };
+
+    let seen = 0;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node === target) return seen;
+      const nodeRole = node.getAttribute('role') || node.tagName.toLowerCase();
+      if (nodeRole !== wantRole) continue;
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      const nodeText = (node.innerText || node.textContent || '').split('\n')[0].trim();
+      const accessibleName = (
+        node.getAttribute('aria-label') || node.getAttribute('alt') || node.getAttribute('title') || ''
+      ).trim();
+      if (isTextMatch(nodeText) || isTextMatch(accessibleName)) seen++;
+    }
+    return seen;
+  }
+
   const attrs = {};
   for (const attr of STABLE_ATTRS) {
     const v = el.getAttribute(attr);
@@ -258,44 +291,6 @@ export const PAGE_FALLBACK_FN = function generateFallback(el) {
   };
 };
 
-/**
- * Count how many visible elements with the same (role + text) precede `el` in
- * document order. Cheap O(n) walk; called once per ref'd element at snapshot
- * time. Returns 0 for the first match.
- */
-function computeNth(el, wantRole, wantText) {
-  if (!wantText) return 0;
-  const textLow = wantText.trim().toLowerCase();
-  // Must use the SAME matching rule as PAGE_RESOLVE_FALLBACK_FN (Fix #3) so the
-  // stored nth lines up with how the resolver counts matches. Exact, or wanted
-  // + non-letter suffix only (mirrors isPreciseTextMatch).
-  const isTextMatch = (candidate) => {
-    const c = candidate.trim().toLowerCase();
-    if (c === textLow) return true;
-    if (textLow.length > 2 && c.length > textLow.length && c.startsWith(textLow)) {
-      const suffix = c.slice(textLow.length);
-      if (!/[a-zà-ÿ]/i.test(suffix)) return true;
-    }
-    return false;
-  };
-  let seen = 0;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-  let node;
-  while ((node = walker.nextNode())) {
-    if (node === el) return seen;
-    const role = node.getAttribute('role') || node.tagName.toLowerCase();
-    if (role !== wantRole) continue;
-    const s = getComputedStyle(node);
-    if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) === 0) continue;
-    const r = node.getBoundingClientRect();
-    if (r.width === 0 || r.height === 0) continue;
-    const t = (node.innerText || node.textContent || '').split('\n')[0].trim().toLowerCase();
-    const aria = (node.getAttribute('aria-label') || node.getAttribute('alt') || node.getAttribute('title') || '').trim().toLowerCase();
-    // count precise matches (mirrors resolver's primary pass)
-    if (isTextMatch(t) || isTextMatch(aria)) seen++;
-  }
-  return seen;
-}
 
 /**
  * Page-side resolver (plan task 3). Given a fallback descriptor, find the

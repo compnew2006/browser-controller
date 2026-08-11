@@ -100,7 +100,7 @@ export function loadOrCreateToken(): StoredToken {
     // missing or invalid — fall through to create
   }
   const created: StoredToken = { token: crypto.randomBytes(24).toString('hex'), createdAt: Date.now() };
-  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   fs.writeFileSync(TOKEN_FILE, JSON.stringify(created, null, 2), { mode: 0o600 });
   return created;
 }
@@ -142,7 +142,7 @@ export function loadOrCreateEnrollment(): StoredEnrollment {
     // missing or invalid — fall through to create
   }
   const created: StoredEnrollment = { secret: crypto.randomBytes(24).toString('hex'), createdAt: Date.now() };
-  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   fs.writeFileSync(ENROLLMENT_FILE, JSON.stringify(created, null, 2), { mode: 0o600 });
   return created;
 }

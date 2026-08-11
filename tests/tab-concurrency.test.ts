@@ -108,24 +108,26 @@ describe('TabLockMap (task 2.2)', () => {
 
   // --- Coverage gaps closed (audit m4) --------------------------------------
 
-  it('unlock(null) releases unconditionally (admin/force path)', () => {
-    locks.lock(11, 'agentA');
-    // sessionId == null means "release regardless of owner" (used by unlockAll
-    // and tabs.onRemoved). Must not require a matching session.
+  it('does not let an unauthenticated caller unlock an owned tab', () => {
+    locks.lock(11, 'sessionA');
     locks.unlock(11, null);
-    expect(locks.owner(11)).toBeUndefined();
+    expect(locks.owner(11)).toBe('sessionA');
   });
 
-  it('waitFor eventually resolves on acquire-timeout (no infinite hang)', async () => {
-    locks.lock(12, 'agentA');
-    locks.acquireTimeoutMs = 100; // shorten so the test is fast
-    const start = Date.now();
-    // agentB will NEVER be granted (agentA never releases) — it must still
-    // resolve via the timeout, not hang forever.
-    await expect(locks.waitFor(12, 'agentB')).resolves.toBeUndefined();
-    const elapsed = Date.now() - start;
-    expect(elapsed).toBeGreaterThanOrEqual(95); // waited ~the timeout
-    expect(elapsed).toBeLessThan(400); // didn't hang
+  it('rejects instead of bypassing ownership when lock wait times out', async () => {
+    locks.lock(12, 'sessionA');
+    locks.acquireTimeoutMs = 100;
+    await expect(locks.waitFor(12, 'sessionB')).rejects.toThrow(
+      'Timed out waiting for tab 12 lock owned by sessionA',
+    );
+  });
+
+  it('does not let another session steal an existing lock', () => {
+    locks.lock(14, 'sessionA');
+    expect(() => locks.lock(14, 'sessionB')).toThrow(
+      'Tab 14 is already locked by sessionA',
+    );
+    expect(locks.owner(14)).toBe('sessionA');
   });
 
   it('waitFor returns immediately when sessionId is null (no locking semantics)', async () => {
