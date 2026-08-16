@@ -4,20 +4,20 @@
   <meta charset="utf-8">
   <style>
     /* ── Design tokens ───────────────────────────────────────────────
-       Dark control-panel identity (preserved). One neutral ramp (zinc),
-       one accent (indigo), three semantic states. Sizes in px (popup is a
-       fixed-DPI surface — fluid units buy nothing and hurt density). */
+       Dark control-panel identity. One neutral ramp (zinc), one accent
+       (indigo), three semantic states. Fixed shell: the BODY never scrolls —
+       only the list panels do (daily-use ergonomics: no long popup scroll). */
     :root {
-      --bg:        #0a0a0b;   /* app background  */
-      --surface:   #131316;   /* panels, inputs  */
-      --surface-2: #1b1b20;   /* hover, raised   */
-      --border:    #26262c;   /* hairlines       */
-      --border-2:  #33333b;   /* focus / active  */
-      --ink:       #ededf0;   /* primary text    */
-      --ink-2:     #a1a1aa;   /* secondary text  */
-      --ink-3:     #6b6b75;   /* muted, labels   */
-      --accent:    #818cf8;   /* indigo-400 (AA on dark) */
-      --accent-2:  #6366f1;   /* indigo-500      */
+      --bg:        #0a0a0b;
+      --surface:   #131316;
+      --surface-2: #1b1b20;
+      --border:    #26262c;
+      --border-2:  #33333b;
+      --ink:       #ededf0;
+      --ink-2:     #a1a1aa;
+      --ink-3:     #7a7a86;
+      --accent:    #818cf8;
+      --accent-2:  #6366f1;
       --accent-soft: rgba(129,140,248,0.12);
       --ok:        #34d399;
       --warn:      #fbbf24;
@@ -25,56 +25,63 @@
       --err-2:     #dc2626;
       --radius:    8px;
       --radius-sm: 5px;
-
-      /* 4pt-base semantic spacing scale. Every padding/margin/gap routes
-         through one of these — no arbitrary px values in the rest of the CSS.
-         Tight grouping for siblings (xs/sm); generous separation between the
-         four logical sections (lg/xl). Rhythm = tight group + clear gap. */
-      --space-xs:  4px;   /* hairline separation: icon↔text in a row      */
-      --space-sm:  8px;   /* siblings within a group, input padding-x     */
-      --space-md:  12px;  /* field stack, section internal padding        */
-      --space-lg:  16px;  /* section separation, body padding             */
-      --space-xl:  20px;  /* major group boundary (connection→fields→…)   */
+      --space-xs:  4px;
+      --space-sm:  8px;
+      --space-md:  12px;
+      --space-lg:  16px;
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     html, body {
-      width: 320px;
-      min-width: 280px;
-      min-height: 240px;
+      width: 100%;
+      height: 100%;
+      min-width: 320px;
+      min-height: 380px;
+      overflow: hidden;           /* the shell is fixed; panels scroll inside */
     }
-
     body {
       font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
       font-size: 13px;
       line-height: 1.5;
       color: var(--ink);
       background: var(--bg);
-      padding: var(--space-lg);
       -webkit-font-smoothing: antialiased;
     }
+    html { width: 380px; height: 540px; } /* default size; the resizer overrides */
 
-    /* ── Header / connection status ───────────────────────────────── */
-    /* Section 1 of 4: connection. Tight internal grouping, generous gap below
-       to separate it from the fields section. */
-    .header {
+    /* ── Shell: header / detail / tabbar / panels / logbar ─────────── */
+    .shell {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .hdr {
       display: flex;
       align-items: center;
       gap: var(--space-sm);
-      margin-bottom: var(--space-xs);
+      padding: var(--space-md) var(--space-lg) var(--space-sm);
     }
-    .header h1 {
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
+    .hdr h1 { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+    .hdr .status {
+      font-size: 11px;
+      color: var(--ink-2);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 260px;
+    }
+    .version {
+      margin-left: auto;
+      font-size: 10.5px;
+      color: var(--ink-3);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
     }
 
     .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
       transition: background 200ms ease, box-shadow 200ms ease;
     }
     .dot.connected    { background: var(--ok);   box-shadow: 0 0 0 3px rgba(52,211,153,0.15); }
@@ -83,93 +90,107 @@
     .dot.error        { background: var(--err);  box-shadow: 0 0 0 3px rgba(248,113,113,0.15); }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
 
-    .status {
-      font-size: 12.5px;
-      font-weight: 500;
-      color: var(--ink);
-      margin-bottom: var(--space-xs);
-    }
-    .status-detail {
-      font-size: 11px;
+    .detail {
+      padding: 0 var(--space-lg) var(--space-sm);
+      font-size: 10.5px;
       color: var(--ink-3);
-      margin-bottom: var(--space-lg); /* section boundary: connection → fields */
       min-height: 15px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
       font-variant-numeric: tabular-nums;
     }
 
-    /* ── Form fields ───────────────────────────────────────────────── */
-    .field { margin-bottom: var(--space-md); }
-    .field label {
-      display: block;
-      font-size: 10.5px;
-      font-weight: 600;
+    /* ── Tab bar ────────────────────────────────────────────────────── */
+    .tabbar {
+      display: flex;
+      gap: var(--space-xs);
+      padding: 0 var(--space-lg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .tabbar button {
+      position: relative;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
       color: var(--ink-3);
-      margin-bottom: var(--space-xs);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+      font: 600 12px -apple-system, system-ui, sans-serif;
+      padding: var(--space-sm) var(--space-sm) calc(var(--space-sm) - 2px);
+      cursor: pointer;
+      transition: color 150ms ease, border-color 150ms ease;
     }
-    .field input {
-      width: 100%;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      color: var(--ink);
-      padding: var(--space-sm) var(--space-md);
-      font: inherit;
-      font-size: 12.5px;
-      outline: none;
-      transition: border-color 150ms ease, background 150ms ease;
-    }
-    .field input::placeholder { color: var(--ink-3); }
-    .field input:hover { border-color: var(--border-2); }
-    .field input:focus {
-      border-color: var(--accent);
+    .tabbar button:hover { color: var(--ink-2); }
+    .tabbar button.active { color: var(--ink); border-bottom-color: var(--accent); }
+    .tabbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-sm); }
+    .tabbar .count {
+      display: inline-block;
+      margin-inline-start: var(--space-xs);
+      min-width: 16px;
+      padding: 0 4px;
+      border-radius: 8px;
       background: var(--surface-2);
-      box-shadow: 0 0 0 3px var(--accent-soft);
+      color: var(--ink-3);
+      font: 600 10px/16px -apple-system, system-ui, sans-serif;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .tabbar button.active .count { background: var(--accent-soft); color: var(--accent); }
+    .tabbar .count:empty { display: none; }
+    /* First-run hint: Settings glows amber until the enrollment secret exists. */
+    .tabbar button.needs-setup::after {
+      content: '';
+      position: absolute;
+      top: var(--space-xs);
+      right: -2px;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--warn);
+      box-shadow: 0 0 0 2px var(--bg);
     }
 
-    /* ── Section labels ────────────────────────────────────────────── */
-    /* Section boundary above a title is generous (lg); the gap to the list
-       below is tight (xs) so the label reads as belonging to its list. */
-    .section-title {
+    /* ── Panels (only ONE visible; the list inside scrolls) ─────────── */
+    .panels { flex: 1; min-height: 0; display: block; }
+    .panel {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      padding: var(--space-md) var(--space-lg) var(--space-sm);
+      min-height: 0;
+    }
+    .panel[hidden] { display: none; }
+    .panel:not([hidden]) { animation: panelIn 140ms ease; }
+    @keyframes panelIn { from { opacity: 0; transform: translateY(3px); } }
+
+    .panel-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-sm);
+      margin-bottom: var(--space-sm);
+      flex-shrink: 0;
+    }
+    .panel-title {
       font-size: 10.5px;
       font-weight: 600;
       color: var(--ink-3);
       text-transform: uppercase;
       letter-spacing: 0.06em;
-      margin: var(--space-lg) 0 var(--space-xs);
     }
 
-    /* ── Lists (tabs / agents / locks share the surface look) ──────── */
-    .tabs-list,
-    .locks {
+    .list {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: var(--space-xs);
-      max-height: 150px;
       overflow-y: auto;
       font-size: 11.5px;
     }
-    .locks { max-height: 96px; }
-    .locks .empty,
-    .tabs-list .empty { color: var(--ink-3); padding: var(--space-xs) var(--space-sm); }
+    .list.grow { flex: 1; min-height: 0; }
+    .list .empty { color: var(--ink-3); padding: var(--space-xs) var(--space-sm); }
+    .list .empty.warn { color: var(--warn); }
 
-    .locks .row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: var(--space-sm);
-      padding: var(--space-xs) var(--space-sm);
-      border-radius: var(--radius-sm);
-      font-family: "SF Mono", "JetBrains Mono", Menlo, monospace;
-      font-size: 11px;
-    }
-    .locks .row:hover { background: var(--surface-2); }
-    .locks .tab { color: var(--ink); font-weight: 500; }
-    .locks .who { color: var(--accent); }
-
-    /* ── Open Tabs rows ────────────────────────────────────────────── */
+    /* ── Tab rows ───────────────────────────────────────────────────── */
     .tab-row {
       display: flex;
       align-items: center;
@@ -178,48 +199,42 @@
       border-radius: var(--radius-sm);
       transition: background 120ms ease;
     }
+    .tab-row:hover { background: var(--surface-2); }
     .tab-row + .tab-row { border-top: 1px solid var(--border); }
+    /* the browser-active tab reads at a glance via a soft accent wash */
+    .tab-row:has(.tab-title.active) { background: var(--accent-soft); }
     .tab-title {
-      flex: 1;
-      min-width: 0;
+      flex: 1; min-width: 0;
       font-size: 11.5px;
       color: var(--ink-2);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .tab-title.active { color: var(--accent); font-weight: 600; }
-    .tab-pin {
-      display: flex;
-      align-items: center;
-      gap: var(--space-xs);
-      flex-shrink: 0;
-    }
+    .tab-pin { display: flex; align-items: center; gap: var(--space-xs); flex-shrink: 0; }
     .tab-pin select {
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       color: var(--ink-2);
-      padding: var(--space-xs) var(--space-xs);
+      padding: var(--space-xs);
       font: 500 10.5px/1.3 -apple-system, system-ui, sans-serif;
-      max-width: 95px;
-      outline: none;
-      cursor: pointer;
+      max-width: 110px;
+      outline: none; cursor: pointer;
       transition: border-color 150ms ease;
     }
     .tab-pin select:hover { border-color: var(--border-2); }
     .tab-pin select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+    .lock-owner { color: var(--accent); font-size: 10px; white-space: nowrap; }
 
-    /* ── Agent rows (Connected Agents panel) ───────────────────────── */
+    /* ── Agent rows ─────────────────────────────────────────────────── */
     .agent-row {
-      display: flex;
-      align-items: center;
-      gap: var(--space-sm);
+      display: flex; align-items: center; gap: var(--space-sm);
       padding: var(--space-xs) var(--space-sm);
       border-radius: var(--radius-sm);
       transition: background 120ms ease;
     }
     .agent-row:hover { background: var(--surface-2); }
+    .agent-row + .agent-row { border-top: 1px solid var(--border); }
     .agent-row .tab { color: var(--ink); font-weight: 500; }
     .agent-row .who {
       flex: 1;
@@ -230,80 +245,134 @@
       font-variant-numeric: tabular-nums;
     }
 
-    /* ── Icon buttons (✕ disconnect, ✕ unpin, 📌 pin) ──────────────── */
-    /* Touch target ≥44px via ::before pseudo (visual stays compact). */
+    /* ── Buttons ────────────────────────────────────────────────────── */
     .icon-btn {
       position: relative;
-      background: none;
-      border: none;
+      background: none; border: none;
       color: var(--ink-3);
       cursor: pointer;
-      font-size: 13px;
-      line-height: 1;
-      padding: var(--space-xs) var(--space-xs);
+      font-size: 13px; line-height: 1;
+      padding: var(--space-xs);
       border-radius: var(--radius-sm);
       transition: color 150ms ease, background 150ms ease;
     }
-    .icon-btn::before {
-      content: '';
-      position: absolute;
-      inset: -10px; /* expand the hit area to ~44px without growing the visual */
-    }
+    .icon-btn::before { content: ''; position: absolute; inset: -10px; }
     .icon-btn:hover { color: var(--err); background: rgba(248,113,113,0.1); }
+    .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     .icon-btn.unpin:hover { color: var(--warn); background: rgba(251,191,36,0.1); }
-    /* the 📌 pin button keeps accent color, not red */
     .icon-btn[data-action="lockTab"] { color: var(--accent); }
     .icon-btn[data-action="lockTab"]:hover { background: var(--accent-soft); color: var(--accent); }
 
-    /* ── Primary button (Unlock All) ───────────────────────────────── */
-    .btn {
-      width: 100%;
-      margin-top: var(--space-sm);
-      background: var(--err-2);
-      border: none;
+    .btn-mini {
+      background: none;
+      border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      color: #fff;
-      padding: var(--space-sm) var(--space-md);
-      font: 600 12px -apple-system, system-ui, sans-serif;
+      color: var(--ink-3);
+      font: 600 10.5px -apple-system, system-ui, sans-serif;
+      padding: var(--space-xs) var(--space-sm);
       cursor: pointer;
-      transition: background 150ms ease, transform 80ms ease;
+      transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
     }
-    .btn:hover { background: #b91c1c; }
-    .btn:active { transform: scale(0.985); }
-    .btn:disabled { background: var(--border-2); color: var(--ink-3); cursor: default; transform: none; }
-    .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .btn-mini:hover:not(:disabled) { color: var(--err); border-color: var(--err); background: rgba(248,113,113,0.08); }
+    .btn-mini:disabled { opacity: 0.4; cursor: default; }
+    .btn-mini:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-    /* ── Activity log ──────────────────────────────────────────────── */
-    .log {
-      margin-top: var(--space-lg);
+    /* ── Settings fields ────────────────────────────────────────────── */
+    .field { margin-bottom: var(--space-md); }
+    .field label {
+      display: block;
+      font-size: 10.5px; font-weight: 600;
+      color: var(--ink-3);
+      margin-bottom: var(--space-xs);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .field input {
+      width: 100%;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: var(--radius);
+      border-radius: var(--radius-sm);
+      color: var(--ink);
       padding: var(--space-sm) var(--space-md);
-      max-height: 110px;
+      font: inherit; font-size: 12.5px;
+      outline: none;
+      transition: border-color 150ms ease, background 150ms ease;
+    }
+    .field input::placeholder { color: var(--ink-3); }
+    .field input:hover { border-color: var(--border-2); }
+    .field input:focus { border-color: var(--accent); background: var(--surface-2); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .hint { font-size: 10.5px; color: var(--ink-3); margin-top: calc(-1 * var(--space-xs)); }
+
+    /* ── Log bar (collapsed: one line; expanded: overlay panel) ─────── */
+    .logbar {
+      position: relative;
+      flex-shrink: 0;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .logbar-toggle {
+      display: flex; align-items: center; gap: var(--space-sm);
+      width: 100%;
+      background: none; border: none;
+      color: var(--ink-3);
+      font: 500 10.5px "SF Mono", Menlo, monospace;
+      padding: var(--space-xs) var(--space-lg) var(--space-xs) 24px; /* clears the resize grip */
+      cursor: pointer;
+      text-align: left;
+      transition: color 150ms ease;
+    }
+    .logbar-toggle:hover { color: var(--ink-2); }
+    .logbar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .logbar-text {
+      flex: 1; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .logbar-text.ok   { color: var(--ok); }
+    .logbar-text.err  { color: var(--err); }
+    .logbar-text.warn { color: var(--warn); }
+    .chev {
+      flex-shrink: 0;
+      width: 0; height: 0;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-bottom: 5px solid currentColor;
+      transition: transform 150ms ease;
+    }
+    .logbar.open .chev { transform: rotate(180deg); }
+
+    .log {
+      position: absolute;
+      left: 0; right: 0; bottom: 100%;
+      max-height: 45vh;
       overflow-y: auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: var(--radius) var(--radius) 0 0;
+      box-shadow: 0 -8px 24px rgba(0,0,0,.35);
+      padding: var(--space-sm) var(--space-md);
       font: 10.5px/1.6 "SF Mono", Menlo, monospace;
       color: var(--ink-3);
+      z-index: 10;
     }
+    .log[hidden] { display: none; }
+    .log-head {
+      display: flex; justify-content: space-between; align-items: center;
+      font: 600 10.5px -apple-system, system-ui, sans-serif;
+      text-transform: uppercase; letter-spacing: .06em;
+      margin-bottom: var(--space-xs);
+      position: sticky; top: calc(-1 * var(--space-sm));
+      background: var(--surface);
+    }
+    .log-head button { font-size: 10px; }
     .log .entry {
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       font-variant-numeric: tabular-nums;
     }
     .log .entry.err  { color: var(--err); }
     .log .entry.ok   { color: var(--ok); }
     .log .entry.warn { color: var(--warn); }
 
-    /* ── Footer ────────────────────────────────────────────────────── */
-    .footer {
-      font-size: 10.5px;
-      color: var(--ink-3);
-      margin-top: var(--space-sm);
-      font-variant-numeric: tabular-nums;
-    }
-
-    /* ── Scrollbars (dark, thin, unobtrusive) ──────────────────────── */
+    /* ── Scrollbars ─────────────────────────────────────────────────── */
     ::-webkit-scrollbar { width: 7px; height: 7px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: var(--space-xs); }
@@ -312,21 +381,17 @@
     /* ── Resize handle (bottom-left) ───────────────────────────────── */
     .resizer {
       position: fixed;
-      left: 0;
-      bottom: 0;
-      width: var(--space-lg);
-      height: var(--space-lg);
+      left: 0; bottom: 0;
+      width: var(--space-lg); height: var(--space-lg);
       cursor: nesw-resize;
       z-index: 2147483646;
       background: linear-gradient(45deg, transparent 0 45%, var(--border-2) 45% 55%, transparent 55% 70%, var(--border-2) 70% 80%, transparent 80%);
       transition: background 150ms ease;
     }
-    .resizer:hover,
-    .resizer:active {
+    .resizer:hover, .resizer:active {
       background: linear-gradient(45deg, transparent 0 45%, var(--accent) 45% 55%, transparent 55% 70%, var(--accent) 70% 80%, transparent 80%);
     }
 
-    /* ── Reduced motion ────────────────────────────────────────────── */
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
         animation-duration: 0.01ms !important;
@@ -336,45 +401,67 @@
   </style>
 </head>
 <body>
-  <div class="header">
-    <div class="dot" id="dot"></div>
-    <h1>Browser Controller</h1>
+  <div class="shell">
+    <header class="hdr">
+      <div class="dot" id="dot"></div>
+      <div>
+        <h1>Browser Controller</h1>
+        <div class="status" id="status">Checking…</div>
+      </div>
+      <span class="version" id="version"></span>
+    </header>
+    <div class="detail" id="detail"></div>
+
+    <nav class="tabbar" role="tablist" aria-label="Sections">
+      <button type="button" role="tab" data-tab="tabs" aria-selected="true">Tabs<span class="count" id="tabsCount"></span></button>
+      <button type="button" role="tab" data-tab="agents" aria-selected="false" tabindex="-1">Agents<span class="count" id="agentsCount"></span></button>
+      <button type="button" role="tab" data-tab="settings" aria-selected="false" tabindex="-1" id="settingsTab">Settings</button>
+    </nav>
+
+    <main class="panels">
+      <section class="panel" role="tabpanel" data-panel="tabs" aria-label="Open tabs">
+        <div class="panel-bar">
+          <span class="panel-title">Open Tabs</span>
+          <button type="button" class="btn-mini" id="unlockAll" disabled>Unlock all</button>
+        </div>
+        <div class="list grow" id="openTabs"><div class="empty">no tabs</div></div>
+      </section>
+
+      <section class="panel" role="tabpanel" data-panel="agents" aria-label="Connected agents" hidden>
+        <div class="panel-bar"><span class="panel-title">Connected Agents</span></div>
+        <div class="list grow" id="agents"><div class="empty">none</div></div>
+      </section>
+
+      <section class="panel" role="tabpanel" data-panel="settings" aria-label="Settings" hidden>
+        <div class="field">
+          <label for="port">WebSocket Port</label>
+          <input type="number" id="port" value="7225" min="1" max="65535">
+        </div>
+        <div class="field">
+          <label for="token">Auth Token</label>
+          <input type="password" id="token" placeholder="auto-fetched from daemon" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="enrollment">Enrollment Secret</label>
+          <input type="password" id="enrollment" placeholder="paste once on first setup" autocomplete="off">
+          <div class="hint">One-time — printed by <code>npx browser-controller</code> on first run.</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="logbar" id="logbar">
+      <button type="button" class="logbar-toggle" id="logToggle" aria-expanded="false" aria-controls="logPanel">
+        <span class="logbar-text" id="logBarText">activity log</span>
+        <span class="chev" aria-hidden="true"></span>
+      </button>
+      <div class="log" id="logPanel" hidden>
+        <div class="log-head"><span>Activity</span><button type="button" class="btn-mini" id="logClear">clear</button></div>
+        <div id="logEntries"></div>
+      </div>
+    </footer>
+
+    <div class="resizer" id="resizer" title="Drag to resize"></div>
   </div>
-  <div class="status" id="status">Checking…</div>
-  <div class="status-detail" id="detail"></div>
-
-  <div class="field">
-    <label for="port">WebSocket Port</label>
-    <input type="number" id="port" value="7225" min="1" max="65535">
-  </div>
-
-  <div class="field">
-    <label for="token">Auth Token (auto-paired; paste only to override)</label>
-    <input type="password" id="token" placeholder="auto-fetched from daemon" autocomplete="off">
-  </div>
-
-  <div class="field">
-    <label for="enrollment">Enrollment Secret (one-time; from `npx browser-controller` output)</label>
-    <input type="password" id="enrollment" placeholder="paste once on first setup" autocomplete="off">
-  </div>
-
-  <div class="section-title">Open Tabs</div>
-  <div class="tabs-list" id="openTabs"><div class="empty">none</div></div>
-
-  <div class="section-title">Connected Agents</div>
-  <div class="locks" id="agents"><div class="empty">none</div></div>
-
-  <div class="section-title">Tab Locks</div>
-  <div class="locks" id="locks"><div class="empty">none</div></div>
-  <button class="btn" id="unlockAll" disabled>Unlock All</button>
-
-  <div class="log" id="log"></div>
-
-  <div class="footer">
-    <span id="version"></span>
-  </div>
-
-  <div class="resizer" id="resizer" title="Drag to resize"></div>
 
   <script src="popup.js"></script>
 </body>

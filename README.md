@@ -412,7 +412,7 @@ browser-controller/
 │   ├── handlers/            Tool implementations: navigation, interaction, inspection, tabs, cdp
 │   ├── events.js            chrome.* listeners (console capture, popup, webRequest, lifecycle)
 │   ├── content.js          Console capture
-│   └── popup/              Status, Open Tabs (pin/unpin), Connected Agents (disconnect), tab-lock viewer
+│   └── popup/              Fixed tabbed shell (Tabs · Agents · Settings) + collapsible activity bar
 ├── agent-config/        Pre-built configs for Cursor + Claude Code
 │   ├── cursor/              Rules and commands
 │   ├── skills/              Browser automation skill
