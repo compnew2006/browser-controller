@@ -13,13 +13,20 @@ import { broadcastStatus } from './connection.js';
 
 /**
  * Lock a tab for `owner`, persist the lock, raise the shield, broadcast.
- * Throws when another session already owns the tab.
+ * Throws when another session already owns the tab (TabLockMap.lock refuses
+ * to steal). Returns whether the input-blocking shield was actually injected —
+ * on a protected page (chrome:// …) it silently never appears, and the lock
+ * must not pretend the user is blocked when they aren't (audit HIGH #4).
  */
-export function lockTabUi(tabId, owner, message) {
+export async function lockTabUi(tabId, owner, message) {
   tabLocks.lock(tabId, owner);
   persistSessionState();
-  showLockShield(tabId); // show blue frame + input block for the lock lifetime
+  const shielded = await showLockShield(tabId); // plain frame, no label
   if (message) broadcastStatus(message);
+  if (!shielded) {
+    broadcastStatus(`Warning: input shield could not be injected on tab ${tabId} (protected page?) — lock is tracked, but user input is NOT blocked.`);
+  }
+  return shielded;
 }
 
 /**

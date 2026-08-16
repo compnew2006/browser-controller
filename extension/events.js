@@ -80,13 +80,12 @@ export function registerEventListeners() {
         respond({ success: false, error: 'tabId and sessionId required' });
         return false;
       }
-      try {
-        lockTabUi(msg.tabId, owner, `Tab ${msg.tabId} pinned to ${owner}`);
-        respond({ success: true });
-      } catch (err) {
-        respond({ success: false, error: err?.message || String(err) });
-      }
-      return false;
+      // lockTabUi is async (it awaits the shield injection) — keep Chrome's
+      // respond() channel open for the async reply.
+      lockTabUi(msg.tabId, owner, `Tab ${msg.tabId} pinned to ${owner}`)
+        .then((shielded) => respond({ success: true, shielded }))
+        .catch((err) => respond({ success: false, error: err?.message || String(err) }));
+      return true;
     }
     if (msg.type === 'unlockTab') {
       // { tabId } — release one tab's lock (vs unlockAll which clears all).

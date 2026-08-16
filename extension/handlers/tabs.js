@@ -12,7 +12,7 @@ import {
   getTabBuffer,
   persistSessionState,
 } from '../lib/state.js';
-import { hideLockShield } from '../lib/overlay.js';
+import { showLockShield, hideLockShield } from '../lib/overlay.js';
 import { broadcastStatus } from '../lib/connection.js';
 import { lockTabUi, releaseTabUi } from '../lib/lock-ops.js';
 
@@ -130,8 +130,8 @@ export async function handleTabs(params, sessionId) {
       // Validate the tab exists — locking a phantom id would create an entry
       // that onRemoved never cleans (it only fires for real tabs).
       await resolveTab(tabId);
-      lockTabUi(tabId, owner, `Tab ${tabId} locked by ${owner}`);
-      return { success: true, locked: tabId, owner };
+      const shielded = await lockTabUi(tabId, owner, `Tab ${tabId} locked by ${owner}`);
+      return { success: true, locked: tabId, owner, shielded };
     }
     case 'unlock': {
       if (!tabId) throw new Error('tabId required');

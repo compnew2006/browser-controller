@@ -7,7 +7,7 @@
 import { runOnTab as runOnTabLib } from './tab-concurrency.js';
 import { tabLocks, tabMutex, persistSessionState } from './state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from './connection.js';
-import { showOverlay, hideOverlay, hideLockShield } from './overlay.js';
+import { showLockShield, hideLockShield } from './overlay.js';
 import { getActiveTab, handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType, handlePressKey, handleHover, handleSelect, handleClickByText, handleDialog, handleDrag, handleFillForm } from '../handlers/interaction.js';
 import { handleWait, handleScroll, handleSnapshot, handleFind, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
@@ -175,7 +175,9 @@ export async function handleMessage(msg) {
     async () => {
       setCurrentActivity(tool);
       updateBadge('active');
-      await showOverlay(tabId, tool.replace('browser_', ''));
+      // Agent control shows the blue input-blocking frame with the running
+      // tool's name INSIDE it (user request) — the old corner badge is gone.
+      await showLockShield(tabId, tool.replace('browser_', ''));
       try {
         const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
         sendToolResponse(id, result);
@@ -184,7 +186,10 @@ export async function handleMessage(msg) {
       } finally {
         setCurrentActivity(null);
         updateBadge(isWsConnected() ? 'connected' : 'disconnected');
-        await hideOverlay(tabId);
+        // A locked tab keeps a plain frame (no label) for the lock's lifetime;
+        // an unlocked tab loses the frame once this action completes.
+        if (tabLocks.owner(tabId)) await showLockShield(tabId);
+        else await hideLockShield(tabId);
       }
     },
   )
