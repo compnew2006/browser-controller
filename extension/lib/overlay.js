@@ -25,9 +25,17 @@ export async function showLockShield(tabId, label) {
         if (!el) {
           el = document.createElement('div');
           el.id = '__bc-lock-shield';
+          // Blue spectrum fading from the viewport edges toward the center
+          // (user-tuned: half-width bands — sides 8%, top/bottom 10% — plus a
+          // soft inset glow; was judged too wide at 16%/20%).
           el.style.cssText =
             'position:fixed;inset:0;z-index:2147483647;pointer-events:auto;' +
-            'background:transparent;box-shadow:inset 0 0 0 4px #2563eb;';
+            'background:' +
+              'linear-gradient(to right,  rgba(37,99,235,.48) 0%, transparent 8%),' +
+              'linear-gradient(to left,   rgba(37,99,235,.48) 0%, transparent 8%),' +
+              'linear-gradient(to bottom,rgba(37,99,235,.48) 0%, transparent 10%),' +
+              'linear-gradient(to top,    rgba(37,99,235,.48) 0%, transparent 10%);' +
+            'box-shadow:inset 0 0 70px 15px rgba(37,99,235,.25);';
           const block = (e) => {
             // Agent's own synthetic events (handleType/handlePressKey dispatch
             // KeyboardEvent directly on the target) have isTrusted===false and

@@ -67,15 +67,22 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
   });
 
-  it('shows the lock-shield frame WITH the tool label during an agent action (no corner badge)', async () => {
-    await handleMessage({ id: 'a1', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1' });
+  it('shows the lock-shield frame WITH the agent-name label during an agent action (no corner badge)', async () => {
+    await handleMessage({ id: 'a1', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
     await flush();
 
     const shields = shieldInjections();
     expect(shields.length, 'a shield injection must happen for the action').toBeGreaterThanOrEqual(1);
-    expect(shields[0]!.args).toContain('console'); // tool name lives INSIDE the frame
+    // The label names the AGENT controlling the tab (user request), not the tool.
+    expect(shields[0]!.args).toContain('agent Vitest controlling the tab');
     expect(overlayInjections(), 'the old corner badge must not be used anymore').toEqual([]);
     expect(sent.find((f) => f.id === 'a1')?.success).toBe(true);
+  });
+
+  it('falls back to a generic label when the message carries no agentName', async () => {
+    await handleMessage({ id: 'a4', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1' });
+    await flush();
+    expect(shieldInjections()[0]!.args).toContain('agent controlling the tab');
   });
 
   it('removes the frame when the action ends on an UNLOCKED tab', async () => {
@@ -90,13 +97,13 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
 
   it('keeps a plain frame (no label) after the action when the tab is LOCKED', async () => {
     tabLocks.lock(3, 's1');
-    await handleMessage({ id: 'a3', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1' });
+    await handleMessage({ id: 'a3', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
     await flush();
 
     const shields = shieldInjections();
     expect(shields.length).toBeGreaterThanOrEqual(2); // show-with-label, then re-show plain
     const last = shields.at(-1)!;
-    expect(last.args).not.toContain('console'); // label gone, frame persists
+    expect(last.args).not.toContain('agent Vitest controlling the tab'); // label gone, frame persists
     expect(last.func.includes('__bc-lock-shield')).toBe(true);
   });
 

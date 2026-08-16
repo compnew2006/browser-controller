@@ -175,9 +175,11 @@ export async function handleMessage(msg) {
     async () => {
       setCurrentActivity(tool);
       updateBadge('active');
-      // Agent control shows the blue input-blocking frame with the running
-      // tool's name INSIDE it (user request) — the old corner badge is gone.
-      await showLockShield(tabId, tool.replace('browser_', ''));
+      // Agent control shows the blue input-blocking spectrum; the label names
+      // the AGENT (user request: "agent {name} controlling the tab"), not the
+      // running tool. agentName is a top-level WS field (audit M1); fall back
+      // to a generic label for anonymous direct-WS callers.
+      await showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab');
       try {
         const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
         sendToolResponse(id, result);
