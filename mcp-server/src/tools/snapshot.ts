@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const snapshotTool: ToolDefinition = {
   name: 'browser_snapshot',
@@ -14,8 +14,5 @@ export const snapshotTool: ToolDefinition = {
   // Read-only (refs are deterministic given a stable DOM): safe to retry.
   idempotent: true,
   timeoutMs: 15_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_snapshot', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_snapshot'),
 };

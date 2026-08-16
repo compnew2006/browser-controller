@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { optionalTabId, textResult } from './types.js';
+import { optionalTabId, forwardHandler } from './types.js';
 
 export const navigateTool: ToolDefinition = {
   name: 'browser_navigate',
@@ -20,8 +20,5 @@ export const navigateTool: ToolDefinition = {
       .describe('Return an inline snapshot of the new page (default true). Set false to save tokens when you will call browser_snapshot yourself.'),
   }),
   timeoutMs: 60_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_navigate', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_navigate'),
 };

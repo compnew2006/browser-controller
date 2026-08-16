@@ -6,8 +6,10 @@ import { isIdempotent, toolTimeoutMs } from './tools/index.js';
 /**
  * Signature of an HTTP request handler the daemon can register so it can serve
  * `/pair` (token bootstrap) and `/status` (connected agents) on the SAME port
- * as the WebSocket. Returning a value serializes it as JSON; returning undefined
- * means the handler already wrote the response.
+ * as the WebSocket. Returning a value serializes it as JSON; returning
+ * undefined answers 404 Not found (the daemon does this for unknown paths —
+ * previously the response was left open and the client hung until its own
+ * timeout).
  */
 export type HttpRequestHandler = (
   req: http.IncomingMessage,
@@ -298,7 +300,12 @@ export class ExtensionBridge {
         try {
           const url = new URL(req.url || '/', `http://${this.host}`);
           const out = await this.httpHandler(req, url);
-          if (out === undefined) return; // handler wrote the response itself
+          if (out === undefined) {
+            // No handler claimed this path — answer 404 instead of leaving the
+            // response open (the client would hang until its own timeout).
+            res.writeHead(404, corsHeaders(req, this.pinnedExtensionOrigin)).end('Not found');
+            return;
+          }
           const body = typeof out === 'string' ? out : JSON.stringify(out);
           res.writeHead(200, { 'Content-Type': typeof out === 'string' ? 'text/plain' : 'application/json', ...corsHeaders(req, this.pinnedExtensionOrigin) });
           res.end(body);
@@ -442,7 +449,11 @@ export class ExtensionBridge {
     if (msg.success) {
       pending.resolve(msg.result);
     } else {
-      pending.reject(new Error(msg.error || 'Unknown error from extension'));
+      const err = new Error(msg.error || 'Unknown error from extension');
+      // Unified error channel: keep the tool's in-band payload (e.g. REF_GONE
+      // freshRefs) on the rejection so the tool layer can surface it verbatim.
+      if (msg.result !== undefined) (err as Error & { result?: unknown }).result = msg.result;
+      pending.reject(err);
     }
   }
 

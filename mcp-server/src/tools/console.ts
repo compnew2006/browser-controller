@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const consoleTool: ToolDefinition = {
   name: 'browser_console',
@@ -14,8 +14,5 @@ export const consoleTool: ToolDefinition = {
   // the original messages. See audit M2.
   idempotent: false,
   timeoutMs: 5_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_console', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_console'),
 };

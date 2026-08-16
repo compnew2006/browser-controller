@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const uploadFileTool: ToolDefinition = {
   name: 'browser_upload_file',
@@ -17,8 +17,5 @@ export const uploadFileTool: ToolDefinition = {
       .describe('Array of local file paths to upload (multiple files)'),
   }),
   timeoutMs: 15_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_upload_file', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_upload_file'),
 };

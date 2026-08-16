@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const textTool: ToolDefinition = {
   name: 'browser_text',
@@ -13,8 +13,5 @@ export const textTool: ToolDefinition = {
   // Read-only: safe to retry on timeout. (Fixes prior wire-name drift — C1.)
   idempotent: true,
   timeoutMs: 15_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_text', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_text'),
 };

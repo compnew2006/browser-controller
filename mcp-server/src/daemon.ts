@@ -31,6 +31,7 @@ import {
   IPC_SOCKET_PATH,
   STATE_DIR,
   TOKEN_FILE,
+  envInt,
   loadOrCreateEnrollment,
   loadOrCreateToken,
   type IpcClientMessage,
@@ -60,8 +61,8 @@ interface IpcClient {
  *  killed without a graceful FIN) linger in `clients` for minutes until the OS
  *  finally delivers `close` — which is what produced the "14 zombie agents"
  *  symptom in the popup. Override via env for tests (fast eviction). */
-const HEARTBEAT_INTERVAL_MS = parseInt(process.env.BC_HEARTBEAT_MS || '15000', 10);
-const HEARTBEAT_MAX_MISSED = parseInt(process.env.BC_HEARTBEAT_MAX_MISSED || '3', 10);
+const HEARTBEAT_INTERVAL_MS = envInt('BC_HEARTBEAT_MS', 15_000);
+const HEARTBEAT_MAX_MISSED = envInt('BC_HEARTBEAT_MAX_MISSED', 3);
 
 /**
  * Per-session tool-call budget over a rolling 60s window. Protects the browser
@@ -73,7 +74,8 @@ const HEARTBEAT_MAX_MISSED = parseInt(process.env.BC_HEARTBEAT_MAX_MISSED || '3'
  * is harmless for a local dev tool.
  */
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_PER_MIN = parseInt(process.env.BC_RATE_LIMIT_PER_MIN || '120', 10);
+// min 0: 0 disables the limiter (documented opt-out for tests / power users).
+const RATE_LIMIT_PER_MIN = envInt('BC_RATE_LIMIT_PER_MIN', 120, 0);
 
 class Daemon {
   private bridge: ExtensionBridge;
@@ -82,6 +84,13 @@ class Daemon {
   /** daemon-global call id counter -> { client, clientId } to route the reply. */
   private pendingCalls = new Map<string, { client: IpcClient; clientId: string }>();
   private sessionIdCounter = 0;
+  /**
+   * Monotonic per-daemon call sequence. `Date.now()` alone collided when two
+   * clients sent the same local msg.id within one millisecond — the second
+   * pendingCalls.set() overwrote the first and one client received the other's
+   * result.
+   */
+  private callSeq = 0;
   private token: string;
   private enrollmentSecret: string;
   private startedAt = Date.now();
@@ -356,7 +365,7 @@ class Daemon {
       client.rateBudget--;
     }
 
-    const daemonCallId = `c${Date.now().toString(36)}-${msg.id}`;
+    const daemonCallId = `c${Date.now().toString(36)}-${++this.callSeq}-${msg.id}`;
     // One AbortController per call so the close handler can cancel in-flight
     // work when this client is evicted (heartbeat) or replaced (dedup). Without
     // this, a non-idempotent action (click/type) keeps running after the
@@ -374,7 +383,16 @@ class Daemon {
       this.sendToClient(client, { kind: 'result', id: msg.id, success: true, result });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      this.sendToClient(client, { kind: 'result', id: msg.id, success: false, error });
+      // Unified error channel: a payload-carrying rejection (in-band tool
+      // failure) must reach the thin client intact, not just its message.
+      const payload = (err as { result?: unknown })?.result;
+      this.sendToClient(client, {
+        kind: 'result',
+        id: msg.id,
+        success: false,
+        error,
+        ...(payload !== undefined ? { result: payload } : {}),
+      });
     } finally {
       client.pending.delete(msg.id);
       this.pendingCalls.delete(daemonCallId);
@@ -441,7 +459,13 @@ class Daemon {
       startedAt: this.startedAt,
       version: '2.0.0',
     };
-    fs.writeFileSync(DAEMON_INFO_FILE, JSON.stringify(info, null, 2));
+    // Write-then-rename so a concurrent thin client never reads a partially
+    // written daemon.json: JSON.parse of a truncated file throws, the client's
+    // daemonLooksAlive() swallows it, returns false, and it spawns a COMPETING
+    // daemon — the exact kill-loop this file tries to prevent.
+    const tmp = `${DAEMON_INFO_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(info, null, 2));
+    fs.renameSync(tmp, DAEMON_INFO_FILE);
   }
 
   /** @internal exposed for tests: number of connected MCP clients. */

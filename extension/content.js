@@ -24,7 +24,11 @@
     //     before the listener replies. Harmless; nothing our code can do about it.
     if (text.indexOf('ResizeObserver loop') !== -1) return;
     if (text.indexOf('message channel closed before a response was received') !== -1) return;
-    try { chrome.runtime.sendMessage({ type: 'console', level, text }); } catch {}
+    // Cap the entry BEFORE shipping it: the per-tab buffer only caps the ENTRY
+    // COUNT (200), so one console.log(hugeString) would otherwise pin the full
+    // payload in service-worker memory and return all of it to the agent.
+    const capped = text.length > 2000 ? text.slice(0, 2000) + '…[truncated]' : text;
+    try { chrome.runtime.sendMessage({ type: 'console', level, text: capped }); } catch {}
   }
 
   console.log = (...a) => capture('log', ...a);

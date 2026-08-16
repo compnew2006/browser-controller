@@ -135,6 +135,34 @@ describe('ExtensionBridge', () => {
     await expect(bridge.callTool('browser_click', { ref: 'e1' })).rejects.toThrow('not found');
   });
 
+  it('preserves the failure payload across the rejection (unified error channel)', async () => {
+    // Architecture fix: in-band tool failures (e.g. REF_GONE freshRefs) travel
+    // as success:false + result on the wire; the bridge must attach that
+    // payload to the rejection so the tool layer can surface it verbatim
+    // instead of collapsing it to a bare message string.
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const client = await connectClient(port);
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.tool) {
+        client.send(JSON.stringify({
+          id: msg.id,
+          success: false,
+          error: 'Element e5 is gone from the DOM',
+          result: { success: false, error: 'Element e5 is gone', freshRefs: [{ ref: 'x1' }] },
+        }));
+      }
+    });
+
+    const err = await bridge.callTool('browser_click', { ref: 'e5' }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain('gone');
+    expect(err.result).toEqual({ success: false, error: 'Element e5 is gone', freshRefs: [{ ref: 'x1' }] });
+  });
+
   it('waitForConnection resolves when already connected', async () => {
     const port = nextPort();
     const bridge = createBridge(port);
@@ -455,6 +483,21 @@ describe('ExtensionBridge', () => {
 
     const res = await httpGet(port, '/status'); // no Origin header
     expect(res.status).toBe(200);
+  });
+
+  it('an unhandled path answers 404 instead of hanging (handler returns undefined)', async () => {
+    // Regression (critical audit #3): the daemon's handleHttp returns undefined
+    // for unknown routes and the bridge treated that as "handler already wrote
+    // the response" — so no res.end() ever fired and the client hung until its
+    // own timeout. Undefined must map to a real 404.
+    const port = nextPort();
+    const bridge = createBridge(port);
+    bridge.registerHttpHandler(() => undefined); // what Daemon.handleHttp does for unknown paths
+    await bridge.start();
+
+    const res = await httpGet(port, '/nope');
+    expect(res.status).toBe(404);
+    expect(res.body).toBe('Not found');
   });
 
   // --- Exact-match on pinned extension ID (the "other malicious extension"

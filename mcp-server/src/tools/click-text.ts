@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const clickTextTool: ToolDefinition = {
   name: 'browser_click_text',
@@ -9,12 +9,9 @@ export const clickTextTool: ToolDefinition = {
   inputSchema: z.object({
     tabId: requireTabId(),
     text: z.string().describe('Text to match against element content (first line)'),
-    index: z.number().optional().describe('Which match to click if multiple (0-based, default 0)'),
+    index: z.number().int().min(0).optional().describe('Which match to click if multiple (0-based, default 0)'),
     exact: z.boolean().optional().describe('Require exact match instead of substring (default false)'),
   }),
   timeoutMs: 10_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_click_text', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_click_text'),
 };

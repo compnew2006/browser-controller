@@ -52,13 +52,20 @@ describe('Tool Registry', () => {
   });
 
   // --- Wire-name drift guard (audit C1) -------------------------------------
-  // The tool's .name MUST equal the string it passes to bridge.callTool(),
+  // The tool's .name MUST equal the wire name it sends to bridge.callTool(),
   // otherwise idempotency-retry lookup silently fails and the extension's
   // dispatch needs aliases to paper over the mismatch. This previously broke
-  // browser_find/browser_text. Static-source check on handler.toString().
+  // browser_find/browser_text. Passthrough tools use the forwardHandler
+  // factory, which tags the closure with its wire name; custom handlers
+  // (screenshot) still carry a literal callTool('...') in source.
   describe('wire name == .name (no drift)', () => {
     for (const tool of allTools) {
-      it(`${tool.name} calls bridge.callTool with its own name`, () => {
+      it(`${tool.name} sends its own wire name`, () => {
+        const tagged = (tool.handler as { toolName?: string }).toolName;
+        if (tagged !== undefined) {
+          expect(tagged, `${tool.name} factory wire name must equal .name`).toBe(tool.name);
+          return;
+        }
         const src = tool.handler.toString();
         const calls = [...src.matchAll(/callTool\(\s*['"]([^'"]+)['"]/g)];
         expect(calls.length, `${tool.name} should call bridge.callTool exactly once`).toBe(1);

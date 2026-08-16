@@ -146,13 +146,30 @@ export class TabLockMap {
 
 /**
  * Convenience wrapper combining lock + mutex, matching runOnTab in background.js.
+ *
+ * Ownership is re-checked INSIDE the mutex task: checking only before joining
+ * the queue left a window (TOCTOU) where another session could lock the tab
+ * between waitFor() resolving and fn() actually starting, letting a non-owner
+ * act on a locked tab. When the tab changed hands, the task defers and the
+ * outer loop waits again. waitFor() stays OUTSIDE the mutex — waiting while
+ * holding the tab mutex would deadlock the owner's own unlock call.
+ *
  * @param {TabLockMap} locks
  * @param {TabMutexMap} mutex
  * @param {number} tabId
  * @param {string|null} sessionId
  * @param {() => (Promise<unknown> | unknown)} fn
  */
+const DEFER = Symbol('runOnTab.defer');
+
 export async function runOnTab(locks, mutex, tabId, sessionId, fn) {
-  await locks.waitFor(tabId, sessionId);
-  return mutex.run(tabId, fn);
+  for (;;) {
+    await locks.waitFor(tabId, sessionId);
+    const out = await mutex.run(tabId, async () => {
+      const owner = locks.owner(tabId);
+      if (sessionId != null && owner !== undefined && owner !== sessionId) return DEFER;
+      return { value: await fn() };
+    });
+    if (out !== DEFER) return out.value;
+  }
 }

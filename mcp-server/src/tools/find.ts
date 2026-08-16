@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const findTool: ToolDefinition = {
   name: 'browser_find',
@@ -16,8 +16,5 @@ export const findTool: ToolDefinition = {
   // this retry — see audit C1.)
   idempotent: true,
   timeoutMs: 15_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_find', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_find'),
 };

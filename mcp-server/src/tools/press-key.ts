@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const pressKeyTool: ToolDefinition = {
   name: 'browser_press_key',
@@ -17,8 +17,5 @@ export const pressKeyTool: ToolDefinition = {
     selector: z.string().optional().describe('CSS selector to focus before pressing'),
   }),
   timeoutMs: 5_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_press_key', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_press_key'),
 };

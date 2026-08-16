@@ -18,7 +18,19 @@ import crypto from 'node:crypto';
  * per-client `sessionId` so the extension can do per-agent tab locking (2.2).
  */
 
-export const DEFAULT_WS_PORT = parseInt(process.env.WS_PORT || '7225', 10);
+/**
+ * Parse an integer env var, falling back to `def` when unset, non-numeric, or
+ * outside [min, max]. Bare `parseInt(process.env.X || '…')` yields NaN for
+ * garbage values — a NaN WS port crashes listen() and a NaN heartbeat interval
+ * fires pings ~every 1ms.
+ */
+export function envInt(name: string, def: number, min = 1, max?: number): number {
+  const raw = parseInt(process.env[name] ?? '', 10);
+  if (Number.isFinite(raw) && raw >= min && (max === undefined || raw <= max)) return raw;
+  return def;
+}
+
+export const DEFAULT_WS_PORT = envInt('WS_PORT', 7225, 1, 65535);
 export const DEFAULT_WS_HOST = process.env.WS_HOST || '127.0.0.1';
 
 /**

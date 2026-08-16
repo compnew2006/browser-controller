@@ -221,4 +221,25 @@ describe('runOnTab (combined lock + mutex, tasks 2.1+2.2)', () => {
     await Promise.all([mk('t1', 1), mk('t2', 2)]);
     expect(overlap).toBe(true);
   });
+
+  it('re-checks lock ownership after entering the mutex (TOCTOU regression)', async () => {
+    // Regression (critical audit #4): runOnTab used to waitFor() BEFORE joining
+    // the per-tab mutex queue. A lock granted in that gap (between waitFor
+    // resolving and fn actually starting) let a NON-owner run against a locked
+    // tab. The fix re-checks ownership inside the mutex task and defers back
+    // to waitFor when the tab changed hands.
+    const events: string[] = [];
+    const p = runOnTab(locks, mutex, 1, 'agentB', async () => {
+      events.push('b-ran');
+      return 'done';
+    });
+    // Simulate the race: agentA locks synchronously right after runOnTab is
+    // called — before B's fn can start.
+    locks.lock(1, 'agentA');
+    await new Promise((r) => setTimeout(r, 120));
+    expect(events).toEqual([]); // B must NOT run while A holds the lock
+    locks.unlock(1, 'agentA');
+    await expect(p).resolves.toBe('done');
+    expect(events).toEqual(['b-ran']);
+  });
 });

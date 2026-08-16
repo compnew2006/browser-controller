@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const runActionTool: ToolDefinition = {
   name: 'browser_run_action',
@@ -21,8 +21,5 @@ export const runActionTool: ToolDefinition = {
       .describe('Parameters to pass to the action execute() function'),
   }),
   timeoutMs: 30_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_run_action', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_run_action'),
 };

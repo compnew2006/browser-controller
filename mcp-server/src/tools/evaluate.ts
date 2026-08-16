@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const evaluateTool: ToolDefinition = {
   name: 'browser_evaluate',
@@ -12,8 +12,5 @@ export const evaluateTool: ToolDefinition = {
     expression: z.string().describe('JavaScript expression or code to evaluate in the page context'),
   }),
   timeoutMs: 15_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_evaluate', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_evaluate'),
 };

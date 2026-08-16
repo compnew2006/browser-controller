@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { textResult } from './types.js';
+import { textResult, jsonError } from './types.js';
 import { allTools, toolMap } from './index.js';
 
 /**
@@ -77,7 +77,7 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_screenshot:
     'Use to capture a visual image (PNG/JPEG). Cannot be done via JS — this is the only way to see the page.',
   browser_evaluate:
-    'Use for one-off JS in the page MAIN world (no debugger banner, CSP-safe). NOTE: on strict-CSP SPAs it may return null — fall back to browser_run_action.',
+    'Use for one-off JS in the page MAIN world (no debugger banner). CSP-RESTRICTED: on strict-CSP SPAs it may return null — fall back to browser_run_action (CDP, bypasses CSP).',
   browser_run_action:
     'Escape hatch: read/write DOM, fetch an internal API, or read cookies on a strict-CSP site. Runs via CDP so it bypasses CSP and returns real values. Shows a yellow "is being debugged" banner.',
   browser_tabs:
@@ -146,7 +146,7 @@ Workflow: call "list" or "search" first, then "details" on the tool you need, th
 
       if (action === 'search') {
         if (!query) {
-          return textResult(JSON.stringify({ error: 'query is required for action:"search"' }));
+          return jsonError({ error: 'query is required for action:"search"' });
         }
         const q = query.toLowerCase();
         const matches = allTools
@@ -162,16 +162,14 @@ Workflow: call "list" or "search" first, then "details" on the tool you need, th
 
       if (action === 'details') {
         if (!tool) {
-          return textResult(JSON.stringify({ error: 'tool is required for action:"details"' }));
+          return jsonError({ error: 'tool is required for action:"details"' });
         }
         const def = toolMap.get(tool);
         if (!def) {
-          return textResult(
-            JSON.stringify({
-              error: `Unknown tool: ${tool}`,
-              available: allTools.filter((t) => t.name !== 'browser_tools').map((t) => t.name),
-            }),
-          );
+          return jsonError({
+            error: `Unknown tool: ${tool}`,
+            available: allTools.filter((t) => t.name !== 'browser_tools').map((t) => t.name),
+          });
         }
         // Activate the tool so the agent can call it directly after this.
         deps.onActivate(tool);
@@ -192,7 +190,7 @@ Workflow: call "list" or "search" first, then "details" on the tool you need, th
         );
       }
 
-      return textResult(JSON.stringify({ error: `Unknown action: ${action}. Use "list", "search", or "details".` }));
+      return jsonError({ error: `Unknown action: ${action}. Use "list", "search", or "details".` });
     },
   };
 }

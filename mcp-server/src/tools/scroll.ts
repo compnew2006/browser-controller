@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const scrollTool: ToolDefinition = {
   name: 'browser_scroll',
@@ -15,8 +15,5 @@ export const scrollTool: ToolDefinition = {
     position: z.enum(['top', 'bottom']).optional().describe('Scroll to top or bottom of page'),
   }),
   timeoutMs: 10_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_scroll', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_scroll'),
 };

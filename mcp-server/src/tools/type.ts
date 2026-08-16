@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const typeTool: ToolDefinition = {
   name: 'browser_type',
@@ -13,8 +13,5 @@ export const typeTool: ToolDefinition = {
     clear: z.boolean().optional().default(false).describe('Clear the field before typing'),
   }),
   timeoutMs: 15_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_type', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_type'),
 };

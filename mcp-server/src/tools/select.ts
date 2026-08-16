@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const selectTool: ToolDefinition = {
   name: 'browser_select',
@@ -14,8 +14,5 @@ export const selectTool: ToolDefinition = {
     index: z.number().optional().describe('Option index to select (0-based)'),
   }),
   timeoutMs: 10_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_select', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_select'),
 };

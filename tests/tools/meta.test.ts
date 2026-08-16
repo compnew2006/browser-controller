@@ -131,4 +131,24 @@ describe('browser_tools meta tool (progressive disclosure)', () => {
     expect(data.error).toContain('search');
     expect(data.error).toContain('details');
   });
+
+  it('error paths set isError so clients can detect failure (audit: in-band-only errors)', async () => {
+    // Regression (critical audit #7): every meta-tool error used to return a
+    // success-shaped textResult — clients keying on isError (like wrapHandler)
+    // treated failures as successes. Errors must keep the JSON body AND set
+    // isError: true.
+    const cases: Array<Record<string, unknown>> = [
+      { action: 'search' },                      // missing query
+      { action: 'details' },                     // missing tool
+      { action: 'details', tool: 'browser_nope' }, // unknown tool
+      { action: 'bogus' },                       // unknown action
+    ];
+    for (const params of cases) {
+      const result = await metaTool.handler(fakeHost, params);
+      expect(result.isError).toBe(true);
+      const body = JSON.parse((result.content[0] as { text: string }).text);
+      expect(typeof body.error).toBe('string');
+      expect(body.error.length).toBeGreaterThan(0);
+    }
+  });
 });

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const dragTool: ToolDefinition = {
   name: 'browser_drag',
@@ -16,11 +16,8 @@ export const dragTool: ToolDefinition = {
     startY: z.number().optional().describe('Start Y coordinate (if not using ref/selector)'),
     endX: z.number().optional().describe('End X coordinate (if not using ref/selector)'),
     endY: z.number().optional().describe('End Y coordinate (if not using ref/selector)'),
-    steps: z.number().optional().default(10).describe('Number of intermediate mouse move steps'),
+    steps: z.number().int().min(1).optional().default(10).describe('Number of intermediate mouse move steps'),
   }),
   timeoutMs: 10_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_drag', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_drag'),
 };

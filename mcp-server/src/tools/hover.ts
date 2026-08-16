@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, textResult } from './types.js';
+import { requireTabId, forwardHandler } from './types.js';
 
 export const hoverTool: ToolDefinition = {
   name: 'browser_hover',
@@ -11,8 +11,5 @@ export const hoverTool: ToolDefinition = {
     selector: z.string().optional().describe('CSS selector for the element'),
   }),
   timeoutMs: 5_000,
-  async handler(bridge, params) {
-    const result = await bridge.callTool('browser_hover', params);
-    return textResult(JSON.stringify(result));
-  },
+  handler: forwardHandler('browser_hover'),
 };

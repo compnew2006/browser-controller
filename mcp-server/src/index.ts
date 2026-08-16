@@ -95,6 +95,10 @@ class DaemonClient {
   }
 
   async connect(): Promise<void> {
+    // A partial NDJSON line from the DEAD connection must not leak into the
+    // new stream — it would corrupt framing and make the first message after
+    // respawn unparseable. connect() is also the one-shot respawn path.
+    this.buf = '';
     this.socket = net.createConnection(this.ipcPath);
     await new Promise<void>((resolve, reject) => {
       const onErr = (err: Error) => reject(err);
@@ -180,7 +184,13 @@ class DaemonClient {
         clearTimeout(entry.t);
         this.pending.delete(id);
         if (msg.success) entry.resolve(msg.result);
-        else entry.reject(new Error(msg.error || 'Unknown daemon error'));
+        else {
+          const err = new Error(msg.error || 'Unknown daemon error');
+          // Unified error channel: preserve the tool's in-band payload (the
+          // daemon forwards it alongside the error) for the tool layer.
+          if (msg.result !== undefined) (err as Error & { result?: unknown }).result = msg.result;
+          entry.reject(err);
+        }
         break;
       }
       default:
@@ -433,17 +443,15 @@ async function main(): Promise<void> {
   // 4) wire MCP <-> daemon
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 
-  // Progressive disclosure (Anthropic "Code Execution with MCP" pattern):
-  // Instead of registering all 22 tools upfront (~4200 tokens in system prompt),
-  // only browser_tools (the meta tool) is visible, and the agent discovers +
-  // activates other tools on demand via browser_tools {action:"details"}.
-  //
-  // Default is FULL mode (all tools visible) for safety — existing agents that
-  // call browser_click directly will work without changes. Opt INTO progressive
-  // disclosure with BROWSER_CONTROLLER_PROGRESSIVE=1: the initial tools/list
-  // drops ~96% (~150 vs ~4200 tokens); a typical task that activates 3-5 tools
-  // via browser_tools still nets ~75-80% savings.
-  const fullMode = !process.env.BROWSER_CONTROLLER_PROGRESSIVE;
+  // Progressive disclosure (Anthropic "Code Execution with MCP" pattern).
+  // CANONICAL documentation lives on registerTools() in register-tools.ts —
+  // this comment is intentionally just a pointer; the mechanism was previously
+  // explained in three places and they drifted.
+  // Only explicit opt-in values enable progressive mode. The previous truthiness
+  // check treated `=0` and `=false` as ENABLED — the exact opposite of what a
+  // user disabling it via BROWSER_CONTROLLER_PROGRESSIVE=0 intended.
+  const progressiveRaw = (process.env.BROWSER_CONTROLLER_PROGRESSIVE ?? '').trim().toLowerCase();
+  const fullMode = !(progressiveRaw === '1' || progressiveRaw === 'true');
 
   // Registration logic lives in register-tools.ts so the disable/enable wiring
   // is covered by tests/register-tools.test.ts (this main() needs a live daemon).

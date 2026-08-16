@@ -72,8 +72,56 @@ export function textResult(text: string): ToolResult {
   return { content: [{ type: 'text', text }] };
 }
 
+/**
+ * JSON-body error result: same parseable body as textResult(JSON.stringify(…))
+ * but flagged isError:true, so clients can detect failure uniformly (the same
+ * contract wrapHandler enforces for thrown errors). Used by the meta tool.
+ */
+export function jsonError(payload: unknown): ToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(payload) }], isError: true };
+}
+
 export function errorResult(message: string): ToolResult {
   return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
+}
+
+/**
+ * Shared passthrough handler for extension-backed tools (DRY audit item #1:
+ * this body was copy-pasted in 21 of 22 tool files). Forwards to the host and
+ * JSON-wraps the result.
+ *
+ * Unified error channel: when the extension reports an in-band failure
+ * ({success:false, ...}), the bridge/daemon reject with the payload attached
+ * (`.result`); this handler surfaces that payload as an isError result so the
+ * agent gets uniform failure detection AND the body (e.g. REF_GONE
+ * freshRefs). Transport errors without a payload re-throw for wrapHandler.
+ *
+ * The returned function is tagged with its wire name — the registry's
+ * drift-guard test reads the tag instead of scraping handler source (the
+ * factory closes over the name, so a source regex can't see it).
+ */
+/**
+ * The in-band failure payload attached to a rejection by the bridge/daemon
+ * chain (unified error channel), if any. Shared by forwardHandler and the
+ * custom screenshot handler so both surface payloads identically.
+ */
+export function payloadOf(err: unknown): unknown {
+  return (err as { result?: unknown })?.result;
+}
+
+export function forwardHandler(name: string) {
+  const handler = async (host: ToolHost, params: Record<string, unknown>): Promise<ToolResult> => {
+    try {
+      const result = await host.callTool(name, params);
+      return textResult(JSON.stringify(result));
+    } catch (err) {
+      const payload = payloadOf(err);
+      if (payload !== undefined) return jsonError(payload);
+      throw err;
+    }
+  };
+  (handler as { toolName?: string }).toolName = name;
+  return handler;
 }
 
 export function imageResult(base64: string, mimeType = 'image/png'): ToolResult {
