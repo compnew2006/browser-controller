@@ -51,6 +51,9 @@ v1 was a single-client server: one agent, one active tab. If you switched tabs o
 - **Tab locking.** An agent can claim a tab so others queue behind it instead of racing (`browser_tabs { action: "lock" }`).
 - **Authenticated WebSocket.** The extension↔daemon connection requires a token, so no other local process can silently drive your browser.
 - **No debugger banner.** `browser_evaluate` runs in the page's MAIN world via `chrome.scripting` — no yellow "this tab is being debugged" banner. (The result is JSON-serialized inside the page and parsed back in the background to survive the MV3 structured-clone boundary — earlier versions returned `null` for every expression.)
+- **Agent-control shield.** While an agent works on a tab you see a blue inner frame and your input on that tab is blocked (mouse, keyboard, wheel) — the frame shows the running tool's name and disappears when the action finishes. Locking a tab keeps a plain frame for the lock's lifetime.
+- **Honest errors.** Every tool failure reaches your agent as a real `isError` result with the full payload — no more "success" responses hiding failures mid-workflow.
+- **Recycle-proof locks.** Tab locks and smart-selector fallbacks survive Chrome's service-worker recycling (`chrome.storage.session`).
 
 <p align="center">
   <img src="assets/preview.png" alt="Browser Controller" width="100%" />
@@ -401,9 +404,13 @@ browser-controller/
 │       ├── index.ts         Thin stdio MCP client (spawns daemon, multiplexes)
 │       ├── bridge.ts        Extension WS server + cross-platform port probe
 │       └── tools/           One file per tool (22), registry pattern
-├── extension/           Chrome extension (Manifest V3, plain JS)
-│   ├── background.js        Service worker: tab resolution, per-tab mutex, locks
-│   ├── lib/tab-concurrency.js  Pure, unit-tested mutex + lock primitives
+├── extension/           Chrome extension (Manifest V3, plain JS, ES modules)
+│   ├── background.js        Wiring only (~30 lines): inject router, register events, connect
+│   ├── lib/                 state (buffers/locks/persistence), connection (WS lifecycle),
+│   │                        router (dispatch + mutex/locks + control shield), page-exec,
+│   │                        overlay, lock-ops, tab-concurrency (pure, unit-tested)
+│   ├── handlers/            Tool implementations: navigation, interaction, inspection, tabs, cdp
+│   ├── events.js            chrome.* listeners (console capture, popup, webRequest, lifecycle)
 │   ├── content.js          Console capture
 │   └── popup/              Status, Open Tabs (pin/unpin), Connected Agents (disconnect), tab-lock viewer
 ├── agent-config/        Pre-built configs for Cursor + Claude Code

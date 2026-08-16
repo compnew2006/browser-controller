@@ -25,9 +25,11 @@ Once activated, a tool stays visible for the rest of the session. You only need 
 This is a multi-client server. **Never assume which tab your actions hit.** You MUST target a tab explicitly with `tabId`.
 
 1. `browser_tabs` with `action: "list"` → get a `tabId`
-2. Pass that **same `tabId`** to every page-interaction tool
+2. Pass that **same** `tabId` to every page-interaction tool
 3. Refs from a snapshot are valid **only for the tabId that produced them**
 4. For exclusive access: `browser_tabs { action: "lock", tabId }` → `unlock` when done
+
+Note: while any tool runs on a tab, the USER sees a blue frame and their input on that tab is blocked (that is by design — it protects your workflow); a lock keeps the frame for the lock's whole lifetime.
 
 ## Element refs + automatic recovery
 

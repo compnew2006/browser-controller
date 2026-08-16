@@ -2,6 +2,23 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * App version, single-sourced from package.json (extension/manifest.json and
+ * daemon.json report the same value). Previously three literals drifted
+ * silently (audit finding). Runs from src/ (vitest) or dist/ (installed) —
+ * package.json sits two levels up from both.
+ */
+export const APP_VERSION: string = (() => {
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
+    const v = (JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version?: string }).version;
+    return typeof v === 'string' && v ? v : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 /**
  * Daemon configuration, IPC protocol, paths, and auth-token helpers.

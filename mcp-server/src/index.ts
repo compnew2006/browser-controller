@@ -55,6 +55,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { allTools } from './tools/index.js';
 import { registerTools } from './register-tools.js';
 import {
+  APP_VERSION,
   DAEMON_INFO_FILE,
   IPC_SOCKET_PATH,
   STATE_DIR,
@@ -64,7 +65,7 @@ import {
 } from './daemon-config.js';
 
 const SERVER_NAME = 'browser-controller';
-const SERVER_VERSION = '2.0.0';
+const SERVER_VERSION = APP_VERSION;
 const DAEMON_STARTUP_MS = 8_000;
 const CONNECT_RETRY_MS = 250;
 const MAX_CONNECT_TRIES = 32; // ~8s

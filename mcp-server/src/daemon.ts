@@ -24,6 +24,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
+  APP_VERSION,
   DEFAULT_WS_HOST,
   DEFAULT_WS_PORT,
   DAEMON_INFO_FILE,
@@ -457,7 +458,7 @@ class Daemon {
       port: DEFAULT_WS_PORT,
       host: DEFAULT_WS_HOST,
       startedAt: this.startedAt,
-      version: '2.0.0',
+      version: APP_VERSION,
     };
     // Write-then-rename so a concurrent thin client never reads a partially
     // written daemon.json: JSON.parse of a truncated file throws, the client's
