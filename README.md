@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Browser Controller" width="100" height="100" />
+  <img src="https://cdn.jsdelivr.net/gh/compnew2006/browser-controller@51be0c2338b3ade9ebef1587b872cfa03dc45701/assets/logo.png" alt="Browser Controller" width="100" height="100" />
 </p>
 
 <h1 align="center">Browser Controller</h1>
