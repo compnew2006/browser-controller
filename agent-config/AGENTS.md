@@ -42,7 +42,7 @@ Refs (`e5`) can break on dynamic sites (React re-renders, virtualized feeds like
 ## Tools (22)
 
 Navigation: `browser_navigate` (tabId optional), `browser_tabs` (list/create/close/focus/lock/unlock)
-Interaction (tabId required): `browser_click`, `browser_click_text`, `browser_type`, `browser_press_key`, `browser_scroll`, `browser_hover`, `browser_select`, `browser_drag`, `browser_fill_form`, `browser_upload_file`
+Interaction (tabId required): `browser_click`, `browser_click_text`, `browser_type`, `browser_press_key`, `browser_scroll`, `browser_hover`, `browser_select`, `browser_drag`, `browser_fill_form`, `browser_upload_file` (local paths, sets `<input type="file">` with no dialog, fires input+change)
 Reading (tabId required): `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find`
 JS/Dialogs (tabId required): `browser_evaluate` (MAIN world, no banner), `browser_handle_dialog`, `browser_run_action`
 Waiting: `browser_wait`

@@ -5,7 +5,7 @@ import { requireTabId, forwardHandler } from './types.js';
 export const uploadFileTool: ToolDefinition = {
   name: 'browser_upload_file',
   summary: 'Upload a file to a file input element',  description:
-    'Upload a file through a file input element. Uses CDP DOM.setFileInputFiles — works even on strict-CSP pages. Provide the local file path and either a ref from snapshot, a CSS selector targeting the file input, or omit both to auto-find the first input[type="file"].',
+    'Upload a local file into an <input type="file"> WITHOUT opening the file dialog: CDP DOM.setFileInputFiles sets the files as if the user picked them, then input+change events fire so React/Vue handlers react. Works even on strict-CSP pages. Paths are absolute and local to the machine running the browser. Target the input with a ref from snapshot, a CSS selector, or omit both to auto-find the first input[type="file"]. Use files (array) for multiple uploads — requires an input that allows multiple.',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot (e.g. "e12")'),

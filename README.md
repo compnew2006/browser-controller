@@ -272,6 +272,20 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 | `browser_drag` | Drag element-to-element (uses CDP for reliability) |
 | `browser_upload_file` | Upload files through `<input type="file">` (uses CDP, strict-CSP safe) |
 
+<details>
+<summary><b>Uploading files — no file dialog</b></summary>
+
+`browser_upload_file` injects local files into an `<input type="file">` as if the user picked them: the native dialog never opens, and `input`/`change` events fire afterwards so React/Vue forms react.
+
+```
+browser_upload_file { tabId: 15, selector: "#resume", filePath: "/Users/me/resume.pdf" }
+browser_upload_file { tabId: 15, ref: "e12", files: ["/tmp/a.png", "/tmp/b.png"] }
+```
+
+Paths are absolute and local to the machine running the browser. Omit `ref`/`selector` to auto-target the first file input on the page; several files at once need an input with `multiple`.
+
+</details>
+
 **Navigate**
 
 | Tool | What it does |
