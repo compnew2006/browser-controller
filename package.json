@@ -1,7 +1,7 @@
 {
   "name": "browser-controller",
   "mcpName": "io.github.noiemany/browser-controller",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "MCP server + Chrome extension that gives AI agents control of your real browser with existing sessions and logins",
   "type": "module",
   "bin": {
