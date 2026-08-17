@@ -336,9 +336,19 @@ export async function handleFind(params) {
       return map[el.tagName] || el.tagName.toLowerCase();
     }
 
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+    // Same-origin iframe piercing (field report: legacy UIs live entirely
+    // inside #mainFrame — the top-document walk saw none of it).
+    const roots = [document.body];
+    (function collectFrames(doc, depth) {
+      if (depth >= 3) return;
+      for (const f of doc.querySelectorAll('iframe')) {
+        try { const d = f.contentDocument; if (d && d.body) { roots.push(d.body); collectFrames(d, depth + 1); } } catch {}
+      }
+    })(document, 0);
     let rc = 0;
     let node;
+    for (const root of roots) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     while ((node = walker.nextNode()) && matches.length < _lim * 3) {
       const s = getComputedStyle(node);
       const rect = node.getBoundingClientRect();
@@ -359,6 +369,7 @@ export async function handleFind(params) {
         ref, role: r, name: n.slice(0, 100), tag: node.tagName.toLowerCase(), score,
         bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
       });
+    }
     }
 
     matches.sort((a, b) => b.score - a.score);

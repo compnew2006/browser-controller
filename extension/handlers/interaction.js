@@ -15,9 +15,23 @@ export async function handleClick(params) {
   const resolveFallbackSrc = PAGE_RESOLVE_FALLBACK_FN.toString();
 
   const res = await safeExec(tabId, async (_ref, _sel, _btn, _dbl, _fb, resolveFallbackSrc) => {
-    let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
+    // Same-origin iframe piercing (field report: legacy UIs live inside
+    // #mainFrame — top-document lookups missed every element).
+    function deepQuery(sel) {
+      const q = (doc, depth) => {
+        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
+        if (depth >= 3) return null;
+        for (const f of doc.querySelectorAll('iframe')) {
+          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
+        }
+        return null;
+      };
+      return q(document, 0);
+    }
+
+    let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
     let via = 'ref';
-    if (!el && _sel) { el = document.querySelector(_sel); via = 'selector'; }
+    if (!el && _sel) { el = deepQuery(_sel); via = 'selector'; }
     // Rebuild the resolver from its source (chrome.scripting can't serialize fns).
     let resolveFallback = null;
     try { resolveFallback = eval('(' + resolveFallbackSrc + ')'); } catch {}
@@ -42,7 +56,7 @@ export async function handleClick(params) {
     if (!visible0) {
       await new Promise((r) => setTimeout(r, 200));
       // re-resolve the element (it may have been re-rendered with a new node)
-      el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : el;
+      el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : el;
       if (el) el.scrollIntoView({ behavior: 'instant', block: 'center' });
     }
     if (!el) return { success: false, error: 'REF_GONE', _ref };
@@ -99,9 +113,23 @@ export async function handleType(params) {
   const resolveFallbackSrc = PAGE_RESOLVE_FALLBACK_FN.toString();
 
   const res = await safeExec(tabId, (_ref, _sel, _text, _clear, _fb, resolveFallbackSrc) => {
-    let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
+    // Same-origin iframe piercing (field report: legacy UIs live inside
+    // #mainFrame — top-document lookups missed every element).
+    function deepQuery(sel) {
+      const q = (doc, depth) => {
+        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
+        if (depth >= 3) return null;
+        for (const f of doc.querySelectorAll('iframe')) {
+          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
+        }
+        return null;
+      };
+      return q(document, 0);
+    }
+
+    let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
     let via = 'ref';
-    if (!el && _sel) { el = document.querySelector(_sel); via = 'selector'; }
+    if (!el && _sel) { el = deepQuery(_sel); via = 'selector'; }
     let resolveFallback = null;
     try { resolveFallback = eval('(' + resolveFallbackSrc + ')'); } catch {}
     if (!el && _fb && resolveFallback) { el = resolveFallback(_fb); if (el) via = 'fallback'; }
@@ -161,18 +189,32 @@ export async function handlePressKey(params) {
   await resolveTab(tabId);
 
   return safeExec(tabId, (_key, _mods, _ref, _sel) => {
+    // Same-origin iframe piercing (field report: legacy UIs live inside
+    // #mainFrame — top-document lookups missed every element).
+    function deepQuery(sel) {
+      const q = (doc, depth) => {
+        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
+        if (depth >= 3) return null;
+        for (const f of doc.querySelectorAll('iframe')) {
+          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
+        }
+        return null;
+      };
+      return q(document, 0);
+    }
+
     let target = document.activeElement || document.body;
     // When the caller names a target, an unresolved ref/selector must FAIL —
     // silently falling back to activeElement sent Enter to the wrong control
     // with a success result. (Omitting both is still legitimate: intentional
     // activeElement targeting.)
     if (_ref) {
-      const el = document.querySelector(`[data-mcp-ref="${_ref}"]`);
+      const el = deepQuery(`[data-mcp-ref="${_ref}"]`);
       if (!el) return { success: false, error: `Element with ref ${_ref} not found` };
       el.focus();
       target = el;
     } else if (_sel) {
-      const el = document.querySelector(_sel);
+      const el = deepQuery(_sel);
       if (!el) return { success: false, error: `Element with selector ${_sel} not found` };
       el.focus();
       target = el;
@@ -203,8 +245,22 @@ export async function handleHover(params) {
   requireTarget(params);
 
   return safeExec(tabId, (_ref, _sel) => {
-    let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
-    if (!el && _sel) el = document.querySelector(_sel);
+    // Same-origin iframe piercing (field report: legacy UIs live inside
+    // #mainFrame — top-document lookups missed every element).
+    function deepQuery(sel) {
+      const q = (doc, depth) => {
+        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
+        if (depth >= 3) return null;
+        for (const f of doc.querySelectorAll('iframe')) {
+          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
+        }
+        return null;
+      };
+      return q(document, 0);
+    }
+
+    let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
+    if (!el && _sel) el = deepQuery(_sel);
     if (!el) return { success: false, error: 'Element not found' };
 
     el.scrollIntoView({ behavior: 'instant', block: 'center' });
@@ -230,8 +286,22 @@ export async function handleSelect(params) {
   }
 
   return safeExec(tabId, (_ref, _sel, _val, _lbl, _idx) => {
-    let el = _ref ? document.querySelector(`[data-mcp-ref="${_ref}"]`) : null;
-    if (!el && _sel) el = document.querySelector(_sel);
+    // Same-origin iframe piercing (field report: legacy UIs live inside
+    // #mainFrame — top-document lookups missed every element).
+    function deepQuery(sel) {
+      const q = (doc, depth) => {
+        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
+        if (depth >= 3) return null;
+        for (const f of doc.querySelectorAll('iframe')) {
+          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
+        }
+        return null;
+      };
+      return q(document, 0);
+    }
+
+    let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
+    if (!el && _sel) el = deepQuery(_sel);
     if (!el) return { success: false, error: 'Element not found' };
     if (el.tagName !== 'SELECT') return { success: false, error: 'Not a select element' };
 
@@ -258,8 +328,17 @@ export async function handleClickByText(params) {
   return safeExec(tabId, (_text, _index, _exact) => {
     const textLower = _text.toLowerCase();
     const candidates = [];
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+    // Same-origin iframe piercing — walk every frame body, not just the top.
+    const roots = [document.body];
+    (function collectFrames(doc, depth) {
+      if (depth >= 3) return;
+      for (const f of doc.querySelectorAll('iframe')) {
+        try { const d = f.contentDocument; if (d && d.body) { roots.push(d.body); collectFrames(d, depth + 1); } } catch {}
+      }
+    })(document, 0);
     let node;
+    for (const root of roots) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
     while ((node = walker.nextNode())) {
       const s = getComputedStyle(node);
       if (s.display === 'none' || s.visibility === 'hidden') continue;
@@ -275,6 +354,7 @@ export async function handleClickByText(params) {
       if (match) {
         candidates.push({ el: node, text: firstLine, depth: getDepth(node) });
       }
+    }
     }
 
     function getDepth(el) { let d = 0; let p = el; while ((p = p.parentElement)) d++; return d; }
@@ -380,9 +460,23 @@ export async function handleDrag(params) {
 
   if (sx == null || sy == null || ex == null || ey == null) {
     const coords = await safeExec(tabId, (_sRef, _sSel, _eRef, _eSel) => {
+    // Same-origin iframe piercing (field report: legacy UIs live inside
+    // #mainFrame — top-document lookups missed every element).
+    function deepQuery(sel) {
+      const q = (doc, depth) => {
+        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
+        if (depth >= 3) return null;
+        for (const f of doc.querySelectorAll('iframe')) {
+          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
+        }
+        return null;
+      };
+      return q(document, 0);
+    }
+
       function find(ref, sel) {
-        let el = ref ? document.querySelector(`[data-mcp-ref="${ref}"]`) : null;
-        if (!el && sel) el = document.querySelector(sel);
+        let el = ref ? deepQuery(`[data-mcp-ref="${ref}"]`) : null;
+        if (!el && sel) el = deepQuery(sel);
         if (!el) return null;
         el.scrollIntoView({ behavior: 'instant', block: 'center' });
         const r = el.getBoundingClientRect();
@@ -434,6 +528,20 @@ export async function handleFillForm(params) {
   await resolveTab(tabId);
 
   return safeExec(tabId, (_fields, _submit) => {
+    // Same-origin iframe piercing (field report: legacy UIs live inside
+    // #mainFrame — top-document lookups missed every element).
+    function deepQuery(sel) {
+      const q = (doc, depth) => {
+        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
+        if (depth >= 3) return null;
+        for (const f of doc.querySelectorAll('iframe')) {
+          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
+        }
+        return null;
+      };
+      return q(document, 0);
+    }
+
     // Same native-prototype setter as handleType: React/Vue controlled inputs
     // ignore a plain `el.value =` assignment, which is the main use case for a
     // bulk-fill tool.
@@ -449,8 +557,8 @@ export async function handleFillForm(params) {
     let containingForm = null;
     for (const field of _fields) {
       const { ref, selector, value, clear } = field;
-      let el = ref ? document.querySelector(`[data-mcp-ref="${ref}"]`) : null;
-      if (!el && selector) el = document.querySelector(selector);
+      let el = ref ? deepQuery(`[data-mcp-ref="${ref}"]`) : null;
+      if (!el && selector) el = deepQuery(selector);
       if (!el) {
         results.push({ selector: selector || ref, success: false, error: 'Not found' });
         continue;
