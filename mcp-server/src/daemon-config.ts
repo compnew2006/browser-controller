@@ -76,7 +76,7 @@ export const TOKEN_FILE = path.join(STATE_DIR, 'token.json');
  * token. This closes the first-contact TOFU race: even if a co-installed
  * hostile extension wins the Origin-pinning race, it cannot obtain the token
  * because it does not know the enrollment secret (delivered to the user via
- * `npx browser-controller` terminal output and entered manually in the popup
+ * MCP-client terminal output and entered manually in the popup
  * once). See SECURITY.md "First-contact TOFU window".
  */
 export const ENROLLMENT_FILE = path.join(STATE_DIR, 'enrollment.json');
@@ -156,7 +156,7 @@ export interface StoredEnrollment {
  * Reads the existing enrollment secret, or creates one on first run. The
  * secret is stable across daemon restarts (persisted to enrollment.json), so
  * the user pairs once and the popup keeps working after reboots. Rotating it
- * means deleting enrollment.json and re-running `npx browser-controller` (the
+ * means deleting enrollment.json and re-running the server (the
  * daemon prints the new secret on next start).
  *
  * Use readEnrollmentSecret() to peek without creating (e.g. index.ts decides

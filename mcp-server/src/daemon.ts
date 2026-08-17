@@ -7,7 +7,7 @@
  *   1. The extension-facing WebSocket server on 127.0.0.1:WS_PORT (only one
  *      process may own it — fixing the "two agents fighting over 7225" bug).
  *   2. An IPC socket (AF_UNIX / Windows named pipe) that any number of thin
- *      `npx browser-controller` MCP clients connect to.
+ *      MCP clients (node mcp-server/dist/index.js) connect to.
  *
  * The daemon does NOT speak MCP. It multiplexes {tool, params} calls between
  * clients and the single extension, tagging each with a per-client sessionId so

@@ -3,7 +3,7 @@
 /**
  * Thin MCP client (plan task 1.0).
  *
- * This is what `npx browser-controller` runs. It does NOT open a WebSocket server
+ * This is what `node mcp-server/dist/index.js` runs. It does NOT open a WebSocket server
  * — the daemon owns that. Instead it:
  *   1. Speaks MCP over stdio to the agent (Cursor / Claude).
  *   2. Forwards every tool call to the daemon over the local IPC socket.

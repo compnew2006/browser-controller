@@ -278,7 +278,7 @@ export class ExtensionBridge {
         // X-BC-Enrollment header. This is the layer that stops a co-installed
         // hostile extension — even one that won the Origin pin — from fetching
         // /pair and obtaining the auth token: it cannot know the secret (delivered
-        // out-of-band via `npx browser-controller` terminal output + manual popup
+        // out-of-band via MCP-client terminal output + manual popup
         // entry). Without this, the Origin gate alone would leave /pair open to
         // whoever wins the first-contact race. Constant-time compare to avoid a
         // timing oracle on the secret.
