@@ -89,7 +89,15 @@ export async function showLockShield(tabId, label) {
             el.appendChild(badge);
           }
           badge.textContent = lbl;
+          // Self-expiry: if the service worker dies mid-action, nothing ever
+          // runs the hide step and this badge would stick forever on a tab the
+          // agent is no longer touching (seen live in production use). The
+          // page self-heals — a label not refreshed within 60s removes
+          // itself. The FRAME's lifetime stays governed by lock state.
+          clearTimeout(window.__bcShieldBadgeTimer);
+          window.__bcShieldBadgeTimer = setTimeout(() => badge.remove(), 60000);
         } else if (badge) {
+          clearTimeout(window.__bcShieldBadgeTimer);
           badge.remove();
         }
       },

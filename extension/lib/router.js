@@ -149,8 +149,18 @@ export async function handleMessage(msg) {
   }
   const tabId = extractTabId(tool, p);
 
+  // ESCAPE HATCH (field report: frozen-tab deadlock): tabs close/focus must
+  // NEVER queue behind the per-tab mutex. A page frozen by a native dialog
+  // (GWT-style) pins its mutex forever — an in-flight executeScript can't be
+  // aborted — so anything routed through runOnTab on that tab deadlocks,
+  // including close (which needs NO page cooperation: chrome.tabs.remove)
+  // and even handle_dialog. Closing the tab is the operator's guaranteed way
+  // out, so these two actions take the direct path (their ownership checks
+  // live inside handleTabs and still apply).
+  const bypassesMutex = tool === 'browser_tabs' && (p.action === 'close' || p.action === 'focus');
+
   // Tools without a tabId (tabs list/create, console-less) run directly.
-  if (tabId == null) {
+  if (tabId == null || bypassesMutex) {
     const controller = new AbortController();
     activeControllers.set(id, controller);
     try {

@@ -49,6 +49,9 @@ export async function handleScreenshot(params) {
 
 export async function handleConsole(params) {
   const { tabId, clear = false } = params;
+  // Validate the tab (audit finding, seen live): a wrong tabId used to return
+  // an empty success instead of an actionable error.
+  await resolveTab(tabId);
   const buf = getTabBuffer(consoleByTab, tabId);
   const msgs = [...buf];
   if (clear) consoleByTab.set(tabId, []);
@@ -57,6 +60,7 @@ export async function handleConsole(params) {
 
 export async function handleNetwork(params) {
   const { tabId, filter, clear = false, limit } = params;
+  await resolveTab(tabId); // same as handleConsole — no empty fake successes
   let reqs = [...getTabBuffer(networkByTab, tabId)];
   if (filter) {
     // An invalid pattern used to throw a raw SyntaxError out of the handler;

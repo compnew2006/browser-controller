@@ -400,28 +400,45 @@ export async function handleEvaluate(params) {
     throw new Error(`Cannot evaluate on protected page (${tab.url}).`);
   }
 
-  // Wrap the user expression in an async IIFE so `await` works, then run it in
-  // the MAIN world (page's own JS context). We serialize the result to a JSON
-  // string INSIDE the page and parse it back here, because Manifest V3's
-  // chrome.scripting.executeScript loses the resolved value of an async IIFE
-  // across the world boundary (it comes back as null — crbug 1304272). A plain
-  // string survives the structured clone reliably.
-  const wrapped = `(async () => { ${expression} })()`;
-  const results = await chrome.scripting.executeScript({
+  // TWO stacked bugs found live (production stress audit): (1) the old
+  // wrapper `(async () => { ${expression} })()` is a BLOCK body — it evaluates
+  // the expression and DISCARDS it, so every result was undefined even where
+  // the injection worked; (2) async funcs lose returns across the world
+  // boundary (crbug 1304272). Fix: pass the RAW expression; the page-side
+  // direct eval() yields the completion value (expressions AND statement
+  // lists, await included via the async context), parked on a page global by
+  // a SYNC kick func and polled back by a SYNC read (sync MAIN-world returns
+  // verified working live).
+  await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: async (code) => {
-      try {
-        // eslint-disable-next-line no-eval
-        const value = await eval(code);
-        return { ok: true, json: JSON.stringify(value) };
-      } catch (err) {
-        return { ok: false, error: String(err && err.message || err) };
-      }
+    func: (code) => {
+      window.__bcEvalOut = undefined;
+      (async () => {
+        try {
+          const value = await eval(code);
+          window.__bcEvalOut = { ok: true, json: JSON.stringify(value) };
+        } catch (err) {
+          window.__bcEvalOut = { ok: false, error: String(err && err.message || err).slice(0, 2000) };
+        }
+      })();
+      return true;
     },
-    args: [wrapped],
+    args: [expression],
   });
-  const out = results?.[0]?.result;
+
+  let out = null;
+  const deadline = Date.now() + 5000; // page-side settle budget (tool budget is 15s)
+  while (Date.now() < deadline) {
+    const read = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => (window.__bcEvalOut === undefined ? null : window.__bcEvalOut),
+    });
+    out = read?.[0]?.result ?? null;
+    if (out) break;
+    await new Promise((r) => setTimeout(r, 40));
+  }
   if (!out) return { success: false, error: 'evaluate returned no result' };
   if (out.ok === false) return { success: false, error: out.error };
   // Cap oversized results: the page-side stringify has no bound, and a huge

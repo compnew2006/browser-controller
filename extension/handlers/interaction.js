@@ -307,14 +307,36 @@ export async function handleClickByText(params) {
 
 export async function handleDialog(params) {
   const { tabId, action = 'accept', promptText } = params;
-  await resolveTab(tabId);
+  const tab = await resolveTab(tabId);
 
-  // MAIN world is the whole point: the overrides must replace the PAGE's
-  // window.alert/confirm/prompt. In the default ISOLATED world the page never
-  // sees them, real dialogs keep blocking, and the tool is a no-op. State
-  // (__mcpDialogLog / __mcpDialogOverrides) also lives in the page context, so
-  // repeat calls read what the page actually invoked. (handleEvaluate uses
-  // world:'MAIN' for the same reason.)
+  // An ALREADY-OPEN native dialog freezes the page's JS thread — overrides
+  // can't help in that state (and every page tool on the tab is stuck behind
+  // it). CDP handles dialogs OUT-OF-BAND, no page JS needed, so try it
+  // FIRST: this is the only path that can rescue a frozen tab. If no dialog
+  // is currently showing, the command errors and we fall through to arming
+  // the overrides for FUTURE dialogs.
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+    try {
+      await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.enable', {});
+      await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.handleJavaScriptDialog', {
+        accept: action === 'accept',
+        promptText: promptText || '',
+      });
+      return { success: true, handled: 'open-dialog', action };
+    } finally {
+      try { await chrome.debugger.detach({ tabId: tab.id }); } catch {}
+    }
+  } catch {
+    // No dialog showing (or the debugger is unavailable/already attached) —
+    // arm the overrides below.
+  }
+
+  // MAIN world is the whole point of the override path: it must replace the
+  // PAGE's window.alert/confirm/prompt. In the default ISOLATED world the page
+  // never sees them, real dialogs keep blocking, and the tool is a no-op.
+  // State (__mcpDialogLog / __mcpDialogOverrides) also lives in the page
+  // context, so repeat calls read what the page actually invoked.
   return safeExec(tabId, (_action, _promptText) => {
     window.__mcpDialogLog = window.__mcpDialogLog || [];
     window.__mcpDialogAction = _action;

@@ -383,7 +383,10 @@ class Daemon {
       const result = await this.bridge.callTool(msg.tool, msg.params, client.sessionId, controller.signal, client.agentName);
       this.sendToClient(client, { kind: 'result', id: msg.id, success: true, result });
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
+      // Truncate the message: a page-side SyntaxError can embed the ENTIRE
+      // 2MB expression in its message (seen in the stress audit) — errors must
+      // never echo unbounded payloads back over IPC/WS.
+      const error = String(err instanceof Error ? err.message : err).slice(0, 2000);
       // Unified error channel: a payload-carrying rejection (in-band tool
       // failure) must reach the thin client intact, not just its message.
       const payload = (err as { result?: unknown })?.result;

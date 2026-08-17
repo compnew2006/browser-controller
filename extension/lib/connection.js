@@ -6,7 +6,7 @@
  * router → handlers → connection).
  */
 import { tabLocks, loadSessionState } from './state.js';
-import { hideLockShield } from './overlay.js';
+import { showLockShield, hideLockShield } from './overlay.js';
 
 const DEFAULT_WS_PORT = 7225;
 const RECONNECT_BASE_MS = 1000;
@@ -110,16 +110,20 @@ export async function initConnection() {
   await autoPairToken();
   connect();
 
-  // Best-effort: clear stale shields left on tabs whose lock state was wiped
-  // by a service-worker recycle. With session persistence the owner check now
-  // also skips tabs whose locks SURVIVED the recycle — only genuinely unlocked
-  // tabs get their shields cleared. Swallow per-tab errors for protected /
-  // closed tabs. Even if it races a fresh lock, the next onUpdated 'complete'
-  // re-injects the shield (self-healing, review NOTE 7d).
+  // Best-effort sweep of shields left behind (with session persistence the
+  // owner check honors locks that SURVIVED the recycle). LOCKED tabs get a
+  // fresh PLAIN frame — this converts any stale labeled shield ("agent X
+  // controlling the tab" stuck by a service-worker death mid-action) back
+  // into the lock-lifetime frame. Unlocked tabs lose the shield entirely.
+  // Swallow per-tab errors for protected / closed tabs. Even if it races a
+  // fresh lock, the next onUpdated 'complete' re-injects (self-healing,
+  // review NOTE 7d).
   try {
     const all = await chrome.tabs.query({});
     for (const t of all) {
-      if (!tabLocks.owner(t.id)) {
+      if (tabLocks.owner(t.id)) {
+        try { await showLockShield(t.id); } catch {}
+      } else {
         try { await hideLockShield(t.id); } catch {}
       }
     }
