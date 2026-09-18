@@ -13,6 +13,7 @@ describe('Tool Registry', () => {
     'browser_click_text', 'browser_handle_dialog',
     'browser_upload_file', 'browser_run_action',
     'browser_drag', 'browser_fill_form',
+    'browser_observe', 'browser_act',
   ];
 
   it(`registers every expected tool (${expectedTools.length})`, () => {
@@ -84,6 +85,7 @@ describe('Tool Registry', () => {
       expect(isIdempotent('browser_screenshot')).toBe(true);
       expect(isIdempotent('browser_text')).toBe(true);
       expect(isIdempotent('browser_find')).toBe(true);
+      expect(isIdempotent('browser_observe')).toBe(true);
     });
     it('marks clear-able capture tools as NON-idempotent (clear mutates)', () => {
       expect(isIdempotent('browser_console')).toBe(false);
@@ -93,6 +95,7 @@ describe('Tool Registry', () => {
       for (const t of ['browser_click','browser_type','browser_navigate','browser_evaluate','browser_tabs','browser_scroll']) {
         expect(isIdempotent(t), `${t} must not be retried`).toBe(false);
       }
+      expect(isIdempotent('browser_act')).toBe(false);
     });
   });
 
