@@ -4,7 +4,7 @@
  */
 import { safeExec, resolveTab } from '../lib/page-exec.js';
 import { fallbackByTab, lastSnapshotFingerprints, MAX_RESULT_CHARS, persistSessionState } from '../lib/state.js';
-import { PAGE_FALLBACK_FN } from '../utils/smart-selector.js';
+import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
 
 export async function handleWait(params, _sessionId, _agentName, signal) {
   const { tabId, selector, state = 'visible', timeout = 10000, delay } = params;
@@ -109,25 +109,26 @@ export async function handleSnapshot(params) {
   const { tabId, selector, compact = true } = params;
   await resolveTab(tabId);
 
-  // chrome.scripting cannot serialize functions across the service worker
-  // boundary, so pass the fallback generator as its SOURCE STRING and eval it
-  // in the page to rebuild the live function.
-  const genFallbackSrc = PAGE_FALLBACK_FN.toString();
+  // Install the fallback page runtime first (v2 install-once pattern): the
+  // generator's source is injected natively as a chrome.scripting `func:`.
+  // Rebuilding it from a source string via eval() is impossible — MV3's
+  // extension CSP (script-src 'self', no unsafe-eval) throws in every
+  // isolated world, which silently killed fallback capture before this fix.
+  await safeExec(tabId, PAGE_FALLBACK_INSTALL, []);
   // isNew feature: pass the fingerprints seen in the PREVIOUS snapshot so the
   // page function can mark newly-appeared elements. Array is serializable.
   const prevFingerprints = lastSnapshotFingerprints.get(tabId) || [];
   const refPrefix = `e-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-`;
 
-  return safeExec(tabId, (_sel, _compact, genFallbackSrc, _prevFingerprints, _refPrefix) => {
+  return safeExec(tabId, (_sel, _compact, _prevFingerprints, _refPrefix) => {
     let refCount = 0;
     /** @type {Record<string, object>} ref -> fallback, returned to background */
     const fallbacks = {};
     /** @type {string[]} fingerprints of THIS snapshot (role|name), returned to background */
     const fingerprints = [];
     const prevSet = new Set(_prevFingerprints);
-    // Rebuild the live function from its source string (see comment at call site).
-    let genFallback = null;
-    try { genFallback = eval('(' + genFallbackSrc + ')'); } catch {}
+    // Descriptor generator comes from the pre-installed page runtime.
+    const genFallback = (globalThis.__browserControllerFallbackRuntime || {}).generateFallback || null;
     const skipTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'PATH', 'BR', 'HR', 'WBR', 'META', 'LINK']);
 
     function vis(el) {
@@ -297,7 +298,7 @@ export async function handleSnapshot(params) {
       __fallbacks: fallbacks,
       __fingerprints: fingerprints,
     };
-  }, [selector, compact, genFallbackSrc, prevFingerprints, refPrefix]).then((res) => {
+  }, [selector, compact, prevFingerprints, refPrefix]).then((res) => {
     // Store the fallbacks per-tab so click/type can resolve stale refs, and
     // persist them across service-worker recycles (MV3 lifetime).
     if (res && res.__fallbacks) {

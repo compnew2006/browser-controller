@@ -5,16 +5,18 @@
  */
 import { resolveTab, requireTarget, safeExec, getFallback } from '../lib/page-exec.js';
 import { autoReSnapshot } from './inspection.js';
-import { PAGE_RESOLVE_FALLBACK_FN } from '../utils/smart-selector.js';
+import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
 
 export async function handleClick(params) {
   const { tabId, ref, selector, button = 'left', doubleClick = false } = params;
   await resolveTab(tabId);
   requireTarget(params);
   const fb = getFallback(tabId, ref);
-  const resolveFallbackSrc = PAGE_RESOLVE_FALLBACK_FN.toString();
+  // Install the fallback page runtime only when a descriptor exists (v2
+  // install-once pattern — eval rebuilding is impossible under MV3 CSP).
+  if (fb) await safeExec(tabId, PAGE_FALLBACK_INSTALL, []);
 
-  const res = await safeExec(tabId, async (_ref, _sel, _btn, _dbl, _fb, resolveFallbackSrc) => {
+  const res = await safeExec(tabId, async (_ref, _sel, _btn, _dbl, _fb) => {
     // Same-origin iframe piercing (field report: legacy UIs live inside
     // #mainFrame — top-document lookups missed every element).
     function deepQuery(sel) {
@@ -32,9 +34,8 @@ export async function handleClick(params) {
     let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
     let via = 'ref';
     if (!el && _sel) { el = deepQuery(_sel); via = 'selector'; }
-    // Rebuild the resolver from its source (chrome.scripting can't serialize fns).
-    let resolveFallback = null;
-    try { resolveFallback = eval('(' + resolveFallbackSrc + ')'); } catch {}
+    // Resolver comes from the pre-installed page runtime (no eval).
+    const resolveFallback = (globalThis.__browserControllerFallbackRuntime || {}).resolveFallback || null;
     // Smart-selector fallback (plan task 3): ref broke → try robust selector,
     // then text+role+tag scan. The agent doesn't request this; it's automatic.
     if (!el && _fb && resolveFallback) { el = resolveFallback(_fb); if (el) via = 'fallback'; }
@@ -87,7 +88,7 @@ export async function handleClick(params) {
     }
 
     return { success: true, ...(via !== 'ref' ? { via } : {}) };
-  }, [ref, selector, button, doubleClick, fb, resolveFallbackSrc]);
+  }, [ref, selector, button, doubleClick, fb]);
 
   // The page function returns REF_GONE when the element (and all fallbacks)
   // can't be found — typical of virtualized feeds (FB/IG) after scrolling.
@@ -110,9 +111,11 @@ export async function handleType(params) {
   await resolveTab(tabId);
   requireTarget(params);
   const fb = getFallback(tabId, ref);
-  const resolveFallbackSrc = PAGE_RESOLVE_FALLBACK_FN.toString();
+  // Install the fallback page runtime only when a descriptor exists (v2
+  // install-once pattern — eval rebuilding is impossible under MV3 CSP).
+  if (fb) await safeExec(tabId, PAGE_FALLBACK_INSTALL, []);
 
-  const res = await safeExec(tabId, (_ref, _sel, _text, _clear, _fb, resolveFallbackSrc) => {
+  const res = await safeExec(tabId, (_ref, _sel, _text, _clear, _fb) => {
     // Same-origin iframe piercing (field report: legacy UIs live inside
     // #mainFrame — top-document lookups missed every element).
     function deepQuery(sel) {
@@ -130,8 +133,7 @@ export async function handleType(params) {
     let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
     let via = 'ref';
     if (!el && _sel) { el = deepQuery(_sel); via = 'selector'; }
-    let resolveFallback = null;
-    try { resolveFallback = eval('(' + resolveFallbackSrc + ')'); } catch {}
+    const resolveFallback = (globalThis.__browserControllerFallbackRuntime || {}).resolveFallback || null;
     if (!el && _fb && resolveFallback) { el = resolveFallback(_fb); if (el) via = 'fallback'; }
     if (!el) {
       // Element gone (virtualized feed) — abort WITHOUT typing; background
@@ -169,7 +171,7 @@ export async function handleType(params) {
 
     el.dispatchEvent(new Event('change', { bubbles: true }));
     return { success: true, typed: _text, ...(via !== 'ref' ? { via } : {}) };
-  }, [ref, selector, text, clear, fb, resolveFallbackSrc]);
+  }, [ref, selector, text, clear, fb]);
 
   // Virtualization recovery (same as click): type target is gone, so
   // auto-re-snapshot and embed fresh refs. No auto-retry (non-idempotent).

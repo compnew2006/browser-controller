@@ -13,10 +13,13 @@
  *
  * This file has TWO layers:
  *   - Pure heuristic helpers (exported) — unit-testable in node, no DOM needed.
- *   - PAGE_FALLBACK_FN — the function actually injected into the page via
- *     chrome.scripting. It is self-contained (no imports) because the page world
- *     cannot import extension modules. The heuristics are duplicated verbatim
- *     inside it so there is a SINGLE readable source for the algorithm.
+ *   - PAGE_FALLBACK_INSTALL — a self-contained page-runtime installer injected
+ *     via chrome.scripting `func:` (v2 pattern, see observation-v2.js). It
+ *     defines the snapshot-side descriptor generator and the interaction-side
+ *     resolver INLINE because injected source cannot reference extension
+ *     modules — and eval-rebuilding from a source string is impossible under
+ *     MV3's extension CSP (script-src 'self', no unsafe-eval), which is why
+ *     the old stringified-function design never worked in production.
  */
 
 // ---------------------------------------------------------------------------
@@ -157,12 +160,17 @@ function cssEscape(value) {
 }
 
 // ---------------------------------------------------------------------------
-// PAGE-side function. Self-contained — injected via chrome.scripting.executeScript.
-// The heuristics above are duplicated here verbatim (page world can't import).
-// Keep them in sync. Returns { robustSelector, text, role, tag, attrs }.
+// Page-side runtime. Self-contained inside PAGE_FALLBACK_INSTALL — injected
+// via chrome.scripting `func:`. The heuristics above are duplicated here
+// verbatim (page world can't import). Keep them in sync.
+// generateFallback returns { robustSelector, text, role, tag, attrs, nth }.
 // ---------------------------------------------------------------------------
 
-export const PAGE_FALLBACK_FN = function generateFallback(el) {
+export function PAGE_FALLBACK_INSTALL() {
+  if (globalThis.__browserControllerFallbackRuntime) return false;
+
+  /** Snapshot-side: capture a stable fallback descriptor for a ref'd element. */
+  function generateFallback(el) {
   if (!el || !el.tagName) return null;
 
   function isStableId(id) {
@@ -289,17 +297,14 @@ export const PAGE_FALLBACK_FN = function generateFallback(el) {
     // buttons). Borrowed from BrowserOS's nth-recovery idea.
     nth: computeNth(el, role, text),
   };
-};
+  }
 
-
-/**
- * Page-side resolver (plan task 3). Given a fallback descriptor, find the
- * element again after a re-render. Tries robustSelector first, then a
- * text+role+tag scan. Self-contained for injection via chrome.scripting.
- * @param {object} fb - the fallback descriptor from PAGE_FALLBACK_FN
- * @returns {Element|null}
- */
-export const PAGE_RESOLVE_FALLBACK_FN = function resolveFallback(fb) {
+  /**
+   * Interaction-side resolver: given a fallback descriptor, find the element
+   * again after a re-render. Tries robustSelector first, then a text+role+tag
+   * scan with precise nth matching (see isPreciseTextMatch).
+   */
+  function resolveFallback(fb) {
   if (!fb) return null;
 
   // 1. robust CSS selector (may be null if nothing stable was found)
@@ -368,7 +373,21 @@ export const PAGE_RESOLVE_FALLBACK_FN = function resolveFallback(fb) {
     if (looseMatches.length > 0) return looseMatches[0];
   }
   return null;
-};
+  }
+
+  globalThis.__browserControllerFallbackRuntime = Object.freeze({ generateFallback, resolveFallback });
+  return true;
+}
+
+/**
+ * Node/test accessor over the installed runtime — the single definitions live
+ * inside PAGE_FALLBACK_INSTALL so the page gets the exact code the unit tests
+ * exercise (same pattern as createPageV2Helpers in observation-v2.js).
+ */
+export function createFallbackHelpers() {
+  PAGE_FALLBACK_INSTALL();
+  return globalThis.__browserControllerFallbackRuntime;
+}
 
 // ---------------------------------------------------------------------------
 // Pure, DOM-free helpers exported ONLY for unit testing. These mirror the
@@ -378,7 +397,7 @@ export const PAGE_RESOLVE_FALLBACK_FN = function resolveFallback(fb) {
 
 /**
  * Pick the nth match from a list, with a best-effort fallback. Mirrors the
- * `matches[wantNth]` logic in PAGE_RESOLVE_FALLBACK_FN. Pure — no DOM.
+ * `matches[wantNth]` logic in resolveFallback (inside PAGE_FALLBACK_INSTALL). Pure — no DOM.
  * @param {unknown[]} matches - ordered candidate elements (or any items)
  * @param {number} nth - zero-based ordinal to pick
  * @returns {unknown|null} the nth match, or the first if nth is out of range, or null
@@ -398,7 +417,7 @@ export function pickNthMatch(matches, nth) {
  * wrongly matched, picking the WRONG element among duplicates.
  *
  * Pure — no DOM. Exported so the rule is unit-testable; the injected page
- * functions (PAGE_RESOLVE_FALLBACK_FN, computeNth) inline the SAME logic.
+ * functions (resolveFallback, computeNth) inline the SAME logic.
  * Keep them in sync (the test asserts this predicate's behavior).
  * @param {string} candidate - the element's text/aria, any case
  * @param {string} wanted - the text we're looking for, any case

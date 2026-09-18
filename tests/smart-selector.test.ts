@@ -6,7 +6,8 @@ import {
   pickNthMatch,
   computeNewFingerprints,
   isPreciseTextMatch,
-  PAGE_FALLBACK_FN,
+  PAGE_FALLBACK_INSTALL,
+  createFallbackHelpers,
 } from '../extension/utils/smart-selector.js';
 
 /**
@@ -160,8 +161,16 @@ describe('buildRobustSelectorFromPath', () => {
   });
 });
 
-describe('PAGE_FALLBACK_FN injection contract', () => {
-  it('rebuilds from source without depending on extension-scope functions', () => {
+describe('PAGE_FALLBACK_INSTALL injection contract', () => {
+  it('contains no eval — MV3 extension CSP forbids it in every isolated world', () => {
+    // Regression for the production bug: the runtime used to be rebuilt
+    // page-side via eval('(' + src + ')'), which throws under MV3's extension
+    // CSP (script-src 'self', no unsafe-eval) and silently killed the whole
+    // fallback feature — snapshot capture AND stale-ref recovery.
+    expect(PAGE_FALLBACK_INSTALL.toString()).not.toMatch(/\beval\s*\(/);
+  });
+
+  it('installs generate/resolve with no dependency on extension-scope functions', () => {
     const originalDocument = globalThis.document;
     const originalNodeFilter = globalThis.NodeFilter;
     const target = {
@@ -180,8 +189,11 @@ describe('PAGE_FALLBACK_FN injection contract', () => {
     globalThis.NodeFilter = { SHOW_ELEMENT: 1 } as any;
 
     try {
-      const rebuilt = Function(`return (${PAGE_FALLBACK_FN.toString()})`)();
-      expect(rebuilt(target)).toMatchObject({ text: 'Like', nth: 0, tag: 'BUTTON' });
+      const rt = createFallbackHelpers();
+      expect(rt.generateFallback(target)).toMatchObject({ text: 'Like', nth: 0, tag: 'BUTTON' });
+      expect(typeof rt.resolveFallback).toBe('function');
+      // Idempotent: a second install is a no-op.
+      expect(PAGE_FALLBACK_INSTALL()).toBe(false);
     } finally {
       globalThis.document = originalDocument;
       globalThis.NodeFilter = originalNodeFilter;
@@ -273,7 +285,8 @@ describe('computeNewFingerprints', () => {
 // Fix #3 (precise text match): the old includes() matched too loosely — "Save"
 // matched "Saved", "Like" matched "Liked", picking the WRONG element among
 // duplicates. isPreciseTextMatch is the testable mirror of the rule inlined in
-// PAGE_RESOLVE_FALLBACK_FN + computeNth. Locks down the regression.
+// resolveFallback (inside PAGE_FALLBACK_INSTALL) + computeNth. Locks down the
+// regression.
 describe('isPreciseTextMatch (Fix #3: precise nth matching)', () => {
   it('matches exact text (case-insensitive, trimmed)', () => {
     expect(isPreciseTextMatch('Save', 'Save')).toBe(true);
