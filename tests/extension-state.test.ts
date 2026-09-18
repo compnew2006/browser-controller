@@ -23,7 +23,7 @@ const sessionStore = new Map<string, unknown>();
   alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
 };
 
-const { tabLocks, fallbackByTab, persistSessionState, loadSessionState, dropTabState } =
+const { tabLocks, fallbackByTab, observationSnapshots, persistSessionState, loadSessionState, dropTabState } =
   await import('../extension/lib/state.js');
 
 describe('session persistence (MV3 lifetime)', () => {
@@ -31,6 +31,7 @@ describe('session persistence (MV3 lifetime)', () => {
     sessionStore.clear();
     tabLocks.unlockAll();
     fallbackByTab.clear();
+    observationSnapshots.clear();
   });
 
   it('persists lock ownership and restores it after a recycle', async () => {
@@ -62,9 +63,27 @@ describe('session persistence (MV3 lifetime)', () => {
   it('dropTabState releases the lock and clears per-tab maps (tab closed)', () => {
     tabLocks.lock(7, 'agentA');
     fallbackByTab.set(7, new Map());
+    observationSnapshots.register({
+      snapshotId: 's_tab', tabId: 7, sessionId: 'agentA', documentId: 'd1',
+      documentVersion: 'd1:1', createdAt: Date.now(),
+    });
     dropTabState(7);
     expect(tabLocks.owner(7)).toBeUndefined();
     expect(fallbackByTab.has(7)).toBe(false);
+    expect(observationSnapshots.validate('s_tab', 7, 'agentA')).toMatchObject({ error: 'SNAPSHOT_NOT_FOUND' });
+  });
+
+  it('persists bounded observation ownership metadata across a worker recycle', async () => {
+    observationSnapshots.register({
+      snapshotId: 's_restore', tabId: 11, sessionId: 'agentA', documentId: 'd1',
+      documentVersion: 'd1:1', createdAt: Date.now(),
+    });
+    persistSessionState();
+    await new Promise((r) => setTimeout(r, 0));
+
+    observationSnapshots.clear();
+    await loadSessionState();
+    expect(observationSnapshots.validate('s_restore', 11, 'agentA')).toMatchObject({ ok: true });
   });
 
   it('survives a corrupt/empty storage payload without throwing', async () => {
