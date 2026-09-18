@@ -652,7 +652,12 @@ export async function PAGE_ACT_V2(config) {
     let x = rect.localX + rect.width / 2;
     let y = rect.localY + rect.height / 2;
     const hit = element.ownerDocument?.elementFromPoint?.(x, y);
-    if (!helpers.composedContains(element, hit)) {
+    // The extension's tab-lock shield blocks real user pointer input while an
+    // agent owns the tab. It sits above the page by design, so it must not be
+    // reported as a page overlay that blocks this same agent's synthetic V2
+    // action. Any other hit target remains a genuine occlusion failure.
+    const isOwnLockShield = hit?.id === '__bc-lock-shield' && hit?.ownerDocument === element.ownerDocument;
+    if (!isOwnLockShield && !helpers.composedContains(element, hit)) {
       return fail('TARGET_OCCLUDED', 'Another element covers the target pointer point.', {
         ref,
         blockingElement: hit ? {

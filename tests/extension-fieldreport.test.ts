@@ -67,7 +67,7 @@ const { tabMutex } = await import('../extension/lib/state.js');
 
 const flush = (ms = 60) => new Promise((r) => setTimeout(r, ms));
 
-describe('frozen-tab escape hatch (mutex bypass for tabs close/focus)', () => {
+describe('frozen-tab escape hatch (mutex bypass for close/focus/dialog)', () => {
   beforeEach(() => {
     sent.length = 0;
     tabStore.clear();
@@ -95,6 +95,16 @@ describe('frozen-tab escape hatch (mutex bypass for tabs close/focus)', () => {
     await handleMessage({ id: 'x2', tool: 'browser_tabs', params: { action: 'focus', tabId: 3 }, sessionId: 's1' });
     await flush(80);
     expect(sent.find((f) => f.id === 'x2')?.success).toBe(true);
+  });
+
+  it('browser_handle_dialog also bypasses the pinned mutex', async () => {
+    tabMutex.run(3, () => new Promise(() => {}));
+
+    await handleMessage({ id: 'x-dialog', tool: 'browser_handle_dialog', params: { tabId: 3, action: 'dismiss' }, sessionId: 's1' });
+    await flush(80);
+
+    expect(sent.find((f) => f.id === 'x-dialog')).toMatchObject({ success: true, result: { handled: 'open-dialog' } });
+    expect(cdpCommands).toContain('Page.handleJavaScriptDialog');
   });
 
   it('a PAGE tool on the pinned tab still queues (mutex semantics preserved)', async () => {

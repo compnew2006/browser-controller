@@ -350,6 +350,18 @@ describe('page-side Safe Action Engine', () => {
     });
   });
 
+  it('does not treat Browser Controller\'s own lock shield as an external occluder', async () => {
+    const document = new FakeDocument();
+    const button = document.add('button', 'Continue');
+    const shield = document.add('div', 'agent test controlling the tab', { id: '__bc-lock-shield' });
+    document.hit = shield;
+
+    const result = await act(observe(document, 's_lock_shield'), { action: 'click', ref: 'e1' });
+
+    expect(result).toMatchObject({ success: true, ok: true, action: 'click', ref: 'e1' });
+    expect(button.events).toEqual(['mouseover', 'mousedown', 'mouseup', 'click']);
+  });
+
   it('accepts descendant and open-shadow host hit results', async () => {
     const document = new FakeDocument();
     const button = document.add('button', 'Continue');
