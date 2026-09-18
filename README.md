@@ -14,7 +14,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
-  <img src="https://img.shields.io/badge/tests-289%20passing-22c55e?style=flat-square" alt="289 tests" />
+  <img src="https://img.shields.io/badge/tests-291%20passing-22c55e?style=flat-square" alt="291 tests" />
 </p>
 
 ---
@@ -49,33 +49,37 @@ It already has your browser open right there. It just can't see it.
 
 Three pieces, all on your machine. Nothing leaves localhost.
 
-```
-  Agent (Cursor / Claude / Windsurf)        ── other agents connect too ──┐
-                  │ stdio (MCP protocol)                                   │
-                  ▼                                                        ▼
-  ┌─────────────────────────────┐   ┌─────────────────────────────────────────┐
-  │  thin MCP client            │   │  thin MCP client                        │
-  │  (node mcp-server/dist/     │   │  (node mcp-server/dist/                 │
-  │   index.js)                 │   │   index.js)                             │
-  │  - speaks MCP over stdio    │   │  - spawns daemon if not running         │
-  │  - forwards calls to daemon │   │  - gets its own sessionId               │
-  └──────────────┬──────────────┘   └────────────────────┬───────────────────┘
-                 │ local IPC socket (AF_UNIX / named pipe, token-auth)     │
-                 ▼                                                          ▼
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │  DAEMON (single long-running process, owns port 7225)                     │
-  │  - multiplexes N clients → 1 extension                                    │
-  │  - tags every call with the client's sessionId                            │
-  │  - heartbeat eviction, per-session rate limiting                          │
-  └──────────────────────────────┬───────────────────────────────────────────┘
-                                 │ WebSocket ws://127.0.0.1:7225 (token-auth)
-                                 ▼
-  ┌──────────────────────────────────────────────────────────────────────────┐
-  │  Chrome Extension (Manifest V3 service worker)                            │
-  │  - resolves the target tabId (never "the active tab" implicitly)          │
-  │  - serializes same-tab actions, parallelizes cross-tab actions            │
-  │  - executes click/type/snapshot/evaluate against the named tab            │
-  └──────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Client["MCP client (Cursor / Claude / Windsurf)"]
+        A["agent"]
+    end
+
+    subgraph Thin["thin MCP client — mcp-server/dist/index.js"]
+        B["DaemonClient<br/>speaks MCP over stdio<br/>spawns daemon if not running<br/>gets its own sessionId"]
+    end
+
+    subgraph Daemon["daemon — single long-running process, owns port 7225"]
+        C["daemon.ts<br/>multiplexes N clients → 1 extension<br/>sessions · rate limit · heartbeats"]
+        D["bridge.ts (ExtensionBridge)<br/>HTTP /pair /status /kill<br/>WebSocket for the extension"]
+    end
+
+    subgraph Ext["Chrome extension (Manifest V3 service worker)"]
+        E["connection.js<br/>pairing · reconnect backoff"]
+        F["router.js<br/>tool dispatch"]
+        G["tab-concurrency.js<br/>per-tab mutex · locks · shield"]
+        H["handlers/*<br/>interaction · inspection · agent-api<br/>cdp · navigation · tabs"]
+        I["page-exec.js safeExec<br/>chrome.scripting func: — CSP-safe"]
+        E --> F --> G --> H --> I
+    end
+
+    P["Page — your real sessions"]
+
+    A -->|stdio MCP| B
+    B -->|IPC socket + token| C
+    C --> D
+    D <-->|WebSocket + bc-auth token| E
+    I --> P
 ```
 
 **Key idea:** the first time any agent runs, the thin client spawns a background **daemon** that owns port 7225 and the extension connection. Every subsequent agent (even from a different MCP client) connects to that same daemon over a local IPC socket and gets its own `sessionId`. The extension sees one stable connection and routes each call to the exact tab the caller specified.
@@ -417,7 +421,7 @@ browser-controller/
 │       ├── index.ts         Thin stdio MCP client (spawns daemon, multiplexes)
 │       ├── bridge.ts        Extension WS server + cross-platform port probe
 │       ├── register-tools.ts Progressive-disclosure wiring
-│       └── tools/           One file per tool (22), registry pattern
+│       └── tools/           One file per tool (24), registry pattern
 ├── extension/           Chrome extension (Manifest V3, plain JS, ES modules)
 │   ├── background.js        Wiring only (~30 lines): inject router, register events, connect
 │   ├── lib/                 state (buffers/locks/persistence), connection (WS lifecycle),
@@ -432,10 +436,41 @@ browser-controller/
 │   ├── cursor/              Rules and commands
 │   ├── skills/              Browser automation skill
 │   └── setup.mjs            One-command installer
-└── tests/               15 suites / 215 tests
+└── tests/               19 suites / 291 tests
 ```
 
 **Stack:** TypeScript (strict) · MCP SDK · WebSocket · Chrome Extension Manifest V3 · Vitest
+
+### Life of a tool call
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as MCP client
+    participant W as wrapHandler — register-tools.ts
+    participant DC as DaemonClient — index.ts
+    participant DM as daemon — daemon.ts
+    participant BR as ExtensionBridge — bridge.ts
+    participant RT as router.js — extension
+    participant H as handler + safeExec
+
+    C->>W: tool call (JSON-RPC over stdio)
+    W->>DC: host.callTool(name, params)
+    DC->>DM: { kind: "call", id, tool, params } over the IPC socket
+    DM->>DM: rate-limit check + AbortController (per-tool timeout)
+    DM->>BR: bridge.callTool(tool, params, sessionId)
+    BR->>RT: WS { id, tool, params, sessionId, agentName }
+    RT->>RT: per-tab mutex + control shield
+    RT->>H: dispatch (observe/act: snapshot ownership checked first)
+    H->>H: chrome.scripting func: or CDP — CSP-safe, no eval
+    H-->>C: result returns along the same path (errors as isError results)
+```
+
+Every hop is authenticated (IPC socket and WebSocket both require the token) and bounded (per-session rate limit, per-tool timeout). Only idempotent read tools are retried on timeout — a click can never fire twice. See [Reliability](#reliability) for the full list.
+
+### The observe/act runtime
+
+`browser_observe` / `browser_act` run on a dedicated page runtime that is CSP-safe by construction: a one-time install via `chrome.scripting` function injection (no `eval` anywhere in the path), then per-action validation of snapshot ownership, document/route identity, target semantics, geometry, visibility, and click-point occlusion. If the page changed, the agent gets a compact state error (`DOCUMENT_CHANGED`, `STALE_STATE`, …) instead of a wrong click — see [Safe Observe → Act workflow](#safe-observe--act-workflow).
 
 ## Development
 
@@ -451,7 +486,7 @@ npm test
 |---------|---------|
 | `npm run build` | Compile TypeScript → `mcp-server/dist/` |
 | `npm run dev` | Watch mode |
-| `npm test` | Run the full test suite (215 tests) |
+| `npm test` | Run the full test suite (291 tests) |
 | `npm run typecheck` | Type check without emitting |
 | `npm run setup:cursor` | Install Cursor rule + command |
 | `npm run setup:claude` | Install Claude Code `AGENTS.md` |
