@@ -153,6 +153,15 @@ export async function handleMessage(msg) {
   }
   const tabId = extractTabId(tool, p);
 
+  // A tool call without an id can never be answered: it used to collide in
+  // activeControllers under key `undefined` (aborting the wrong controller)
+  // and leave the caller hanging until its timeout. Refuse it up front —
+  // raw-WS clients only; the daemon always sends ids.
+  if (id === undefined || id === null) {
+    sendResponse(null, { success: false, error: 'tool call is missing id — no response can be correlated' });
+    return;
+  }
+
   // ESCAPE HATCH (field report: frozen-tab deadlock): tabs close/focus must
   // NEVER queue behind the per-tab mutex. A page frozen by a native dialog
   // (GWT-style) pins its mutex forever — an in-flight executeScript can't be

@@ -109,9 +109,10 @@ export async function handleTabs(params, sessionId) {
     case 'close': {
       if (!tabId) throw new Error('tabId required');
       // A locked tab belongs to its owner session — closing it from another
-      // session would destroy the work the lock exists to protect.
+      // session (or from an anonymous no-session caller) would destroy the
+      // work the lock exists to protect.
       const closerOwner = tabLocks.owner(tabId);
-      if (closerOwner && sessionId && closerOwner !== sessionId) {
+      if (closerOwner && closerOwner !== sessionId) {
         throw new Error(`Tab ${tabId} is locked by ${closerOwner} — unlock it from that session before closing.`);
       }
       await chrome.tabs.remove(tabId);
@@ -121,7 +122,7 @@ export async function handleTabs(params, sessionId) {
     case 'focus': {
       if (!tabId) throw new Error('tabId required');
       const focusOwner = tabLocks.owner(tabId);
-      if (focusOwner && sessionId && focusOwner !== sessionId) {
+      if (focusOwner && focusOwner !== sessionId) {
         throw new Error(`Tab ${tabId} is locked by ${focusOwner} — unlock it from that session before focusing.`);
       }
       await chrome.tabs.update(tabId, { active: true });

@@ -282,13 +282,20 @@ export class ExtensionBridge {
         // entry). Without this, the Origin gate alone would leave /pair open to
         // whoever wins the first-contact race. Constant-time compare to avoid a
         // timing oracle on the secret.
-        if (this.enrollmentSecret) {
-          const presented = req.headers['x-bc-enrollment'];
-          const presentedStr = Array.isArray(presented) ? presented[0] : presented;
-          if (typeof presentedStr !== 'string' || !tokensMatch(presentedStr, this.enrollmentSecret)) {
-            res.writeHead(403).end('Forbidden: invalid enrollment');
-            return;
-          }
+        if (!this.enrollmentSecret) {
+          // Fail closed: without a configured enrollment secret the whole HTTP
+          // surface is refused — /pair hands out the raw auth token, and every
+          // legitimate client (popup + extension) always sends the header. An
+          // empty secret means the embedder skipped loadOrCreateEnrollment();
+          // silently serving open-gated HTTP is never the right recovery.
+          res.writeHead(503).end('Enrollment secret not configured — refusing HTTP request');
+          return;
+        }
+        const presented = req.headers['x-bc-enrollment'];
+        const presentedStr = Array.isArray(presented) ? presented[0] : presented;
+        if (typeof presentedStr !== 'string' || !tokensMatch(presentedStr, this.enrollmentSecret)) {
+          res.writeHead(403).end('Forbidden: invalid enrollment');
+          return;
         }
         if (decision.origin && !this.pinnedExtensionOrigin) {
           this.pinnedExtensionOrigin = decision.origin;
