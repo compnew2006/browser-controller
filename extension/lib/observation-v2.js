@@ -8,42 +8,8 @@ export function actionError(error, message, details = {}) {
 
 /** Pure semantic policy shared by observation and action revalidation. */
 export function inferAllowedActions(descriptor = {}) {
-  if (descriptor.disabled) return [];
-  const role = String(descriptor.role || '').toLowerCase();
-  const tag = String(descriptor.tagName || '').toLowerCase();
-  const inputType = String(descriptor.inputType || '').toLowerCase();
-  if (tag === 'input' && inputType === 'file') return ['upload'];
-
-  const actions = [];
-  const add = (action) => { if (!actions.includes(action)) actions.push(action); };
-  const isText = descriptor.contentEditable
-    || tag === 'textarea'
-    || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'hidden'].includes(inputType));
-  const isSelect = tag === 'select';
-  const isClickable = ['button', 'link', 'checkbox', 'radio', 'switch', 'menuitem', 'tab', 'option'].includes(role)
-    || tag === 'button'
-    || tag === 'a'
-    || (tag === 'input' && ['button', 'submit', 'reset', 'checkbox', 'radio'].includes(inputType));
-
-  if (isText) {
-    add('focus');
-    if (!descriptor.readOnly) add('type');
-    add('keypress');
-    add('hover');
-  } else if (isSelect) {
-    add('select');
-    add('focus');
-    add('hover');
-  } else if (isClickable) {
-    add('click');
-    add('focus');
-    add('hover');
-  } else if (descriptor.focusable) {
-    add('focus');
-    add('hover');
-  }
-  if (descriptor.scrollable) add('scroll');
-  return actions;
+  PAGE_V2_INSTALL();
+  return globalThis.__browserControllerV2Runtime.inferAllowedActions(descriptor);
 }
 
 export function validateActionArguments(params = {}) {
@@ -149,10 +115,56 @@ export function validateFreshness(observed = {}, current = {}) {
 }
 
 /**
- * Self-contained DOM helpers. The function is serialized into Chrome's
- * isolated world, so it deliberately has no extension-scope dependencies.
+ * Hermetic page runtime installer, injected with chrome.scripting `func:` so
+ * Chrome executes its source natively. Rebuilding these functions with eval()
+ * of a source string instead would throw in every isolated world: their CSP is
+ * script-src 'self' without unsafe-eval (developer.chrome.com — Content
+ * scripts), so the page-side observe/act entrypoints must never eval. The
+ * function deliberately has no extension-scope dependencies.
  */
-export function createPageV2Helpers() {
+export function PAGE_V2_INSTALL() {
+  if (globalThis.__browserControllerV2Runtime) return false;
+
+  /** Pure semantic policy shared by observation and action revalidation. */
+  function inferAllowedActions(descriptor = {}) {
+    if (descriptor.disabled) return [];
+    const role = String(descriptor.role || '').toLowerCase();
+    const tag = String(descriptor.tagName || '').toLowerCase();
+    const inputType = String(descriptor.inputType || '').toLowerCase();
+    if (tag === 'input' && inputType === 'file') return ['upload'];
+
+    const actions = [];
+    const add = (action) => { if (!actions.includes(action)) actions.push(action); };
+    const isText = descriptor.contentEditable
+      || tag === 'textarea'
+      || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'hidden'].includes(inputType));
+    const isSelect = tag === 'select';
+    const isClickable = ['button', 'link', 'checkbox', 'radio', 'switch', 'menuitem', 'tab', 'option'].includes(role)
+      || tag === 'button'
+      || tag === 'a'
+      || (tag === 'input' && ['button', 'submit', 'reset', 'checkbox', 'radio'].includes(inputType));
+
+    if (isText) {
+      add('focus');
+      if (!descriptor.readOnly) add('type');
+      add('keypress');
+      add('hover');
+    } else if (isSelect) {
+      add('select');
+      add('focus');
+      add('hover');
+    } else if (isClickable) {
+      add('click');
+      add('focus');
+      add('hover');
+    } else if (descriptor.focusable) {
+      add('focus');
+      add('hover');
+    }
+    if (descriptor.scrollable) add('scroll');
+    return actions;
+  }
+
   const clean = (value, max = 160) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max);
   const attr = (element, name) => clean(element?.getAttribute?.(name));
 
@@ -340,14 +352,37 @@ export function createPageV2Helpers() {
     return contexts;
   }
 
-  return { clean, attr, roleOf, nameOf, descriptorOf, rectOf, visibilityOf, composedContains, collectContexts };
+  globalThis.__browserControllerV2Runtime = Object.freeze({
+    helpers: Object.freeze({ clean, attr, roleOf, nameOf, descriptorOf, rectOf, visibilityOf, composedContains, collectContexts }),
+    inferAllowedActions,
+  });
+  return true;
+}
+
+/**
+ * Node/worker-side accessor over the installed runtime's DOM helpers — the
+ * single definition lives inside PAGE_V2_INSTALL so the page gets the exact
+ * code the unit tests exercise.
+ */
+export function createPageV2Helpers() {
+  PAGE_V2_INSTALL();
+  return globalThis.__browserControllerV2Runtime.helpers;
 }
 
 /** Atomic page-side collector used by browser_observe. */
-export function PAGE_OBSERVE_V2(config, helperSource, inferActionsSource) {
+export function PAGE_OBSERVE_V2(config) {
   const startedAt = performance.now();
-  const helpers = eval(`(${helperSource})`)();
-  const inferActions = eval(`(${inferActionsSource})`);
+  const runtime = globalThis.__browserControllerV2Runtime;
+  if (!runtime) {
+    return {
+      success: false,
+      ok: false,
+      error: 'RUNTIME_NOT_INSTALLED',
+      message: 'The Observation V2 runtime is missing on this document; install it and retry.',
+    };
+  }
+  const helpers = runtime.helpers;
+  const inferActions = runtime.inferAllowedActions;
   const STATE_KEY = '__browserControllerObservationV2';
   let state = globalThis[STATE_KEY];
   if (!state || state.document !== document) {
@@ -476,11 +511,15 @@ export function PAGE_OBSERVE_V2(config, helperSource, inferActionsSource) {
 }
 
 /** Single-injection safe action pipeline used by browser_act. */
-export async function PAGE_ACT_V2(config, helperSource, inferActionsSource) {
+export async function PAGE_ACT_V2(config) {
   const startedAt = performance.now();
-  const helpers = eval(`(${helperSource})`)();
-  const inferActions = eval(`(${inferActionsSource})`);
   const fail = (error, message, details = {}) => ({ success: false, ok: false, error, message, ...details });
+  const runtime = globalThis.__browserControllerV2Runtime;
+  if (!runtime) {
+    return fail('RUNTIME_NOT_INSTALLED', 'The Observation V2 runtime is missing on this document; install it and retry.');
+  }
+  const helpers = runtime.helpers;
+  const inferActions = runtime.inferAllowedActions;
   const state = globalThis.__browserControllerObservationV2;
   if (!state || state.document !== document || state.documentId !== config.documentId) {
     return fail('DOCUMENT_CHANGED', 'The page document changed; call browser_observe again.');

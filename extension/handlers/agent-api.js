@@ -5,16 +5,32 @@ import {
 } from '../lib/state.js';
 import {
   actionError,
-  createPageV2Helpers,
-  inferAllowedActions,
   PAGE_ACT_V2,
   PAGE_OBSERVE_V2,
+  PAGE_V2_INSTALL,
   validateActionArguments,
 } from '../lib/observation-v2.js';
 import { SNAPSHOT_MAX_ENTRIES, SNAPSHOT_TTL_MS } from '../lib/snapshot-registry.js';
 import { handleUploadFile } from './cdp.js';
 
 const sessionKey = (sessionId) => String(sessionId || 'anonymous');
+
+/**
+ * Install the (idempotent) page runtime, then run the observe/act entrypoint.
+ * Both are passed as chrome.scripting `func:` so Chrome executes their source
+ * natively — rebuilding helpers with eval() would throw in every isolated
+ * world, whose CSP is script-src 'self' without unsafe-eval.
+ */
+async function execPageV2(tabId, func, args) {
+  await safeExec(tabId, PAGE_V2_INSTALL, []);
+  return safeExec(tabId, func, args);
+}
+
+/** Report protocol calls honestly: page-side metric + the install round trip. */
+function withInstallRoundTrip(result) {
+  const protocolCalls = (result?.metrics?.protocolCalls ?? 0) + 1;
+  return { ...result, metrics: { ...result?.metrics, protocolCalls } };
+}
 
 function snapshotId() {
   const random = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -45,7 +61,7 @@ export async function handleObserve(params = {}, sessionId, _agentName, signal) 
 
   const id = snapshotId();
   const createdAt = Date.now();
-  const result = await safeExec(tabId, PAGE_OBSERVE_V2, [{
+  const result = await execPageV2(tabId, PAGE_OBSERVE_V2, [{
     snapshotId: id,
     sessionId: sessionKey(sessionId),
     mode,
@@ -53,7 +69,7 @@ export async function handleObserve(params = {}, sessionId, _agentName, signal) 
     maxSnapshots: SNAPSHOT_MAX_ENTRIES,
     ttlMs: SNAPSHOT_TTL_MS,
     now: createdAt,
-  }, createPageV2Helpers.toString(), inferAllowedActions.toString()]);
+  }]);
   if (signal?.aborted) return actionError('STALE_STATE', 'Observation was cancelled.');
   if (!result?.success || !result.documentId || !result.documentVersion) {
     return result?.success === false
@@ -72,7 +88,7 @@ export async function handleObserve(params = {}, sessionId, _agentName, signal) 
     createdAt,
   });
   persistSessionState();
-  return { ...result, tabId };
+  return withInstallRoundTrip({ ...result, tabId });
 }
 
 export async function handleAct(params = {}, sessionId, _agentName, signal) {
@@ -96,14 +112,14 @@ export async function handleAct(params = {}, sessionId, _agentName, signal) {
 
   let result;
   try {
-    result = await safeExec(params.tabId, PAGE_ACT_V2, [{
+    result = await execPageV2(params.tabId, PAGE_ACT_V2, [{
       snapshotId: params.snapshotId,
       sessionId: sessionKey(sessionId),
       documentId: ownership.snapshot.documentId,
       routeEpoch: ownership.snapshot.routeEpoch,
       ttlMs: SNAPSHOT_TTL_MS,
       params,
-    }, createPageV2Helpers.toString(), inferAllowedActions.toString()]);
+    }]);
   } catch (error) {
     const message = error?.message || String(error);
     if (/context.*invalidated|frame.*removed|page.*navigat/i.test(message)) {
@@ -160,11 +176,11 @@ export async function handleAct(params = {}, sessionId, _agentName, signal) {
       tabId: params.tabId,
       metrics: {
         ...result.metrics,
-        // Initial safe-action injection + target recheck + four CDP commands
-        // + best-effort input/change dispatch.
-        protocolCalls: 7,
+        // Runtime install + safe-action injection + target recheck + four CDP
+        // commands + best-effort input/change dispatch.
+        protocolCalls: 8,
       },
     };
   }
-  return { ...result, tabId: params.tabId };
+  return withInstallRoundTrip({ ...result, tabId: params.tabId });
 }

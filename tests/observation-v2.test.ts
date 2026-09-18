@@ -3,12 +3,25 @@ import {
   actionError,
   inferAllowedActions,
   isAcceptableComposedHit,
+  PAGE_ACT_V2,
+  PAGE_OBSERVE_V2,
+  PAGE_V2_INSTALL,
   validateActionArguments,
   validateElementGeometry,
   validateFreshness,
 } from '../extension/lib/observation-v2.js';
 
 describe('Observation Engine V2 semantics', () => {
+  it('keeps injected page functions free of eval (isolated-world CSP has no unsafe-eval)', () => {
+    // Isolated worlds run under script-src 'self' without unsafe-eval, so an
+    // eval() inside any chrome.scripting-injected function throws on every
+    // page. The runtime must therefore be installed natively via `func:`.
+    for (const injected of [PAGE_V2_INSTALL, PAGE_OBSERVE_V2, PAGE_ACT_V2]) {
+      expect(injected.toString(), injected.name).not.toMatch(/\beval\s*\(/);
+      expect(injected.toString(), injected.name).not.toMatch(/new\s+Function\b/);
+    }
+  });
+
   it.each([
     [{ role: 'button', tagName: 'button' }, ['click', 'focus', 'hover']],
     [{ role: 'textbox', tagName: 'input', inputType: 'text' }, ['focus', 'type', 'keypress', 'hover']],

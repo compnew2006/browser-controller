@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PAGE_V2_INSTALL } from '../extension/lib/observation-v2.js';
 
 const tabs = new Map<number, { id: number; url: string; title: string }>();
 const injections: Array<Record<string, any>> = [];
@@ -14,6 +15,7 @@ let queryNodeId = 2;
   scripting: {
     executeScript: vi.fn(async (request: Record<string, any>) => {
       injections.push(request);
+      if (request.func === PAGE_V2_INSTALL) return [{ result: true }];
       if (nextResult instanceof Error) throw nextResult;
       if (typeof nextResult === 'function') return [{ result: (nextResult as Function)(request) }];
       return [{ result: nextResult }];
@@ -70,10 +72,10 @@ describe('observe/act extension handlers', () => {
       success: true,
       tabId: 7,
       documentVersion: 'd_page:1:0',
-      metrics: { protocolCalls: 1 },
+      metrics: { protocolCalls: 2 },
     });
     expect(result.snapshotId).toMatch(/^s_/);
-    expect(injections).toHaveLength(1);
+    expect(injections).toHaveLength(2);
     expect(observationSnapshots.validate(result.snapshotId, 7, 'session-a')).toMatchObject({ ok: true });
   });
 
@@ -128,7 +130,7 @@ describe('observe/act extension handlers', () => {
     const result = await handleAct({ tabId: 7, snapshotId: 's_owned', action: 'click', ref: 'e1' }, 'session-a');
 
     expect(result).toMatchObject({ success: true, ok: true, tabId: 7, action: 'click', ref: 'e1' });
-    expect(injections).toHaveLength(1);
+    expect(injections).toHaveLength(2);
   });
 
   it('reports an unknown action outcome instead of claiming success when navigation destroys the context', async () => {
@@ -195,7 +197,7 @@ describe('observe/act extension handlers', () => {
 
     expect(result).toMatchObject({ success: true, ok: true, action: 'upload', files: ['/tmp/resume.pdf'] });
     expect(debuggerCommands).toEqual(['DOM.enable', 'DOM.getDocument', 'DOM.querySelector', 'DOM.setFileInputFiles']);
-    expect(result.metrics).toMatchObject({ protocolCalls: 7 });
+    expect(result.metrics).toMatchObject({ protocolCalls: 8 });
   });
 
   it('returns a structured stale error if the file input disappears during CDP handoff', async () => {

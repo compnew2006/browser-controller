@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  createPageV2Helpers,
-  inferAllowedActions,
   PAGE_ACT_V2,
   PAGE_OBSERVE_V2,
+  PAGE_V2_INSTALL,
 } from '../extension/lib/observation-v2.js';
 
 class FakeEvent {
@@ -142,6 +141,7 @@ function install(document: FakeDocument) {
   (globalThis as any).scrollBy = () => {};
   (globalThis as any).requestAnimationFrame = (callback: Function) => callback();
   delete (globalThis as any).__browserControllerObservationV2;
+  PAGE_V2_INSTALL();
 }
 
 function observe(document: FakeDocument, snapshotId = 's_test') {
@@ -154,7 +154,7 @@ function observe(document: FakeDocument, snapshotId = 's_test') {
     maxSnapshots: 10,
     ttlMs: 60_000,
     now: Date.now(),
-  }, createPageV2Helpers.toString(), inferAllowedActions.toString());
+  });
 }
 
 function act(observation: any, params: Record<string, unknown>) {
@@ -165,7 +165,7 @@ function act(observation: any, params: Record<string, unknown>) {
     routeEpoch: observation.routeEpoch,
     ttlMs: 60_000,
     params,
-  }, createPageV2Helpers.toString(), inferAllowedActions.toString());
+  });
 }
 
 describe('page-side Observation Engine V2', () => {
@@ -274,13 +274,40 @@ describe('page-side Observation Engine V2', () => {
     const second = PAGE_OBSERVE_V2({
       snapshotId: 's_2', sessionId: 'session-a', mode: 'compact', maxElements: 10,
       maxSnapshots: 10, ttlMs: 60_000, now: Date.now(),
-    }, createPageV2Helpers.toString(), inferAllowedActions.toString());
+    });
     expect(second.documentVersion).toBe(first.documentVersion);
 
     const nextDocument = new FakeDocument();
     nextDocument.add('button', 'Two');
     const replacement = observe(nextDocument, 's_3');
     expect(replacement.documentId).not.toBe(first.documentId);
+  });
+
+  it('refuses to run without the installed runtime and recovers once installed', async () => {
+    const runtime = (globalThis as any).__browserControllerV2Runtime;
+    delete (globalThis as any).__browserControllerV2Runtime;
+    const document = new FakeDocument();
+    document.add('button', 'Continue');
+    try {
+      install(document);
+      delete (globalThis as any).__browserControllerV2Runtime;
+      expect(PAGE_OBSERVE_V2({
+        snapshotId: 's_no_runtime', sessionId: 'session-a', mode: 'compact',
+        maxElements: 10, maxSnapshots: 10, ttlMs: 60_000, now: Date.now(),
+      })).toMatchObject({ success: false, error: 'RUNTIME_NOT_INSTALLED' });
+      expect(await PAGE_ACT_V2({
+        snapshotId: 's_no_runtime', sessionId: 'session-a', documentId: 'd_x',
+        routeEpoch: 1, ttlMs: 60_000, params: { action: 'click', ref: 'e1' },
+      })).toMatchObject({ success: false, error: 'RUNTIME_NOT_INSTALLED' });
+      expect(PAGE_V2_INSTALL()).toBe(true);
+      expect(PAGE_OBSERVE_V2({
+        snapshotId: 's_no_runtime2', sessionId: 'session-a', mode: 'compact',
+        maxElements: 10, maxSnapshots: 10, ttlMs: 60_000, now: Date.now(),
+      })).toMatchObject({ success: true, elements: [expect.objectContaining({ ref: 'e1' })] });
+      expect(PAGE_V2_INSTALL()).toBe(false);
+    } finally {
+      (globalThis as any).__browserControllerV2Runtime = runtime;
+    }
   });
 });
 
