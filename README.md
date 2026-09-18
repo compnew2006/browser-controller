@@ -14,7 +14,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
-  <img src="https://img.shields.io/badge/tests-215%20passing-22c55e?style=flat-square" alt="215 tests" />
+  <img src="https://img.shields.io/badge/tests-285%20passing-22c55e?style=flat-square" alt="285 tests" />
 </p>
 
 ---
@@ -186,6 +186,31 @@ The model is **tab-first**: the agent always says *which* tab to act on. It neve
    If a ref is stale but the element still exists, it's found automatically via a robust selector + text/role scan (response carries `via: "fallback"`). If the element was scrolled away entirely (virtualized feeds), the response carries **`freshRefs: [...]`** with a fresh snapshot inline — retry with one of those new refs in the same step, no separate snapshot needed.
 4. **Verify** — snapshot or read text again after the action.
 
+### Safe Observe → Act workflow
+
+For automation that must fail safely when a page changes, use the Browser Controller 2.0 agent API. `browser_observe` captures one compact semantic state in a single page execution and returns session-, tab-, document-, and snapshot-owned refs:
+
+```text
+browser_observe { tabId: 15, mode: "compact" }
+→ {
+    snapshotId: "s_…",
+    documentVersion: "d_…:1:0",
+    elements: [
+      { ref: "e1", role: "button", name: "Continue",
+        bbox: [422, 680, 160, 44], allowedActions: ["click", "focus", "hover"] }
+    ]
+  }
+```
+
+Pass the same `tabId`, `snapshotId`, and ref to `browser_act`:
+
+```text
+browser_act { tabId: 15, snapshotId: "s_…", action: "click", ref: "e1" }
+browser_act { tabId: 15, snapshotId: "s_…", action: "type", ref: "e4", text: "London", clear: true }
+```
+
+Before acting, the extension checks snapshot ownership, document/route identity, target semantics, current geometry and visibility, enabled state, allowed actions, and click-point occlusion. Recoverable replacements need one unique stable identity; ambiguous or unsafe state returns a compact error such as `DOCUMENT_CHANGED`, `STALE_STATE`, `TARGET_OCCLUDED`, or `ACTION_NOT_ALLOWED`. Call `browser_observe` again after one of these state errors.
+
 ### Multi-agent coordination (two agents, two tabs)
 
 1. Agent A lists tabs, picks tab 10, optionally locks it: `browser_tabs { action: "lock", tabId: 10 }`
@@ -216,7 +241,7 @@ A fixed-height tabbed shell (the body never scrolls, only the lists do):
 
 ## 🧠 Teach Your Agent
 
-The agent can use all 22 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
+The agent can use all 24 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
 
 ```bash
 npm run setup:cursor   # or: node mcp-server/dist/index.js --setup cursor
@@ -245,12 +270,13 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-22 tools. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional).
+24 tools. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional).
 
 **See**
 
 | Tool | What it does |
 |------|-------------|
+| `browser_observe` | Compact atomic semantic observation with snapshot/document identity, geometry, state, and dynamic allowed actions |
 | `browser_snapshot` | Accessibility tree with element refs. Compact mode (default) returns only interactive elements. Traverses shadow DOM + iframes. |
 | `browser_screenshot` | Capture a tab as an image (activates the tab first to capture) |
 | `browser_text` | Extract raw text from page or element |
@@ -260,6 +286,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 | Tool | What it does |
 |------|-------------|
+| `browser_act` | Safely click/type/select/focus/hover/keypress/scroll/upload against a `browser_observe` snapshot |
 | `browser_click` | Click by ref or CSS selector — pierces same-origin iframes |
 | `browser_click_text` | Click by visible text. Works through React portals and overlays |
 | `browser_type` | Type into inputs and contenteditable fields |
@@ -324,7 +351,7 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 | Env var | Default | What it does |
 |---------|---------|-------------|
 | `WS_PORT` | `7225` | WebSocket port the daemon uses for the extension connection |
-| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of ~4200 for all 22 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
+| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of loading all 24 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
 | `MCP_AGENT_NAME` | (auto: IDE name) | Override the agent name shown in the popup (same as `--agent`) |
 
 ### Daemon state files

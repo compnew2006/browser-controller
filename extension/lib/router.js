@@ -2,10 +2,10 @@
  * Tool router (extracted from background.js): routes daemon WS messages to
  * handlers through the per-tab mutex + lock layer, and owns in-flight abort
  * controllers. The handler registry is a module-level constant — the old
- * dispatch() rebuilt a 22-entry object on every call.
+ * dispatch() rebuilt the tool map on every call.
  */
 import { runOnTab as runOnTabLib } from './tab-concurrency.js';
-import { tabLocks, tabMutex, persistSessionState } from './state.js';
+import { tabLocks, tabMutex, observationSnapshots, persistSessionState } from './state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from './connection.js';
 import { showLockShield, hideLockShield } from './overlay.js';
 import { getActiveTab, handleNavigate } from '../handlers/navigation.js';
@@ -13,6 +13,7 @@ import { handleClick, handleType, handlePressKey, handleHover, handleSelect, han
 import { handleWait, handleScroll, handleSnapshot, handleFind, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
 import { handleTabs, handleConsole, handleNetwork, handleScreenshot } from '../handlers/tabs.js';
 import { handleRunAction, handleUploadFile } from '../handlers/cdp.js';
+import { handleObserve, handleAct } from '../handlers/agent-api.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -58,6 +59,8 @@ const HANDLERS = {
   browser_fill_form: handleFillForm,
   browser_find: handleFind,
   browser_text: handleGetPageText,
+  browser_observe: handleObserve,
+  browser_act: handleAct,
 };
 
 /** All tool names the router can dispatch (exported for the drift-guard test). */
@@ -108,6 +111,7 @@ export async function handleMessage(msg) {
       // releaseByOwner is synchronous and returns the released tabIds before
       // any shield calls below run — no async race (review NOTE 7a).
       const released = tabLocks.releaseByOwner(owner);
+      observationSnapshots.dropSession(owner);
       // Persist: without this, a service-worker recycle after the disconnect
       // would restore the just-released lock from session storage and
       // resurrect stale exclusivity (spec-review finding).

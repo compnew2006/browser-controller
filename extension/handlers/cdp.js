@@ -101,8 +101,11 @@ export async function handleUploadFile(params) {
   }
 
   // upload_file stays on CDP (DOM.setFileInputFiles is CDP-only).
-  await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+  let attached = false;
+  let uploaded = false;
   try {
+    await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+    attached = true;
     await chrome.debugger.sendCommand({ tabId: tab.id }, 'DOM.enable', {});
     const { root } = await chrome.debugger.sendCommand({ tabId: tab.id }, 'DOM.getDocument', {});
 
@@ -117,20 +120,25 @@ export async function handleUploadFile(params) {
       files: filePaths,
       nodeId,
     });
+    uploaded = true;
   } finally {
-    try { await chrome.debugger.detach({ tabId: tab.id }); } catch {}
+    if (attached) {
+      try { await chrome.debugger.detach({ tabId: tab.id }); } catch {}
+    }
+    // Fire the events React/Vue file inputs listen for after a successful set,
+    // and always remove the short-lived Observation V2 handoff marker.
+    try {
+      await safeExec(tab.id, (s, notify) => {
+        const el = document.querySelector(s);
+        if (!el) return;
+        if (notify) {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        el.removeAttribute('data-bc-v2-upload');
+      }, [sel, uploaded]);
+    } catch { /* page changed — CDP outcome still determines the tool result */ }
   }
-
-  // Fire the events React/Vue file inputs listen for (CDP sets files without
-  // notifying the page). Best-effort: the files are already set either way.
-  try {
-    await safeExec(tab.id, (s) => {
-      const el = document.querySelector(s);
-      if (!el) return;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    }, [sel]);
-  } catch { /* shielded page / tab gone — files were still set via CDP */ }
 
   return { success: true, files: filePaths, selector: sel };
 }

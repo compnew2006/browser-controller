@@ -10,7 +10,7 @@
  *   - lib/router.js         tool dispatch through the per-tab mutex + locks
  *   - lib/page-exec.js      resolveTab / safeExec / locator guard
  *   - lib/overlay.js        action badge overlay + tab-lock shield
- *   - handlers/*.js         the 22 tool implementations, grouped by concern
+ *   - handlers/*.js         the 24 tool implementations, grouped by concern
  *   - events.js             chrome.* event listeners (console capture, popup,
  *                           webRequest, tab lifecycle)
  *

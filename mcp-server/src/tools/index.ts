@@ -21,6 +21,8 @@ import { uploadFileTool } from './upload-file.js';
 import { runActionTool } from './run-action.js';
 import { dragTool } from './drag.js';
 import { fillFormTool } from './fill-form.js';
+import { observeTool } from './observe.js';
+import { actTool } from './act.js';
 
 export const allTools: ToolDefinition[] = [
   navigateTool,
@@ -45,6 +47,8 @@ export const allTools: ToolDefinition[] = [
   runActionTool,
   dragTool,
   fillFormTool,
+  observeTool,
+  actTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

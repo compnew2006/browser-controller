@@ -28,6 +28,11 @@ describe('Observation Engine V2 semantics', () => {
     ]);
   });
 
+  it('does not advertise native-only actions for unsupported ARIA lookalikes', () => {
+    expect(inferAllowedActions({ role: 'textbox', tagName: 'div' })).toEqual([]);
+    expect(inferAllowedActions({ role: 'listbox', tagName: 'div' })).toEqual([]);
+  });
+
   it.each([
     [{ action: 'type', ref: 'e1' }, 'text'],
     [{ action: 'keypress', ref: 'e1' }, 'key'],
@@ -47,6 +52,21 @@ describe('Observation Engine V2 semantics', () => {
     expect(validateActionArguments({ action: 'launch', ref: 'e1' })).toMatchObject({
       ok: false,
       error: 'INVALID_ACTION_ARGUMENTS',
+    });
+  });
+
+  it.each([
+    [{ action: 'focus', ref: 12 }, 'ref'],
+    [{ action: 'type', ref: 'e1', text: 'ok', clear: 'yes' }, 'clear'],
+    [{ action: 'select', ref: 'e1', index: -1 }, 'index'],
+    [{ action: 'keypress', ref: 'e1', key: '', modifiers: ['super'] }, 'key'],
+    [{ action: 'scroll', deltaY: Number.POSITIVE_INFINITY }, 'deltaY'],
+    [{ action: 'upload', ref: 'e1', files: [] }, 'files'],
+  ])('rejects malformed direct-wire action request %o', (params, invalid) => {
+    expect(validateActionArguments(params)).toMatchObject({
+      ok: false,
+      error: 'INVALID_ACTION_ARGUMENTS',
+      invalid,
     });
   });
 

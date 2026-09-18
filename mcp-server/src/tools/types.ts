@@ -87,7 +87,7 @@ export function errorResult(message: string): ToolResult {
 
 /**
  * Shared passthrough handler for extension-backed tools (DRY audit item #1:
- * this body was copy-pasted in 21 of 22 tool files). Forwards to the host and
+ * this body was previously copy-pasted across nearly every tool file). Forwards to the host and
  * JSON-wraps the result.
  *
  * Unified error channel: when the extension reports an in-band failure

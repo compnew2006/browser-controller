@@ -14,6 +14,7 @@
  *     lifetime for both. See loadSessionState/persistSessionState.
  */
 import { TabMutexMap, TabLockMap } from './tab-concurrency.js';
+import { SnapshotRegistry } from './snapshot-registry.js';
 
 export const PER_TAB_CAP = 200;
 // Response cap for unbounded result tools (evaluate/run_action). browser_text
@@ -39,6 +40,8 @@ export const fallbackByTab = new Map();
  * @type {Map<number, string[]>}
  */
 export const lastSnapshotFingerprints = new Map();
+/** Bounded Observation V2 ownership metadata; page-side refs never live here. */
+export const observationSnapshots = new SnapshotRegistry();
 
 // --- Per-tab mutex (task 2.1) + per-agent tab locks (task 2.2) ------------
 // Pure, unit-tested primitives in lib/tab-concurrency.js.
@@ -77,7 +80,11 @@ export function persistSessionState() {
       fallbacks[tabId] = Object.fromEntries(map);
     }
     chrome.storage.session.set({
-      [SESSION_STATE_KEY]: { locks: tabLocks.snapshot(), fallbacks },
+      [SESSION_STATE_KEY]: {
+        locks: tabLocks.snapshot(),
+        fallbacks,
+        observations: observationSnapshots.serialize(),
+      },
     }).catch(() => {});
   } catch { /* storage unavailable — in-memory behavior */ }
 }
@@ -107,7 +114,15 @@ export async function loadSessionState() {
         }
       }
     }
+    observationSnapshots.restore(state.observations);
   } catch { /* storage unavailable — start empty, as before */ }
+}
+
+/** Invalidate document-bound refs without releasing the tab's durable lock. */
+export function dropDocumentState(tabId) {
+  fallbackByTab.delete(tabId);
+  lastSnapshotFingerprints.delete(tabId);
+  observationSnapshots.invalidateTab(tabId);
 }
 
 /** Drop one tab's durable state (tab closed). */
@@ -116,5 +131,6 @@ export function dropTabState(tabId) {
   networkByTab.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
+  observationSnapshots.dropTab(tabId);
   tabLocks.release(tabId);
 }

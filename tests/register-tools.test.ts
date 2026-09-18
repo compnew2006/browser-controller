@@ -13,7 +13,7 @@ import type { ToolHost } from '../mcp-server/src/tools/types.js';
  * InMemoryTransport — the same code path index.ts uses, minus the daemon.
  *
  * Covers the two modes:
- *  - fullMode (default): all 22 tools + browser_tools visible immediately.
+ *  - fullMode (default): all 24 tools + browser_tools visible immediately.
  *  - progressive (BROWSER_CONTROLLER_PROGRESSIVE=1): only browser_tools
  *    visible; disabled tools reject calls; details activates + notifies.
  */

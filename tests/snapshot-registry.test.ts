@@ -71,6 +71,16 @@ describe('SnapshotRegistry', () => {
     expect(registry.serialize().map((item: { snapshotId: string }) => item.snapshotId)).toEqual(['s_1']);
   });
 
+  it('distinguishes document invalidation while preserving tab/session isolation', () => {
+    const registry = new SnapshotRegistry({ ttlMs: 10_000, now: () => 1_100 });
+    registry.register(entry());
+    registry.invalidateTab(7);
+
+    expect(registry.validate('s_1', 7, 'agent-a')).toMatchObject({ error: 'DOCUMENT_CHANGED' });
+    expect(registry.validate('s_1', 8, 'agent-a')).toMatchObject({ error: 'SNAPSHOT_NOT_FOUND', reason: 'WRONG_TAB' });
+    expect(registry.validate('s_1', 7, 'agent-b')).toMatchObject({ error: 'SNAPSHOT_NOT_FOUND', reason: 'WRONG_SESSION' });
+  });
+
   it('restores only valid, well-shaped metadata after a service-worker recycle', () => {
     const registry = new SnapshotRegistry({ ttlMs: 1_000, now: () => 1_100 });
     registry.restore([

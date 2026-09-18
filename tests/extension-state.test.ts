@@ -23,7 +23,7 @@ const sessionStore = new Map<string, unknown>();
   alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
 };
 
-const { tabLocks, fallbackByTab, observationSnapshots, persistSessionState, loadSessionState, dropTabState } =
+const { tabLocks, fallbackByTab, observationSnapshots, persistSessionState, loadSessionState, dropDocumentState, dropTabState } =
   await import('../extension/lib/state.js');
 
 describe('session persistence (MV3 lifetime)', () => {
@@ -71,6 +71,21 @@ describe('session persistence (MV3 lifetime)', () => {
     expect(tabLocks.owner(7)).toBeUndefined();
     expect(fallbackByTab.has(7)).toBe(false);
     expect(observationSnapshots.validate('s_tab', 7, 'agentA')).toMatchObject({ error: 'SNAPSHOT_NOT_FOUND' });
+  });
+
+  it('invalidates document-bound refs without releasing a durable tab lock', () => {
+    tabLocks.lock(7, 'agentA');
+    fallbackByTab.set(7, new Map([['e1', { selector: '#continue' }]]));
+    observationSnapshots.register({
+      snapshotId: 's_document', tabId: 7, sessionId: 'agentA', documentId: 'd1',
+      documentVersion: 'd1:1', createdAt: Date.now(),
+    });
+
+    dropDocumentState(7);
+
+    expect(tabLocks.owner(7)).toBe('agentA');
+    expect(fallbackByTab.has(7)).toBe(false);
+    expect(observationSnapshots.validate('s_document', 7, 'agentA')).toMatchObject({ error: 'DOCUMENT_CHANGED' });
   });
 
   it('persists bounded observation ownership metadata across a worker recycle', async () => {
