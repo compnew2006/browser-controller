@@ -15,7 +15,7 @@ import { handleTabs, handleConsole, handleNetwork, handleScreenshot, handleResiz
 import { handleRunAction, handleUploadFile } from '../handlers/cdp.js';
 import { handleIntercept } from '../handlers/intercept.js';
 import { handleObserve, handleAct } from '../handlers/agent-api.js';
-import { handleGif, isRecording, recordFrame, GIF_FRAME_TOOLS } from '../handlers/gif.js';
+import { handleGif, isRecording, recordFrame, GIF_FRAME_TOOLS, currentTabId } from '../handlers/gif.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -113,6 +113,13 @@ function extractTabId(_tool, params) {
   return typeof params.tabId === "number" ? params.tabId : null;
 }
 
+/** The new tab id when this call replaced a frozen tab (navigate/reload), else null. */
+function replacementOf(result) {
+  if (typeof result?.replacedTabId !== 'number') return null;
+  const fresh = result.tabId ?? result.reloaded;
+  return typeof fresh === 'number' ? fresh : null;
+}
+
 export async function handleMessage(msg) {
   // Control messages (non-tool) from the daemon. These carry a `type` and no
   // `tool`; handle them here before the tool-dispatch path assumes a tool call.
@@ -170,6 +177,11 @@ export async function handleMessage(msg) {
   if (tool === "browser_navigate" && typeof p.tabId !== "number") {
     p.tabId = (await getActiveTab()).id;
   }
+  // A GIF call naming a replaced frozen tab targets its replacement, so the
+  // lock check and the per-tab queue below apply to the tab it really touches.
+  if (tool === 'browser_gif' && p.action !== 'start' && typeof p.tabId === 'number') {
+    p.tabId = currentTabId(p.tabId);
+  }
   const tabId = extractTabId(tool, p);
 
   // A tool call without an id can never be answered: it used to collide in
@@ -218,6 +230,12 @@ export async function handleMessage(msg) {
         controller.signal,
       );
       sendToolResponse(id, result);
+      // Recovery navigate replaced a frozen tab: record the new page, queued
+      // on the replacement's mutex like any other capture.
+      const fresh = replacementOf(result);
+      if (fresh != null && GIF_FRAME_TOOLS.has(tool) && isRecording(fresh)) {
+        await tabMutex.run(fresh, () => recordFrame(fresh, tool, result));
+      }
     } catch (err) {
       sendResponse(id, { success: false, error: err.message || String(err) });
     } finally {
@@ -250,8 +268,10 @@ export async function handleMessage(msg) {
         sendToolResponse(id, result);
         // GIF recording: capture the page after the action (the reply is already
         // sent; the tab mutex keeps the next call from racing the capture).
-        if (GIF_FRAME_TOOLS.has(tool) && isRecording(tabId) && !(result && result.success === false)) {
-          await recordFrame(tabId, tool, result);
+        // A frozen tab replaced by this call records on its replacement.
+        const frameTab = replacementOf(result) ?? tabId;
+        if (GIF_FRAME_TOOLS.has(tool) && isRecording(frameTab) && !(result && result.success === false)) {
+          await recordFrame(frameTab, tool, result);
         }
       } catch (err) {
         sendResponse(id, { success: false, error: err.message || String(err) });

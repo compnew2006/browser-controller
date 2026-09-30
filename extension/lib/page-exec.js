@@ -2,7 +2,7 @@
  * Page-execution primitives (extracted from background.js): tab resolution,
  * the locator guard, and safeExec. Everything a handler needs to touch a page.
  */
-import { fallbackByTab, wedgedTabs, tabLocks, persistSessionState } from './state.js';
+import { fallbackByTab, wedgedTabs, tabLocks, persistSessionState, gifRecordings, replacedTabs } from './state.js';
 import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from './page-dom.js';
 
 /**
@@ -111,6 +111,13 @@ export async function replaceFrozenTab(tab, url, sessionId = null) {
     tabLocks.lock(fresh.id, owner);
     persistSessionState();
   }
+  // A GIF recording moves with the tab: frames keep coming, export still works.
+  const rec = gifRecordings.get(tab.id);
+  if (rec) {
+    gifRecordings.delete(tab.id);
+    gifRecordings.set(fresh.id, rec);
+  }
+  replacedTabs.set(tab.id, fresh.id);
   chrome.tabs.remove(tab.id).catch(() => { /* already gone */ });
   return fresh;
 }

@@ -6,6 +6,10 @@ const updates: Array<[number, unknown]> = [];
 let captureHangs = false;
 let dpr = 1;
 let imageData = 'CDPDATA';
+/** What window.devicePixelRatio reports (null = the page can't answer). */
+let pageDpr: number | null = null;
+/** When set, the capture is as big as a real one: clip × scale × this true ratio. */
+let trueDpr: number | null = null;
 /** A tiny PNG header (signature + IHDR) of the given size, base64. */
 function pngOf(w: number, h: number): string {
   const b = Buffer.alloc(33);
@@ -39,7 +43,13 @@ function pngOf(w: number, h: number): string {
     onDetach: { addListener: () => {} },
     sendCommand: async (_t: { tabId: number }, method: string, params: Record<string, unknown> = {}) => {
       cdp.push({ method, params });
-      if (method === 'Runtime.evaluate') return { result: { value: 1000 } };
+      if (method === 'Runtime.evaluate') {
+        if (String(params.expression).includes('devicePixelRatio')) {
+          if (pageDpr === null) throw new Error('no page');
+          return { result: { value: pageDpr } };
+        }
+        return { result: { value: 1000 } };
+      }
       if (method === 'Page.getLayoutMetrics') {
         return {
           cssVisualViewport: { clientWidth: 1000, clientHeight: 600, pageX: 0, pageY: 50 },
@@ -50,6 +60,10 @@ function pngOf(w: number, h: number): string {
       if (method === 'Page.captureScreenshot') {
         const tab = tabs.get(_t.tabId);
         if (captureHangs || !tab?.active) return new Promise(() => {});
+        if (trueDpr !== null) {
+          const clip = params.clip as { width: number; height: number; scale: number };
+          return { data: pngOf(Math.round(clip.width * clip.scale * trueDpr), Math.round(clip.height * clip.scale * trueDpr)) };
+        }
         return { data: imageData };
       }
       return {};
@@ -67,6 +81,8 @@ describe('browser_screenshot over CDP', () => {
     captureHangs = false;
     dpr = 1;
     imageData = 'CDPDATA';
+    pageDpr = null;
+    trueDpr = null;
     tabs.clear();
     tabs.set(1, { id: 1, url: 'https://a.test', windowId: 7, active: true });
     tabs.set(2, { id: 2, url: 'https://b.test', windowId: 7, active: false });
@@ -92,6 +108,28 @@ describe('browser_screenshot over CDP', () => {
     const small = await handleScreenshot({ tabId: 1, format: 'png', maxWidth: 800 });
     expect(cdp.find((c) => c.method === 'Page.captureScreenshot')!.params).toMatchObject({ clip: { scale: 0.4 } });
     expect(small).toMatchObject({ width: 800, frame: { scale: 0.8 } });
+  });
+
+  it('maxWidth holds at DPR 2 even when the layout metrics report no ratio (real Chrome)', async () => {
+    // Real Chrome at DPR 2: device and CSS viewport widths come back equal.
+    dpr = 1;
+    trueDpr = 2;
+    pageDpr = 2;
+    const res = await handleScreenshot({ tabId: 1, format: 'png', maxWidth: 800 });
+    const caps = cdp.filter((c) => c.method === 'Page.captureScreenshot');
+    expect(caps).toHaveLength(1);
+    expect(caps[0].params).toMatchObject({ clip: { scale: 0.4 } });
+    expect(res).toMatchObject({ width: 800, height: 480, frame: { scale: 0.8 } });
+  });
+
+  it('maxWidth is enforced from the real image when no ratio source is right', async () => {
+    dpr = 1;
+    trueDpr = 2; // the page can't tell (pageDpr null) and the metrics say 1
+    const res = await handleScreenshot({ tabId: 1, format: 'png', maxWidth: 800 });
+    const caps = cdp.filter((c) => c.method === 'Page.captureScreenshot');
+    expect(caps).toHaveLength(2); // one re-capture, scaled by what the image showed
+    expect(caps[1].params).toMatchObject({ clip: { scale: 0.4 } });
+    expect(res).toMatchObject({ width: 800, frame: { scale: 0.8 } });
   });
 
   it('fullPage clips the whole content', async () => {

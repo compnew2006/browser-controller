@@ -132,6 +132,81 @@ describe("extension router (handleMessage)", () => {
     wedgedTabs.clear();
   });
 
+  it('a GIF call by the old id is checked against the lock of the replacement tab', async () => {
+    const { gifRecordings, replacedTabs } = await import('../extension/lib/state.js');
+    const rec = { frames: [{}], width: 800, maxFrames: 300, activate: true, recording: true, skipped: 0, startedAt: Date.now() };
+    gifRecordings.set(99, rec);
+    replacedTabs.set(3, 99);
+    tabStore.set(99, { id: 99, windowId: 1, url: 'https://a.test', title: 'A', active: true });
+    tabLocks.lock(99, 'session-a');
+    // Another session stops "tab 3": it must queue behind 99's lock, not stop the owner's recording.
+    await handleMessage({ id: 'g1', tool: 'browser_gif', params: { tabId: 3, action: 'stop' }, sessionId: 'session-b' });
+    await flush();
+    expect(rec.recording).toBe(true);
+    expect(sent.find((f) => f.id === 'g1' && f.success === true)).toBeUndefined();
+    // The owner using the old id reaches its recording.
+    await handleMessage({ id: 'g2', tool: 'browser_gif', params: { tabId: 3, action: 'stop' }, sessionId: 'session-a' });
+    await flush();
+    expect(rec.recording).toBe(false);
+    tabLocks.release(99);
+    await flush();
+    gifRecordings.clear();
+    replacedTabs.clear();
+    tabStore.delete(99);
+  });
+
+  it('recovery navigate of a frozen, recording tab captures a frame of the replacement', async () => {
+    const { gifRecordings, replacedTabs } = await import('../extension/lib/state.js');
+    const rec = { frames: [] as unknown[], width: 800, maxFrames: 300, activate: true, recording: true, skipped: 0, startedAt: Date.now() };
+    gifRecordings.set(3, rec);
+    wedgedTabs.set(3, Date.now());
+    tabStore.set(3, { id: 3, windowId: 1, url: 'https://frozen.test', title: 'F', active: true });
+    (globalThis as any).chrome.tabs.create = async () => { tabStore.set(99, { id: 99, windowId: 1, url: 'about:blank', title: '', active: true }); return { id: 99 }; };
+    (globalThis as any).chrome.tabs.remove = async () => {};
+    // The replacement finishes loading right away.
+    (globalThis as any).chrome.tabs.onUpdated = {
+      addListener: (fn: (id: number, info: unknown, tab: unknown) => void) => setTimeout(() => fn(99, { status: 'complete' }, tabStore.get(99)), 5),
+      removeListener: () => {},
+    };
+    await handleMessage({ id: 'n1', tool: 'browser_navigate', params: { tabId: 3, url: 'https://example.com/x', snapshot: false }, sessionId: 'session-a' });
+    for (let i = 0; i < 20 && rec.frames.length + rec.skipped === 0; i++) await flush();
+    expect(gifRecordings.get(99)).toBe(rec);
+    // A capture was attempted on tab 99 (the mock has no real CDP, so it may be skipped).
+    expect(sent.find((f) => f.id === 'n1')).toMatchObject({ success: true });
+    expect(rec.frames.length + rec.skipped).toBe(1);
+    delete (globalThis as any).chrome.tabs.onUpdated;
+    gifRecordings.clear();
+    replacedTabs.clear();
+    wedgedTabs.clear();
+    tabStore.delete(3);
+    tabStore.delete(99);
+  });
+
+  it('a GIF recording follows a frozen tab to its replacement (frames continue, old id still answers)', async () => {
+    const { replaceFrozenTab } = await import('../extension/lib/page-exec.js');
+    const { gifRecordings, replacedTabs } = await import('../extension/lib/state.js');
+    const { handleGif, isRecording } = await import('../extension/handlers/gif.js');
+    (globalThis as any).chrome.tabs.create = async () => ({ id: 99 });
+    (globalThis as any).chrome.tabs.remove = async () => {};
+    const rec = { frames: [{}, {}], width: 800, maxFrames: 300, activate: true, recording: true, skipped: 0, startedAt: Date.now() };
+    gifRecordings.set(3, rec);
+    wedgedTabs.set(3, Date.now());
+    const fresh = await replaceFrozenTab({ id: 3, windowId: 1, index: 0, active: true }, null, null);
+    expect(fresh.id).toBe(99);
+    expect(gifRecordings.get(99)).toBe(rec);
+    expect(gifRecordings.has(3)).toBe(false);
+    expect(isRecording(99)).toBe(true); // the router keeps adding frames on the new tab
+    // The old id (closed tab) still reaches the recording: no tab lookup for status/stop/export.
+    const realGet = (globalThis as any).chrome.tabs.get;
+    (globalThis as any).chrome.tabs.get = async (id: number) => { if (id === 3) throw new Error('No tab with id: 3'); return realGet(id); };
+    expect(await handleGif({ tabId: 3, action: 'status' })).toMatchObject({ success: true, recording: true, frames: 2 });
+    expect(await handleGif({ tabId: 3, action: 'stop' })).toMatchObject({ success: true, recording: false, frames: 2 });
+    (globalThis as any).chrome.tabs.get = realGet;
+    gifRecordings.clear();
+    replacedTabs.clear();
+    wedgedTabs.clear();
+  });
+
   it("converts a THROWN handler error into a wire-level error", async () => {
     // click with neither ref nor selector throws in requireTarget.
     await handleMessage({
