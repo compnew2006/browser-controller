@@ -118,14 +118,16 @@ export class ExtensionConnections {
   select(sessionId: string | undefined, browserId: unknown): Record<string, unknown> {
     if (!sessionId) throw new Error('Selecting a browser needs a client session (connect through the Browser Controller MCP server).');
     const id = typeof browserId === 'string' ? browserId.trim() : '';
-    // An explicit choice (or "auto" again) re-pins the session.
-    this.autoBrowser.delete(sessionId);
     if (!id || id === 'auto') {
+      // "auto" again re-pins the session to the current default.
+      this.autoBrowser.delete(sessionId);
       this.sessionBrowser.delete(sessionId);
       return { success: true, selected: 'auto', browserId: this.primary()?.browserId ?? null };
     }
     const conn = this.live().find((c) => c.browserId === id || c.label === id);
+    // A failed selection changes nothing: the session keeps its pin.
     if (!conn) throw new Error(`No connected browser "${id}". browser_list_browsers shows the connected ones.`);
+    this.autoBrowser.delete(sessionId);
     this.sessionBrowser.set(sessionId, conn.browserId);
     return { success: true, selected: conn.browserId, label: conn.label };
   }

@@ -105,6 +105,9 @@ describe('multi-browser bridge', () => {
     const listed = await (bridge.callTool('browser_list_browsers', {}, 's1') as Promise<any>);
     expect(listed).toMatchObject({ selectedBrowserId: 'work', pinnedAuto: true });
     expect(listed.browsers.find((b: any) => b.selected).browserId).toBe('work');
+    // A failed selection keeps the pin.
+    await expect(bridge.callTool('browser_select_browser', { browserId: 'nope' }, 's1')).rejects.toThrow(/No connected browser/);
+    expect(await bridge.callTool('browser_type', { tabId: 7, text: 'z' }, 's1')).toEqual({ from: 'work' });
     // Its browser gone: an error, never a silent switch to the other browser.
     work.ws.close();
     await new Promise((r) => setTimeout(r, 60));
