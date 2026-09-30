@@ -27,7 +27,8 @@ export default [
       parserOptions: {
         requireConfigFile: false,
         babelOptions: {
-          presets: [['@babel/preset-typescript', { allowDeclareFields: true }]],
+          // Babel 8 always allows `declare` fields (the option was removed).
+          presets: ['@babel/preset-typescript'],
         },
       },
     },

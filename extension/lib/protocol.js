@@ -39,11 +39,15 @@ export function validateDaemonHello(message) {
   return { ok: true, legacy: false };
 }
 
-export function buildExtensionHelloAck(appVersion) {
+export function buildExtensionHelloAck(appVersion, identity = {}) {
   return {
     type: 'helloAck',
     protocolVersion: PROTOCOL_VERSION,
     ...(appVersion ? { appVersion } : {}),
     capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
+    // Multi-browser: a stable id per browser profile (+ a human label) so the
+    // daemon can keep several browsers connected and route sessions to one.
+    ...(identity.browserId ? { browserId: identity.browserId } : {}),
+    ...(identity.browserLabel ? { browserLabel: identity.browserLabel } : {}),
   };
 }

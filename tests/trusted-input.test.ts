@@ -92,6 +92,35 @@ describe('trusted input (CDP)', () => {
     expect(inputs().filter((c) => c.params.type === 'mousePressed').map((c) => c.params.clickCount)).toEqual([1, 2]);
   });
 
+  it('click at x/y: no element lookup, real click at the point, triple click', async () => {
+    pageResults.push({ inView: true, hit: { role: 'button', name: 'Go', tag: 'button' } });
+    const res = await handleClick({ tabId: 5, x: 30, y: 40, clickCount: 3, modifiers: ['ctrl'] });
+    expect(res).toMatchObject({ success: true, input: 'cdp', at: { x: 30, y: 40 }, hit: { name: 'Go' } });
+    const presses = inputs().filter((c) => c.params.type === 'mousePressed');
+    expect(presses.map((c) => c.params.clickCount)).toEqual([1, 2, 3]);
+    expect(presses[0].params).toMatchObject({ x: 30, y: 40, modifiers: 2 });
+  });
+
+  it('press_key: space-separated sequences and repeat', async () => {
+    pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true });
+    await handlePressKey({ tabId: 5, key: 'ArrowDown ArrowDown Enter' });
+    expect(inputs().filter((c) => c.params.type !== 'keyUp').map((c) => c.params.key)).toEqual(['ArrowDown', 'ArrowDown', 'Enter']);
+    cdp.length = 0;
+    pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true });
+    const res = await handlePressKey({ tabId: 5, key: 'ctrl+a Backspace', repeat: 2 });
+    expect(res).toMatchObject({ success: true, repeat: 2 });
+    const downs = inputs().filter((c) => c.params.type !== 'keyUp');
+    expect(downs.map((c) => [c.params.key, c.params.modifiers])).toEqual([['a', 2], ['Backspace', 0], ['a', 2], ['Backspace', 0]]);
+  });
+
+  it('type without ref/selector types into the focused field, and refuses the page body', async () => {
+    pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true, via: 'active' });
+    pageResults.push({ value: 'hi' });
+    expect(await handleType({ tabId: 5, text: 'hi' })).toMatchObject({ success: true, value: 'hi', via: 'active' });
+    pageResults.push({ success: false, error: 'NO_FOCUS' });
+    expect(await handleType({ tabId: 5, text: 'hi' })).toMatchObject({ success: false, error: expect.stringMatching(/No field has focus/) });
+  });
+
   it('type: key per character, select-all when clearing an unselectable value', async () => {
     pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true, needsSelectAll: true, hasText: true });
     pageResults.push({ value: 'ab' });

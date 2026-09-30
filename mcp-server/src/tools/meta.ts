@@ -61,7 +61,7 @@ const TASK_PREAMBLE =
  */
 const TOOL_GUIDANCE: Record<string, string> = {
   browser_click:
-    'Use for ANY click — a real (trusted) mouse click over CDP with a smart-selector fallback; works in background windows. Prefer over JS .click().',
+    'Use for ANY click — a real (trusted) mouse click over CDP with a verified smart-selector fallback; works in background windows. Also clicks at x/y read off a screenshot, triple-clicks (clickCount 3) and ctrl/shift-clicks. Prefer over JS .click().',
   browser_type:
     'Use for typing into inputs — real key presses over CDP, so autocomplete/lookup widgets react like for a user. change/blur fire when focus leaves: follow with browser_press_key Tab. Prefer over JS .value= .',
   browser_batch:
@@ -75,9 +75,9 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_snapshot:
     'Use to understand page structure and get element refs (e1, e2…) for subsequent click/type calls. Returns the accessibility tree (semantic), not raw DOM.',
   browser_text:
-    'Use to read visible text on the page. Cheapest read tool. Returns {text, title, url}.',
+    'Use to read visible text on the page (incl. shadow DOM). Cheapest read tool. mode:"article" = main content only; page long text with offset/nextOffset. Returns {text, title, url}.',
   browser_find:
-    'Use to locate elements by natural-language description when you don\'t have a snapshot yet. Returns refs for click/type.',
+    'Use to locate elements by natural-language description ("search input", "Save button") when you don\'t have a snapshot yet — cheaper than a snapshot. Sees shadow DOM and same-origin iframes. Returns refs for every ref tool.',
   browser_screenshot:
     'Use to capture a visual image (PNG/JPEG). Cannot be done via JS — this is the only way to see the page.',
   browser_evaluate:
@@ -89,13 +89,23 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_scroll:
     'Use to scroll the page or a specific element (pixel offset, to-element, or top/bottom). Works with virtualized feeds.',
   browser_hover:
-    'Use to trigger tooltips / dropdown menus / hover-only UI states.',
+    'Use to trigger tooltips / dropdown menus / hover-only UI states (ref, selector or x/y).',
+  browser_shortcuts:
+    'Use for a workflow you repeat (login-free form fill, report export…): save it once with {{variables}}, then run it in ONE call.',
+  browser_list_browsers:
+    'Use only when several browsers/profiles are connected: shows browserIds and which one this session uses.',
+  browser_select_browser:
+    'Use to work in another connected browser/profile (then list its tabs). "auto" = default.',
+  browser_gif:
+    'Use to show the user what you did: start before a flow, export after — writes an animated .gif (clicks marked) and returns its path.',
+  browser_resize_window:
+    'Use to test responsive layouts or maximize/restore the window holding a tab. Resizes the user\'s window — prefer a separate window for experiments.',
   browser_select:
     'Use to pick an option in a native <select> dropdown.',
   browser_press_key:
-    'Use for keyboard input (Enter, Tab, Escape, ArrowDown, Ctrl+A, …).',
+    'Use for keyboard input (Enter, Tab, Escape, ArrowDown, Ctrl+A, …), key sequences ("ArrowDown ArrowDown Enter") and repeat.',
   browser_wait:
-    'Use to wait for an element to appear/disappear, or a fixed delay. Avoids fragile sleep loops.',
+    'Use to wait for an element to appear/disappear, text to appear/disappear, a URL change, or a fixed delay. Avoids fragile sleep loops.',
   browser_console:
     'Use to read console messages (log/warn/error) from a tab. Useful for debugging.',
   browser_network:

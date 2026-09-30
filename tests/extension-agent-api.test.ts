@@ -32,6 +32,8 @@ let queryNodeId = 2;
       debuggerCommands.push(method);
       if (method === 'DOM.getDocument') return { root: { nodeId: 1 } };
       if (method === 'DOM.querySelector') return { nodeId: queryNodeId };
+      // upload_file finds the marked input in the page and hands CDP its objectId.
+      if (method === 'Runtime.evaluate') return { result: queryNodeId ? { objectId: 'obj-1' } : { type: 'object', subtype: 'null' } };
       return {};
     },
   },
@@ -196,7 +198,7 @@ describe('observe/act extension handlers', () => {
     }, 'session-a');
 
     expect(result).toMatchObject({ success: true, ok: true, action: 'upload', files: ['/tmp/resume.pdf'] });
-    expect(debuggerCommands.filter((m) => m.startsWith('DOM.'))).toEqual(['DOM.enable', 'DOM.getDocument', 'DOM.querySelector', 'DOM.setFileInputFiles']);
+    expect(debuggerCommands.filter((m) => m.startsWith('DOM.'))).toEqual(['DOM.setFileInputFiles']);
     expect(result.metrics).toMatchObject({ protocolCalls: 8 });
   });
 

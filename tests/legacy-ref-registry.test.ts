@@ -78,7 +78,8 @@ function walk(root: FakeElement): FakeElement[] {
 }
 
 function matches(el: FakeElement, selector: string): boolean {
-  if (selector === 'iframe') return el.tagName === 'IFRAME';
+  if (selector === '*') return true;
+  if (selector === 'iframe' || selector === 'iframe,frame') return el.tagName === 'IFRAME' || el.tagName === 'FRAME';
   if (selector.startsWith('[data-mcp-ref="')) {
     const ref = selector.slice('[data-mcp-ref="'.length, -2);
     return el.getAttribute('data-mcp-ref') === ref;
@@ -133,7 +134,7 @@ describe('legacy snapshot refs', () => {
     const result = await handleSnapshot({ tabId: 9, compact: true });
 
     expect(result.success).toBe(true);
-    expect(result.tree.ref).toMatch(/^e-/);
+    expect(result.tree.ref).toMatch(/^s[a-z0-9]+-\d+$/);
     expect(button.getAttribute('data-mcp-ref')).toBeNull();
   });
 
@@ -143,7 +144,7 @@ describe('legacy snapshot refs', () => {
     const result = await handleFind({ tabId: 9, query: 'save', limit: 1 });
 
     expect(result.success).toBe(true);
-    expect(result.matches[0].ref).toMatch(/^f-/);
+    expect(result.matches[0].ref).toMatch(/^f[a-z0-9]+-\d+$/);
     expect(button.getAttribute('data-mcp-ref')).toBeNull();
   });
 });

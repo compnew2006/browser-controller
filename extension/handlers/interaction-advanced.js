@@ -3,7 +3,7 @@
  * orchestration. Kept separate from the common pointer/keyboard handlers so
  * each module stays focused and reviewable.
  */
-import { resolveTab, safeExec } from '../lib/page-exec.js';
+import { resolveTab, safeExec, execDom, getFallback } from '../lib/page-exec.js';
 import { withCdp } from '../lib/cdp-session.js';
 import { openShield, releaseShield } from '../lib/trusted-input.js';
 
@@ -64,32 +64,19 @@ export async function handleDrag(params) {
 
   let sx = startX, sy = startY, ex = endX, ey = endY;
   if (sx == null || sy == null || ex == null || ey == null) {
-    const coords = await safeExec(tabId, (_sRef, _sSel, _eRef, _eSel) => {
-      function deepQuery(sel) {
-        const query = (doc, depth) => {
-          try { const el = doc.querySelector(sel); if (el) return el; } catch {}
-          if (depth >= 3) return null;
-          for (const frame of doc.querySelectorAll('iframe')) {
-            try {
-              const child = frame.contentDocument;
-              if (child) { const el = query(child, depth + 1); if (el) return el; }
-            } catch {}
-          }
-          return null;
-        };
-        return query(document, 0);
-      }
-
-      function find(ref, selector) {
-        let el = ref ? deepQuery(`[data-mcp-ref="${ref}"]`) : null;
-        if (!el && selector) el = deepQuery(selector);
+    const coords = await execDom(tabId, (_sRef, _sSel, _eRef, _eSel, _sFb, _eFb) => {
+      const D = globalThis.__bcDom;
+      if (!D) return { __needDom: true };
+      function find(ref, selector, fb) {
+        if (!ref && !selector) return null;
+        const el = D.resolve(ref, selector, fb).el;
         if (!el) return null;
         el.scrollIntoView({ behavior: 'instant', block: 'center' });
-        const rect = el.getBoundingClientRect();
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        const { x, y } = D.centerOf(el);
+        return { x, y };
       }
-      return { start: find(_sRef, _sSel), end: find(_eRef, _eSel) };
-    }, [startRef, startSelector, endRef, endSelector]);
+      return { start: find(_sRef, _sSel, _sFb), end: find(_eRef, _eSel, _eFb) };
+    }, [startRef, startSelector, endRef, endSelector, getFallback(tabId, startRef), getFallback(tabId, endRef)]);
 
     if (coords.start) { sx = coords.start.x; sy = coords.start.y; }
     if (coords.end) { ex = coords.end.x; ey = coords.end.y; }
@@ -127,21 +114,12 @@ export async function handleFillForm(params) {
   }
   await resolveTab(tabId);
 
-  return safeExec(tabId, (_fields, _submit) => {
-    function deepQuery(sel) {
-      const query = (doc, depth) => {
-        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
-        if (depth >= 3) return null;
-        for (const frame of doc.querySelectorAll('iframe')) {
-          try {
-            const child = frame.contentDocument;
-            if (child) { const el = query(child, depth + 1); if (el) return el; }
-          } catch {}
-        }
-        return null;
-      };
-      return query(document, 0);
-    }
+  // Attach each ref's snapshot descriptor so stale refs re-resolve (verified) in the page.
+  const withFb = fields.map((f) => (f && f.ref ? { ...f, fb: getFallback(tabId, f.ref) } : f));
+
+  return execDom(tabId, (_fields, _submit) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
 
     const setNativeValue = (target, nextValue) => {
       const prototype = target instanceof HTMLTextAreaElement
@@ -154,9 +132,8 @@ export async function handleFillForm(params) {
     const results = [];
     let containingForm = null;
     for (const field of _fields) {
-      const { ref, selector, value, clear } = field;
-      let el = ref ? deepQuery(`[data-mcp-ref="${ref}"]`) : null;
-      if (!el && selector) el = deepQuery(selector);
+      const { ref, selector, value, clear, fb } = field;
+      const el = D.resolve(ref, selector, fb).el;
       if (!el) {
         results.push({ selector: selector || ref, success: false, error: 'Not found' });
         continue;
@@ -164,20 +141,27 @@ export async function handleFillForm(params) {
 
       el.focus();
       if (el.form && !containingForm) containingForm = el.form;
-      if (clear !== false) {
+      const isChoice = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio';
+      if (clear !== false && !isChoice) {
         if (el.isContentEditable) el.textContent = '';
         else setNativeValue(el, '');
         el.dispatchEvent(new Event('input', { bubbles: true }));
       }
 
       if (el.tagName === 'SELECT') {
-        const option = Array.from(el.options).find((candidate) => candidate.value === String(value));
+        // Match the option's value first, then its visible label.
+        const want = String(value);
+        const options = Array.from(el.options);
+        const option = options.find((candidate) => candidate.value === want)
+          || options.find((candidate) => candidate.textContent.trim() === want.trim())
+          || options.find((candidate) => candidate.textContent.trim().toLowerCase() === want.trim().toLowerCase());
         if (!option) {
           results.push({ selector: selector || ref, success: false, error: `Option "${value}" not found` });
           continue;
         }
-        setNativeValue(el, String(value));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+        if (setter) setter.call(el, option.value); else el.value = option.value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
       } else if (el.type === 'checkbox' || el.type === 'radio') {
         const checked = value === true || value === 'true';
         if (el.checked !== checked) el.click();
@@ -205,5 +189,5 @@ export async function handleFillForm(params) {
     return failed === 0
       ? { success: true, fields: results }
       : { success: false, error: `${failed} of ${results.length} fields failed`, fields: results };
-  }, [fields, submit]);
+  }, [withFb, submit]);
 }

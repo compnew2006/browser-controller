@@ -2,7 +2,7 @@
  * Navigation handler (extracted from background.js): the one page tool allowed
  * to omit tabId (documented active-tab fallback).
  */
-import { resolveTab, safeExec } from '../lib/page-exec.js';
+import { resolveTab, safeExec, replaceFrozenTab } from '../lib/page-exec.js';
 import { isHashOnlyChange } from '../utils/navigation.js';
 import { handleSnapshot } from './inspection.js';
 
@@ -18,11 +18,11 @@ export async function getActiveTab() {
   return tab;
 }
 
-export async function handleNavigate(params, _sessionId, _agentName, signal) {
+export async function handleNavigate(params, sessionId, _agentName, signal) {
   let { url } = params;
   const { waitUntil = 'load', tabId, snapshot: wantSnapshot = true } = params;
   // navigate is the one page tool allowed to omit tabId → active tab fallback.
-  const tab = tabId != null ? await resolveTab(tabId) : await getActiveTab();
+  let tab = tabId != null ? await resolveTab(tabId) : await getActiveTab();
 
   // Fix #2 (hash-aware): a hash-only navigation does NOT reload the document,
   // so `chrome.tabs.onUpdated` never fires `status === 'complete'` and the wait
@@ -35,6 +35,10 @@ export async function handleNavigate(params, _sessionId, _agentName, signal) {
     : historyStep === 'forward' ? chrome.tabs.goForward(tab.id)
     : chrome.tabs.update(tab.id, { url });
 
+  // A frozen page (TAB_WEDGED) would hold the navigation hostage: replace the tab.
+  let replacedTabId = null;
+  const fresh = !historyStep ? await replaceFrozenTab(tab, null, sessionId) : null;
+  if (fresh) { replacedTabId = tab.id; tab = fresh; }
   const currentTab = await chrome.tabs.get(tab.id);
   const hashOnly = !historyStep && isHashOnlyChange(currentTab.url, url);
 
@@ -123,7 +127,7 @@ export async function handleNavigate(params, _sessionId, _agentName, signal) {
   if (historyStep) url = (await chrome.tabs.get(tab.id)).url;
 
   if (!wantSnapshot) {
-    return { url, status: 'navigated', tabId: tab.id };
+    return { url, status: 'navigated', tabId: tab.id, ...(replacedTabId ? { replacedTabId, note: `tab ${replacedTabId} was frozen and has been replaced by tab ${tab.id}` } : {}) };
   }
   try {
     const snap = await handleSnapshot({ tabId: tab.id, compact: true });
@@ -132,10 +136,11 @@ export async function handleNavigate(params, _sessionId, _agentName, signal) {
       url,
       status: 'navigated',
       tabId: tab.id,
+      ...(replacedTabId ? { replacedTabId, note: `tab ${replacedTabId} was frozen and has been replaced by tab ${tab.id}` } : {}),
       snapshot: snapObj && snapObj.content ? snapObj.content : snapObj,
     };
   } catch {
     // snapshot failed (protected page / 401 / etc) — navigation still succeeded.
-    return { url, status: 'navigated', tabId: tab.id };
+    return { url, status: 'navigated', tabId: tab.id, ...(replacedTabId ? { replacedTabId } : {}) };
   }
 }

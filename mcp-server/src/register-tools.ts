@@ -44,7 +44,7 @@ function checkPayloadLimits(value: unknown, ctx: z.RefinementCtx, path: Array<st
 }
 
 const payloadLimitsSchema = z.unknown().superRefine((value, ctx) => {
-  let bytes = 0;
+  let bytes: number;
   try {
     bytes = Buffer.byteLength(JSON.stringify(value), 'utf8');
   } catch {
@@ -88,7 +88,7 @@ export function parseToolParams(tool: ToolDefinition, params: Record<string, unk
   } catch (err) {
     if (err instanceof z.ZodError) {
       const details = z.treeifyError(err);
-      throw new Error(`Invalid tool arguments for ${tool.name}: ${JSON.stringify(details)}`);
+      throw new Error(`Invalid tool arguments for ${tool.name}: ${JSON.stringify(details)}`, { cause: err });
     }
     throw err;
   }

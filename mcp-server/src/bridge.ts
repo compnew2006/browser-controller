@@ -15,8 +15,15 @@ import {
   isDaemonResponsiveOnPort,
   tokensMatch,
 } from './bridge-security.js';
+import {
+  ExtensionConnections,
+  identityOf,
+  newConnection,
+  type ExtensionConnection,
+} from './bridge-connections.js';
 
 export { isDaemonResponsiveOnPort } from './bridge-security.js';
+export { BRIDGE_TOOLS } from './bridge-connections.js';
 
 /** Handler for daemon-owned HTTP endpoints served on the bridge port. */
 export type HttpRequestHandler = (
@@ -39,6 +46,8 @@ interface PendingRequest {
   /** Abort listener registered for this request (audit C2); removed on settle. */
   onAbort?: (() => void) | null;
   signal?: AbortSignal | null;
+  /** The extension connection (browser) this call was sent to. */
+  conn?: ExtensionConnection;
 }
 
 interface BridgeOptions {
@@ -64,7 +73,7 @@ interface BridgeOptions {
 export class ExtensionBridge {
   private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
-  private client: WebSocket | null = null;
+  private conns = new ExtensionConnections();
   private pendingRequests = new Map<string, PendingRequest>();
   private requestId = 0;
   private port: number;
@@ -76,11 +85,9 @@ export class ExtensionBridge {
   private defaultTimeoutMs: number;
   private maxWsPayloadBytes: number;
   private handshakeGraceMs: number;
-  private handshakeState: 'disconnected' | 'pending' | 'ready' | 'legacy' | 'incompatible' = 'disconnected';
+  /** Reason of the latest failed extension handshake, until some browser connects fine. */
   private handshakeError: string | null = null;
-  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
-  private missedPongs = 0;
   private connectionWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
   /** Optional HTTP handler (set by the daemon) for /pair, /status, etc. */
   private httpHandler: HttpRequestHandler | null = null;
@@ -106,30 +113,47 @@ export class ExtensionBridge {
     this.handshakeGraceMs = options.handshakeGraceMs ?? 25;
   }
 
-  private clearHandshakeTimer(): void {
-    if (this.handshakeTimer) clearTimeout(this.handshakeTimer);
-    this.handshakeTimer = null;
-  }
-
-  private markExtensionReady(state: 'ready' | 'legacy'): void {
-    this.clearHandshakeTimer();
-    this.handshakeState = state;
+  private markExtensionReady(conn: ExtensionConnection, state: 'ready' | 'legacy', info?: { browserId?: unknown; browserLabel?: unknown }): void {
+    if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
+    conn.handshakeTimer = null;
+    conn.state = state;
+    conn.missedPongs = 0;
+    const { browserId, label } = identityOf(info);
+    conn.browserId = browserId;
+    conn.label = label;
+    // A reconnect of the same browser replaces its old socket.
+    for (const other of this.conns.siblingsOf(conn)) {
+      this.dropConn(other, 'Extension reconnected');
+      try { other.ws.close(); } catch { /* already closing */ }
+    }
     this.handshakeError = null;
-    this.missedPongs = 0;
     this.startPingLoop();
     this.connectionWaiters.forEach((waiter) => waiter.resolve());
     this.connectionWaiters = [];
-    console.error(`[Bridge] Extension connected (${state} protocol)`);
+    console.error(`[Bridge] Extension connected (${state} protocol, browser ${conn.label})`);
   }
 
-  private rejectExtensionHandshake(reason: string): void {
-    this.clearHandshakeTimer();
-    this.handshakeState = 'incompatible';
+  private rejectExtensionHandshake(conn: ExtensionConnection, reason: string): void {
+    if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
+    conn.handshakeTimer = null;
+    conn.state = 'incompatible';
     this.handshakeError = reason;
-    const error = new Error(reason);
-    this.connectionWaiters.forEach((waiter) => waiter.reject(error));
-    this.connectionWaiters = [];
-    this.rejectAllPending(reason);
+    if (this.conns.live().length === 0) {
+      const error = new Error(reason);
+      this.connectionWaiters.forEach((waiter) => waiter.reject(error));
+      this.connectionWaiters = [];
+    }
+    this.rejectAllPending(reason, conn);
+  }
+
+  /** Forget a connection and fail the calls that were waiting on it. */
+  private dropConn(conn: ExtensionConnection, reason: string): void {
+    if (!this.conns.has(conn)) return;
+    this.conns.delete(conn);
+    if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
+    conn.handshakeTimer = null;
+    this.rejectAllPending(reason, conn);
+    if (this.conns.live().length === 0) this.stopPingLoop();
   }
 
   /**
@@ -160,6 +184,7 @@ export class ExtensionBridge {
       throw new Error(
         `Cannot listen on ${this.host}:${this.port}: ${owner} already owns the port. ` +
         'Refusing to terminate another process automatically.',
+        { cause: err },
       );
     }
   }
@@ -284,16 +309,11 @@ export class ExtensionBridge {
         });
       });
 
-      this.wss.on('connection', (ws: WebSocket, req) => {
-        if (this.client && this.client.readyState === WebSocket.OPEN) {
-          this.client.close();
-        }
-
-        this.client = ws;
-        this.clearHandshakeTimer();
-        this.handshakeState = 'pending';
-        this.handshakeError = null;
-        this.missedPongs = 0;
+      this.wss.on('connection', (ws: WebSocket, _req) => {
+        // Every socket is its own connection (browser). A reconnect of the same
+        // browser replaces the old socket once the new one finished its handshake.
+        const conn = newConnection(ws);
+        this.conns.add(conn);
 
         ws.on('message', (data: Buffer) => {
           try {
@@ -303,15 +323,15 @@ export class ExtensionBridge {
               const capabilities = validateCapabilities(msg.capabilities, ['tool-dispatch', 'ping-pong']);
               if (!version.ok || !capabilities.ok) {
                 const reason = version.reason || capabilities.reason || 'Extension protocol handshake failed.';
-                this.rejectExtensionHandshake(reason);
+                this.rejectExtensionHandshake(conn, reason);
                 ws.close(1002, 'incompatible protocol');
                 return;
               }
-              this.markExtensionReady(version.legacy || capabilities.legacy ? 'legacy' : 'ready');
+              this.markExtensionReady(conn, version.legacy || capabilities.legacy ? 'legacy' : 'ready', msg);
               return;
             }
             if (msg.type === 'pong') {
-              this.missedPongs = 0;
+              conn.missedPongs = 0;
               return;
             }
             this.handleResponse(msg);
@@ -321,16 +341,9 @@ export class ExtensionBridge {
         });
 
         ws.on('close', () => {
-          if (this.client !== ws) return;
-          console.error('[Bridge] Extension disconnected');
-          this.client = null;
-          this.clearHandshakeTimer();
-          if (this.handshakeState !== 'incompatible') {
-            this.handshakeState = 'disconnected';
-            this.handshakeError = null;
-          }
-          this.stopPingLoop();
-          this.rejectAllPending('Extension disconnected');
+          if (!this.conns.has(conn)) return; // replaced or already dropped
+          console.error(`[Bridge] Extension disconnected (browser ${conn.label})`);
+          this.dropConn(conn, 'Extension disconnected');
         });
 
         ws.on('error', (err: Error) => {
@@ -340,11 +353,11 @@ export class ExtensionBridge {
         // Modern extensions acknowledge immediately. The short fallback keeps
         // pre-handshake extension builds usable during a rolling local upgrade.
         setTimeout(() => {
-          if (this.client !== ws || ws.readyState !== WebSocket.OPEN) return;
+          if (!this.conns.has(conn) || ws.readyState !== WebSocket.OPEN) return;
           ws.send(JSON.stringify(buildExtensionHello(APP_VERSION)));
-          this.handshakeTimer = setTimeout(() => {
-            if (this.client === ws && this.handshakeState === 'pending') {
-              this.markExtensionReady('legacy');
+          conn.handshakeTimer = setTimeout(() => {
+            if (this.conns.has(conn) && conn.state === 'pending') {
+              this.markExtensionReady(conn, 'legacy');
             }
           }, this.handshakeGraceMs);
         }, 0);
@@ -367,14 +380,15 @@ export class ExtensionBridge {
   private startPingLoop(): void {
     this.stopPingLoop();
     this.pingTimer = setInterval(() => {
-      if (!this.isConnected()) return;
-      this.missedPongs++;
-      if (this.missedPongs >= 3) {
-        console.error('[Bridge] Extension unresponsive (3 missed pongs), closing');
-        this.client?.close();
-        return;
+      for (const conn of this.conns.live()) {
+        conn.missedPongs++;
+        if (conn.missedPongs >= 3) {
+          console.error(`[Bridge] Extension unresponsive (3 missed pongs), closing (browser ${conn.label})`);
+          conn.ws.close();
+          continue;
+        }
+        try { conn.ws.send(JSON.stringify({ type: 'ping' })); } catch { /* close path handles it */ }
       }
-      this.client?.send(JSON.stringify({ type: 'ping' }));
     }, this.pingIntervalMs);
   }
 
@@ -406,9 +420,7 @@ export class ExtensionBridge {
   }
 
   isConnected(): boolean {
-    return this.client !== null
-      && this.client.readyState === WebSocket.OPEN
-      && (this.handshakeState === 'ready' || this.handshakeState === 'legacy');
+    return this.conns.live().length > 0;
   }
 
   /**
@@ -417,11 +429,15 @@ export class ExtensionBridge {
    * forget: control messages carry no reply. Used by the daemon's close handler.
    */
   sendControl(type: string, payload: Record<string, unknown> = {}): void {
-    if (!this.isConnected()) return; // extension gone — nothing to notify
-    try {
-      this.client!.send(JSON.stringify({ type, ...payload }));
-    } catch {
-      // socket gone — close path will fire
+    // A gone session no longer has a browser choice.
+    if (type === 'releaseSession' && typeof payload.sessionId === 'string') this.conns.releaseSession(payload.sessionId);
+    // Every browser gets control messages (session release, cancel of an id it may own).
+    for (const conn of this.conns.live()) {
+      try {
+        conn.ws.send(JSON.stringify({ type, ...payload }));
+      } catch {
+        // socket gone — close path will fire
+      }
     }
   }
 
@@ -451,14 +467,17 @@ export class ExtensionBridge {
   }
 
   async callTool(tool: string, params: Record<string, unknown>, sessionId?: string, signal?: AbortSignal, agentName?: string): Promise<unknown> {
+    // Browser selection is answered here, not by an extension.
+    if (tool === 'browser_list_browsers') return this.conns.list(sessionId);
+    if (tool === 'browser_select_browser') return this.conns.select(sessionId, params.browserId);
     if (!this.isConnected()) {
       try {
         await this.waitForConnection(5_000);
       } catch (error) {
-        if (this.handshakeError) throw new Error(this.handshakeError);
+        if (this.handshakeError) throw new Error(this.handshakeError, { cause: error });
         throw new Error(error instanceof Error && /protocol|capabilit/i.test(error.message)
           ? error.message
-          : 'Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.');
+          : 'Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.', { cause: error });
       }
     }
 
@@ -470,6 +489,12 @@ export class ExtensionBridge {
     // reject immediately rather than firing the action into the void.
     if (signal?.aborted) {
       return Promise.reject(new Error(`Call aborted before send: ${tool}`));
+    }
+    let conn: ExtensionConnection;
+    try {
+      conn = this.conns.forSession(sessionId);
+    } catch (err) {
+      return Promise.reject(err);
     }
     return new Promise((resolve, reject) => {
       const id = String(++this.requestId);
@@ -523,14 +548,14 @@ export class ExtensionBridge {
         signal.addEventListener('abort', onAbort, { once: true });
       }
 
-      this.pendingRequests.set(id, { resolve, reject, timeout, tool, retries: retryCount, params, onAbort, signal });
+      this.pendingRequests.set(id, { resolve, reject, timeout, tool, retries: retryCount, params, onAbort, signal, conn });
 
       try {
         // sessionId + agentName travel as top-level WS fields (audit M1), not
         // injected into params — the daemon stays a pure {tool, params} multiplexer.
         // agentName is the STABLE identity for tab locks (survives reconnects);
         // sessionId is transient (s3→s4) and used only for logging/UI.
-        this.client!.send(JSON.stringify({ id, tool, params, sessionId, agentName }));
+        conn.ws.send(JSON.stringify({ id, tool, params, sessionId, agentName }));
       } catch (err) {
         clearTimeout(timeout);
         if (signal) signal.removeEventListener('abort', onAbort);
@@ -544,8 +569,10 @@ export class ExtensionBridge {
     });
   }
 
-  private rejectAllPending(reason: string): void {
+  /** Fail waiting calls: all of them, or only those sent to one browser. */
+  private rejectAllPending(reason: string, onlyConn?: ExtensionConnection): void {
     for (const [id, pending] of this.pendingRequests) {
+      if (onlyConn && pending.conn !== onlyConn) continue;
       clearTimeout(pending.timeout);
       if (pending.onAbort && pending.signal) pending.signal.removeEventListener('abort', pending.onAbort);
       pending.reject(new Error(reason));
@@ -554,13 +581,15 @@ export class ExtensionBridge {
   }
 
   stop(): void {
-    this.clearHandshakeTimer();
     this.stopPingLoop();
     this.rejectAllPending('Server shutting down');
     this.connectionWaiters.forEach(w => w.reject(new Error('Server shutting down')));
     this.connectionWaiters = [];
-    this.client?.close();
-    this.client = null;
+    for (const conn of this.conns.all()) {
+      if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
+      try { conn.ws.close(); } catch { /* already closed */ }
+    }
+    this.conns.clear();
     this.wss?.close();
     this.wss = null;
     this.httpServer?.close();

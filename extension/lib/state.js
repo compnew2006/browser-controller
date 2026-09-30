@@ -34,6 +34,14 @@ export const networkByTab = new Map();
  */
 export const fallbackByTab = new Map();
 /**
+ * Tabs whose page stopped answering chrome.scripting (frozen main thread, a
+ * giant document). Map<tabId, sinceMs>. While a tab is here every page call
+ * first probes it with a short timeout and fails fast with TAB_WEDGED instead
+ * of queueing behind executeScript calls that can never be aborted.
+ * Cleared when the tab starts a new navigation or is closed.
+ */
+export const wedgedTabs = new Map();
+/**
  * isNew feature: Map<tabId, string[]> of "fingerprints" (role|name) from the
  * PREVIOUS snapshot. The next snapshot marks any ref whose fingerprint isn't
  * in this set as `isNew: true`, so the agent can focus on what changed.
@@ -120,6 +128,7 @@ export async function loadSessionState() {
 
 /** Invalidate document-bound refs without releasing the tab's durable lock. */
 export function dropDocumentState(tabId) {
+  wedgedTabs.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
   observationSnapshots.invalidateTab(tabId);
@@ -127,10 +136,20 @@ export function dropDocumentState(tabId) {
 
 /** Drop one tab's durable state (tab closed). */
 export function dropTabState(tabId) {
+  wedgedTabs.delete(tabId);
   consoleByTab.delete(tabId);
   networkByTab.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
   observationSnapshots.dropTab(tabId);
   tabLocks.release(tabId);
+}
+
+// Short refs ("s4k2-17"): a per-worker salt keeps refs from a recycled service
+// worker from colliding with live ones in the page registry.
+const REF_SALT = Math.random().toString(36).slice(2, 4);
+let refSeq = 0;
+export function nextRefPrefix(kind) {
+  refSeq = (refSeq + 1) % 1296;
+  return `${kind}${REF_SALT}${refSeq.toString(36)}-`;
 }

@@ -13,6 +13,16 @@
  */
 
 export const IDLE_MS = 30_000;
+/** A CDP command on a frozen renderer never answers: bound the setup probes. */
+const SETUP_MS = 5_000;
+
+function bounded(promise, what) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`CDP ${what} timed out (page not responding)`)), SETUP_MS); }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 /** tabId -> { ready: Promise<void>, timer } */
 const sessions = new Map();
@@ -33,9 +43,9 @@ async function attach(tabId) {
     // A service-worker restart forgets the map but Chrome may keep our
     // attachment: probe it and reuse instead of failing.
     if (!/already attached/i.test(String(err?.message || err))) throw err;
-    await chrome.debugger.sendCommand(target, 'Runtime.evaluate', { expression: '1' });
+    await bounded(chrome.debugger.sendCommand(target, 'Runtime.evaluate', { expression: '1' }), 'attach probe');
   }
-  await chrome.debugger.sendCommand(target, 'Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+  await bounded(chrome.debugger.sendCommand(target, 'Emulation.setFocusEmulationEnabled', { enabled: true }), 'focus emulation').catch(() => {});
   // Can fail while the page is still loading; locateTarget retries it.
   await ensureViewport(tabId).catch(() => {});
 }
@@ -48,9 +58,9 @@ async function attach(tabId) {
  */
 export async function ensureViewport(tabId) {
   const target = { tabId };
-  const { result } = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
+  const { result } = await bounded(chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
     expression: 'innerWidth * innerHeight', returnByValue: true,
-  });
+  }), 'viewport probe');
   if (result?.value > 0) return;
   const tab = await chrome.tabs.get(tabId);
   const win = await chrome.windows.get(tab.windowId);

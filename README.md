@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.3.0-blue?style=flat-square" alt="v2.3.0" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.4.0-blue?style=flat-square" alt="v2.4.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -44,6 +44,12 @@ It already has your browser open right there. It just can't see it.
 - **Real, trusted input.** Clicks, typing and key presses go through the Chrome DevTools Protocol, so the page sees `isTrusted` events, focus really moves, default actions run (Tab moves focus, Enter submits, arrows drive autocomplete menus) and focus/blur fire even while the window is in the background — legacy grids and lookup widgets behave as they do for a person. One debugger session per tab is reused and detached after 30 s idle (the yellow "being debugged" banner shows only while it is attached). Pass `trusted: false` for the old synthetic events with no banner; they are also the automatic fallback when the debugger can't attach.
 - **Batches.** `browser_batch` runs a list of tool calls in one round-trip and stops at the first failure — a click → type → Tab → wait → read sequence is one call instead of five.
 - **Console-style JavaScript.** `browser_evaluate` accepts code as you'd type it in DevTools: top-level `await`, several statements, the last expression's value is returned, DOM nodes come back as readable descriptions — and page CSP doesn't block it.
+- **Refs that stay right.** Snapshot/find refs resolve through one shared page runtime: the registered element first, then the first *visible* selector match (across open and closed shadow roots and same-origin iframes), then a verified fallback that only re-binds when role, tag and name identify one element — an ambiguous match is reported as gone instead of clicked. Hidden duplicates are skipped.
+- **Shadow DOM everywhere.** `snapshot`, `text`, `find`, `click_text`, `wait` and every locator see web components (open and closed roots, slots), so sites like caniuse read like any other page.
+- **Frozen tabs don't freeze the agent.** Every page call has an 8 s budget; a tab that stops answering is reported as `TAB_WEDGED` in seconds, later calls fail fast after a 1.5 s probe, and `browser_navigate` / `browser_tabs reload` replace the frozen tab in place (the result carries the new `tabId`).
+- **Coordinates when you need them.** Click, hover and wheel-scroll at `x`/`y`, triple-click, ctrl/shift-click, key sequences with `repeat`, and zoomed `region` screenshots that tell you how image pixels map to those coordinates.
+- **Record and replay.** `browser_gif` records a flow as an animated GIF (clicks marked) for the user; `browser_shortcuts` saves a flow with `{{variables}}` and replays it in one call.
+- **Several browsers.** Every connected Chrome profile is its own connection; `browser_list_browsers` / `browser_select_browser` pick one per session (one browser behaves exactly as before).
 - **Honest errors.** Every tool failure reaches your agent as a real `isError` result with the full payload — no "success" responses hiding failures mid-workflow.
 
 ---
@@ -284,35 +290,36 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-25 tools. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional).
+30 tools. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional).
 
 **See**
 
 | Tool | What it does |
 |------|-------------|
 | `browser_observe` | Compact atomic semantic observation with snapshot/document identity, geometry, state, and dynamic allowed actions |
-| `browser_snapshot` | Accessibility tree with element refs. Compact mode (default) returns only interactive elements. Traverses open shadow DOM + same-origin iframes. |
-| `browser_screenshot` | Capture a tab as an image over CDP — `maxWidth` / `scale` / `jpeg` to cut tokens, `fullPage` for the whole page |
-| `browser_text` | Extract raw text from page or element |
-| `browser_find` | Query elements by natural language — walks same-origin iframes too |
+| `browser_snapshot` | Accessibility tree with element refs. Compact mode (default) returns only interactive elements; `filter` / `depth` / `ref` (subtree) / `maxChars` (default 20k) keep it small. Traverses open + closed shadow DOM, slots and same-origin iframes. |
+| `browser_screenshot` | Capture a tab as an image over CDP — `maxWidth` / `scale` / `jpeg` to cut tokens, `fullPage` for the whole page, `region` to zoom; reports the pixel → x/y mapping |
+| `browser_text` | Extract text from page or element (incl. shadow DOM); `mode:"article"` = main content only; `offset` paging |
+| `browser_find` | Query elements by natural language ("search input", "Save button") — tokenized, role-aware, shadow DOM + same-origin iframes |
 
 **Interact**
 
 | Tool | What it does |
 |------|-------------|
 | `browser_act` | Safely click/type/select/focus/hover/keypress/scroll/upload against a `browser_observe` snapshot |
-| `browser_click` | Real (trusted) click by ref or CSS selector — pierces same-origin iframes |
-| `browser_click_text` | Click by visible text. Works through React portals and overlays |
-| `browser_type` | Real key presses into inputs and contenteditable fields; returns the resulting value |
-| `browser_press_key` | Real key presses and combos (`Enter`, `Tab`, `ctrl+a`) |
+| `browser_click` | Real (trusted) click by ref, CSS selector or `x`/`y` — `clickCount` 1-3, `modifiers`; pierces same-origin iframes and shadow DOM |
+| `browser_click_text` | Click by visible text (case-insensitive, shadow DOM too) with a real click on the owning control. Works through React portals and overlays |
+| `browser_type` | Real key presses into inputs and contenteditable fields (or the focused field); returns the resulting value |
+| `browser_press_key` | Real key presses, combos (`Enter`, `Tab`, `ctrl+a`), sequences (`"ArrowDown ArrowDown Enter"`) and `repeat` |
 | `browser_batch` | Run several tool calls in one round-trip; stops at the first failure |
-| `browser_scroll` | Scroll pages and virtual containers |
-| `browser_hover` | Trigger tooltips and dropdowns |
+| `browser_shortcuts` | Save a flow with `{{variables}}`, replay it in one call |
+| `browser_scroll` | Scroll pages and virtual containers, or wheel-scroll at `x`/`y` |
+| `browser_hover` | Trigger tooltips and dropdowns (ref, selector or `x`/`y`) |
 | `browser_select` | Pick from native `<select>` dropdowns |
-| `browser_wait` | Wait for elements to appear or disappear |
-| `browser_fill_form` | Fill multiple form fields in one call (React/Vue-safe setters) |
+| `browser_wait` | Wait for elements (any visible match), text, a URL change, or a delay |
+| `browser_fill_form` | Fill multiple form fields in one call (React/Vue-safe setters; selects by value or label) |
 | `browser_drag` | Drag element-to-element (uses CDP for reliability) |
-| `browser_upload_file` | Upload files through `<input type="file">` (uses CDP, strict-CSP safe) |
+| `browser_upload_file` | Upload files through `<input type="file">` (CDP, strict-CSP safe), or bytes / a screenshot into an input or a drop zone |
 
 <details>
 <summary><b>Uploading files — no file dialog</b></summary>
@@ -332,15 +339,18 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 
 | Tool | What it does |
 |------|-------------|
-| `browser_navigate` | Go to a URL in a tab (`tabId` optional, defaults to active) |
-| `browser_tabs` | List / create / close / focus / **lock** / **unlock** tabs |
+| `browser_navigate` | Go to a URL in a tab (`tabId` optional, defaults to active); replaces a frozen tab |
+| `browser_tabs` | List / create (`active:false` for background) / close / focus / reload / **lock** / **unlock** tabs |
+| `browser_resize_window` | Resize or maximize the window holding a tab (responsive testing) |
+| `browser_list_browsers` / `browser_select_browser` | See the connected browsers (profiles) and route this session to one |
 
 **Debug & Advanced**
 
 | Tool | What it does |
 |------|-------------|
-| `browser_console` | Console output (log, warn, error) — per-tab, capped at 200 entries |
-| `browser_network` | XHR/fetch requests with status codes — per-tab, optional `limit` |
+| `browser_console` | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit` |
+| `browser_network` | Requests with status codes and failures — per-tab; `urlPattern`, regex `filter`, `failed`, `limit` |
+| `browser_gif` | Record the agent's actions in a tab as an animated GIF (clicks marked); export writes the file |
 | `browser_evaluate` | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
 | `browser_handle_dialog` | Dismiss/accept an open alert/confirm/prompt via CDP (works on frozen pages) |
 | `browser_run_action` | Run a self-contained JS action object via CDP |

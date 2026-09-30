@@ -91,12 +91,28 @@ async function autoPairToken() {
   return '';
 }
 
+/** This browser profile's identity for multi-browser routing (persisted). */
+let browserIdentity = {};
+
+function defaultBrowserLabel(id) {
+  const ua = navigator.userAgentData;
+  const brand = ua?.brands?.find((b) => !/Not.?A.?Brand|Chromium/i.test(b.brand))?.brand || 'Chrome';
+  const platform = ua?.platform || navigator.platform || '';
+  return `${brand}${platform ? ` on ${platform}` : ''} (${id.slice(0, 4)})`;
+}
+
 export async function initConnection() {
   try {
-    const stored = await chrome.storage.local.get(['wsPort', 'wsToken', 'enrollmentSecret']);
+    const stored = await chrome.storage.local.get(['wsPort', 'wsToken', 'enrollmentSecret', 'bcBrowserId', 'bcBrowserLabel']);
     if (stored.wsPort) wsPort = stored.wsPort;
     if (stored.wsToken) wsToken = stored.wsToken;
     if (stored.enrollmentSecret) enrollmentSecret = stored.enrollmentSecret;
+    let id = stored.bcBrowserId;
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)).replace(/-/g, '').slice(0, 12);
+      chrome.storage.local.set({ bcBrowserId: id });
+    }
+    browserIdentity = { browserId: id, browserLabel: stored.bcBrowserLabel || defaultBrowserLabel(id) };
   } catch {}
 
   // Restore lock ownership + fallbacks BEFORE connecting: the shield sweep
@@ -251,7 +267,7 @@ export async function connect() {
             socket.close(1002, 'incompatible protocol');
             return;
           }
-          socket.send(JSON.stringify(buildExtensionHelloAck(chrome.runtime.getManifest().version)));
+          socket.send(JSON.stringify(buildExtensionHelloAck(chrome.runtime.getManifest().version, browserIdentity)));
           clearTimeout(handshakeTimeout);
           handshakeTimeout = null;
           connected = true;

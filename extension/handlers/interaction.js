@@ -3,15 +3,19 @@
  * hover, select, click_text, dialog, drag, fill_form — the write side that
  * drives the page's event system (synthetic events) or CDP when required.
  */
-import { resolveTab, requireTarget, safeExec, getFallback } from '../lib/page-exec.js';
+import { resolveTab, requireTarget, hasPoint, execDom, getFallback } from '../lib/page-exec.js';
 import { autoReSnapshot } from './inspection.js';
-import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
-import { trustedSender, locateTarget, releaseShield, cdpClickAt, cdpKeyPress, cdpTypeText, keyDefinition } from '../lib/trusted-input.js';
+import { trustedSender, locateTarget, releaseShield, cdpClickAt, cdpKeyPress, cdpTypeText, keyDefinition, modifierBits, pointInfo } from '../lib/trusted-input.js';
 
 export { handleDialog, handleDrag, handleFillForm } from './interaction-advanced.js';
 
 /** Shared REF_GONE recovery: re-snapshot and hand fresh refs back (no auto-retry). */
-async function refGone(tabId, res, ref) {
+async function refGone(tabId, res, ref, selector) {
+  // A selector that matches nothing is usually the wrong page (navigation,
+  // postback), not a virtualized feed — say which locator failed.
+  if (!(res._ref || ref) && selector) {
+    return { success: false, error: `No element matches selector ${selector} on the current page (${res.url || 'navigated?'}).` };
+  }
   const fresh = await autoReSnapshot(tabId);
   return {
     success: false,
@@ -21,25 +25,63 @@ async function refGone(tabId, res, ref) {
 }
 
 const BUTTONS = new Set(['left', 'right', 'middle']);
+const MODS = new Set(['ctrl', 'alt', 'shift', 'meta']);
+
+/** clickCount from the params (1–3; doubleClick = 2). */
+function clickCountOf(params) {
+  const n = Number(params.clickCount);
+  if (Number.isInteger(n) && n >= 1) return Math.min(n, 3);
+  return params.doubleClick ? 2 : 1;
+}
+
+/** Modifier names held during a click ("ctrl+click" opens links in a new tab). */
+function clickModifiers(params) {
+  const mods = Array.isArray(params.modifiers) ? params.modifiers.filter((m) => MODS.has(m)) : [];
+  return modifierBits(mods);
+}
+
+/** Coordinate actions need CDP: there is no element to dispatch synthetic events on. */
+async function requireCdp(tabId, what) {
+  const send = await trustedSender(tabId, true);
+  if (!send) throw new Error(`${what} at x/y needs the debugger (CDP), which could not attach to tab ${tabId}. Use ref or selector instead.`);
+  return send;
+}
+
+/** Real mouse click at viewport coordinates (the same CSS-pixel frame as browser_screenshot). */
+async function clickAtPoint(tabId, params) {
+  const { x, y, button = 'left' } = params;
+  if (!BUTTONS.has(button)) throw new Error(`Unknown button ${button}`);
+  const send = await requireCdp(tabId, 'Clicking');
+  const info = await pointInfo(tabId, x, y);
+  try {
+    await cdpClickAt(send, x, y, { button, clickCount: clickCountOf(params), modifiers: clickModifiers(params) });
+  } finally {
+    await releaseShield(tabId);
+  }
+  return {
+    success: true, input: 'cdp', at: { x, y },
+    ...(info.hit ? { hit: info.hit } : {}),
+    ...(info.inView === false ? { warning: 'point is outside the viewport' } : {}),
+  };
+}
 
 export async function handleClick(params) {
   const { tabId, ref, selector, button = 'left', doubleClick = false, trusted } = params;
   await resolveTab(tabId);
-  requireTarget(params);
+  requireTarget(params, { allowPoint: true });
+  if (!ref && !selector) return clickAtPoint(tabId, params);
+  // Snapshot-time descriptor used by the shared resolver when the ref is stale.
   const fb = getFallback(tabId, ref);
-  // Install the fallback page runtime only when a descriptor exists (v2
-  // install-once pattern — eval rebuilding is impossible under MV3 CSP).
-  if (fb) await safeExec(tabId, PAGE_FALLBACK_INSTALL, []);
 
   // Trusted path: a real mouse click at the element's centre over CDP, so
   // focus moves, default actions run and the page sees isTrusted:true.
   const send = await trustedSender(tabId, trusted);
   if (send && BUTTONS.has(button)) {
     const loc = await locateTarget(tabId, { ref, selector, fb });
-    if (loc && loc.success === false && loc.error === 'REF_GONE') return refGone(tabId, loc, ref);
+    if (loc && loc.success === false && loc.error === 'REF_GONE') return refGone(tabId, loc, ref, selector);
     if (loc?.success && loc.visible) {
       try {
-        await cdpClickAt(send, loc.x, loc.y, { button, clickCount: doubleClick ? 2 : 1 });
+        await cdpClickAt(send, loc.x, loc.y, { button, clickCount: clickCountOf(params), modifiers: clickModifiers(params) });
       } finally {
         await releaseShield(tabId);
       }
@@ -54,33 +96,19 @@ export async function handleClick(params) {
     // Zero-size element: no point to hit — fall through to the synthetic path.
   }
 
-  const res = await safeExec(tabId, async (_ref, _sel, _btn, _dbl, _fb) => {
-    // Same-origin iframe piercing (field report: legacy UIs live inside
-    // #mainFrame — top-document lookups missed every element).
-    function deepQuery(sel) {
-      const q = (doc, depth) => {
-        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
-        if (depth >= 3) return null;
-        for (const f of doc.querySelectorAll('iframe')) {
-          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
-        }
-        return null;
-      };
-      return q(document, 0);
-    }
+  const res = await execDom(tabId, async (_ref, _sel, _btn, _dbl, _fb) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
 
-    let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
-    let via = 'ref';
-    if (!el && _sel) { el = deepQuery(_sel); via = 'selector'; }
-    // Resolver comes from the pre-installed page runtime (no eval).
-    const resolveFallback = (globalThis.__browserControllerFallbackRuntime || {}).resolveFallback || null;
-    // Smart-selector fallback (plan task 3): ref broke → try robust selector,
-    // then text+role+tag scan. The agent doesn't request this; it's automatic.
-    if (!el && _fb && resolveFallback) { el = resolveFallback(_fb); if (el) via = 'fallback'; }
+    // ref registry → first visible selector match → verified fallback (lib/page-dom.js).
+    const found = D.resolve(_ref, _sel, _fb);
+    if (found.error === 'INVALID_SELECTOR') return { success: false, error: `Invalid CSS selector: ${_sel}` };
+    let el = found.el || null;
+    const via = found.via || 'ref';
     if (!el) {
       // Element is gone (likely virtualized away on scroll). Abort WITHOUT
       // clicking — the background auto-re-snapshots and embeds fresh refs.
-      return { success: false, error: 'REF_GONE', _ref };
+      return { success: false, error: 'REF_GONE', _ref, url: location.href };
     }
 
     el.scrollIntoView({ behavior: 'instant', block: 'center' });
@@ -95,7 +123,7 @@ export async function handleClick(params) {
     if (!visible0) {
       await new Promise((r) => setTimeout(r, 200));
       // re-resolve the element (it may have been re-rendered with a new node)
-      el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : el;
+      el = D.resolve(_ref, _sel, _fb).el || el;
       if (el) el.scrollIntoView({ behavior: 'instant', block: 'center' });
     }
     if (!el) return { success: false, error: 'REF_GONE', _ref };
@@ -133,26 +161,31 @@ export async function handleClick(params) {
   // Auto-re-snapshot and embed fresh refs so the agent retries in ONE step.
   // We do NOT auto-retry the click: it's non-idempotent and the element that
   // re-appears may be a different post after the scroll shifted the feed.
-  if (res && res.success === false && res.error === 'REF_GONE') return refGone(tabId, res, ref);
+  if (res && res.success === false && res.error === 'REF_GONE') return refGone(tabId, res, ref, selector);
   return res;
 }
 
 export async function handleType(params) {
   const { tabId, ref, selector, text, clear = false, trusted } = params;
   await resolveTab(tabId);
-  requireTarget(params);
+  // No ref/selector: type into the element that has focus (like a user
+  // typing after clicking a field).
+  const focusedOnly = !ref && !selector;
+  // Snapshot-time descriptor used by the shared resolver when the ref is stale.
   const fb = getFallback(tabId, ref);
-  // Install the fallback page runtime only when a descriptor exists (v2
-  // install-once pattern — eval rebuilding is impossible under MV3 CSP).
-  if (fb) await safeExec(tabId, PAGE_FALLBACK_INSTALL, []);
 
   // Trusted path: focus the field, then real key presses over CDP (keydown /
   // keypress / input / keyup per character). Like a user, this does NOT fire
   // `change` until focus leaves the field — press Tab to commit.
   const send = await trustedSender(tabId, trusted);
   if (send) {
-    const loc = await locateTarget(tabId, { ref, selector, fb, mode: clear ? 'clear' : 'focus' });
-    if (loc && loc.success === false && loc.error === 'REF_GONE') return refGone(tabId, loc, ref);
+    const mode = focusedOnly ? (clear ? 'focused-clear' : 'focused') : clear ? 'clear' : 'focus';
+    const loc = await locateTarget(tabId, { ref, selector, fb, mode });
+    if (loc && loc.error === 'NO_FOCUS') {
+      await releaseShield(tabId);
+      return { success: false, error: 'No field has focus: pass ref/selector, or click the field first.' };
+    }
+    if (loc && loc.success === false && loc.error === 'REF_GONE') return refGone(tabId, loc, ref, selector);
     if (loc?.success && (loc.focused || loc.visible)) {
       let after;
       try {
@@ -175,30 +208,25 @@ export async function handleType(params) {
     await releaseShield(tabId);
   }
 
-  const res = await safeExec(tabId, (_ref, _sel, _text, _clear, _fb) => {
-    // Same-origin iframe piercing (field report: legacy UIs live inside
-    // #mainFrame — top-document lookups missed every element).
-    function deepQuery(sel) {
-      const q = (doc, depth) => {
-        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
-        if (depth >= 3) return null;
-        for (const f of doc.querySelectorAll('iframe')) {
-          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
-        }
-        return null;
-      };
-      return q(document, 0);
-    }
+  const res = await execDom(tabId, (_ref, _sel, _text, _clear, _fb) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
 
-    let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
-    let via = 'ref';
-    if (!el && _sel) { el = deepQuery(_sel); via = 'selector'; }
-    const resolveFallback = (globalThis.__browserControllerFallbackRuntime || {}).resolveFallback || null;
-    if (!el && _fb && resolveFallback) { el = resolveFallback(_fb); if (el) via = 'fallback'; }
+    let found;
+    if (!_ref && !_sel) {
+      const a = document.activeElement;
+      if (!a || a === document.body) return { success: false, error: 'No field has focus: pass ref/selector, or click the field first.' };
+      found = { el: a, via: 'active' };
+    } else {
+      found = D.resolve(_ref, _sel, _fb);
+    }
+    if (found.error === 'INVALID_SELECTOR') return { success: false, error: `Invalid CSS selector: ${_sel}` };
+    const el = found.el || null;
+    const via = found.via || 'ref';
     if (!el) {
       // Element gone (virtualized feed) — abort WITHOUT typing; background
       // auto-re-snapshots and embeds fresh refs for a one-step retry.
-      return { success: false, error: 'REF_GONE', _ref };
+      return { success: false, error: 'REF_GONE', _ref, url: location.href };
     }
 
     el.focus();
@@ -235,7 +263,7 @@ export async function handleType(params) {
 
   // Virtualization recovery (same as click): type target is gone, so
   // auto-re-snapshot and embed fresh refs. No auto-retry (non-idempotent).
-  if (res && res.success === false && res.error === 'REF_GONE') return refGone(tabId, res, ref);
+  if (res && res.success === false && res.error === 'REF_GONE') return refGone(tabId, res, ref, selector);
   return res;
 }
 
@@ -258,55 +286,54 @@ export async function handlePressKey(params) {
   const { tabId, ref, selector, trusted } = params;
   const { key, mods: modifiers } = parseKeyCombo(params.key, params.modifiers || []);
   await resolveTab(tabId);
+  const fb = getFallback(tabId, ref);
+
+  // "ArrowDown ArrowDown Enter" / "ctrl+a Backspace": a space-separated key
+  // sequence; `repeat` presses the whole sequence N times.
+  const raw = String(params.key ?? '');
+  const seq = raw.length > 1 && /\s/.test(raw.trim()) ? raw.trim().split(/\s+/) : [raw];
+  const combos = seq.map((k) => parseKeyCombo(k, params.modifiers || []));
+  const repeat = Math.min(Math.max(1, Number.isInteger(params.repeat) ? params.repeat : 1), 100);
 
   // Trusted path: a real key press, so default actions run (Tab moves focus
   // and fires blur/focusout, Enter submits, arrows drive autocomplete menus).
   let knownKey = true;
-  try { keyDefinition(key); } catch { knownKey = false; }
+  for (const c of combos) { try { keyDefinition(c.key); } catch { knownKey = false; } }
+  if (!knownKey && (combos.length > 1 || repeat > 1)) throw new Error(`Unknown key in "${raw}"`);
   const send = knownKey ? await trustedSender(tabId, trusted) : null;
   if (send) {
-    const loc = await locateTarget(tabId, { ref, selector, mode: ref || selector ? 'focus' : 'active' });
+    const loc = await locateTarget(tabId, { ref, selector, fb, mode: ref || selector ? 'focus' : 'active' });
     if (!loc || loc.success === false) {
       await releaseShield(tabId);
       if (ref || selector) return { success: false, error: `Element ${ref ? `with ref ${ref}` : `with selector ${selector}`} not found` };
     }
     let after;
     try {
-      await cdpKeyPress(send, key, modifiers);
+      for (let r = 0; r < repeat; r++) {
+        for (const c of combos) await cdpKeyPress(send, c.key, c.mods);
+      }
     } finally {
       after = await releaseShield(tabId);
     }
-    return { success: true, key, ...(modifiers.length ? { modifiers } : {}), input: 'cdp', ...(after?.focusedTag ? { focused: after.focusedTag } : {}) };
+    return {
+      success: true, key: combos.length > 1 ? raw : key, ...(modifiers.length && combos.length === 1 ? { modifiers } : {}),
+      ...(repeat > 1 ? { repeat } : {}), input: 'cdp', ...(after?.focusedTag ? { focused: after.focusedTag } : {}),
+    };
   }
 
-  return safeExec(tabId, (_key, _mods, _ref, _sel) => {
-    // Same-origin iframe piercing (field report: legacy UIs live inside
-    // #mainFrame — top-document lookups missed every element).
-    function deepQuery(sel) {
-      const q = (doc, depth) => {
-        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
-        if (depth >= 3) return null;
-        for (const f of doc.querySelectorAll('iframe')) {
-          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
-        }
-        return null;
-      };
-      return q(document, 0);
-    }
+  if (combos.length > 1 || repeat > 1) throw new Error('Key sequences and repeat need the debugger (CDP); press keys one at a time with trusted:false.');
+  return execDom(tabId, (_key, _mods, _ref, _sel, _fb) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
 
     let target = document.activeElement || document.body;
     // When the caller names a target, an unresolved ref/selector must FAIL —
     // silently falling back to activeElement sent Enter to the wrong control
     // with a success result. (Omitting both is still legitimate: intentional
     // activeElement targeting.)
-    if (_ref) {
-      const el = deepQuery(`[data-mcp-ref="${_ref}"]`);
-      if (!el) return { success: false, error: `Element with ref ${_ref} not found` };
-      el.focus();
-      target = el;
-    } else if (_sel) {
-      const el = deepQuery(_sel);
-      if (!el) return { success: false, error: `Element with selector ${_sel} not found` };
+    if (_ref || _sel) {
+      const el = D.resolve(_ref, _sel, _fb).el;
+      if (!el) return { success: false, error: _ref ? `Element with ref ${_ref} not found` : `Element with selector ${_sel} not found` };
       el.focus();
       target = el;
     }
@@ -327,17 +354,28 @@ export async function handlePressKey(params) {
     target.dispatchEvent(new KeyboardEvent('keyup', init));
 
     return { success: true, key: _key };
-  }, [key, modifiers, ref, selector]);
+  }, [key, modifiers, ref, selector, fb]);
 }
 
 export async function handleHover(params) {
   const { tabId, ref, selector, trusted } = params;
   await resolveTab(tabId);
-  requireTarget(params);
+  requireTarget(params, { allowPoint: true });
+  if (!ref && !selector && hasPoint(params)) {
+    const sendAt = await requireCdp(tabId, 'Hovering');
+    const info = await pointInfo(tabId, params.x, params.y);
+    try {
+      await sendAt('Input.dispatchMouseEvent', { type: 'mouseMoved', x: params.x, y: params.y });
+    } finally {
+      await releaseShield(tabId);
+    }
+    return { success: true, input: 'cdp', at: { x: params.x, y: params.y }, ...(info.hit ? { hit: info.hit } : {}) };
+  }
+  const fb = getFallback(tabId, ref);
 
   const send = await trustedSender(tabId, trusted);
   if (send) {
-    const loc = await locateTarget(tabId, { ref, selector });
+    const loc = await locateTarget(tabId, { ref, selector, fb });
     if (loc?.success && loc.visible) {
       try {
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: loc.x, y: loc.y });
@@ -350,23 +388,11 @@ export async function handleHover(params) {
     if (loc && loc.success === false) return { success: false, error: 'Element not found' };
   }
 
-  return safeExec(tabId, (_ref, _sel) => {
-    // Same-origin iframe piercing (field report: legacy UIs live inside
-    // #mainFrame — top-document lookups missed every element).
-    function deepQuery(sel) {
-      const q = (doc, depth) => {
-        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
-        if (depth >= 3) return null;
-        for (const f of doc.querySelectorAll('iframe')) {
-          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
-        }
-        return null;
-      };
-      return q(document, 0);
-    }
+  return execDom(tabId, (_ref, _sel, _fb) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
 
-    let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
-    if (!el && _sel) el = deepQuery(_sel);
+    const el = D.resolve(_ref, _sel, _fb).el;
     if (!el) return { success: false, error: 'Element not found' };
 
     el.scrollIntoView({ behavior: 'instant', block: 'center' });
@@ -380,7 +406,7 @@ export async function handleHover(params) {
     el.dispatchEvent(new MouseEvent('mousemove', init));
 
     return { success: true };
-  }, [ref, selector]);
+  }, [ref, selector, fb]);
 }
 
 export async function handleSelect(params) {
@@ -390,24 +416,13 @@ export async function handleSelect(params) {
   if (value === undefined && label === undefined && index === undefined) {
     throw new Error('One of value, label, or index is required to pick an option.');
   }
+  const fb = getFallback(tabId, ref);
 
-  return safeExec(tabId, (_ref, _sel, _val, _lbl, _idx) => {
-    // Same-origin iframe piercing (field report: legacy UIs live inside
-    // #mainFrame — top-document lookups missed every element).
-    function deepQuery(sel) {
-      const q = (doc, depth) => {
-        try { const el = doc.querySelector(sel); if (el) return el; } catch {}
-        if (depth >= 3) return null;
-        for (const f of doc.querySelectorAll('iframe')) {
-          try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
-        }
-        return null;
-      };
-      return q(document, 0);
-    }
+  return execDom(tabId, (_ref, _sel, _val, _lbl, _idx, _fb) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
 
-    let el = _ref ? deepQuery(`[data-mcp-ref="${_ref}"]`) : null;
-    if (!el && _sel) el = deepQuery(_sel);
+    const el = D.resolve(_ref, _sel, _fb).el;
     if (!el) return { success: false, error: 'Element not found' };
     if (el.tagName !== 'SELECT') return { success: false, error: 'Not a select element' };
 
@@ -424,69 +439,98 @@ export async function handleSelect(params) {
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.dispatchEvent(new Event('input', { bubbles: true }));
     return { success: true, selected: el.value };
-  }, [ref, selector, value, label, index]);
+  }, [ref, selector, value, label, index, fb]);
 }
 
 export async function handleClickByText(params) {
-  const { tabId, text, index = 0, exact = false } = params;
+  const { tabId, text, index = 0, exact = false, trusted } = params;
   await resolveTab(tabId);
+  const tempRef = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
 
-  return safeExec(tabId, (_text, _index, _exact) => {
-    const textLower = _text.toLowerCase();
-    const candidates = [];
-    // Same-origin iframe piercing — walk every frame body, not just the top.
-    const roots = [document.body];
-    (function collectFrames(doc, depth) {
-      if (depth >= 3) return;
-      for (const f of doc.querySelectorAll('iframe')) {
-        try { const d = f.contentDocument; if (d && d.body) { roots.push(d.body); collectFrames(d, depth + 1); } } catch {}
+  // Page side: find the element by accessible name / composed text (shadow
+  // roots + same-origin frames), climb to the control that owns it, and park
+  // it in the ref registry so the click itself goes through the normal path.
+  const found = await execDom(tabId, (_text, _index, _exact, _ref) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
+    const want = D.clean(_text).toLowerCase();
+    if (!want) return { success: false, error: 'text is required' };
+    const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'HTML', 'BODY', 'META', 'LINK']);
+    const hits = [];
+    const seen = new Set();
+    const matches = (s) => {
+      const t = D.clean(s).toLowerCase();
+      if (!t) return false;
+      return _exact ? t === want : t.includes(want);
+    };
+    for (const root of D.allRoots(true)) {
+      let els = [];
+      try { els = root.querySelectorAll('*'); } catch {}
+      for (const el of els) {
+        if (SKIP.has(el.tagName)) continue;
+        const own = D.isInteractive(el) ? D.nameOf(el) : D.composedText(el, 200);
+        // aria-label / title / value also count as the element's text.
+        if (!matches(own) && !matches(D.attr(el, 'aria-label')) && !matches(D.attr(el, 'title'))
+          && !(el.tagName === 'INPUT' && matches(el.value))) continue;
+        // Climb to the control that owns this text (MUI: <span> inside <button>).
+        let target = el;
+        let cur = el;
+        for (let i = 0; i < 6 && cur; i++) {
+          if (D.isInteractive(cur)) { target = cur; break; }
+          let r = null;
+          try { r = cur.getRootNode(); } catch {}
+          cur = cur.parentElement || (r && r.host) || null;
+        }
+        if (seen.has(target) || !D.isVisible(target)) continue;
+        seen.add(target);
+        hits.push({ el: target, interactive: D.isInteractive(target), len: D.clean(own).length });
       }
-    })(document, 0);
-    let node;
-    for (const root of roots) {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-    while ((node = walker.nextNode())) {
-      const s = getComputedStyle(node);
-      if (s.display === 'none' || s.visibility === 'hidden') continue;
-      const r = node.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) continue;
+    }
+    // Prefer controls over plain text; then the most specific (shortest) text; keep document order otherwise.
+    hits.forEach((h, i) => { h.i = i; });
+    hits.sort((a, b) => (b.interactive - a.interactive) || (a.len - b.len) || (a.i - b.i));
+    // Drop a candidate that merely contains a better one (wrapper rows).
+    const best = hits.filter((h) => !hits.some((o) => o !== h && o.i !== h.i && D.composedContains(h.el, o.el) && o.interactive >= h.interactive));
+    if (best.length === 0) return { success: false, error: `No element found with text "${_text}"` };
+    if (!Number.isInteger(_index) || _index < 0 || _index >= best.length) {
+      return { success: false, error: `Only ${best.length} matches, index ${_index} out of range` };
+    }
+    const chosen = best[_index].el;
+    D.registry.set(_ref, chosen);
+    return { success: true, clicked: D.nameOf(chosen).slice(0, 80) || D.composedText(chosen, 80), role: D.roleOf(chosen), matchCount: best.length };
+  }, [text, index, exact, tempRef]);
+  if (!found || found.success === false) return found;
 
-      const nodeText = (node.innerText || node.textContent || '').trim();
-      const firstLine = nodeText.split('\n')[0].trim();
-      const match = _exact
-        ? firstLine === _text
-        : firstLine.toLowerCase().includes(textLower);
-
-      if (match) {
-        candidates.push({ el: node, text: firstLine, depth: getDepth(node) });
+  // Trusted click on the parked element (same path as browser_click).
+  const send = await trustedSender(tabId, trusted);
+  if (send) {
+    const loc = await locateTarget(tabId, { ref: tempRef });
+    if (loc?.success && loc.visible) {
+      try {
+        await cdpClickAt(send, loc.x, loc.y);
+      } finally {
+        await releaseShield(tabId);
       }
+      return { ...found, input: 'cdp', ...(loc.occludedBy ? { warning: `click point is covered by ${loc.occludedBy}` } : {}) };
     }
-    }
+    await releaseShield(tabId);
+  }
 
-    function getDepth(el) { let d = 0; let p = el; while ((p = p.parentElement)) d++; return d; }
-
-    candidates.sort((a, b) => b.depth - a.depth);
-
-    if (candidates.length === 0) return { success: false, error: `No element found with text "${_text}"` };
-    // Guard the full range: a negative index used to read candidates[-1] and
-    // crash with a raw TypeError (schema bounds only protect MCP callers).
-    if (!Number.isInteger(_index) || _index < 0 || _index >= candidates.length) {
-      return { success: false, error: `Only ${candidates.length} matches, index ${_index} out of range` };
-    }
-
-    const target = candidates[_index].el;
+  return execDom(tabId, (_ref, _found) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
+    const target = D.registry.get(_ref);
+    if (!D.connected(target)) return { success: false, error: 'Element disappeared before the click' };
     target.scrollIntoView({ behavior: 'instant', block: 'center' });
     const rect = target.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
-    const init = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 };
-
+    const init = { bubbles: true, cancelable: true, composed: true, view: target.ownerDocument.defaultView, clientX: x, clientY: y, button: 0 };
     target.dispatchEvent(new MouseEvent('mouseover', init));
     target.dispatchEvent(new MouseEvent('mousedown', init));
     if (target.focus) target.focus();
     target.dispatchEvent(new MouseEvent('mouseup', init));
     target.dispatchEvent(new MouseEvent('click', init));
-
-    return { success: true, clicked: candidates[_index].text, matchCount: candidates.length };
-  }, [text, index, exact]);
+    return _found;
+  }, [tempRef, found]);
 }

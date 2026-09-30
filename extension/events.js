@@ -117,6 +117,23 @@ export function registerEventListeners() {
     { urls: ['<all_urls>'] },
   );
 
+  // Requests that never completed (DNS failure, blocked, aborted, CORS…):
+  // onCompleted never fires for them, so without this they were invisible.
+  chrome.webRequest.onErrorOccurred.addListener(
+    (details) => {
+      if (details.tabId == null || details.tabId < 0) return;
+      const buf = getTabBuffer(networkByTab, details.tabId);
+      pushCapped(buf, {
+        method: details.method,
+        url: details.url,
+        error: details.error,
+        type: details.type,
+        timestamp: details.timeStamp,
+      });
+    },
+    { urls: ['<all_urls>'] },
+  );
+
   // A tab closing should release its lock and drop its buffers.
   // NOTE: no hideLockShield here — the tab/page is already gone, so a shield
   // inject would just throw (swallowed) and there is nothing to remove.

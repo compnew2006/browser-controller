@@ -4,10 +4,12 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const networkTool: ToolDefinition = {
   name: 'browser_network',
-  summary: 'Read network requests captured from a tab',  description: 'Read network requests made by a specific tab. Filter by URL pattern.',
+  summary: 'Read network requests captured from a tab',  description: 'Read network requests made by a specific tab (method, url, status, type — failed ones carry error). Filter by urlPattern (substring) or filter (regex); failed:true = only errors and 4xx/5xx.',
   inputSchema: z.object({
     tabId: requireTabId(),
     filter: z.string().optional().describe('URL regex pattern to filter requests'),
+    urlPattern: z.string().optional().describe('URL substring to filter requests (e.g. "/api/")'),
+    failed: z.boolean().optional().describe('Only failed requests (network errors and HTTP 4xx/5xx)'),
     limit: z.number().int().min(1).max(200).optional().describe('Return only the most recent N requests (default: all buffered, up to 200)'),
     clear: z.boolean().optional().default(false).describe('Clear this tab\'s requests after reading'),
   }),

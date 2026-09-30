@@ -5,7 +5,7 @@ import { toolMap } from './index.js';
 import { parseToolParams } from '../register-tools.js';
 
 /** Tools that must not run inside a batch (recursion / discovery only). */
-const NOT_BATCHABLE = new Set(['browser_batch', 'browser_tools']);
+const NOT_BATCHABLE = new Set(['browser_batch', 'browser_tools', 'browser_shortcuts']);
 const MAX_STEPS = 200;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -31,6 +31,19 @@ async function runStep(def: ToolDefinition, host: ToolHost, params: Record<strin
       await sleep((Number(m[1]) + 1) * 1000);
     }
   }
+}
+
+/** If a step replaced the frozen tab `current`, the new tab id; else null. */
+function replacedBy(result: ToolResult, current: number): number | null {
+  for (const c of result.content) {
+    if (c.type !== 'text' || !c.text.includes('replacedTabId')) continue;
+    try {
+      const r = JSON.parse(c.text) as { replacedTabId?: number; tabId?: number; reloaded?: number };
+      const next = r.tabId ?? r.reloaded;
+      if (r.replacedTabId === current && typeof next === 'number') return next;
+    } catch { /* not a JSON payload */ }
+  }
+  return null;
 }
 
 /**
@@ -67,12 +80,14 @@ export const batchTool: ToolDefinition = {
   // transport timeout.
   timeoutMs: 300_000,
   async handler(host, params) {
-    const { tabId, actions, continueOnError, output } = params as {
+    const { actions, continueOnError, output } = params as {
       tabId?: number;
       actions: Array<{ tool: string; params?: Record<string, unknown> }>;
       continueOnError: boolean;
       output: 'all' | 'last' | 'errors';
     };
+    // The default tab follows a frozen tab's replacement (navigate/reload report replacedTabId).
+    let tabId = (params as { tabId?: number }).tabId;
     const content: ToolResult['content'] = [];
     let failed = 0;
     let ran = 0;
@@ -94,6 +109,10 @@ export const batchTool: ToolDefinition = {
         }
       }
       ran++;
+      if (!result.isError && tabId !== undefined) {
+        const replacement = replacedBy(result, tabId);
+        if (replacement !== null) tabId = replacement;
+      }
       const isLast = i === actions.length - 1;
       if (output === 'all' || result.isError || (output === 'last' && isLast)) {
         content.push({ type: 'text', text: `${label} ${result.isError ? 'FAILED' : 'ok'}` });

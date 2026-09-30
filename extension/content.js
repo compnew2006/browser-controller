@@ -37,6 +37,15 @@
   console.info = (...a) => capture('info', ...a);
   console.debug = (...a) => capture('debug', ...a);
 
+  // Page console entries from console-main.js (MAIN world), JSON on a DOM event.
+  document.addEventListener('__bc_console_entry', (e) => {
+    let entry;
+    try { entry = JSON.parse(e.detail); } catch { return; }
+    if (!entry || typeof entry.text !== 'string') return;
+    if (entry.text.indexOf('ResizeObserver loop') !== -1) return;
+    try { chrome.runtime.sendMessage({ type: 'console', level: String(entry.level || 'log'), text: entry.text.slice(0, 2100) }); } catch {}
+  });
+
   window.addEventListener('error', (e) => {
     // Silence the well-known ResizeObserver loop warning: it's a benign browser
     // notice (element resized during its own observation callback), not a real

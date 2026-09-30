@@ -4,6 +4,15 @@ const cdp: Array<{ method: string; params: Record<string, unknown> }> = [];
 const tabs = new Map<number, { id: number; url: string; windowId: number; active: boolean }>();
 const updates: Array<[number, unknown]> = [];
 let captureHangs = false;
+let dpr = 1;
+let imageData = 'CDPDATA';
+/** A tiny PNG header (signature + IHDR) of the given size, base64. */
+function pngOf(w: number, h: number): string {
+  const b = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+  b.writeUInt32BE(13, 8); b.write('IHDR', 12); b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20);
+  return b.toString('base64');
+}
 
 (globalThis as unknown as { chrome: unknown }).chrome = {
   tabs: {
@@ -32,12 +41,16 @@ let captureHangs = false;
       cdp.push({ method, params });
       if (method === 'Runtime.evaluate') return { result: { value: 1000 } };
       if (method === 'Page.getLayoutMetrics') {
-        return { cssVisualViewport: { clientWidth: 1000, clientHeight: 600, pageX: 0, pageY: 50 }, cssContentSize: { width: 1000, height: 3000 } };
+        return {
+          cssVisualViewport: { clientWidth: 1000, clientHeight: 600, pageX: 0, pageY: 50 },
+          visualViewport: { clientWidth: 1000 * dpr, clientHeight: 600 * dpr },
+          cssContentSize: { width: 1000, height: 3000 },
+        };
       }
       if (method === 'Page.captureScreenshot') {
         const tab = tabs.get(_t.tabId);
         if (captureHangs || !tab?.active) return new Promise(() => {});
-        return { data: 'CDPDATA' };
+        return { data: imageData };
       }
       return {};
     },
@@ -52,6 +65,8 @@ describe('browser_screenshot over CDP', () => {
     cdp.length = 0;
     updates.length = 0;
     captureHangs = false;
+    dpr = 1;
+    imageData = 'CDPDATA';
     tabs.clear();
     tabs.set(1, { id: 1, url: 'https://a.test', windowId: 7, active: true });
     tabs.set(2, { id: 2, url: 'https://b.test', windowId: 7, active: false });
@@ -64,6 +79,19 @@ describe('browser_screenshot over CDP', () => {
     expect(res).toMatchObject({ success: true, via: 'cdp', width: 500, height: 300, data: 'CDPDATA' });
     const cap = cdp.find((c) => c.method === 'Page.captureScreenshot')!;
     expect(cap.params).toMatchObject({ format: 'jpeg', quality: 60, clip: { x: 0, y: 50, width: 1000, height: 600, scale: 0.5 } });
+  });
+
+  it('reports the pixel mapping from the real image size (device pixel ratio 2)', async () => {
+    dpr = 2;
+    imageData = pngOf(2000, 1200); // a 1000x600 CSS viewport captured at DPR 2
+    const res = await handleScreenshot({ tabId: 1, format: 'png' });
+    expect(res).toMatchObject({ width: 2000, height: 1200, frame: { scale: 2, origin: [0, 0] } });
+    // maxWidth caps the IMAGE, so the clip scale accounts for the ratio.
+    imageData = pngOf(800, 480);
+    cdp.length = 0;
+    const small = await handleScreenshot({ tabId: 1, format: 'png', maxWidth: 800 });
+    expect(cdp.find((c) => c.method === 'Page.captureScreenshot')!.params).toMatchObject({ clip: { scale: 0.4 } });
+    expect(small).toMatchObject({ width: 800, frame: { scale: 0.8 } });
   });
 
   it('fullPage clips the whole content', async () => {

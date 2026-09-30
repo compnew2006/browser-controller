@@ -9,7 +9,7 @@
  * The synthetic path stays as the fallback when CDP can't attach.
  */
 import { ensureCdp, ensureViewport, hasCdp } from './cdp-session.js';
-import { safeExec } from './page-exec.js';
+import { safeExec, execDom } from './page-exec.js';
 
 const MOD_BITS = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
 
@@ -107,42 +107,51 @@ export async function cdpClickAt(send, x, y, { button = 'left', clickCount = 1, 
 }
 
 /**
- * Page-side: resolve the target (ref → selector → smart fallback, piercing
- * same-origin iframes), scroll it into view, optionally focus/select it, and
+ * Page-side: resolve the target through the shared DOM runtime (ref registry →
+ * first visible selector match across shadow roots and same-origin iframes →
+ * verified fallback), scroll it into view, optionally focus/select it, and
  * return its centre in TOP-level viewport coordinates (what CDP expects).
  * Also opens the lock shield for the agent's own trusted input for a few
  * seconds, since trusted events are otherwise blocked by it.
  * Kept self-contained: it is serialized into the page by chrome.scripting.
  */
 function pageLocate(ref, sel, fb, mode) {
-  function deepQuery(s) {
-    const q = (doc, depth) => {
-      try { const el = doc.querySelector(s); if (el) return el; } catch {}
-      if (depth >= 3) return null;
-      for (const f of doc.querySelectorAll('iframe')) {
-        try { const d = f.contentDocument; if (d) { const el = q(d, depth + 1); if (el) return el; } } catch {}
-      }
-      return null;
-    };
-    return q(document, 0);
-  }
-  let el = ref ? deepQuery(`[data-mcp-ref="${ref}"]`) : null;
+  const D = globalThis.__bcDom;
+  if (!D) return { __needDom: true };
+  let el = null;
   let via = 'ref';
-  if (!el && sel) { el = deepQuery(sel); via = 'selector'; }
-  const resolveFallback = (globalThis.__browserControllerFallbackRuntime || {}).resolveFallback || null;
-  if (!el && fb && resolveFallback) { el = resolveFallback(fb); if (el) via = 'fallback'; }
-  if (!el && mode === 'active') { el = document.activeElement; via = 'active'; }
-  if (!el) return { success: false, error: 'REF_GONE', _ref: ref };
+  if (ref || sel || fb) {
+    const r = D.resolve(ref, sel, fb);
+    if (r.error === 'INVALID_SELECTOR') return { success: false, error: `Invalid CSS selector: ${sel}` };
+    if (r.el) { el = r.el; via = r.via; }
+  }
+  if (!el && (mode === 'active' || mode === 'focused' || mode === 'focused-clear')) {
+    el = document.activeElement;
+    // Descend into focused shadow roots / same-origin frames.
+    for (let i = 0; el && i < 10; i++) {
+      const s = D.shadowOf(el);
+      if (s && s.activeElement) { el = s.activeElement; continue; }
+      const d = D.frameDoc(el);
+      if (d && d.activeElement) { el = d.activeElement; continue; }
+      break;
+    }
+    via = 'active';
+    // type without a target needs a real field, not the page body.
+    if (mode !== 'active' && (!el || el === document.body || el === document.documentElement)) {
+      return { success: false, error: 'NO_FOCUS' };
+    }
+  }
+  if (!el) return { success: false, error: 'REF_GONE', _ref: ref, url: location.href };
 
   // Agent input pass-through for the lock shield (see overlay.js).
   window.__bcAgentInputUntil = Date.now() + 8000;
   const shield = document.getElementById('__bc-lock-shield');
   if (shield) shield.style.pointerEvents = 'none';
 
-  if (mode !== 'active') el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
-  if (mode === 'focus' || mode === 'clear') {
+  if (via !== 'active') el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+  if (mode === 'focus' || mode === 'clear' || mode === 'focused-clear') {
     if (typeof el.focus === 'function') el.focus();
-    if (mode === 'clear') {
+    if (mode === 'clear' || mode === 'focused-clear') {
       if (el.isContentEditable) {
         const r = el.ownerDocument.createRange();
         r.selectNodeContents(el);
@@ -155,32 +164,22 @@ function pageLocate(ref, sel, fb, mode) {
     }
   }
 
-  const rect = el.getBoundingClientRect();
-  let x = rect.left + rect.width / 2;
-  let y = rect.top + rect.height / 2;
-  // Add the offsets of every enclosing same-origin iframe.
-  let win = el.ownerDocument.defaultView;
-  while (win && win !== window && win.frameElement) {
-    const fr = win.frameElement.getBoundingClientRect();
-    const cs = win.frameElement.ownerDocument.defaultView.getComputedStyle(win.frameElement);
-    x += fr.left + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.paddingLeft) || 0);
-    y += fr.top + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.paddingTop) || 0);
-    win = win.parent;
+  const { x, y, rect } = D.centerOf(el);
+  let focusedEl = el.ownerDocument.activeElement;
+  for (let i = 0; focusedEl && i < 10; i++) {
+    const s = D.shadowOf(focusedEl);
+    if (s && s.activeElement) focusedEl = s.activeElement; else break;
   }
-  const doc = el.ownerDocument;
-  const focused = doc.activeElement === el || (el.contains && el.contains(doc.activeElement));
+  const focused = focusedEl === el || D.composedContains(el, focusedEl);
   const hasValue = 'value' in el && !el.isContentEditable && typeof el.value === 'string';
   let fullySelected = false;
   try { fullySelected = el.selectionStart === 0 && el.selectionEnd === el.value.length; } catch { /* number/email inputs */ }
-  // What a real click at (x, y) would hit (top document only).
+  // What a real click at (x, y) would hit (pierces shadow roots and same-origin frames).
   let occludedBy = null;
-  if (win === window || !el.ownerDocument.defaultView.frameElement) {
-    const hit = document.elementFromPoint(x, y);
-    if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) {
-      occludedBy = hit.tagName.toLowerCase() + (hit.id ? `#${hit.id}` : '')
-        + (typeof hit.className === 'string' && hit.className.trim() ? `.${hit.className.trim().split(/\s+/).slice(0, 2).join('.')}` : '');
-    }
-  }
+  try {
+    const hit = D.elementAt(x, y);
+    if (hit && !D.composedContains(el, hit) && !D.composedContains(hit, el)) occludedBy = D.describe(hit);
+  } catch { /* detached mid-measure */ }
   return {
     success: true,
     x, y,
@@ -192,6 +191,8 @@ function pageLocate(ref, sel, fb, mode) {
     hasText: hasValue ? el.value.length > 0 : (el.textContent || '').length > 0,
     ...(occludedBy ? { occludedBy } : {}),
     ...(via !== 'ref' ? { via } : {}),
+    // A fallback re-resolution says what it actually hit, so a wrong guess is visible.
+    ...(via === 'fallback' ? { target: { role: D.roleOf(el), name: D.nameOf(el).slice(0, 60) } } : {}),
   };
 }
 
@@ -201,7 +202,9 @@ function pageRelease() {
   const shield = document.getElementById('__bc-lock-shield');
   if (shield) shield.style.pointerEvents = 'auto';
   let a = document.activeElement;
-  while (a && a.tagName === 'IFRAME') {
+  for (let i = 0; a && i < 10; i++) {
+    if (a.shadowRoot && a.shadowRoot.activeElement) { a = a.shadowRoot.activeElement; continue; }
+    if (a.tagName !== 'IFRAME') break;
     try { a = a.contentDocument.activeElement; } catch { break; }
   }
   if (!a || a === document.body) return { value: null };
@@ -209,12 +212,42 @@ function pageRelease() {
   return { value: value == null ? null : value.slice(0, 500), focusedTag: a.tagName.toLowerCase() + (a.id ? `#${a.id}` : '') };
 }
 
+/**
+ * Page-side: what is at a top-level viewport point (pierces shadow roots and
+ * same-origin frames), and open the shield pass-through for the agent's input.
+ */
+function pagePointInfo(x, y) {
+  const D = globalThis.__bcDom;
+  if (!D) return { __needDom: true };
+  window.__bcAgentInputUntil = Date.now() + 8000;
+  const shield = document.getElementById('__bc-lock-shield');
+  if (shield) shield.style.pointerEvents = 'none';
+  const inView = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight;
+  const el = D.elementAt(x, y);
+  if (!el) return { inView };
+  // Report the control that owns the point (e.g. the <button> around an <svg>).
+  let owner = el;
+  for (let cur = el, i = 0; cur && i < 6; i++) {
+    if (D.isInteractive(cur)) { owner = cur; break; }
+    let r = null;
+    try { r = cur.getRootNode(); } catch {}
+    cur = cur.parentElement || (r && r.host) || null;
+  }
+  const name = D.nameOf(owner).slice(0, 60);
+  return { inView, hit: { role: D.roleOf(owner), ...(name ? { name } : {}), tag: owner.tagName.toLowerCase() } };
+}
+
+/** Describe the element at (x, y) and let trusted input through the shield. */
+export async function pointInfo(tabId, x, y) {
+  try { return (await execDom(tabId, pagePointInfo, [x, y])) || {}; } catch { return {}; /* protected page: input still works */ }
+}
+
 export async function locateTarget(tabId, { ref, selector, fb, mode = 'none' }) {
-  const loc = await safeExec(tabId, pageLocate, [ref, selector, fb, mode]);
+  const loc = await execDom(tabId, pageLocate, [ref, selector, fb, mode]);
   // Never-shown background tab: size its viewport, then measure again.
   if (loc?.success && loc.zeroViewport && hasCdp(tabId)) {
     await ensureViewport(tabId).catch(() => {});
-    return safeExec(tabId, pageLocate, [ref, selector, fb, mode]);
+    return execDom(tabId, pageLocate, [ref, selector, fb, mode]);
   }
   return loc;
 }
