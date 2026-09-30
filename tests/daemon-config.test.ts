@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { envInt } from '../mcp-server/src/daemon-config.js';
+import { envInt, DEFAULT_WS_HOST } from '../mcp-server/src/daemon-config.js';
 
 /**
  * envInt (critical audit #9): bare `parseInt(process.env.X || '…')` yielded
@@ -11,6 +11,11 @@ import { envInt } from '../mcp-server/src/daemon-config.js';
 const SET_KEYS = ['BC_TEST_INT', 'WS_PORT'] as const;
 
 describe('envInt', () => {
+  it('keeps the control plane loopback-only', () => {
+    expect(DEFAULT_WS_HOST).toBe('127.0.0.1');
+  });
+
+
   afterEach(() => {
     for (const k of SET_KEYS) delete process.env[k];
   });

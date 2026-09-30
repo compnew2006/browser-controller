@@ -1,7 +1,7 @@
-import { z } from 'zod';
-import type { ToolDefinition } from './types.js';
-import { textResult, jsonError } from './types.js';
-import { allTools, toolMap } from './index.js';
+import { z } from "zod";
+import type { ToolDefinition } from "./types.js";
+import { textResult, jsonError } from "./types.js";
+import { allTools, toolMap } from "./index.js";
 
 /**
  * Progressive disclosure meta tool (Anthropic "Code Execution with MCP" pattern).
@@ -67,27 +67,27 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_batch:
     'Use to run several known steps (click → type → Tab → wait → text) in ONE call. Stops at the first failing step. Biggest round-trip saver.',
   browser_fill_form:
-    'Use to fill several fields in one call (and optionally submit). Cheaper than repeated browser_type calls.',
+    "Use to fill several fields in one call (and optionally submit). Cheaper than repeated browser_type calls.",
   browser_click_text:
-    'Use to click by visible text (works on React dropdowns/portals that may not appear in a snapshot).',
+    "Use to click by visible text (works on React dropdowns/portals that may not appear in a snapshot).",
   browser_navigate:
-    'Use to go to a URL. Handles hash-only routes correctly (resolves without waiting for a complete event). Returns an optional inline snapshot so you can act immediately.',
+    "Use to go to a URL. Handles hash-only routes correctly (resolves without waiting for a complete event). Returns an optional inline snapshot so you can act immediately.",
   browser_snapshot:
-    'Use to understand page structure and get element refs (e1, e2…) for subsequent click/type calls. Returns the accessibility tree (semantic), not raw DOM.',
+    "Use to understand page structure and get element refs (e1, e2…) for subsequent click/type calls. Returns the accessibility tree (semantic), not raw DOM.",
   browser_text:
     'Use to read visible text on the page (incl. shadow DOM). Cheapest read tool. mode:"article" = main content only; page long text with offset/nextOffset. Returns {text, title, url}.',
   browser_find:
     'Use to locate elements by natural-language description ("search input", "Save button") when you don\'t have a snapshot yet — cheaper than a snapshot. Sees shadow DOM and same-origin iframes. Returns refs for every ref tool.',
   browser_screenshot:
-    'Use to capture a visual image (PNG/JPEG). Cannot be done via JS — this is the only way to see the page.',
+    "Use to capture a visual image (PNG/JPEG). Cannot be done via JS — this is the only way to see the page.",
   browser_evaluate:
-    'Use for one-off JS in the page MAIN world (no debugger banner). CSP-RESTRICTED: on strict-CSP SPAs it may return null — fall back to browser_run_action (CDP, bypasses CSP).',
+    "Use for one-off JS in the page MAIN world (no debugger banner). CSP-RESTRICTED: on strict-CSP SPAs it may return null — fall back to browser_run_action (CDP, bypasses CSP).",
   browser_run_action:
     'Escape hatch: read/write DOM, fetch an internal API, or read cookies on a strict-CSP site. Runs via CDP so it bypasses CSP and returns real values. Shows a yellow "is being debugged" banner.',
   browser_tabs:
-    'Use to list/create/close/focus/lock tabs. ALWAYS pass an explicit tabId to other tools so the agent doesn\'t act on the tab the user is looking at.',
+    "Use to list/create/close/focus/lock tabs. ALWAYS pass an explicit tabId to other tools so the agent doesn't act on the tab the user is looking at.",
   browser_scroll:
-    'Use to scroll the page or a specific element (pixel offset, to-element, or top/bottom). Works with virtualized feeds.',
+    "Use to scroll the page or a specific element (pixel offset, to-element, or top/bottom). Works with virtualized feeds.",
   browser_hover:
     'Use to trigger tooltips / dropdown menus / hover-only UI states (ref, selector or x/y).',
   browser_shortcuts:
@@ -107,15 +107,17 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_wait:
     'Use to wait for an element to appear/disappear, text to appear/disappear, a URL change, or a fixed delay. Avoids fragile sleep loops.',
   browser_console:
-    'Use to read console messages (log/warn/error) from a tab. Useful for debugging.',
+    "Use to read console messages (log/warn/error) from a tab. Useful for debugging.",
   browser_network:
-    'Use to read network requests the page made (filter by URL). Useful for seeing API calls.',
+    "Use to read network requests the page made (filter by URL). Useful for seeing API calls.",
   browser_upload_file:
     'Use to upload a file through an <input type="file">. Works even on strict-CSP pages (uses CDP).',
   browser_drag:
-    'Use for drag-and-drop (ref/selector or x/y coords). Uses CDP mouse events for reliability.',
+    "Use for drag-and-drop (ref/selector or x/y coords). Uses CDP mouse events for reliability.",
   browser_handle_dialog:
     'Use to handle or dismiss a JS dialog (alert/confirm/prompt) that blocks the page.',
+  browser_intercept:
+    "Use to block/redirect/mock network traffic per tab (rules by URL regex) or export a redacted HAR. Check the enforcement flag — capture-only means rules are ledger-marked, not applied.",
   browser_observe:
     'Use as the primary AI-facing page read before browser_act. It returns compact, session-owned refs with allowed actions and geometry.',
   browser_act:
@@ -124,8 +126,8 @@ const TOOL_GUIDANCE: Record<string, string> = {
 
 export function createMetaTool(deps: MetaToolDeps): ToolDefinition {
   return {
-    name: 'browser_tools',
-    summary: 'Discover and activate browser tools (progressive disclosure)',
+    name: "browser_tools",
+    summary: "Discover and activate browser tools (progressive disclosure)",
     description: `Discover, search, and activate browser control tools. Instead of loading all tool definitions upfront, use this to find the right tool for your task.
 
 Actions:
@@ -136,49 +138,72 @@ Actions:
 Workflow: call "list" or "search" first, then "details" on the tool you need, then call that tool directly.`,
     inputSchema: z.object({
       action: z
-        .enum(['list', 'search', 'details'])
-        .describe('list = all summaries; search = find by keyword; details = full schema + activate'),
+        .enum(["list", "search", "details"])
+        .describe(
+          "list = all summaries; search = find by keyword; details = full schema + activate",
+        ),
       query: z
         .string()
         .optional()
-        .describe('Search query (for action:"search"). Matches tool name + summary.'),
+        .describe(
+          'Search query (for action:"search"). Matches tool name + summary.',
+        ),
       tool: z
         .string()
         .optional()
         .describe('Tool name (for action:"details"). e.g. "browser_click"'),
     }),
     async handler(_host, params) {
-      const { action, query, tool } = params as { action: string; query?: string; tool?: string };
+      const { action, query, tool } = params as {
+        action: string;
+        query?: string;
+        tool?: string;
+      };
 
-      if (action === 'list') {
+      if (action === "list") {
         const tools = allTools
-          .filter((t) => t.name !== 'browser_tools') // don't list the meta tool itself
+          .filter((t) => t.name !== "browser_tools") // don't list the meta tool itself
           .map((t) => ({
             name: t.name,
             summary: t.summary,
-            guidance: TOOL_GUIDANCE[t.name] ?? '',
+            guidance: TOOL_GUIDANCE[t.name] ?? "",
             active: deps.isActive(t.name),
           }));
         return textResult(JSON.stringify({ preamble: TASK_PREAMBLE, tools }));
       }
 
-      if (action === 'search') {
+      if (action === "search") {
         if (!query) {
           return jsonError({ error: 'query is required for action:"search"' });
         }
         const q = query.toLowerCase();
         const matches = allTools
-          .filter((t) => t.name !== 'browser_tools')
+          .filter((t) => t.name !== "browser_tools")
           .filter((t) => {
-            const haystack = (t.name + ' ' + t.summary + ' ' + t.description).toLowerCase();
+            const haystack = (
+              t.name +
+              " " +
+              t.summary +
+              " " +
+              t.description
+            ).toLowerCase();
             // match if ANY word in the query appears in the haystack
-            return q.split(/\s+/).some((word) => word.length > 1 && haystack.includes(word));
+            return q
+              .split(/\s+/)
+              .some((word) => word.length > 1 && haystack.includes(word));
           })
-          .map((t) => ({ name: t.name, summary: t.summary, guidance: TOOL_GUIDANCE[t.name] ?? '', active: deps.isActive(t.name) }));
-        return textResult(JSON.stringify({ query, matches, count: matches.length }));
+          .map((t) => ({
+            name: t.name,
+            summary: t.summary,
+            guidance: TOOL_GUIDANCE[t.name] ?? "",
+            active: deps.isActive(t.name),
+          }));
+        return textResult(
+          JSON.stringify({ query, matches, count: matches.length }),
+        );
       }
 
-      if (action === 'details') {
+      if (action === "details") {
         if (!tool) {
           return jsonError({ error: 'tool is required for action:"details"' });
         }
@@ -186,7 +211,9 @@ Workflow: call "list" or "search" first, then "details" on the tool you need, th
         if (!def) {
           return jsonError({
             error: `Unknown tool: ${tool}`,
-            available: allTools.filter((t) => t.name !== 'browser_tools').map((t) => t.name),
+            available: allTools
+              .filter((t) => t.name !== "browser_tools")
+              .map((t) => t.name),
           });
         }
         // Activate the tool so the agent can call it directly after this.
@@ -200,7 +227,7 @@ Workflow: call "list" or "search" first, then "details" on the tool you need, th
           JSON.stringify({
             name: def.name,
             description: def.description,
-            guidance: TOOL_GUIDANCE[def.name] ?? '',
+            guidance: TOOL_GUIDANCE[def.name] ?? "",
             inputSchema: jsonSchema,
             activated: true,
             message: `Tool "${tool}" is now active. You can call it directly.`,
@@ -208,7 +235,9 @@ Workflow: call "list" or "search" first, then "details" on the tool you need, th
         );
       }
 
-      return jsonError({ error: `Unknown action: ${action}. Use "list", "search", or "details".` });
+      return jsonError({
+        error: `Unknown action: ${action}. Use "list", "search", or "details".`,
+      });
     },
   };
 }

@@ -1,6 +1,6 @@
-import { z } from 'zod';
-import type { ToolDefinition } from './types.js';
-import { requireTabId, forwardHandler } from './types.js';
+import { z } from "zod";
+import type { ToolDefinition } from "./types.js";
+import { requireTabId, forwardHandler } from "./types.js";
 
 export const networkTool: ToolDefinition = {
   name: 'browser_network',
@@ -16,5 +16,5 @@ export const networkTool: ToolDefinition = {
   // NOT idempotent: `clear:true` mutates the buffer (same reasoning as console — M2).
   idempotent: false,
   timeoutMs: 5_000,
-  handler: forwardHandler('browser_network'),
+  handler: forwardHandler("browser_network"),
 };

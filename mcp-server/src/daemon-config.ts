@@ -48,13 +48,17 @@ export function envInt(name: string, def: number, min = 1, max?: number): number
 }
 
 export const DEFAULT_WS_PORT = envInt('WS_PORT', 7225, 1, 65535);
-export const DEFAULT_WS_HOST = process.env.WS_HOST || '127.0.0.1';
-
 /**
- * Directory under the user's home where daemon state lives (token, socket,
- * daemon.json, daemon.log). Override with BC_STATE_DIR for isolated tests so
- * the suite never touches the real ~/.browser-controller.
+ * The daemon's HTTP/WebSocket control plane is intentionally loopback-only.
+ *
+ * Do not make this configurable to 0.0.0.0: the extension-facing token gate is
+ * useful for local pairing, but it is not a replacement for a network trust
+ * boundary. Remote callers (including n8n) require a separately authenticated
+ * transport and must not be given direct access to this browser socket.
  */
+export const DEFAULT_WS_HOST = '127.0.0.1';
+
+/** Directory under the user's home where daemon state lives. */
 export const STATE_DIR = process.env.BC_STATE_DIR || path.join(os.homedir(), '.browser-controller');
 
 /** Local IPC socket the daemon listens on (thin clients connect here). */
@@ -63,8 +67,42 @@ export const IPC_SOCKET_PATH =
     ? '\\\\.\\pipe\\browser-controller'
     : path.join(STATE_DIR, 'daemon.sock');
 
-/** Daemon metadata file: { pid, socket, port, startedAt }. */
+/** Daemon metadata file. */
 export const DAEMON_INFO_FILE = path.join(STATE_DIR, 'daemon.json');
+
+/** Daemon ownership lock; a live PID identifies the authoritative runtime. */
+export const DAEMON_LOCK_FILE = path.join(STATE_DIR, 'daemon.lock');
+
+/** Acquire the runtime lock, removing only a demonstrably stale lock. */
+export function acquireDaemonLock(): void {
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  for (;;) {
+    try {
+      const fd = fs.openSync(DAEMON_LOCK_FILE, 'wx', 0o600);
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now() }));
+      fs.closeSync(fd);
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      let ownerPid = 0;
+      try { ownerPid = JSON.parse(fs.readFileSync(DAEMON_LOCK_FILE, 'utf8')).pid ?? 0; } catch { /* stale/corrupt */ }
+      let alive = false;
+      if (ownerPid > 0) {
+        try { process.kill(ownerPid, 0); alive = true; } catch { /* not running */ }
+      }
+      if (alive) throw new Error(`Browser Controller daemon lock is held by live process ${ownerPid}`, { cause: err });
+      try { fs.unlinkSync(DAEMON_LOCK_FILE); } catch { /* raced with cleanup */ }
+    }
+  }
+}
+
+export function releaseDaemonLock(): void {
+  try {
+    if (JSON.parse(fs.readFileSync(DAEMON_LOCK_FILE, 'utf8')).pid === process.pid) {
+      fs.unlinkSync(DAEMON_LOCK_FILE);
+    }
+  } catch { /* already gone */ }
+}
 
 /** Auth token file (3.1): both IPC clients and the extension must present it. */
 export const TOKEN_FILE = path.join(STATE_DIR, 'token.json');

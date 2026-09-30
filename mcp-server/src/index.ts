@@ -70,6 +70,8 @@ const SERVER_VERSION = APP_VERSION;
 const DAEMON_STARTUP_MS = 8_000;
 const CONNECT_RETRY_MS = 250;
 const MAX_CONNECT_TRIES = 32; // ~8s
+const DAEMON_MODE = (process.env.BROWSER_CONTROLLER_DAEMON_MODE ?? 'spawn').trim().toLowerCase();
+const CONNECT_ONLY_DAEMON = DAEMON_MODE === 'connect' || DAEMON_MODE === 'managed';
 
 /**
  * Daemon connection: a line-delimited JSON socket speaking the IPC protocol
@@ -306,8 +308,9 @@ async function daemonLooksAlive(): Promise<boolean> {
     if (!fs.existsSync(DAEMON_INFO_FILE)) return false;
     const info = JSON.parse(fs.readFileSync(DAEMON_INFO_FILE, 'utf8'));
     const ageMs = Date.now() - info.startedAt;
-    if (ageMs > 60 * 60 * 1000) return false;
 
+    // The active socket probe is the source of truth. A long-lived healthy daemon
+    // must not be treated as stale solely because daemon.json is older than 1 hour.
     if (await connectProbe()) return true;
 
     // First probe failed. If the daemon is brand new (< 10s old) it may simply
@@ -412,10 +415,18 @@ async function main(): Promise<void> {
     console.error(`[${SERVER_NAME}] enrollment secret (enter in the popup once): ${enrollment}`);
   }
 
-  // 2) ensure daemon is up
+  // 2) ensure daemon is up. Desktop/stdio clients default to self-managed
+  // spawning. Long-running supervisors (systemd, launchd, containers) can set
+  // BROWSER_CONTROLLER_DAEMON_MODE=connect so this process never competes for
+  // daemon lifecycle ownership.
   if (!(await daemonLooksAlive())) {
-    spawnDaemon();
-    await waitForDaemon();
+    if (CONNECT_ONLY_DAEMON) {
+      console.error(`[${SERVER_NAME}] daemon mode=connect; waiting for managed daemon`);
+      await waitForDaemon();
+    } else {
+      spawnDaemon();
+      await waitForDaemon();
+    }
   }
 
   // 3) connect to daemon. Resolve a human-readable agent name for the popup UI.
@@ -445,6 +456,9 @@ async function main(): Promise<void> {
       try {
         if (await daemonLooksAlive()) {
           console.error(`[${SERVER_NAME}] daemon connection lost — reconnecting to live daemon`);
+        } else if (CONNECT_ONLY_DAEMON) {
+          console.error(`[${SERVER_NAME}] daemon connection lost — waiting for managed daemon`);
+          await waitForDaemon();
         } else {
           console.error(`[${SERVER_NAME}] daemon connection lost — attempting one respawn`);
           spawnDaemon();

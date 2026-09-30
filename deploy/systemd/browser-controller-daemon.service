@@ -1,0 +1,17 @@
+# Example systemd user unit. Adjust the checkout path (and node location if
+# `node` is not on the user manager's PATH) to match your installation.
+[Unit]
+Description=Browser Controller shared daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/browser-controller
+Environment=HOME=%h
+ExecStart=/usr/bin/env node %h/browser-controller/mcp-server/dist/daemon.js
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

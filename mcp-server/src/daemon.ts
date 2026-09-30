@@ -28,6 +28,8 @@ import {
   DEFAULT_WS_HOST,
   DEFAULT_WS_PORT,
   DAEMON_INFO_FILE,
+  acquireDaemonLock,
+  releaseDaemonLock,
   ENROLLMENT_FILE,
   IPC_SOCKET_PATH,
   STATE_DIR,
@@ -118,38 +120,33 @@ class Daemon {
 
   async start(): Promise<void> {
     fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+    acquireDaemonLock();
 
-    // 1) extension-facing WS server (task 1.0). The bridge handles the stale-
-    //    port eviction already (lsof replaced by net-based probe in bridge).
-    await this.bridge.start();
+    try {
+      // 1) extension-facing WS server (task 1.0).
+      await this.bridge.start();
+      this.bridge.registerHttpHandler((req, url) => this.handleHttp(req, url));
 
-    // 1b) HTTP endpoints on the SAME port (bridge shares it). The popup uses
-    //     these to auto-pair the token and to show connected agents — without
-    //     them the extension (no fs access) could never read the token.
-    this.bridge.registerHttpHandler((req, url) => this.handleHttp(req, url));
+      // 2) IPC server for thin MCP clients.
+      this.ipcServer = this.createIpcServer();
+      this.heartbeatTimer = this.startHeartbeat();
+      this.writeDaemonInfo();
 
-    // 2) IPC server for thin MCP clients.
-    this.ipcServer = this.createIpcServer();
+      console.error(`[${SERVER_NAME}] listening. WS=${DEFAULT_WS_HOST}:${DEFAULT_WS_PORT} IPC=${IPC_SOCKET_PATH}`);
+      console.error(`[${SERVER_NAME}] auth token at ${TOKEN_FILE}`);
+      console.error(`[${SERVER_NAME}] enrollment secret stored at ${ENROLLMENT_FILE}`);
 
-    // 2b) heartbeat: evict half-open IPC sockets so the popup's "Connected
-    //     Agents" list doesn't accumulate zombies from killed IDE processes.
-    this.heartbeatTimer = this.startHeartbeat();
-
-    // 3) write daemon info so thin clients can find / healthcheck us.
-    this.writeDaemonInfo();
-
-    console.error(`[${SERVER_NAME}] listening. WS=${DEFAULT_WS_HOST}:${DEFAULT_WS_PORT} IPC=${IPC_SOCKET_PATH}`);
-    console.error(`[${SERVER_NAME}] auth token at ${TOKEN_FILE}`);
-    console.error(`[${SERVER_NAME}] enrollment secret stored at ${ENROLLMENT_FILE}`);
-
-    // graceful shutdown
-    const shutdown = (sig: string) => {
-      console.error(`[${SERVER_NAME}] ${sig} received, shutting down`);
+      const shutdown = (sig: string) => {
+        console.error(`[${SERVER_NAME}] ${sig} received, shutting down`);
+        this.stop();
+        process.exit(0);
+      };
+      process.on('SIGINT', () => shutdown('SIGINT'));
+      process.on('SIGTERM', () => shutdown('SIGTERM'));
+    } catch (err) {
       this.stop();
-      process.exit(0);
-    };
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
+      throw err;
+    }
   }
 
   private createIpcServer(): net.Server {
@@ -459,6 +456,8 @@ class Daemon {
         extension: { connected: this.bridge.isConnected(), since: null },
         agents: this.agents(),
         uptimeMs: Date.now() - this.startedAt,
+        // Lets lifecycle tools confirm a pid really is this daemon.
+        pid: process.pid,
       };
     }
     return undefined; // bridge returns 404
@@ -511,6 +510,7 @@ class Daemon {
     try {
       fs.unlinkSync(DAEMON_INFO_FILE);
     } catch {}
+    releaseDaemonLock();
   }
 }
 

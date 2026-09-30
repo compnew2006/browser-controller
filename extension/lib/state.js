@@ -73,7 +73,7 @@ export function pushCapped(arr, item, cap = PER_TAB_CAP) {
 
 // --- MV3 session persistence (architecture item) ---------------------------
 
-const SESSION_STATE_KEY = 'bcSessionState';
+const SESSION_STATE_KEY = "bcSessionState";
 
 /**
  * Persist lock ownership + smart-selector fallbacks to chrome.storage.session.
@@ -112,12 +112,14 @@ export async function loadSessionState() {
         // lock() refuses to steal: a stale entry for a tab another live session
         // re-locked is impossible here (we're the only instance), but the guard
         // costs nothing.
-        try { tabLocks.lock(tabId, sessionId); } catch {}
+        try {
+          tabLocks.lock(tabId, sessionId);
+        } catch {}
       }
     }
-    if (state.fallbacks && typeof state.fallbacks === 'object') {
+    if (state.fallbacks && typeof state.fallbacks === "object") {
       for (const [tabId, entries] of Object.entries(state.fallbacks)) {
-        if (entries && typeof entries === 'object') {
+        if (entries && typeof entries === "object") {
           fallbackByTab.set(Number(tabId), new Map(Object.entries(entries)));
         }
       }

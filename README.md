@@ -34,7 +34,7 @@ It already has your browser open right there. It just can't see it.
 - **Multiple agents at once.** Cursor can drive tab 10 while Claude drives tab 11 — both through one shared daemon, neither blocking the other.
 - **Tab targeting, not "the active tab."** Every action names a `tabId`. Move your mouse, switch tabs, watch YouTube — the agent keeps working on the tab you told it to. It never hijacks the page you're reading.
 - **Per-tab isolation.** Element refs, console logs, and network buffers are scoped per tab. A ref from tab 10 can never click something in tab 20.
-- **Per-tab concurrency.** Two actions on the *same* tab serialize (no races); actions on *different* tabs run in parallel.
+- **Per-tab concurrency.** Two actions on the _same_ tab serialize (no races); actions on _different_ tabs run in parallel.
 - **Tab locking.** An agent can claim a tab so others queue behind it instead of racing (`browser_tabs { action: "lock" }`). Locks survive Chrome's service-worker recycling (`chrome.storage.session`).
 - **Agent-control shield.** While an agent works on a tab you see a translucent blue inner frame and your input on that tab is blocked (mouse, keyboard, wheel) — the badge shows `agent <name> controlling the tab` and disappears when the action finishes. Locking a tab keeps a plain frame for the lock's lifetime.
 - **Same-origin iframe piercing.** Legacy/enterprise UIs that live inside iframes (e.g. an ONT console in `iframe#mainFrame`) are reachable: all locator tools search iframe documents, and `find`/`click_text` walk every frame.
@@ -56,7 +56,7 @@ It already has your browser open right there. It just can't see it.
 
 ## How it works
 
-Three pieces, all on your machine. Nothing leaves localhost.
+Three pieces, all on your machine. Nothing leaves localhost. The daemon control plane is hard-bound to `127.0.0.1`; there is no supported remote/n8n listener.
 
 ```mermaid
 flowchart LR
@@ -145,7 +145,11 @@ By default the daemon names each connection after its parent IDE ("Cursor", "Cla
   "mcpServers": {
     "browser-controller": {
       "command": "node",
-      "args": ["/path/to/browser-controller/mcp-server/dist/index.js", "--agent", "My Project Agent"]
+      "args": [
+        "/path/to/browser-controller/mcp-server/dist/index.js",
+        "--agent",
+        "My Project Agent"
+      ]
     }
   }
 }
@@ -171,6 +175,45 @@ Green dot = you're connected. Your agent can now see your browser.
 
 > These secrets prevent any other local process from opening a WebSocket and driving your authenticated browser sessions. To rotate them, stop your MCP clients, delete the folder, and the next run recreates both secrets. See [SECURITY.md](SECURITY.md) for the full threat model.
 
+### Runtime lifecycle (authoritative daemon)
+
+The **daemon** is the only process that owns the extension-facing runtime. MCP
+clients are thin stdio adapters and may start it automatically, but deployment
+scripts should use the lifecycle commands below so there is one restart owner.
+Do not run a second `daemon.js` or install a launch supervisor that competes for
+port `7225`.
+
+```bash
+npm run build
+npm run daemon:start      # start, or report the already-running PID
+npm run daemon:status     # JSON health/runtime information
+npm run daemon:stop       # graceful SIGTERM; removes runtime metadata
+npm run daemon:restart    # stop, then start; preserves token/enrollment
+```
+
+The daemon survives browser/Chrome restarts: token, enrollment secret, and
+pairing remain in `~/.browser-controller/` (override with `BC_STATE_DIR`), and
+the extension reconnects to the same endpoint. The lifecycle wrapper reads the
+`daemon.json` PID and is safe to run repeatedly; a stale lock is removed only
+when its recorded PID is not alive.
+
+### Expected endpoints
+
+- **MCP endpoint:** stdio, launched as `node mcp-server/dist/index.js` (the
+  standard `mcpServers` command/args form is shown above).
+- **Extension runtime:** `ws://127.0.0.1:7225` by default, with HTTP
+  `/pair`, `/status`, and `/kill?sessionId=...` on the same port. These are
+  daemon/popup endpoints, not an MCP HTTP transport.
+- **MCP client IPC:** `~/.browser-controller/daemon.sock` on Unix or
+  `\\.\pipe\browser-controller` on Windows. It is internal and token-authenticated.
+- **State:** `~/.browser-controller/{daemon.json,daemon.lock,token.json,
+  enrollment.json,daemon.log}`. `WS_PORT`, `WS_HOST`, and `BC_STATE_DIR` are the
+  supported configuration overrides.
+
+This preserves the real Chrome session workflow: no Playwright/headless browser
+is launched, and the existing Chrome profile, cookies, logins, and tabs remain
+the browser being controlled.
+
 ### Permission and trust boundary
 
 The unpacked extension deliberately requests Chrome's powerful `debugger`, `scripting`, `webRequest`, and `<all_urls>` permissions. They are what let it inspect network activity, inject functions, upload files through CDP, and automate any normal web tab you select. They also mean a connected MCP agent can read and change sensitive pages in your signed-in browser. Install the extension only from source you trust, pair it only with a trusted local daemon, and do not expose the daemon port beyond localhost. Chrome-protected pages such as `chrome://`, the Web Store, and DevTools remain inaccessible.
@@ -179,7 +222,7 @@ The unpacked extension deliberately requests Chrome's powerful `debugger`, `scri
 
 ## Using it
 
-The model is **tab-first**: the agent always says *which* tab to act on. It never assumes "the active tab."
+The model is **tab-first**: the agent always says _which_ tab to act on. It never assumes "the active tab."
 
 ### Basic workflow
 
@@ -268,6 +311,7 @@ npm run setup:cursor   # or: node mcp-server/dist/index.js --setup cursor
 ```
 
 This installs:
+
 - `~/.cursor/rules/browser-controller.mdc` — the tab-targeting workflow, dropdown handling, when to lock tabs
 - `~/.cursor/commands/check-browser.md` — adds `/check-browser` to your Cursor chat
 
@@ -349,25 +393,26 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 | Tool | What it does |
 |------|-------------|
 | `browser_console` | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit` |
+| `browser_intercept` | Block, redirect or set request headers per tab (Chrome session rules); captures + HAR export. `mock`/`log` rules are ledger-only |
 | `browser_network` | Requests with status codes and failures — per-tab; `urlPattern`, regex `filter`, `failed`, `limit` |
 | `browser_gif` | Record the agent's actions in a tab as an animated GIF (clicks marked); export writes the file |
 | `browser_evaluate` | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
 | `browser_handle_dialog` | Dismiss/accept an open alert/confirm/prompt via CDP (works on frozen pages) |
-| `browser_run_action` | Run a self-contained JS action object via CDP |
+| `browser_run_action`    | Run a self-contained JS action object via CDP                               |
 
 ---
 
 ## How Others Compare
 
-| | Browser Controller | Playwright MCP | Chrome DevTools MCP |
-|---|---|---|---|
-| Uses your existing browser | Yes | No, launches new | Partial, needs debug port |
-| Sessions and cookies | Already there | Fresh profile | Manual setup |
-| Works behind corporate SSO | Yes | No | Depends |
-| Multiple agents, multiple tabs | Yes | No | No |
-| Tab-targeting (won't hijack active tab) | Yes | N/A | No |
-| Authenticated local connection | Yes | N/A | No |
-| Setup | Build from source + extension | Headless browser | Chrome with `--remote-debugging-port` |
+|                                         | Browser Controller            | Playwright MCP   | Chrome DevTools MCP                   |
+| --------------------------------------- | ----------------------------- | ---------------- | ------------------------------------- |
+| Uses your existing browser              | Yes                           | No, launches new | Partial, needs debug port             |
+| Sessions and cookies                    | Already there                 | Fresh profile    | Manual setup                          |
+| Works behind corporate SSO              | Yes                           | No               | Depends                               |
+| Multiple agents, multiple tabs          | Yes                           | No               | No                                    |
+| Tab-targeting (won't hijack active tab) | Yes                           | N/A              | No                                    |
+| Authenticated local connection          | Yes                           | N/A              | No                                    |
+| Setup                                   | Build from source + extension | Headless browser | Chrome with `--remote-debugging-port` |
 
 ---
 
@@ -376,20 +421,20 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 | Env var | Default | What it does |
 |---------|---------|-------------|
 | `WS_PORT` | `7225` | WebSocket port the daemon uses for the extension connection |
-| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of loading all 25 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
+| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of loading all 26 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
 | `MCP_AGENT_NAME` | (auto: IDE name) | Override the agent name shown in the popup (same as `--agent`) |
 
 ### Daemon state files
 
 The daemon keeps everything in `~/.browser-controller/` (Windows: `%USERPROFILE%\.browser-controller\`):
 
-| File | Purpose |
-|------|---------|
-| `enrollment.json` | One-time pairing secret for the extension (mode `0600`) |
-| `token.json` | Auth token the extension must present on every WebSocket connection (mode `0600`) |
-| `daemon.sock` | The IPC socket thin clients connect to (AF_UNIX on mac/linux; named pipe on Windows) |
-| `daemon.json` | Daemon metadata (pid, port, start time) — used to detect a running daemon |
-| `daemon.log` | Daemon stdout/stderr when spawned by a client |
+| File              | Purpose                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `enrollment.json` | One-time pairing secret for the extension (mode `0600`)                              |
+| `token.json`      | Auth token the extension must present on every WebSocket connection (mode `0600`)    |
+| `daemon.sock`     | The IPC socket thin clients connect to (AF_UNIX on mac/linux; named pipe on Windows) |
+| `daemon.json`     | Daemon metadata (pid, port, start time) — used to detect a running daemon            |
+| `daemon.log`      | Daemon stdout/stderr when spawned by a client                                        |
 
 To fully reset: stop your MCP clients, delete the folder, and the next run recreates it with fresh secrets.
 

@@ -20,6 +20,7 @@ import { clickTextTool } from './click-text.js';
 import { dialogTool } from './dialog.js';
 import { uploadFileTool } from './upload-file.js';
 import { runActionTool } from './run-action.js';
+import { interceptTool } from './intercept.js';
 import { dragTool } from './drag.js';
 import { fillFormTool } from './fill-form.js';
 import { observeTool } from './observe.js';
@@ -53,6 +54,7 @@ export const allTools: ToolDefinition[] = [
   runActionTool,
   dragTool,
   fillFormTool,
+  interceptTool,
   observeTool,
   actTool,
   batchTool,
@@ -64,7 +66,7 @@ export const allTools: ToolDefinition[] = [
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(
-  allTools.map(t => [t.name, t]),
+  allTools.map((t) => [t.name, t]),
 );
 
 export type ToolCapability = 'read' | 'write' | 'mixed';
@@ -121,7 +123,7 @@ export function isIdempotent(tool: string): boolean {
  */
 const timeoutByToolName = new Map(
   allTools
-    .filter((t) => typeof t.timeoutMs === 'number')
+    .filter((t) => typeof t.timeoutMs === "number")
     .map((t) => [t.name, t.timeoutMs as number]),
 );
 

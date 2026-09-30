@@ -13,6 +13,7 @@ import { handleClick, handleType, handlePressKey, handleHover, handleSelect, han
 import { handleWait, handleScroll, handleSnapshot, handleFind, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
 import { handleTabs, handleConsole, handleNetwork, handleScreenshot, handleResizeWindow } from '../handlers/tabs.js';
 import { handleRunAction, handleUploadFile } from '../handlers/cdp.js';
+import { handleIntercept } from '../handlers/intercept.js';
 import { handleObserve, handleAct } from '../handlers/agent-api.js';
 import { handleGif, isRecording, recordFrame, GIF_FRAME_TOOLS } from '../handlers/gif.js';
 
@@ -60,6 +61,7 @@ const HANDLERS = {
   browser_fill_form: handleFillForm,
   browser_find: handleFind,
   browser_text: handleGetPageText,
+  browser_intercept: handleIntercept,
   browser_observe: handleObserve,
   browser_act: handleAct,
   browser_resize_window: handleResizeWindow,
@@ -95,10 +97,10 @@ function sendResponse(id, response) {
  * can surface it verbatim instead of a bare message.
  */
 function sendToolResponse(id, result) {
-  if (result && typeof result === 'object' && result.success === false) {
+  if (result && typeof result === "object" && result.success === false) {
     sendResponse(id, {
       success: false,
-      error: String(result.error || 'Tool failed'),
+      error: String(result.error || "Tool failed"),
       result,
     });
   } else {
@@ -108,13 +110,13 @@ function sendToolResponse(id, result) {
 
 /** Which tabId does this call target? null = tab-agnostic (tabs list/create). */
 function extractTabId(_tool, params) {
-  return typeof params.tabId === 'number' ? params.tabId : null;
+  return typeof params.tabId === "number" ? params.tabId : null;
 }
 
 export async function handleMessage(msg) {
   // Control messages (non-tool) from the daemon. These carry a `type` and no
   // `tool`; handle them here before the tool-dispatch path assumes a tool call.
-  if (msg.type === 'releaseSession') {
+  if (msg.type === "releaseSession") {
     // Session ids are unique even when two live clients share a display name.
     // Releasing one session therefore cannot unlock its sibling's tabs.
     const owner = msg.sessionId;
@@ -129,12 +131,14 @@ export async function handleMessage(msg) {
       persistSessionState();
       for (const tabId of released) hideLockShield(tabId);
       if (released.length) {
-        broadcastStatus(`Released ${released.length} lock(s) from disconnected agent ${owner}`);
+        broadcastStatus(
+          `Released ${released.length} lock(s) from disconnected agent ${owner}`,
+        );
       }
     }
     return; // control message — no response expected
   }
-  if (msg.type === 'cancel') {
+  if (msg.type === "cancel") {
     // The daemon/bridge aborted a call (client gone / timeout). Abort the
     // in-flight handler so it short-circuits and releases the tab mutex NOW —
     // otherwise a slow navigate (55s) blocks every later call on the same tab
@@ -143,11 +147,15 @@ export async function handleMessage(msg) {
     // interrupted via the AbortSignal it was given.
     const cancelledId = msg.id;
     if (cancelledId && activeControllers.has(cancelledId)) {
-      try { activeControllers.get(cancelledId).abort(); } catch { /* already settled */ }
+      try {
+        activeControllers.get(cancelledId).abort();
+      } catch {
+        /* already settled */
+      }
     }
     return; // control message — no response expected
   }
-  if (msg.type === 'ping') {
+  if (msg.type === "ping") {
     // already handled in onmessage, but be defensive
     return;
   }
@@ -159,7 +167,7 @@ export async function handleMessage(msg) {
 
   // Resolve navigate's documented active-tab fallback before lock/mutex routing.
   // This freezes the target even if the user changes focus while the call waits.
-  if (tool === 'browser_navigate' && typeof p.tabId !== 'number') {
+  if (tool === "browser_navigate" && typeof p.tabId !== "number") {
     p.tabId = (await getActiveTab()).id;
   }
   const tabId = extractTabId(tool, p);
@@ -202,7 +210,13 @@ export async function handleMessage(msg) {
     const controller = new AbortController();
     activeControllers.set(id, controller);
     try {
-      const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
+      const result = await dispatch(
+        tool,
+        p,
+        sessionId,
+        agentName,
+        controller.signal,
+      );
       sendToolResponse(id, result);
     } catch (err) {
       sendResponse(id, { success: false, error: err.message || String(err) });

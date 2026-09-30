@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * Minimal structural host a tool handler needs. Both {@link ExtensionBridge}
@@ -12,7 +12,10 @@ export interface ToolHost {
 
 export interface ToolResult {
   [key: string]: unknown;
-  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>;
+  content: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; data: string; mimeType: string }
+  >;
   isError?: boolean;
 }
 
@@ -25,7 +28,7 @@ export const tabIdParam = z
   .number()
   .int()
   .describe(
-    'Target tab id (from browser_tabs list). Actions apply to THIS tab, not the active tab.',
+    "Target tab id (from browser_tabs list). Actions apply to THIS tab, not the active tab.",
   );
 
 /** Mandatory tabId (click/type/snapshot/…). */
@@ -35,7 +38,9 @@ export function requireTabId() {
 
 /** Optional tabId — for tools like navigate where "active tab" is still acceptable. */
 export function optionalTabId() {
-  return tabIdParam.optional().describe('Target tab id. If omitted, uses the active tab.');
+  return tabIdParam
+    .optional()
+    .describe("Target tab id. If omitted, uses the active tab.");
 }
 
 export interface ToolDefinition {
@@ -49,7 +54,10 @@ export interface ToolDefinition {
   summary: string;
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
-  handler: (host: ToolHost, params: Record<string, unknown>) => Promise<ToolResult>;
+  handler: (
+    host: ToolHost,
+    params: Record<string, unknown>,
+  ) => Promise<ToolResult>;
   /**
    * Whether re-running this tool with the same params has no side effects.
    * Drives the bridge's retry-on-timeout policy. Default `false` — a click must
@@ -69,7 +77,7 @@ export interface ToolDefinition {
 }
 
 export function textResult(text: string): ToolResult {
-  return { content: [{ type: 'text', text }] };
+  return { content: [{ type: "text", text }] };
 }
 
 /**
@@ -78,11 +86,17 @@ export function textResult(text: string): ToolResult {
  * contract wrapHandler enforces for thrown errors). Used by the meta tool.
  */
 export function jsonError(payload: unknown): ToolResult {
-  return { content: [{ type: 'text', text: JSON.stringify(payload) }], isError: true };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    isError: true,
+  };
 }
 
 export function errorResult(message: string): ToolResult {
-  return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
+  return {
+    content: [{ type: "text", text: `Error: ${message}` }],
+    isError: true,
+  };
 }
 
 /**
@@ -110,7 +124,10 @@ export function payloadOf(err: unknown): unknown {
 }
 
 export function forwardHandler(name: string) {
-  const handler = async (host: ToolHost, params: Record<string, unknown>): Promise<ToolResult> => {
+  const handler = async (
+    host: ToolHost,
+    params: Record<string, unknown>,
+  ): Promise<ToolResult> => {
     try {
       const result = await host.callTool(name, params);
       return textResult(JSON.stringify(result));
@@ -124,6 +141,9 @@ export function forwardHandler(name: string) {
   return handler;
 }
 
-export function imageResult(base64: string, mimeType = 'image/png'): ToolResult {
-  return { content: [{ type: 'image', data: base64, mimeType }] };
+export function imageResult(
+  base64: string,
+  mimeType = "image/png",
+): ToolResult {
+  return { content: [{ type: "image", data: base64, mimeType }] };
 }

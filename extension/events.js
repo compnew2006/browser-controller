@@ -13,9 +13,10 @@ import {
   persistSessionState,
   dropTabState,
   dropDocumentState,
-} from './lib/state.js';
-import { showLockShield, hideLockShield } from './lib/overlay.js';
-import { lockTabUi, releaseTabUi } from './lib/lock-ops.js';
+} from "./lib/state.js";
+import { showLockShield, hideLockShield } from "./lib/overlay.js";
+import { enrichCapture } from "./handlers/intercept.js";
+import { lockTabUi, releaseTabUi } from "./lib/lock-ops.js";
 import {
   getOpenTabs,
   buildStatusPayload,
@@ -23,7 +24,7 @@ import {
   applyPort,
   applyToken,
   applyEnrollment,
-} from './lib/connection.js';
+} from "./lib/connection.js";
 
 export function registerEventListeners() {
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
@@ -32,12 +33,17 @@ export function registerEventListeners() {
     // before that, Chrome logs "message channel closed before a response was
     // received". Every branch below responds synchronously (or is fire-and-forget),
     // so we return false (or nothing) — Chrome handles it without the warning.
-    if (msg.type === 'console' && sender.tab?.id != null) {
+    if (msg.type === "console" && sender.tab?.id != null) {
       const buf = getTabBuffer(consoleByTab, sender.tab.id);
-      pushCapped(buf, { level: msg.level, text: msg.text, timestamp: Date.now(), url: sender.tab.url });
+      pushCapped(buf, {
+        level: msg.level,
+        text: msg.text,
+        timestamp: Date.now(),
+        url: sender.tab.url,
+      });
       return false; // fire-and-forget; no response expected
     }
-    if (msg.type === 'getStatus') {
+    if (msg.type === "getStatus") {
       // Async: fetch tabs before responding so the popup gets a full snapshot
       // (connection + locks + open tabs) in one message. Returning true signals
       // Chrome we'll call respond() asynchronously.
@@ -46,15 +52,15 @@ export function registerEventListeners() {
       });
       return true; // async response
     }
-    if (msg.type === 'setPort') {
+    if (msg.type === "setPort") {
       respond(applyPort(msg.port));
       return false;
     }
-    if (msg.type === 'setToken') {
+    if (msg.type === "setToken") {
       respond(applyToken(msg.token));
       return false;
     }
-    if (msg.type === 'setEnrollment') {
+    if (msg.type === "setEnrollment") {
       // The popup owns the user-facing entry of the enrollment secret. Persist,
       // re-pair, reconnect — all inside connection.js. The onMessage listener is
       // NOT async, so we .then() and return true (Chrome keeps the respond()
@@ -64,38 +70,40 @@ export function registerEventListeners() {
       });
       return true; // async response — respond() fires from the .then()
     }
-    if (msg.type === 'unlockAll') {
+    if (msg.type === "unlockAll") {
       // Snapshot BEFORE unlockAll() — unlockAll clears the map, so reading after
       // would lose the list of tabs whose shields need removing.
       const prev = tabLocks.snapshot();
       tabLocks.unlockAll();
       persistSessionState();
       for (const { tabId } of prev) hideLockShield(tabId);
-      broadcastStatus('All tab locks cleared');
+      broadcastStatus("All tab locks cleared");
       respond({ success: true });
       return false;
     }
-    if (msg.type === 'lockTab') {
+    if (msg.type === "lockTab") {
       const owner = msg.sessionId;
       if (msg.tabId == null || !owner) {
-        respond({ success: false, error: 'tabId and sessionId required' });
+        respond({ success: false, error: "tabId and sessionId required" });
         return false;
       }
       // lockTabUi is async (it awaits the shield injection) — keep Chrome's
       // respond() channel open for the async reply.
       lockTabUi(msg.tabId, owner, `Tab ${msg.tabId} pinned to ${owner}`)
         .then((shielded) => respond({ success: true, shielded }))
-        .catch((err) => respond({ success: false, error: err?.message || String(err) }));
+        .catch((err) =>
+          respond({ success: false, error: err?.message || String(err) }),
+        );
       return true;
     }
-    if (msg.type === 'unlockTab') {
+    if (msg.type === "unlockTab") {
       // { tabId } — release one tab's lock (vs unlockAll which clears all).
       if (msg.tabId == null) {
-        respond({ success: false, error: 'tabId required' });
+        respond({ success: false, error: "tabId required" });
         return false;
       }
       const was = releaseTabUi(msg.tabId);
-      broadcastStatus(`Tab ${msg.tabId} unpinned (was ${was || '-'})`);
+      broadcastStatus(`Tab ${msg.tabId} unpinned (was ${was || "-"})`);
       respond({ success: true, previousSession: was || null });
       return false;
     }
@@ -106,15 +114,20 @@ export function registerEventListeners() {
     (details) => {
       if (details.tabId == null || details.tabId < 0) return; // not a real tab
       const buf = getTabBuffer(networkByTab, details.tabId);
-      pushCapped(buf, {
+      const entry = {
         method: details.method,
         url: details.url,
         status: details.statusCode,
         type: details.type,
         timestamp: details.timeStamp,
-      });
+      };
+      pushCapped(buf, entry);
+      // Intercept ledger enrichment (best-effort; never breaks capture).
+      try {
+        enrichCapture(details.tabId, entry);
+      } catch {}
     },
-    { urls: ['<all_urls>'] },
+    { urls: ["<all_urls>"] },
   );
 
   // Requests that never completed (DNS failure, blocked, aborted, CORS…):
@@ -153,11 +166,11 @@ export function registerEventListeners() {
   // from the short-lived per-call listener inside handleNavigate — they share no
   // state and Chrome supports multiple onUpdated listeners (review NOTE 7c).
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === 'loading') {
+    if (changeInfo.status === "loading") {
       dropDocumentState(tabId);
       persistSessionState();
     }
-    if (changeInfo.status === 'complete' && tabLocks.owner(tabId)) {
+    if (changeInfo.status === "complete" && tabLocks.owner(tabId)) {
       showLockShield(tabId);
     }
   });
