@@ -90,6 +90,31 @@ describe('multi-browser bridge', () => {
     await expect(bridge.callTool('browser_tabs', { action: 'list' }, 's1')).rejects.toThrow(/not connected/);
   });
 
+  it('an auto session stays on its browser when another one connects (batch/retry safe)', async () => {
+    const { bridge, port: p } = await startBridge();
+    const work = await fakeBrowser(p, 'work');
+    // Step 1 of a batch: click in "work" (the only browser).
+    expect(await bridge.callTool('browser_click', { tabId: 7 }, 's1')).toEqual({ from: 'work' });
+    const home = await fakeBrowser(p, 'home'); // newer: becomes the default
+    // Step 2 must not land in "home" with the same tabId.
+    expect(await bridge.callTool('browser_type', { tabId: 7, text: 'x' }, 's1')).toEqual({ from: 'work' });
+    expect(work.calls).toEqual(['browser_click', 'browser_type']);
+    expect(home.calls).toEqual([]);
+    // A new session takes the default; list shows each session's own browser.
+    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'home' });
+    const listed = await (bridge.callTool('browser_list_browsers', {}, 's1') as Promise<any>);
+    expect(listed).toMatchObject({ selectedBrowserId: 'work', pinnedAuto: true });
+    expect(listed.browsers.find((b: any) => b.selected).browserId).toBe('work');
+    // Its browser gone: an error, never a silent switch to the other browser.
+    work.ws.close();
+    await new Promise((r) => setTimeout(r, 60));
+    await expect(bridge.callTool('browser_type', { tabId: 7, text: 'y' }, 's1')).rejects.toThrow(/"work" disconnected/);
+    expect(home.calls).toEqual(['browser_tabs']);
+    // Selecting "auto" again re-pins to the current default.
+    await bridge.callTool('browser_select_browser', { browserId: 'auto' }, 's1');
+    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'home' });
+  });
+
   it('releasing a session forgets its browser choice', async () => {
     const { bridge, port: p } = await startBridge();
     await fakeBrowser(p, 'work');

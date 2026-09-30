@@ -41,6 +41,10 @@ export const fallbackByTab = new Map();
  * Cleared when the tab starts a new navigation or is closed.
  */
 export const wedgedTabs = new Map();
+/** browser_gif recordings: tabId -> recording (here so a replaced frozen tab can hand its recording over). */
+export const gifRecordings = new Map();
+/** Frozen tabs replaced by replaceFrozenTab: old tabId -> new tabId. */
+export const replacedTabs = new Map();
 /**
  * isNew feature: Map<tabId, string[]> of "fingerprints" (role|name) from the
  * PREVIOUS snapshot. The next snapshot marks any ref whose fingerprint isn't

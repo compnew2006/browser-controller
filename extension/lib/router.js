@@ -250,8 +250,10 @@ export async function handleMessage(msg) {
         sendToolResponse(id, result);
         // GIF recording: capture the page after the action (the reply is already
         // sent; the tab mutex keeps the next call from racing the capture).
-        if (GIF_FRAME_TOOLS.has(tool) && isRecording(tabId) && !(result && result.success === false)) {
-          await recordFrame(tabId, tool, result);
+        // A frozen tab replaced by this call records on its replacement.
+        const frameTab = typeof result?.replacedTabId === 'number' ? (result.tabId ?? result.reloaded ?? tabId) : tabId;
+        if (GIF_FRAME_TOOLS.has(tool) && isRecording(frameTab) && !(result && result.success === false)) {
+          await recordFrame(frameTab, tool, result);
         }
       } catch (err) {
         sendResponse(id, { success: false, error: err.message || String(err) });

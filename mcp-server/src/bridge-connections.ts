@@ -36,11 +36,16 @@ export function identityOf(info?: { browserId?: unknown; browserLabel?: unknown 
  * The set of extension connections plus each session's browser choice.
  * Routing: a session's selected browser, else the default — the most
  * recently connected live browser (so one browser behaves exactly as before).
+ * An "auto" session is pinned to the browser its first call went to: tab ids
+ * belong to one browser, so a browser connecting mid-session (or mid-batch,
+ * or between a call and its retry) must not take over that session's calls.
  */
 export class ExtensionConnections {
   private conns = new Set<ExtensionConnection>();
   /** sessionId -> browserId chosen with browser_select_browser. */
   private sessionBrowser = new Map<string, string>();
+  /** sessionId -> browserId an "auto" session was pinned to by its first call. */
+  private autoBrowser = new Map<string, string>();
 
   add(conn: ExtensionConnection): void { this.conns.add(conn); }
   has(conn: ExtensionConnection): boolean { return this.conns.has(conn); }
@@ -70,8 +75,19 @@ export class ExtensionConnections {
       if (chosen) return chosen;
       throw new Error(`Selected browser "${want}" is not connected. browser_list_browsers shows the connected ones (browser_select_browser "auto" = default).`);
     }
+    const pinned = sessionId ? this.autoBrowser.get(sessionId) : undefined;
+    if (pinned) {
+      const same = this.live().find((c) => c.browserId === pinned);
+      if (same) return same;
+      // Its browser is gone: moving on to another browser is only safe when
+      // no other one could be confused with it — never switch silently.
+      if (this.live().length > 0) {
+        throw new Error(`This session's browser "${pinned}" disconnected. Its tab ids are not valid in the other connected browser(s): reconnect it, or call browser_select_browser (then browser_tabs list) to continue in another one.`);
+      }
+    }
     const primary = this.primary();
     if (!primary) throw new Error('Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.');
+    if (sessionId) this.autoBrowser.set(sessionId, primary.browserId);
     return primary;
   }
 
@@ -83,7 +99,7 @@ export class ExtensionConnections {
   /** browser_list_browsers: every connected extension, with this session's choice. */
   list(sessionId?: string): Record<string, unknown> {
     const primary = this.primary();
-    const selected = sessionId ? this.sessionBrowser.get(sessionId) : undefined;
+    const selected = sessionId ? (this.sessionBrowser.get(sessionId) ?? this.autoBrowser.get(sessionId)) : undefined;
     return {
       success: true,
       browsers: this.live().map((c) => ({
@@ -94,6 +110,7 @@ export class ExtensionConnections {
         ...((selected ? selected === c.browserId : c === primary) ? { selected: true } : {}),
       })),
       ...(selected ? { selectedBrowserId: selected } : {}),
+      ...(sessionId && !this.sessionBrowser.has(sessionId) && selected ? { pinnedAuto: true } : {}),
     };
   }
 
@@ -101,6 +118,8 @@ export class ExtensionConnections {
   select(sessionId: string | undefined, browserId: unknown): Record<string, unknown> {
     if (!sessionId) throw new Error('Selecting a browser needs a client session (connect through the Browser Controller MCP server).');
     const id = typeof browserId === 'string' ? browserId.trim() : '';
+    // An explicit choice (or "auto" again) re-pins the session.
+    this.autoBrowser.delete(sessionId);
     if (!id || id === 'auto') {
       this.sessionBrowser.delete(sessionId);
       return { success: true, selected: 'auto', browserId: this.primary()?.browserId ?? null };
@@ -111,10 +130,14 @@ export class ExtensionConnections {
     return { success: true, selected: conn.browserId, label: conn.label };
   }
 
-  releaseSession(sessionId: string): void { this.sessionBrowser.delete(sessionId); }
+  releaseSession(sessionId: string): void {
+    this.sessionBrowser.delete(sessionId);
+    this.autoBrowser.delete(sessionId);
+  }
 
   clear(): void {
     this.conns.clear();
     this.sessionBrowser.clear();
+    this.autoBrowser.clear();
   }
 }

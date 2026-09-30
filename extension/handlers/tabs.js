@@ -56,6 +56,16 @@ export function imageSize(b64) {
  * one in its window, so the user's view is never switched, and can downscale
  * (`scale`) or cap the width (`maxWidth`) to save image tokens.
  */
+/** Device pixels per CSS pixel: window.devicePixelRatio, else the layout-metrics ratio. */
+async function pageDpr(send, metrics, vv) {
+  try {
+    const r = await withTimeout(send('Runtime.evaluate', { expression: 'window.devicePixelRatio', returnByValue: true }), 1500, 'devicePixelRatio');
+    const v = Number(r?.result?.value);
+    if (v > 0 && v < 16) return v;
+  } catch { /* frozen or restricted page: fall back */ }
+  return metrics.visualViewport?.clientWidth > 0 ? metrics.visualViewport.clientWidth / vv.clientWidth : 1;
+}
+
 async function cdpScreenshot(tabId, { format, quality, scale, maxWidth, fullPage, region }) {
   return withCdp(tabId, async (send) => {
     let metrics = await send('Page.getLayoutMetrics');
@@ -78,25 +88,34 @@ async function cdpScreenshot(tabId, { format, quality, scale, maxWidth, fullPage
       height = Math.max(1, Math.min(region.height, vv.clientHeight - originY));
     }
     let s = Math.min(region ? 4 : 1, Math.max(0.05, scale ?? (region ? 2 : 1)));
-    // The capture comes out at clip.scale × devicePixelRatio (device pixels):
-    // the deprecated device-pixel metrics against the CSS ones give the ratio.
-    const dpr = metrics.visualViewport?.clientWidth > 0 ? metrics.visualViewport.clientWidth / vv.clientWidth : 1;
+    // The capture comes out at clip.scale × devicePixelRatio (device pixels).
+    // The layout metrics can't be trusted for that ratio (real Chrome at DPR 2
+    // reports equal device and CSS viewport widths), so ask the page.
+    const dpr = await pageDpr(send, metrics, vv);
     if (maxWidth && width * s * dpr > maxWidth) s = maxWidth / (width * dpr);
-    const { data } = await withTimeout(send('Page.captureScreenshot', {
+    const capture = (clipScale) => withTimeout(send('Page.captureScreenshot', {
       format,
       ...(format === 'jpeg' ? { quality } : {}),
       captureBeyondViewport: !!fullPage && !region,
       clip: {
         x: fullPage && !region ? 0 : vv.pageX + originX,
         y: fullPage && !region ? 0 : vv.pageY + originY,
-        width, height, scale: s,
+        width, height, scale: clipScale,
       },
     }), CDP_CAPTURE_TIMEOUT_MS, 'Page.captureScreenshot');
+    let { data } = await capture(s);
+    let size = imageSize(data);
+    // maxWidth is a promise about the IMAGE: if the ratio was still off, shrink
+    // by what the real image shows and capture once more.
+    if (maxWidth && size?.width > maxWidth + 1) {
+      s = s * (maxWidth / size.width);
+      ({ data } = await capture(s));
+      size = imageSize(data);
+    }
     // How image pixels map to the viewport coordinates click/hover/scroll take:
     // viewportX = origin[0] + imageX / scale (fullPage: page coordinates instead).
     // The real image size is the ground truth (it includes the device pixel
     // ratio: an 800 px viewport at DPR 2 is a 1600 px image, scale 2).
-    const size = imageSize(data);
     const imgW = size?.width || Math.round(width * s * dpr);
     const imgH = size?.height || Math.round(height * s * dpr);
     const frame = {

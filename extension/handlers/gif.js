@@ -6,6 +6,7 @@
  * server writes the file — the GIF bytes never go to the agent.
  */
 import { resolveTab } from '../lib/page-exec.js';
+import { gifRecordings as recordings, replacedTabs } from '../lib/state.js';
 import { encodeGif, drawMarker } from '../lib/gif-encoder.js';
 import { handleScreenshot } from './tabs.js';
 
@@ -19,8 +20,14 @@ export const GIF_FRAME_TOOLS = new Set([
 const MAX_FRAMES_CAP = 500;
 /** Export travels in parts: the daemon's WebSocket frames are capped at 1 MB. */
 export const GIF_PART_BYTES = 600_000;
-/** tabId -> { frames, width, maxFrames, activate, recording, skipped, startedAt } */
-const recordings = new Map();
+/** recordings (lib/state.js): tabId -> { frames, width, maxFrames, activate, recording, skipped, startedAt } */
+
+/** The tab now holding this id's recording (a frozen tab replaced mid-recording hands it on). */
+export function currentTabId(tabId) {
+  let id = tabId;
+  for (let i = 0; i < 10 && !recordings.has(id) && replacedTabs.has(id); i++) id = replacedTabs.get(id);
+  return id;
+}
 
 export function isRecording(tabId) {
   const r = recordings.get(tabId);
@@ -85,8 +92,11 @@ async function encodeRecording(rec) {
 }
 
 export async function handleGif(params) {
-  const { tabId, action } = params;
-  await resolveTab(tabId);
+  const { action } = params;
+  // An id replaced mid-recording resolves to its replacement.
+  const tabId = action === 'start' ? params.tabId : currentTabId(params.tabId);
+  // Only capturing needs a live tab: stop/status/export/clear work on the frames already taken.
+  if (action === 'start' || action === 'frame') await resolveTab(tabId);
   switch (action) {
     case 'start': {
       const rec = {
