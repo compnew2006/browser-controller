@@ -8,6 +8,7 @@ import { fallbackByTab, lastSnapshotFingerprints, MAX_RESULT_CHARS, persistSessi
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
 import { withCdp } from '../lib/cdp-session.js';
 import { cdpEvaluate } from '../lib/cdp-evaluate.js';
+import { handleNativeSnapshot } from './ax-snapshot.js';
 
 /** Default output cap for snapshots (chars of serialized tree). */
 export const SNAPSHOT_MAX_CHARS = 20_000;
@@ -156,7 +157,8 @@ export async function handleScroll(params) {
 
 /**
  * Snapshot (task 2.4): builds an accessibility tree INCLUDING shadow DOM and
- * same-origin iframes. Refs are returned to the agent, while element recovery
+ * same-origin iframes (source:"dom", the default; source:"native" reads Chrome's
+ * real AX tree instead — handlers/ax-snapshot.js). Refs are returned to the agent, while element recovery
  * state is stored in the extension fallback registry instead of mutating page
  * DOM with permanent data-mcp-ref attributes.
  */
@@ -165,6 +167,16 @@ export async function handleSnapshot(params) {
   // filter:"interactive"|"all" (Claude-in-Chrome naming) is an alias of compact.
   const compact = params.filter === 'all' ? false : params.filter === 'interactive' ? true : params.compact !== false;
   await resolveTab(tabId);
+
+  // source:"native": Chrome's own accessibility tree (CDP). When the debugger
+  // can't attach (or the AX read fails) the DOM snapshot below answers instead
+  // and says why in `nativeUnavailable`.
+  let nativeUnavailable;
+  if (params.source === 'native') {
+    const native = await handleNativeSnapshot(params, { compact, maxChars });
+    if (!native.__fallback) return native;
+    nativeUnavailable = native.__fallback;
+  }
 
   // Install the fallback page runtime first (v2 install-once pattern): the
   // generator's source is injected natively as a chrome.scripting `func:`.
@@ -360,6 +372,7 @@ export async function handleSnapshot(params) {
       lastSnapshotFingerprints.set(tabId, res.__fingerprints);
       delete res.__fingerprints;
     }
+    if (nativeUnavailable && res && res.success) res.nativeUnavailable = nativeUnavailable;
     return res;
   });
 }

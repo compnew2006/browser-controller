@@ -73,7 +73,7 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_navigate:
     "Use to go to a URL. Handles hash-only routes correctly (resolves without waiting for a complete event). Returns an optional inline snapshot so you can act immediately.",
   browser_snapshot:
-    "Use to understand page structure and get element refs (e1, e2…) for subsequent click/type calls. Returns the accessibility tree (semantic), not raw DOM.",
+    "Use to understand page structure and get element refs (e1, e2…) for subsequent click/type calls. Returns the accessibility tree (semantic), not raw DOM. source:\"native\" = Chrome's own computed tree (exact names/roles/states; uses the debugger).",
   browser_text:
     'Use to read visible text on the page (incl. shadow DOM). Cheapest read tool. mode:"article" = main content only; page long text with offset/nextOffset. Returns {text, title, url}.',
   browser_find:

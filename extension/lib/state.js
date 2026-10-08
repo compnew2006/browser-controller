@@ -52,6 +52,8 @@ export const replacedTabs = new Map();
  * @type {Map<number, string[]>}
  */
 export const lastSnapshotFingerprints = new Map();
+/** Same, for `browser_snapshot source:"native"` (its roles/names differ from the DOM walker's). */
+export const lastNativeFingerprints = new Map();
 /** Bounded Observation V2 ownership metadata; page-side refs never live here. */
 export const observationSnapshots = new SnapshotRegistry();
 
@@ -137,6 +139,7 @@ export function dropDocumentState(tabId) {
   wedgedTabs.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
+  lastNativeFingerprints.delete(tabId);
   observationSnapshots.invalidateTab(tabId);
 }
 
@@ -147,6 +150,7 @@ export function dropTabState(tabId) {
   networkByTab.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
+  lastNativeFingerprints.delete(tabId);
   observationSnapshots.dropTab(tabId);
   tabLocks.release(tabId);
 }

@@ -61,7 +61,7 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 - `browser_select` - Select from `<select>`. Params: `tabId`, `ref` OR `selector`, `value` OR `label` OR `index`
 
 ### Reading (all require `tabId`)
-- `browser_snapshot` - Accessibility tree with refs. Params: `tabId`, `selector`, `compact`
+- `browser_snapshot` - Accessibility tree with refs. Params: `tabId`, `selector`, `compact`, `source` (`"dom"` default | `"native"` = Chrome's own computed tree via the debugger)
 - `browser_screenshot` - Capture a tab as image (activates the tab to capture). Params: `tabId`, `format`, `quality`
 - `browser_text` - Get text content. Params: `tabId`, `selector`, `maxLength`
 - `browser_find` - Find elements by natural language. Params: `tabId`, `query`, `limit`

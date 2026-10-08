@@ -14,7 +14,7 @@ Unlike Playwright MCP or Chrome DevTools MCP, which launch or attach to a separa
 
 Navigation: browser_navigate, browser_tabs
 Interaction: browser_click, browser_click_text, browser_type, browser_press_key, browser_scroll, browser_hover, browser_select, browser_drag, browser_fill_form, browser_upload_file, browser_wait
-Reading: browser_snapshot (compact mode default - interactive elements only), browser_screenshot, browser_text, browser_find
+Reading: browser_snapshot (compact mode default - interactive elements only; source:"native" returns Chrome's own accessibility tree), browser_screenshot, browser_text, browser_find
 JavaScript: browser_evaluate (execute arbitrary JS in page context, supports async/await), browser_run_action (CDP-based, bypasses CSP)
 Dialogs: browser_handle_dialog (handle alert/confirm/prompt)
 Debugging: browser_console, browser_network
