@@ -213,6 +213,15 @@ function filterByPattern(entries, filter) {
   return entries.filter((e) => re.test(e.url));
 }
 
+/** The running extension's version (manifest), reported as the HAR creator version. */
+function extensionVersion() {
+  try {
+    return globalThis.chrome?.runtime?.getManifest?.()?.version || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 function buildHar(tabId, entries) {
   const harEntries = entries.map((e) => ({
     startedDateTime: new Date(e.timestamp ?? Date.now()).toISOString(),
@@ -224,7 +233,7 @@ function buildHar(tabId, entries) {
   return {
     log: {
       version: "1.2",
-      creator: { name: "browser-controller", version: "2.2.0" },
+      creator: { name: "browser-controller", version: extensionVersion() },
       pages: [{ id: `tab-${tabId}`, title: `Tab ${tabId}` }],
       entries: harEntries,
     },

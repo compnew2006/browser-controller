@@ -114,6 +114,11 @@ describe('registerTools — full mode (default)', () => {
     const runG = data.tools.find((t: { name: string }) => t.name === 'browser_run_action');
     expect(/CSP|null/i.test(evalG.guidance)).toBe(true);
     expect(/bypasses CSP|CSP/i.test(runG.guidance)).toBe(true);
+    // browser_evaluate runs over CDP by default (mcp-server/src/tools/evaluate.ts):
+    // the guidance must not send agents away from it as "CSP-restricted".
+    expect(evalG.guidance).toMatch(/cdp/i);
+    expect(evalG.guidance).not.toMatch(/CSP-RESTRICTED|may return null/i);
+    expect(data.preamble).not.toMatch(/browser_evaluate is the CSP-bound|If browser_evaluate returns null/);
   });
 
   it('meta tool details returns guidance for the requested tool', async () => {

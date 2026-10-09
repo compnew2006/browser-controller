@@ -21,6 +21,7 @@ const tabStore = new Map<
   },
   scripting: { executeScript: async () => [{ result: null }] },
   storage: { session: { get: async () => ({}), set: async () => {} } },
+  runtime: { getManifest: () => ({ version: "9.8.7" }) },
 };
 
 const { validateRule, validateRuleSet, matchRule, evaluateRules } =
@@ -239,6 +240,8 @@ describe("capture + HAR (S4)", () => {
     expect(res.success).toBe(true);
     expect(res.har.log.version).toBe("1.2");
     expect(res.har.log.creator.name).toBe("browser-controller");
+    // The running extension's version (manifest), not a hard-coded release.
+    expect(res.har.log.creator.version).toBe("9.8.7");
     expect(res.entries).toBe(1);
     expect(res.har.log.entries[0].response._redacted).toBe(true);
   });

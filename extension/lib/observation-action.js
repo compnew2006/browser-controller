@@ -25,6 +25,8 @@ export async function PAGE_ACT_V2(config) {
 
   const action = config.params.action;
   const ref = config.params.ref;
+  /** Top-level viewport point a click landed on (browser_gif rings it). */
+  let clickedAt = null;
   if (action === 'scroll' && !ref) {
     const deltaX = Number(config.params.deltaX) || 0;
     const deltaY = Number(config.params.deltaY) || (deltaX ? 0 : 500);
@@ -168,6 +170,7 @@ export async function PAGE_ACT_V2(config) {
         });
       }
     }
+    if (action === 'click') clickedAt = { x: Math.round(x), y: Math.round(y) };
     // Agent cursor (opt-in, lib/page-dom.js): glide to the point (now in
     // top-level coordinates) before acting. The events below are dispatched on
     // the element itself, so only its detaching meanwhile can spoil the action.
@@ -284,6 +287,7 @@ export async function PAGE_ACT_V2(config) {
       ok: true,
       action,
       ...(resultRef ? { ref: resultRef } : {}),
+      ...(clickedAt ? { at: clickedAt } : {}),
       documentVersion: `${state.documentId}:${state.routeEpoch}:${state.revision}`,
       navigationDetected: currentUrl !== snapshot.url,
       documentChanged: currentUrl !== snapshot.url,

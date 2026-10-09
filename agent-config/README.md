@@ -12,7 +12,7 @@ npm run setup:cursor
 npm run setup:claude
 
 # Both
-npm run setup:all
+node agent-config/setup.mjs all
 ```
 
 ## What Gets Installed

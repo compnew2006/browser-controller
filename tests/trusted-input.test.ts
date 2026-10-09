@@ -39,7 +39,7 @@ let attachCount = 0;
 
 const ti = await import('../extension/lib/trusted-input.js');
 const session = await import('../extension/lib/cdp-session.js');
-const { handleClick, handleType, handlePressKey, handleDrag, parseKeyCombo } = await import('../extension/handlers/interaction.js');
+const { handleClick, handleClickByText, handleType, handlePressKey, handleDrag, parseKeyCombo } = await import('../extension/handlers/interaction.js');
 
 const inputs = () => cdp.filter((c) => c.method.startsWith('Input.'));
 
@@ -93,6 +93,19 @@ describe('trusted input (CDP)', () => {
     expect(res).toMatchObject({ success: true, input: 'cdp' });
     expect(inputs().map((c) => c.params.type)).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
     expect(inputs()[1].params).toMatchObject({ x: 100, y: 40, button: 'left', clickCount: 1 });
+  });
+
+  it('click by ref/selector reports the point it clicked (browser_gif rings it)', async () => {
+    pageResults.push({ success: true, x: 100, y: 40, visible: true });
+    expect(await handleClick({ tabId: 5, selector: '#go' })).toMatchObject({ at: { x: 100, y: 40 } });
+  });
+
+  it('click_text reports the point it clicked (browser_gif rings it)', async () => {
+    pageResults.push({ success: true, clicked: 'Go', role: 'button', matchCount: 1 });
+    pageResults.push({ success: true, x: 12, y: 34, visible: true });
+    const res = await handleClickByText({ tabId: 5, text: 'go' });
+    expect(res).toMatchObject({ success: true, input: 'cdp', at: { x: 12, y: 34 } });
+    expect(inputs()[1].params).toMatchObject({ type: 'mousePressed', x: 12, y: 34 });
   });
 
   it('click: double click sends clickCount 1 then 2', async () => {

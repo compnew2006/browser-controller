@@ -334,6 +334,28 @@ describe('page-side Safe Action Engine', () => {
     expect(button.events).toEqual(['mouseover', 'mousedown', 'mouseup', 'click']);
   });
 
+  it('a click reports its top-level point (browser_gif rings it), including frame offsets', async () => {
+    const document = new FakeDocument();
+    const button = document.add('button', 'Continue');
+    document.hit = button;
+    expect(await act(observe(document, 's_at'), { action: 'click', ref: 'e1' })).toMatchObject({ at: { x: 70, y: 36 } });
+
+    const outer = new FakeDocument();
+    const frame = outer.add('iframe');
+    frame.rect = { left: 100, top: 80, width: 500, height: 400 };
+    const inner = new FakeDocument();
+    const frameButton = inner.add('button', 'Frame action');
+    frameButton.rect = { left: 15, top: 25, width: 90, height: 30 };
+    frame.contentDocument = inner;
+    outer.hit = frame;
+    inner.hit = frameButton;
+    const observation = observe(outer, 's_at_frame');
+    const ref = observation.elements.find((element: any) => element.name === 'Frame action').ref;
+    expect(await act(observation, { action: 'click', ref })).toMatchObject({ success: true, at: { x: 160, y: 120 } });
+    // Only clicks carry it: other actions keep their compact result.
+    expect(await act(observation, { action: 'focus', ref })).not.toHaveProperty('at');
+  });
+
   it('glides the agent cursor to the target before click/hover when it is switched on', async () => {
     const calls: unknown[][] = [];
     (globalThis as any).__bcDom = { cursor: (...args: unknown[]) => { calls.push(args); return 15; } };

@@ -1,7 +1,7 @@
 {
   "name": "browser-controller",
   "mcpName": "io.github.noiemany/browser-controller",
-  "version": "2.5.0",
+  "version": "2.5.5",
   "description": "MCP server + Chrome extension that gives AI agents control of your real browser with existing sessions and logins",
   "type": "module",
   "bin": {
@@ -25,6 +25,9 @@
     "typecheck": "tsc -p mcp-server/tsconfig.json --noEmit",
     "setup:cursor": "node agent-config/setup.mjs cursor",
     "setup:claude": "node agent-config/setup.mjs claude",
+    "setup:pairing": "node scripts/pairing.mjs install",
+    "pairing:status": "node scripts/pairing.mjs status",
+    "pairing:uninstall": "node scripts/pairing.mjs uninstall",
     "context:lint": "ai-context-kit lint",
     "context:measure": "ai-context-kit measure"
   },

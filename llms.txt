@@ -10,15 +10,20 @@ browser-controller is a Model Context Protocol (MCP) server paired with a Chrome
 
 Unlike Playwright MCP or Chrome DevTools MCP, which launch or attach to a separate browser, browser-controller controls the browser the user is already using. For projects with authentication, complex state, or corporate SSO, this means no re-login, no session setup, no cookie recreation.
 
-## Tools (22 + 1 meta tool)
+## Tools (31 + 1 meta tool)
 
-Navigation: browser_navigate, browser_tabs
-Interaction: browser_click, browser_click_text, browser_type, browser_press_key, browser_scroll, browser_hover, browser_select, browser_drag, browser_fill_form, browser_upload_file, browser_wait
-Reading: browser_snapshot (compact mode default - interactive elements only; source:"native" returns Chrome's own accessibility tree), browser_screenshot, browser_text, browser_find
-JavaScript: browser_evaluate (execute arbitrary JS in page context, supports async/await), browser_run_action (CDP-based, bypasses CSP)
-Dialogs: browser_handle_dialog (handle alert/confirm/prompt)
-Debugging: browser_console, browser_network
+Every page tool takes a tabId from browser_tabs list (optional only on browser_navigate), so the agent never acts on the tab the user is looking at.
+
+Reading: browser_observe (compact semantic observation whose snapshotId/refs feed browser_act), browser_snapshot (compact mode default - interactive elements only; source:"native" returns Chrome's own accessibility tree), browser_screenshot, browser_text (cheapest read), browser_find (find elements by natural-language description)
+Interaction: browser_act (safe action on a browser_observe snapshot - rejects stale, hidden or covered targets), browser_click, browser_click_text, browser_type, browser_press_key, browser_scroll, browser_hover, browser_select, browser_wait, browser_fill_form, browser_drag, browser_upload_file
+Chain, replay & record: browser_batch (several tool calls in one round-trip, stops at the first error), browser_shortcuts (save a flow with {{variables}}, replay it in one call), browser_gif (record the agent's actions in a tab as an animated GIF, clicks marked with a red ring; export writes the .gif and returns its path)
+Navigation: browser_navigate, browser_tabs (list/create/close/focus/reload/lock/unlock), browser_resize_window, browser_list_browsers, browser_select_browser (several connected Chrome profiles)
+JavaScript: browser_evaluate (DevTools-console style JS over CDP: top-level await, last expression returned), browser_run_action (self-contained JS action object via CDP)
+Dialogs: browser_handle_dialog (handle alert/confirm/prompt, even on a frozen page)
+Debugging: browser_console, browser_network, browser_intercept (block/redirect/add request headers per tab, capture ledger, HAR export)
 Discovery: browser_tools (meta tool - list/search/activate tools; with BROWSER_CONTROLLER_PROGRESSIVE=1 only this tool is visible upfront: initial tool-definition tokens drop ~96%, ~75-80% net for a typical task activating 3-5 tools)
+
+Full per-tool reference (parameters, behavior, timeouts): the "Tool reference" section of README.md.
 
 ## Architecture
 
@@ -28,11 +33,13 @@ Discovery: browser_tools (meta tool - list/search/activate tools; with BROWSER_C
 
 ## Install
 
-npm: npx browser-controller
-Chrome extension: Load unpacked from the extension/ directory
+From source - this project is not published to npm (the npm package named "browser-controller" is an unrelated project) or the Chrome Web Store:
+
+1. git clone https://github.com/compnew2006/browser-controller.git, then npm install and npm run build
+2. MCP client config: command "node", args ["/absolute/path/to/browser-controller/mcp-server/dist/index.js"]
+3. Chrome extension: Load unpacked from the extension/ directory, run npm run setup:pairing once, then reload the extension - it pairs itself with the daemon (manual fallback: paste the enrollment secret from ~/.browser-controller/enrollment.json into the popup) - see README.md "Quick Start"
 
 ## Links
 
 - Repository: https://github.com/compnew2006/browser-controller
-- npm: https://www.npmjs.com/package/browser-controller
 - License: MIT

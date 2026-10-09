@@ -155,6 +155,14 @@ describe('browser_click_text', () => {
     expect(span.events).not.toContain('click');
   });
 
+  it('synthetic clicks report the top-level point they clicked (browser_gif rings it)', async () => {
+    const btn = doc.el('button', { id: 'go' }, 'Go');
+    doc.body.append(btn);
+    // Fake boxes sit at (10, 10), 100 × 20: centre (60, 20).
+    expect(await handleClick({ tabId: 1, selector: '#go' })).toMatchObject({ success: true, at: { x: 60, y: 20 } });
+    expect(await handleClickByText({ tabId: 1, text: 'go', exact: true })).toMatchObject({ success: true, at: { x: 60, y: 20 } });
+  });
+
   it('reaches text inside shadow roots', async () => {
     const host = doc.el('cookie-banner');
     const accept = doc.el('button', {}, 'Accept all');

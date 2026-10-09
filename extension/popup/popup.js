@@ -12,7 +12,8 @@ const tokenInput = document.getElementById('token');
 const enrollmentInput = document.getElementById('enrollment');
 // Enrollment secret the daemon gates /pair, /status, /kill behind. Loaded from
 // chrome.storage.local so the popup remembers it across reopens (the user
-// pastes it once on first setup — see SECURITY.md "First-contact TOFU window").
+// pastes it once, or the background fills it from the native pairing host —
+// see SECURITY.md "First-contact TOFU window").
 let enrollment = '';
 const versionEl = document.getElementById('version');
 const unlockAllBtn = document.getElementById('unlockAll');

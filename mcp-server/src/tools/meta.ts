@@ -48,8 +48,8 @@ const TASK_PREAMBLE =
   '• Several known steps → browser_batch (one call, stops at the first error).\n' +
   '• Read visible text → browser_text (cheapest). Page structure / element refs → browser_snapshot. Screenshot → browser_screenshot (cannot be done via JS).\n' +
   '• Safe Observe → Act loop → browser_observe, then browser_act with its snapshotId/ref. This adds freshness, geometry, allowed-action, and click-occlusion checks.\n' +
-  '• Read/write DOM OR call an internal API (fetch) OR read cookies on a strict-CSP SPA → browser_run_action (runs via CDP, bypasses CSP, returns real values; shows a yellow debugger banner).\n' +
-  '• browser_evaluate is the CSP-bound, banner-free lighter sibling of run_action. Use it only when you must avoid the debugger banner AND the page allows the script. If browser_evaluate returns null, fall back to browser_run_action.\n' +
+  '• Read/write DOM OR call an internal API (fetch) OR read cookies → browser_evaluate (DevTools-console style: top-level await, last value returned; runs over CDP by default, so page CSP does not block it; yellow debugger banner while attached). mode:"scripting" avoids the banner but a strict CSP can block it.\n' +
+  '• browser_run_action runs an action object ({ execute(params) } + actionParams) or a plain expression — always over CDP, never falling back to chrome.scripting.\n' +
   '• Navigate (incl. hash routes) → browser_navigate. Manage tabs → browser_tabs. Wait for something → browser_wait.';
 
 /**
@@ -81,9 +81,9 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_screenshot:
     "Use to capture a visual image (PNG/JPEG). Cannot be done via JS — this is the only way to see the page.",
   browser_evaluate:
-    "Use for one-off JS in the page MAIN world (no debugger banner). CSP-RESTRICTED: on strict-CSP SPAs it may return null — fall back to browser_run_action (CDP, bypasses CSP).",
+    'Use for one-off JS in the page (read/write DOM, fetch an internal API, read cookies). Default mode:"cdp" runs over the debugger, so page CSP does not block it (yellow banner while attached); without a debugger it falls back to chrome.scripting, which a strict CSP can block. mode:"scripting" = banner-free but CSP-bound.',
   browser_run_action:
-    'Escape hatch: read/write DOM, fetch an internal API, or read cookies on a strict-CSP site. Runs via CDP so it bypasses CSP and returns real values. Shows a yellow "is being debugged" banner.',
+    'Use to run an action object ({ execute(params) } with separate actionParams) or a snippet that must stay on CDP: it always runs via the debugger (bypasses CSP, never falls back to chrome.scripting) and shows a yellow "is being debugged" banner. For plain one-off JS, browser_evaluate is simpler.',
   browser_tabs:
     "Use to list/create/close/focus/lock tabs. ALWAYS pass an explicit tabId to other tools so the agent doesn't act on the tab the user is looking at.",
   browser_scroll:

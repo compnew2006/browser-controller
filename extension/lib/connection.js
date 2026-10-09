@@ -28,6 +28,19 @@ let wsToken = ''; // auth token (3.1); appended as ?token=
 // not optional) and sends it on /pair. Without this, the background's own
 // autoPairToken() 403s under the enrollment gate and reconnect dies.
 let enrollmentSecret = '';
+/** The user set the port in the popup: the pairing host's port must not override it. */
+let portFromUser = false;
+/** HTTP status of the last /pair call (0 = daemon unreachable). */
+let lastPairStatus = 0;
+// Zero-touch pairing (`npm run setup:pairing`): a native messaging host hands
+// over the enrollment secret from ~/.browser-controller. Chrome lets only the
+// extension IDs in the host manifest start it, so the secret stays
+// out-of-band (never over the daemon's HTTP channel). Spawning it costs a
+// process, so it is asked at most once per NATIVE_PAIR_RETRY_MS.
+const NATIVE_PAIRING_HOST = 'com.browser_controller.pairing';
+const NATIVE_PAIR_RETRY_MS = 30000;
+let nativePairAt = 0;
+let lastPairingNote = '';
 let ws = null;
 let connected = false;
 let reconnectAttempts = 0;
@@ -76,6 +89,7 @@ async function autoPairToken() {
     const headers = {};
     if (enrollmentSecret) headers['X-BC-Enrollment'] = enrollmentSecret;
     const res = await fetch(`http://127.0.0.1:${wsPort}/pair`, { cache: 'no-store', headers });
+    lastPairStatus = res.status;
     if (!res.ok) return '';
     const data = await res.json();
     if (data && typeof data.token === 'string' && data.token) {
@@ -87,8 +101,73 @@ async function autoPairToken() {
     }
   } catch {
     // daemon not reachable yet
+    lastPairStatus = 0;
   }
   return '';
+}
+
+/** Tell the popup's activity log how pairing went (each distinct note once). */
+function notePairing(message) {
+  if (message === lastPairingNote) return;
+  lastPairingNote = message;
+  broadcastStatus(message).catch(() => {});
+}
+
+/** Actionable text for chrome.runtime.sendNativeMessage failures. */
+function nativePairingHint(message) {
+  if (/not found/i.test(message)) {
+    return 'Auto-pairing is not set up: run `npm run setup:pairing` in the browser-controller folder, then reload the extension (or paste the enrollment secret in Settings).';
+  }
+  if (/forbidden/i.test(message)) {
+    return 'The pairing host does not allow this extension ID: run `npm run setup:pairing` again (see `npm run pairing:status`).';
+  }
+  return `Auto-pairing failed: ${message}`;
+}
+
+/**
+ * Ask the native pairing host for the enrollment secret. Returns true when it
+ * changed something (secret or port), i.e. when /pair is worth retrying.
+ */
+async function nativePair() {
+  if (!chrome.runtime?.sendNativeMessage) return false;
+  if (Date.now() - nativePairAt < NATIVE_PAIR_RETRY_MS) return false;
+  nativePairAt = Date.now();
+  let reply;
+  try {
+    reply = await chrome.runtime.sendNativeMessage(NATIVE_PAIRING_HOST, { type: 'pairing' });
+  } catch (err) {
+    notePairing(nativePairingHint(err?.message || String(err)));
+    return false;
+  }
+  if (!reply?.ok || typeof reply.enrollmentSecret !== 'string' || !reply.enrollmentSecret) {
+    notePairing(`Auto-pairing: ${reply?.error || 'the pairing host returned no secret.'}`);
+    return false;
+  }
+  let changed = false;
+  if (!portFromUser && Number.isInteger(reply.port) && reply.port > 0 && reply.port < 65536 && reply.port !== wsPort) {
+    wsPort = reply.port;
+    changed = true;
+  }
+  if (reply.enrollmentSecret !== enrollmentSecret) {
+    enrollmentSecret = reply.enrollmentSecret;
+    chrome.storage.local.set({ enrollmentSecret });
+    changed = true;
+  }
+  return changed;
+}
+
+/**
+ * Get a token. When the daemon refuses the enrollment secret (403: none
+ * stored yet, or rotated), fetch it from the pairing host and retry once.
+ * An unreachable daemon is left to the reconnect loop.
+ */
+export async function ensurePairing() {
+  const token = await autoPairToken();
+  if (token || lastPairStatus !== 403) return token;
+  if (!(await nativePair())) return '';
+  const retried = await autoPairToken();
+  if (retried) notePairing('Paired automatically (enrollment secret from the local pairing host).');
+  return retried;
 }
 
 /** This browser profile's identity for multi-browser routing (persisted). */
@@ -104,7 +183,7 @@ function defaultBrowserLabel(id) {
 export async function initConnection() {
   try {
     const stored = await chrome.storage.local.get(['wsPort', 'wsToken', 'enrollmentSecret', 'bcBrowserId', 'bcBrowserLabel']);
-    if (stored.wsPort) wsPort = stored.wsPort;
+    if (stored.wsPort) { wsPort = stored.wsPort; portFromUser = true; }
     if (stored.wsToken) wsToken = stored.wsToken;
     if (stored.enrollmentSecret) enrollmentSecret = stored.enrollmentSecret;
     let id = stored.bcBrowserId;
@@ -125,8 +204,8 @@ export async function initConnection() {
     if (alarm.name === KEEPALIVE_ALARM && !connected) connect();
   });
   // Always try to (re)pair at startup so the WS carries a fresh token even if
-  // the daemon rotated it or storage is empty.
-  await autoPairToken();
+  // the daemon rotated it or storage is empty (then the pairing host is asked).
+  await ensurePairing();
   connect();
 
   // Best-effort sweep of shields left behind (with session persistence the
@@ -186,7 +265,7 @@ export async function connect() {
   // If the last attempt died mid-handshake, the token is likely stale/empty —
   // re-fetch it before reconnecting so we don't loop on a bad token.
   if (lastWasHandshakeClose) {
-    await autoPairToken();
+    await ensurePairing();
     lastWasHandshakeClose = false;
   }
 
@@ -402,6 +481,7 @@ export function applyPort(port) {
   const p = parseInt(port, 10);
   if (p > 0 && p < 65536) {
     wsPort = p;
+    portFromUser = true;
     chrome.storage.local.set({ wsPort: p });
     resetAndReconnect();
     return { success: true, port: p };

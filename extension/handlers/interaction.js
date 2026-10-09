@@ -89,6 +89,7 @@ export async function handleClick(params) {
       return {
         success: true,
         input: 'cdp',
+        at: { x: Math.round(loc.x), y: Math.round(loc.y) },
         ...(loc.via ? { via: loc.via } : {}),
         ...(loc.occludedBy ? { warning: `click point is covered by ${loc.occludedBy}` } : {}),
       };
@@ -154,7 +155,9 @@ export async function handleClick(params) {
       el.dispatchEvent(new MouseEvent('dblclick', init));
     }
 
-    return { success: true, ...(via !== 'ref' ? { via } : {}) };
+    // Top-level viewport point (iframe offsets added), like the trusted path reports.
+    const at = D.centerOf(el);
+    return { success: true, at: { x: Math.round(at.x), y: Math.round(at.y) }, ...(via !== 'ref' ? { via } : {}) };
   }, [ref, selector, button, doubleClick, fb]);
 
   // The page function returns REF_GONE when the element (and all fallbacks)
@@ -515,7 +518,12 @@ export async function handleClickByText(params) {
       } finally {
         await releaseShield(tabId);
       }
-      return { ...found, input: 'cdp', ...(loc.occludedBy ? { warning: `click point is covered by ${loc.occludedBy}` } : {}) };
+      return {
+        ...found,
+        input: 'cdp',
+        at: { x: Math.round(loc.x), y: Math.round(loc.y) },
+        ...(loc.occludedBy ? { warning: `click point is covered by ${loc.occludedBy}` } : {}),
+      };
     }
     await releaseShield(tabId);
   }
@@ -535,6 +543,7 @@ export async function handleClickByText(params) {
     if (target.focus) target.focus();
     target.dispatchEvent(new MouseEvent('mouseup', init));
     target.dispatchEvent(new MouseEvent('click', init));
-    return _found;
+    const at = D.centerOf(target);
+    return { ..._found, at: { x: Math.round(at.x), y: Math.round(at.y) } };
   }, [tempRef, found]);
 }

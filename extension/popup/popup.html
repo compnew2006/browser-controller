@@ -304,6 +304,8 @@
     .field input:hover { border-color: var(--border-2); }
     .field input:focus { border-color: var(--accent); background: var(--surface-2); box-shadow: 0 0 0 3px var(--accent-soft); }
     .hint { font-size: 10.5px; color: var(--ink-3); margin-top: calc(-1 * var(--space-xs)); }
+    /* Commands and paths stay whole so they read (and copy) as one unit. */
+    .hint code { white-space: nowrap; }
 
     /* On/off setting: text on the left, switch on the right. */
     .switch-row {
@@ -481,8 +483,8 @@
         </div>
         <div class="field">
           <label for="enrollment">Enrollment Secret</label>
-          <input type="password" id="enrollment" placeholder="paste once on first setup" autocomplete="off">
-          <div class="hint">One-time — printed by <code>npx browser-controller</code> on first run.</div>
+          <input type="password" id="enrollment" placeholder="not paired yet" autocomplete="off" aria-describedby="enrollmentHint">
+          <div class="hint" id="enrollmentHint">Fills in automatically after you run <code>npm run setup:pairing</code> once. To set it by hand, paste the <code>secret</code> from <code>~/.browser-controller/enrollment.json</code>.</div>
         </div>
       </section>
     </main>
