@@ -115,4 +115,20 @@ describe('browser_batch', () => {
     expect(res.isError).toBeUndefined();
     expect(calls).toEqual(['browser_click', 'browser_click']);
   });
+
+  it('reports elapsed time for each step and for the whole batch', async () => {
+    const { host } = fakeHost();
+    const res = await run(host, {
+      tabId: 1,
+      actions: [
+        { tool: 'browser_click', params: { selector: '#a' } },
+        { tool: 'browser_press_key', params: { key: 'Tab' } },
+      ],
+    });
+    const texts = res.content.map((c) => (c.type === 'text' ? c.text : ''));
+    expect(texts.some((t) => /^\[1\/2\] browser_click ok \d+ ms$/.test(t))).toBe(true);
+    expect(texts.some((t) => /^\[2\/2\] browser_press_key ok \d+ ms$/.test(t))).toBe(true);
+    expect(texts[texts.length - 1]).toMatch(/^timing: total \d+ ms; steps \d+, \d+ ms$/);
+    expect(texts[0]).toBe('batch: 2/2 steps ok');
+  });
 });

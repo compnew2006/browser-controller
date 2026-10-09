@@ -377,19 +377,38 @@ export async function handleGetPageText(params) {
     const D = globalThis.__bcDom;
     if (!D) return { __needDom: true };
     const article = _mode === 'article';
-    let root = document.body;
+    const budget = _from + _max + 1000;
+    let roots = [document.body];
     if (_sel) {
-      const hit = D.resolve(null, _sel, null);
-      if (hit.error === 'INVALID_SELECTOR') return { success: false, error: `Invalid CSS selector: ${_sel}` };
-      root = hit.el;
+      // EVERY match, not just the first: a selector list like "h1, .price"
+      // used to return only the h1 (found live). Same preference order as
+      // the resolver — visible light-DOM matches, then visible shadow/frame
+      // matches, then the first match even if hidden.
+      const light = D.queryAll(_sel, false);
+      if (light === null) return { success: false, error: `Invalid CSS selector: ${_sel}` };
+      let hits = light.filter((el) => D.isVisible(el));
+      if (!hits.length) {
+        const deep = D.queryAll(_sel, true) || [];
+        hits = deep.filter((el) => D.isVisible(el));
+        if (!hits.length && (deep[0] || light[0])) hits = [deep[0] || light[0]];
+      }
+      // Outermost matches only — a match inside another match would repeat its text.
+      roots = hits.filter((el) => !hits.some((o) => o !== el && D.composedContains(o, el)));
     } else if (article) {
-      root = D.articleRoot();
+      roots = [D.articleRoot()];
     }
-    if (!root) return { success: false, error: 'Element not found' };
+    if (!roots.length || !roots[0]) return { success: false, error: 'Element not found' };
 
     // Composed text: includes open/closed shadow roots and same-origin frames
     // (innerText alone misses web-component content such as caniuse's tables).
-    let text = D.pageText(root, { article, max: _from + _max + 1000 });
+    const parts = [];
+    let size = 0;
+    for (const root of roots) {
+      if (size > budget) break;
+      const part = D.pageText(root, { article, max: budget });
+      if (part) { parts.push(part); size += part.length + 2; }
+    }
+    let text = parts.join('\n\n');
     const total = text.length;
     if (_from) text = text.slice(_from);
     const truncated = text.length > _max;
@@ -397,6 +416,7 @@ export async function handleGetPageText(params) {
 
     return {
       success: true, url: location.href, title: document.title, text, length: text.length, truncated,
+      ...(roots.length > 1 ? { matches: roots.length } : {}),
       ...(_from ? { offset: _from } : {}),
       ...(truncated ? { nextOffset: _from + _max } : {}),
       ...(article ? { mode: 'article' } : {}),

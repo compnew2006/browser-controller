@@ -7,7 +7,7 @@ export const textTool: ToolDefinition = {
   summary: 'Extract raw text content from a page',  description: 'Extract raw text content from the page or a specific element. Includes shadow-DOM (web component) content. mode:"article" returns only the main content (skips nav, header, footer, sidebars). Page long texts with offset.',
   inputSchema: z.object({
     tabId: requireTabId(),
-    selector: z.string().optional().describe('CSS selector to scope text extraction'),
+    selector: z.string().optional().describe('CSS selector to scope text extraction. Every visible match is included (page order, nested matches once), so a list like "h1, .price" returns both; `matches` reports how many when more than one'),
     maxLength: z.number().int().min(1).max(100_000).optional().default(5000).describe('Max text length to return (default 5000 chars ≈ 1250 tokens; raise only when you need more, max 100000)'),
     mode: z.enum(['all', 'article']).optional().describe('"all" (default): all visible text. "article": main content only (article/main), without navigation, headers, footers, sidebars and banners.'),
     offset: z.number().int().min(0).optional().describe('Start at this character (use nextOffset from a truncated result to read the next page).'),

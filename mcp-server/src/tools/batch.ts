@@ -89,11 +89,14 @@ export const batchTool: ToolDefinition = {
     // The default tab follows a frozen tab's replacement (navigate/reload report replacedTabId).
     let tabId = (params as { tabId?: number }).tabId;
     const content: ToolResult['content'] = [];
+    const batchStart = Date.now();
+    const stepMs: number[] = [];
     let failed = 0;
     let ran = 0;
     for (const [i, step] of actions.entries()) {
       const label = `[${i + 1}/${actions.length}] ${step.tool}`;
       const def = toolMap.get(step.tool);
+      const stepStart = Date.now();
       let result: ToolResult;
       if (!def || NOT_BATCHABLE.has(step.tool)) {
         result = { content: [{ type: 'text', text: `Error: ${def ? 'cannot be used inside a batch' : 'unknown tool'}` }], isError: true };
@@ -108,6 +111,8 @@ export const batchTool: ToolDefinition = {
           result = { content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
         }
       }
+      const ms = Date.now() - stepStart;
+      stepMs.push(ms);
       ran++;
       if (!result.isError && tabId !== undefined) {
         const replacement = replacedBy(result, tabId);
@@ -115,7 +120,7 @@ export const batchTool: ToolDefinition = {
       }
       const isLast = i === actions.length - 1;
       if (output === 'all' || result.isError || (output === 'last' && isLast)) {
-        content.push({ type: 'text', text: `${label} ${result.isError ? 'FAILED' : 'ok'}` });
+        content.push({ type: 'text', text: `${label} ${result.isError ? 'FAILED' : 'ok'} ${ms} ms` });
         content.push(...result.content);
       }
       if (result.isError) {
@@ -127,6 +132,8 @@ export const batchTool: ToolDefinition = {
         }
       }
     }
+    // Timing is appended last so the summary stays the first text block.
+    content.push({ type: 'text', text: `timing: total ${Date.now() - batchStart} ms; steps ${stepMs.join(', ')} ms` });
     return {
       content: [{ type: 'text', text: `batch: ${ran - failed}/${actions.length} steps ok` }, ...content],
       ...(failed ? { isError: true } : {}),

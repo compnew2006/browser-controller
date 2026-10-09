@@ -227,4 +227,33 @@ describe('snapshot + text', () => {
     const all = await handleGetPageText({ tabId: 1 });
     expect(all.text).toContain('WebGPU supported');
   });
+
+  it('text with a selector list returns every match, not just the first', async () => {
+    doc.body.append(doc.el('h1', {}, 'Title'), doc.el('p', {}, 'Body'), doc.el('span', { class: 'price' }, '42 SAR'));
+    const res = await handleGetPageText({ tabId: 1, selector: 'h1, .price' });
+    expect(res.text).toContain('Title');
+    expect(res.text).toContain('42 SAR');
+    expect(res.text).not.toContain('Body');
+    expect(res.matches).toBe(2);
+  });
+
+  it('text with a selector skips nested matches and hidden duplicates', async () => {
+    const outer = doc.el('div', { class: 'card' });
+    outer.append(doc.el('div', { class: 'card' }, 'Inner'));
+    const hidden = doc.el('div', { class: 'card' }, 'Hidden');
+    hidden.hidden = true;
+    doc.body.append(outer, hidden);
+    const res = await handleGetPageText({ tabId: 1, selector: '.card' });
+    expect(res.text.match(/Inner/g)).toHaveLength(1);
+    expect(res.text).not.toContain('Hidden');
+    expect(res.matches).toBeUndefined();
+  });
+
+  it('text with one selector match keeps the single-element shape', async () => {
+    doc.body.append(doc.el('p', { id: 'only' }, 'Solo'));
+    const res = await handleGetPageText({ tabId: 1, selector: '#only' });
+    expect(res.text).toBe('Solo');
+    expect(res.matches).toBeUndefined();
+    expect(await handleGetPageText({ tabId: 1, selector: '#missing' })).toMatchObject({ success: false, error: 'Element not found' });
+  });
 });
