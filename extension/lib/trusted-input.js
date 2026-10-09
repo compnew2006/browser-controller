@@ -10,6 +10,7 @@
  */
 import { ensureCdp, ensureViewport, hasCdp } from './cdp-session.js';
 import { safeExec, execDom } from './page-exec.js';
+import { agentCursorEnabled } from './overlay.js';
 
 const MOD_BITS = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
 
@@ -230,7 +231,7 @@ function pagePointInfo(x, y, effect, count) {
   const shield = document.getElementById('__bc-lock-shield');
   if (shield) shield.style.pointerEvents = 'none';
   const inView = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight;
-  const cursorMs = D.cursor ? D.cursor(x, y, effect, count) : 0;
+  const cursorMs = effect && D.cursor ? D.cursor(x, y, effect, count) : 0;
   const el = D.elementAt(x, y);
   if (!el) return { inView, cursorMs };
   // Report the control that owns the point (e.g. the <button> around an <svg>).
@@ -246,13 +247,15 @@ function pagePointInfo(x, y, effect, count) {
 }
 
 /**
- * Describe the element at (x, y), let trusted input through the shield, and
- * glide the agent cursor there (`effect`: 'move' | 'click', see lib/page-dom.js).
- * Resolves once the cursor has arrived, so the real input lands under it.
+ * Describe the element at (x, y), let trusted input through the shield, and —
+ * when the agent cursor is switched on — glide it there (`effect`: 'move' |
+ * 'click', see lib/page-dom.js), resolving once it has arrived so the real
+ * input lands under it.
  */
 export async function pointInfo(tabId, x, y, effect = 'move', count = 1) {
+  const cursor = (await agentCursorEnabled()) ? effect : null;
   let info = {};
-  try { info = (await execDom(tabId, pagePointInfo, [x, y, effect, count])) || {}; } catch { /* protected page: input still works */ }
+  try { info = (await execDom(tabId, pagePointInfo, [x, y, cursor, count])) || {}; } catch { /* protected page: input still works */ }
   if (info.cursorMs > 0) await sleep(info.cursorMs);
   return info;
 }
@@ -269,12 +272,13 @@ export async function locateTarget(tabId, { ref, selector, fb, mode = 'none', cu
 }
 
 /**
- * locateTarget for mouse input, with the agent cursor gliding to the target
- * first (`effect`: 'move' | 'click'). The glide takes time, so the target is
- * measured again once the cursor has arrived: a layout shift during the
- * animation must not make the click miss.
+ * locateTarget for mouse input. With the agent cursor switched on, it glides
+ * to the target first (`effect`: 'move' | 'click'); the glide takes time, so
+ * the target is measured again once the cursor has arrived: a layout shift
+ * during the animation must not make the click miss.
  */
 export async function locatePointer(tabId, target, effect, count = 1) {
+  if (!(await agentCursorEnabled())) return locateTarget(tabId, target);
   const loc = await locateTarget(tabId, { ...target, cursor: { effect, count } });
   if (!loc?.success || !(loc.cursorMs > 0)) return loc;
   await sleep(loc.cursorMs);
@@ -293,9 +297,11 @@ function pageCursor(x, y, effect, count) {
 
 /**
  * Glide the agent cursor to (x, y) without waiting; returns the glide's
- * duration in ms (0: nothing to wait for). Cosmetic, never throws.
+ * duration in ms (0: nothing to wait for, or the cursor is switched off).
+ * Cosmetic, never throws.
  */
 export async function cursorTo(tabId, x, y, effect = 'move', count = 1) {
+  if (!(await agentCursorEnabled())) return 0;
   try { return (await execDom(tabId, pageCursor, [x, y, effect, count]))?.ms || 0; } catch { return 0; }
 }
 

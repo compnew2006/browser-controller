@@ -13,7 +13,7 @@ import {
   getTabBuffer,
   persistSessionState,
 } from "../lib/state.js";
-import { showLockShield, hideLockShield, setAgentCursorHidden } from "../lib/overlay.js";
+import { showLockShield, hideLockShield, setAgentCursorHidden, agentCursorEnabled } from "../lib/overlay.js";
 import { broadcastStatus } from "../lib/connection.js";
 import { lockTabUi, releaseTabUi } from "../lib/lock-ops.js";
 import { withCdp, ensureViewport } from '../lib/cdp-session.js';
@@ -130,7 +130,7 @@ async function cdpScreenshot(tabId, { format, quality, scale, maxWidth, fullPage
 
 export async function handleScreenshot(params) {
   // The agent cursor stays out of the picture: it would cover what was just clicked.
-  const cursor = !wedgedTabs.has(params.tabId);
+  const cursor = !wedgedTabs.has(params.tabId) && await agentCursorEnabled();
   if (cursor) await setAgentCursorHidden(params.tabId, true);
   try {
     return await captureScreenshot(params);

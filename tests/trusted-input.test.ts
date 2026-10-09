@@ -6,6 +6,8 @@ const cdp: Array<{ method: string; params: Record<string, unknown> }> = [];
 const pageResults: unknown[] = [];
 /** Arguments of every page function call, in order. */
 const pageArgs: unknown[][] = [];
+/** The popup's "Show agent cursor" switch (chrome.storage.local agentCursor). */
+let cursorOn = false;
 let attachError: Error | null = null;
 let attachCount = 0;
 
@@ -22,7 +24,7 @@ let attachCount = 0;
   },
   storage: {
     session: { get: async () => ({}), set: async () => {} },
-    local: { get: async () => ({}), set: async () => {} },
+    local: { get: async () => ({ agentCursor: cursorOn }), set: async () => {} },
   },
   debugger: {
     attach: async () => { attachCount++; if (attachError) throw attachError; },
@@ -46,6 +48,7 @@ describe('trusted input (CDP)', () => {
     cdp.length = 0;
     pageResults.length = 0;
     pageArgs.length = 0;
+    cursorOn = false;
     attachError = null;
     attachCount = 0;
     await session.detachCdp(5);
@@ -151,7 +154,22 @@ describe('trusted input (CDP)', () => {
     expect(inputs()[0].params).toMatchObject({ key: 'Tab', modifiers: 8 });
   });
 
+  it('the agent cursor is off by default: no cursor work, no wait, one measurement', async () => {
+    pageResults.push({ success: true, x: 100, y: 40, visible: true });
+    await handleClick({ tabId: 5, selector: '#go' });
+    expect(pageArgs[0][4]).toBeNull();
+    pageResults.push({ inView: true });
+    await handleClick({ tabId: 5, x: 30, y: 40 });
+    expect(pageArgs.at(-2)).toEqual([30, 40, null, 1]); // pointInfo: no cursor effect
+    cdp.length = 0;
+    pageArgs.length = 0;
+    await handleDrag({ tabId: 5, startX: 10, startY: 10, endX: 110, endY: 10, steps: 2 });
+    expect(pageArgs).toHaveLength(2); // openShield + releaseShield only
+    expect(inputs().map((c) => c.params.type)).toEqual(['mousePressed', 'mouseMoved', 'mouseMoved', 'mouseReleased']);
+  });
+
   it('click: the agent cursor glides first, then the target is measured again and clicked there', async () => {
+    cursorOn = true;
     // The page reports a 30 ms glide; a layout shift moves the button meanwhile.
     pageResults.push({ success: true, x: 100, y: 40, visible: true, cursorMs: 30 });
     pageResults.push({ success: true, x: 100, y: 90, visible: true });
@@ -165,6 +183,7 @@ describe('trusted input (CDP)', () => {
   });
 
   it('click: a target that disappears during the glide is not clicked', async () => {
+    cursorOn = true;
     pageResults.push({ success: true, x: 100, y: 40, visible: true, cursorMs: 5 });
     pageResults.push({ success: false, error: 'REF_GONE', url: 'https://example.test' });
     const res = await handleClick({ tabId: 5, selector: '#go' });
@@ -173,6 +192,7 @@ describe('trusted input (CDP)', () => {
   });
 
   it('click at x/y: the press waits until the agent cursor has arrived', async () => {
+    cursorOn = true;
     pageResults.push({ inView: true, cursorMs: 30 });
     const t0 = Date.now();
     await handleClick({ tabId: 5, x: 30, y: 40 });
@@ -182,6 +202,7 @@ describe('trusted input (CDP)', () => {
   });
 
   it('drag: the cursor presses at the start and the moves follow its glide to the end', async () => {
+    cursorOn = true;
     pageResults.push({}); // openShield
     pageResults.push({ ms: 0 }); // cursor to the start ('down')
     pageResults.push({ ms: 40 }); // cursor glide to the end ('up')

@@ -302,6 +302,33 @@
     .field input:focus { border-color: var(--accent); background: var(--surface-2); box-shadow: 0 0 0 3px var(--accent-soft); }
     .hint { font-size: 10.5px; color: var(--ink-3); margin-top: calc(-1 * var(--space-xs)); }
 
+    /* On/off setting: text on the left, switch on the right. */
+    .switch-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: var(--space-md);
+      padding-top: var(--space-md);
+      border-top: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .switch-title { display: block; font-size: 12.5px; color: var(--ink); }
+    .switch-row .hint { display: block; margin-top: 2px; }
+    .switch {
+      appearance: none; flex: none; margin: 0;
+      width: 32px; height: 18px; border-radius: 9px;
+      background: var(--border-2);
+      position: relative; cursor: pointer;
+      transition: background 150ms ease;
+    }
+    .switch::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: var(--ink-2);
+      transition: transform 150ms ease, background 150ms ease;
+    }
+    .switch:checked { background: var(--accent-2); }
+    .switch:checked::after { transform: translateX(14px); background: #fff; }
+    .switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
     /* ── Log bar (collapsed: one line; expanded: overlay panel) ─────── */
     .logbar {
       position: relative;
@@ -446,6 +473,13 @@
           <input type="password" id="enrollment" placeholder="paste once on first setup" autocomplete="off">
           <div class="hint">One-time — printed by <code>npx browser-controller</code> on first run.</div>
         </div>
+        <label class="switch-row" for="agentCursor">
+          <span>
+            <span class="switch-title">Show agent cursor</span>
+            <span class="hint">Pointer + click ripples on the page. Adds ~0.2–0.35 s to each mouse action.</span>
+          </span>
+          <input type="checkbox" class="switch" id="agentCursor" role="switch">
+        </label>
       </section>
     </main>
 

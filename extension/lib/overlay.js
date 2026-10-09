@@ -6,9 +6,25 @@
  *     running tool's name shown inside the frame — replaced the old corner
  *     badge, per user request), and
  *   - per-lock: for a tab lock's whole lifetime (plain frame, no label).
- * The agent cursor (drawn by the shared page runtime, lib/page-dom.js) only
- * needs hiding from screenshots here.
+ * The agent cursor (drawn by the shared page runtime, lib/page-dom.js) is
+ * switched on here and only needs hiding from screenshots.
  */
+
+/** chrome.storage.local key of the popup's "Show agent cursor" switch. */
+export const AGENT_CURSOR_KEY = 'agentCursor';
+
+/**
+ * The agent cursor is opt-in (popup → Settings): its glide holds every mouse
+ * action ~200–350 ms on a visible tab. Read per action, so the switch applies
+ * at once; off when the setting can't be read.
+ */
+export async function agentCursorEnabled() {
+  try {
+    return (await chrome.storage.local.get(AGENT_CURSOR_KEY))?.[AGENT_CURSOR_KEY] === true;
+  } catch {
+    return false;
+  }
+}
 
 // Lock-shield: a full-viewport transparent input-capture layer + a blue inner
 // frame. It blocks REAL user input on the top frame; the agent's own
