@@ -30,6 +30,10 @@ Agent ─stdio─ thin MCP client (index.ts) ─IPC─► daemon (daemon.ts, own
 - `autoReSnapshot`: on ref failure (virtualized feed), snapshot the tab and embed `freshRefs` in the response so the agent retries in one step. Do NOT auto-retry the click (non-idempotent). `browser_scroll` returns `refsMayBeStale: true` as a hint.
 - `isNew`: each snapshot tracks `role|name` fingerprints per tab; elements appearing since the last snapshot are tagged `isNew: true` so the agent can focus on what changed (big token saver after an overlay/dropdown opens). State lives in `lastSnapshotFingerprints` Map, cleared on tab close.
 
+## Native accessibility tree (`browser_snapshot source:"native"`)
+
+`handlers/ax-snapshot.js` + pure `lib/ax-native.js`. CDP `Accessibility.getFullAXTree` per frame (main + same-process child frames, grafted under their `Iframe` node) → same tree shape as the DOM snapshot. Refs are bound into the SAME page registry (`__bcDom.registry`) by structural path: main world `DOM.resolveNode` + `Runtime.callFunctionOn(pathOfTarget)` → isolated world walks the path (`-1` = enter shadow root, `-2` = enter iframe document, else element-child index), verifies the tag, registers, stores the smart-selector fallback. No DOM mutation. Gotchas: batch `callFunctionOn` PER FRAME (Chrome rejects mixed JS contexts); AX ids repeat across frames (namespaced on merge); user-agent shadow nodes (e.g. a date input's sub-fields) are unreachable: no ref, and omitted from the compact tree (`unreachableNodes`); scoping resolves in the page, then finds the node in a `DOM.getDocument({pierce:true})` dump with the same path grammar. CDP failure → DOM snapshot + `nativeUnavailable`. Default `source:"dom"` never touches the debugger.
+
 ## Concurrency (extension/lib/tab-concurrency.js — pure, unit-tested)
 
 - `TabMutexMap`: same-tab serializes, cross-tab parallelizes.

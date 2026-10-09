@@ -51,7 +51,7 @@ Debug (tabId required, per-tab, capped 200 entries): `browser_console`, `browser
 ## Pattern
 
 1. `browser_tabs { action: "list" }` → pick a `tabId`
-2. `browser_snapshot { tabId }` to see the page and get refs (refs are tab-scoped)
+2. `browser_snapshot { tabId }` to see the page and get refs (refs are tab-scoped). Add `source: "native"` for Chrome's own accessibility tree (exact accessible names, roles and states; uses the debugger) when the default tree misses or mislabels a control
 3. Use `{ tabId, ref }` with interaction tools
 4. Re-snapshot after navigation/DOM changes to refresh refs
 5. `browser_wait { tabId, selector }` before interacting with dynamic content
