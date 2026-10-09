@@ -168,6 +168,16 @@ export async function PAGE_ACT_V2(config) {
         });
       }
     }
+    // Agent cursor (opt-in, lib/page-dom.js): glide to the point (now in
+    // top-level coordinates) before acting. The events below are dispatched on
+    // the element itself, so only its detaching meanwhile can spoil the action.
+    const glideMs = config.cursor && globalThis.__bcDom?.cursor
+      ? globalThis.__bcDom.cursor(x, y, action === 'click' ? 'click' : 'move')
+      : 0;
+    if (glideMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, glideMs));
+      if (!element.isConnected) return fail('STALE_STATE', 'The target detached before the action.', { ref });
+    }
   }
 
   const eventWindow = element.ownerDocument?.defaultView || globalThis;

@@ -121,7 +121,8 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  */
 function pageLocate(ref, sel, fb, mode, cursor) {
   const D = globalThis.__bcDom;
-  if (!D) return { __needDom: true };
+  // An older runtime (installed before an extension update) has no cursor.
+  if (!D || (cursor && !D.cursor)) return { __needDom: true };
   let el = null;
   let via = 'ref';
   if (ref || sel || fb) {
@@ -226,7 +227,7 @@ function pageRelease() {
  */
 function pagePointInfo(x, y, effect, count) {
   const D = globalThis.__bcDom;
-  if (!D) return { __needDom: true };
+  if (!D || (effect && !D.cursor)) return { __needDom: true };
   window.__bcAgentInputUntil = Date.now() + 8000;
   const shield = document.getElementById('__bc-lock-shield');
   if (shield) shield.style.pointerEvents = 'none';
@@ -291,7 +292,7 @@ export async function locatePointer(tabId, target, effect, count = 1) {
 
 function pageCursor(x, y, effect, count) {
   const D = globalThis.__bcDom;
-  if (!D) return { __needDom: true };
+  if (!D || !D.cursor) return { __needDom: true };
   return { ms: D.cursor ? D.cursor(x, y, effect, count) : 0 };
 }
 

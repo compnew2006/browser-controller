@@ -11,6 +11,8 @@ import {
   validateActionArguments,
 } from '../lib/observation-v2.js';
 import { SNAPSHOT_MAX_ENTRIES, SNAPSHOT_TTL_MS } from '../lib/snapshot-registry.js';
+import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from '../lib/page-dom.js';
+import { agentCursorEnabled } from '../lib/overlay.js';
 import { handleUploadFile } from './cdp.js';
 
 const sessionKey = (sessionId) => String(sessionId || 'anonymous');
@@ -110,6 +112,16 @@ export async function handleAct(params = {}, sessionId, _agentName, signal) {
     });
   }
 
+  // Agent cursor (opt-in, popup → Settings): the action glides it to the
+  // target first; it is drawn by the shared page runtime (lib/page-dom.js).
+  let cursor = false;
+  if ((params.action === 'click' || params.action === 'hover') && await agentCursorEnabled()) {
+    try {
+      await safeExec(params.tabId, PAGE_DOM_INSTALL, [PAGE_DOM_VERSION]); // no-op when current
+      cursor = true;
+    } catch { /* protected page: act reports it */ }
+  }
+
   let result;
   try {
     result = await execPageV2(params.tabId, PAGE_ACT_V2, [{
@@ -118,6 +130,7 @@ export async function handleAct(params = {}, sessionId, _agentName, signal) {
       documentId: ownership.snapshot.documentId,
       routeEpoch: ownership.snapshot.routeEpoch,
       ttlMs: SNAPSHOT_TTL_MS,
+      cursor,
       params,
     }]);
   } catch (error) {

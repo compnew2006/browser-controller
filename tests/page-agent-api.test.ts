@@ -157,13 +157,14 @@ function observe(document: FakeDocument, snapshotId = 's_test') {
   });
 }
 
-function act(observation: any, params: Record<string, unknown>) {
+function act(observation: any, params: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return PAGE_ACT_V2({
     snapshotId: observation.snapshotId,
     sessionId: 'session-a',
     documentId: observation.documentId,
     routeEpoch: observation.routeEpoch,
     ttlMs: 60_000,
+    ...extra,
     params,
   });
 }
@@ -331,6 +332,35 @@ describe('page-side Safe Action Engine', () => {
     const result = await act(observation, { action: 'click', ref: 'e1' });
     expect(result).toMatchObject({ success: true, ok: true, action: 'click', ref: 'e1' });
     expect(button.events).toEqual(['mouseover', 'mousedown', 'mouseup', 'click']);
+  });
+
+  it('glides the agent cursor to the target before click/hover when it is switched on', async () => {
+    const calls: unknown[][] = [];
+    (globalThis as any).__bcDom = { cursor: (...args: unknown[]) => { calls.push(args); return 15; } };
+    try {
+      const document = new FakeDocument();
+      const button = document.add('button', 'Continue');
+      document.hit = button;
+      const observation = observe(document);
+
+      expect(await act(observation, { action: 'click', ref: 'e1' })).toMatchObject({ success: true });
+      expect(calls).toEqual([]); // switched off: no cursor work, no wait
+
+      const t0 = Date.now();
+      expect(await act(observation, { action: 'click', ref: 'e1' }, { cursor: true })).toMatchObject({ success: true });
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(10);
+      expect(calls[0]).toEqual([70, 36, 'click']); // the target's centre
+      await act(observation, { action: 'hover', ref: 'e1' }, { cursor: true });
+      expect(calls[1][2]).toBe('move');
+
+      // Gone while the cursor glides: nothing is dispatched.
+      button.events = [];
+      (globalThis as any).__bcDom = { cursor: () => { button.isConnected = false; return 5; } };
+      expect(await act(observation, { action: 'click', ref: 'e1' }, { cursor: true })).toMatchObject({ error: 'STALE_STATE' });
+      expect(button.events).toEqual([]);
+    } finally {
+      delete (globalThis as any).__bcDom;
+    }
   });
 
   it('returns blocker metadata for an overlay', async () => {
