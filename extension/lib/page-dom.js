@@ -15,7 +15,7 @@
  * ambiguous is reported as gone instead of guessed.
  */
 
-export const PAGE_DOM_VERSION = 1;
+export const PAGE_DOM_VERSION = 2;
 
 export function PAGE_DOM_INSTALL(version) {
   if (globalThis.__bcDom && globalThis.__bcDom.v === version) return false;
@@ -427,11 +427,118 @@ export function PAGE_DOM_INSTALL(version) {
     return flatText(root, { article, max });
   }
 
+  /**
+   * Agent cursor (user request): a visible pointer that glides to wherever the
+   * agent's real (CDP) mouse input lands and ripples on clicks, so a person
+   * watching the tab can follow the agent. Cosmetic only: pointer-events:none
+   * (invisible to hit-testing), never throws, fades out after a few idle
+   * seconds. Returns the glide's duration in ms so the caller can hold the
+   * real input until the cursor arrives — 0 when there is nothing to wait for
+   * (hidden tab, reduced motion, first appearance, no distance).
+   *   effect: 'move' | 'click' (count rings) | 'down' / 'up' (drag press and
+   *   release) | 'track' (snap to a re-measured point, no glide, no effect)
+   */
+  const CURSOR_ID = '__bc-agent-cursor';
+  const CURSOR_IDLE_MS = 4000;
+  const CURSOR_COLOR = '37,99,235'; // the agent-control frame's blue (lib/overlay.js)
+
+  function makeCursor() {
+    const el = document.createElement('div');
+    el.id = CURSOR_ID;
+    el.setAttribute('aria-hidden', 'true');
+    // `all:initial` first: page CSS (resets like `svg { max-width:100% }`,
+    // which would collapse the arrow inside this 0×0 box) must not reach it.
+    el.style.cssText = 'all:initial;display:block;position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;'
+      + 'pointer-events:none;transition:opacity .25s;will-change:transform;';
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('width', '25');
+    svg.setAttribute('height', '30');
+    svg.setAttribute('viewBox', '0 0 20 24');
+    // The arrow's tip is (2, 2) at 1.25x: offset it so the tip sits exactly on the point.
+    // pointer-events again: `all:initial` drops the inherited none, and the tip
+    // sits exactly on the point the real click must reach.
+    svg.style.cssText = 'all:initial;pointer-events:none;position:absolute;left:-2.5px;top:-2.5px;width:25px;height:30px;overflow:visible;'
+      + 'transform-origin:2.5px 2.5px;transition:transform .12s;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45));';
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M2 2 L2 19.5 L6.6 15.3 L9.7 22.2 L12.9 20.8 L9.9 14 L16 14 Z');
+    path.style.cssText = `fill:rgb(${CURSOR_COLOR});stroke:#fff;stroke-width:1.6px;stroke-linejoin:round;`;
+    svg.appendChild(path);
+    el.appendChild(svg);
+    return el;
+  }
+
+  function cursorEffect(el, effect, count) {
+    try {
+      const arrow = el.lastChild;
+      if (effect === 'down') { arrow.style.transform = 'scale(.8)'; return; }
+      if (effect === 'up') { arrow.style.transform = ''; return; }
+      // click: one ring per click (double/triple-click), and the arrow presses in.
+      const n = Math.min(Math.max(Number(count) || 1, 1), 3);
+      for (let i = 0; i < n; i++) {
+        const ring = document.createElement('div');
+        ring.style.cssText = 'all:initial;position:absolute;left:-20px;top:-20px;width:40px;height:40px;box-sizing:border-box;'
+          + `border-radius:50%;border:2px solid rgb(${CURSOR_COLOR});background:rgba(${CURSOR_COLOR},.18);`
+          + 'pointer-events:none;opacity:0;';
+        el.insertBefore(ring, arrow); // under the arrow
+        const a = ring.animate(
+          [{ transform: 'scale(.3)', opacity: 1 }, { transform: 'scale(1.5)', opacity: 0 }],
+          { duration: 550, delay: i * 130, easing: 'ease-out' },
+        );
+        a.onfinish = () => ring.remove();
+      }
+      arrow.animate([{ transform: 'scale(1)' }, { transform: 'scale(.8)' }, { transform: 'scale(1)' }], { duration: 220 });
+    } catch { /* cosmetic */ }
+  }
+
+  function cursor(x, y, effect = 'move', count = 1) {
+    try {
+      const root = document.documentElement;
+      if (!root || !Number.isFinite(x) || !Number.isFinite(y)) return 0;
+      let el = document.getElementById(CURSOR_ID);
+      const from = el && el.__bcPos;
+      const fresh = !el;
+      if (fresh) el = makeCursor();
+      // Same z-index as the agent-control shield, which is re-created per
+      // action: the later sibling paints on top, so stay the last one.
+      if (root.lastElementChild !== el) root.appendChild(el);
+      const to = `translate(${x}px,${y}px)`;
+      el.style.transform = to;
+      el.style.display = 'block'; // back from a screenshot (lib/overlay.js)
+      el.style.opacity = '1';
+      el.__bcPos = { x, y };
+      let still = document.visibilityState === 'hidden';
+      try { still = still || matchMedia('(prefers-reduced-motion: reduce)').matches; } catch {}
+      let ms = 0;
+      if (effect === 'track') {
+        // Re-measured after the glide: if the target moved, jump there now.
+        const moved = from && Math.hypot(x - from.x, y - from.y) > 1;
+        if (moved && el.getAnimations) for (const a of el.getAnimations()) a.cancel();
+      } else if (from && !still) {
+        const dist = Math.hypot(x - from.x, y - from.y);
+        if (dist > 2) ms = Math.round(Math.min(350, 120 + dist * 0.25));
+        if (ms) {
+          // A drag ('up') glides linearly, in step with its evenly spaced real moves.
+          el.animate([{ transform: `translate(${from.x}px,${from.y}px)` }, { transform: to }],
+            { duration: ms, easing: effect === 'up' ? 'linear' : 'cubic-bezier(.3,.7,.4,1)' });
+        }
+      } else if (fresh && !still) {
+        el.lastChild.animate([{ opacity: 0, transform: 'scale(.4)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 160, easing: 'ease-out' });
+      }
+      if (effect !== 'move' && effect !== 'track') setTimeout(() => cursorEffect(el, effect, count), ms);
+      clearTimeout(el.__bcIdle);
+      el.__bcIdle = setTimeout(() => { el.style.opacity = '0'; }, ms + CURSOR_IDLE_MS);
+      return ms;
+    } catch {
+      return 0; // cosmetic: never break the action it decorates
+    }
+  }
+
   globalThis.__bcDom = Object.freeze({
     v: version,
     clean, attr, shadowOf, frameDoc, allRoots, queryAll, isVisible, flatChildren, hasShadowHosts,
     roleOf, nameOf, composedText, isInteractive, preciseMatch, resolve, centerOf, elementAt,
-    composedContains, describe, registry, flatText, articleRoot, pageText, styleOf, connected,
+    composedContains, describe, registry, flatText, articleRoot, pageText, styleOf, connected, cursor,
   });
   return true;
 }

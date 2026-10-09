@@ -1,11 +1,13 @@
 /**
- * Page overlays (extracted from background.js). There is ONE user-visible
- * element now: the lock shield — a translucent full-viewport input-capture
- * layer with a blue inner frame. It serves both lifetimes:
+ * Page overlays (extracted from background.js). The lock shield is a
+ * translucent full-viewport input-capture layer with a blue inner frame. It
+ * serves both lifetimes:
  *   - per-action: while an agent is actively controlling a tab (with the
  *     running tool's name shown inside the frame — replaced the old corner
  *     badge, per user request), and
  *   - per-lock: for a tab lock's whole lifetime (plain frame, no label).
+ * The agent cursor (drawn by the shared page runtime, lib/page-dom.js) only
+ * needs hiding from screenshots here.
  */
 
 // Lock-shield: a full-viewport transparent input-capture layer + a blue inner
@@ -136,4 +138,28 @@ export async function hideLockShield(tabId) {
       },
     });
   } catch {}
+}
+
+/**
+ * Hide or restore the agent cursor (lib/page-dom.js) around a screenshot, so
+ * it never covers what the agent is looking at. Cosmetic: never throws, and
+ * bounded so a page that stops answering can't hold the screenshot hostage.
+ */
+export async function setAgentCursorHidden(tabId, hidden) {
+  let timer;
+  const toggle = (async () => {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (h) => {
+          // display, not visibility: the cursor's parts reset inherited styles.
+          const el = document.getElementById('__bc-agent-cursor');
+          if (el) el.style.display = h ? 'none' : 'block';
+        },
+        args: [hidden],
+      });
+    } catch {}
+  })();
+  await Promise.race([toggle, new Promise((r) => { timer = setTimeout(r, 1000); })]);
+  clearTimeout(timer);
 }
