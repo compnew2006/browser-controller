@@ -12,3 +12,6 @@ daemon.log
 .serena/
 Archive.zip
 .changes/
+
+# Local agent skill checkouts (never submodules: CI checkout fails without .gitmodules)
+.agents/

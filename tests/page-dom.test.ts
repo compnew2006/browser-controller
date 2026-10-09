@@ -25,6 +25,12 @@ describe('shared page DOM runtime (resolver)', () => {
     PAGE_DOM_INSTALL(PAGE_DOM_VERSION);
   });
 
+  it('the agent cursor is cosmetic: a page it cannot draw on yields no glide and no error', () => {
+    // The fake page has no documentElement / createElement: nothing to draw with.
+    expect(D().cursor(10, 20, 'click', 1)).toBe(0);
+    expect(D().cursor(Number.NaN, 20)).toBe(0);
+  });
+
   it('resolves refs from the registry — no data-mcp-ref attribute needed', () => {
     const btn = doc.el('button', {}, 'Save');
     doc.body.append(btn);

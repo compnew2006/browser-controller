@@ -10,6 +10,7 @@
  */
 import { ensureCdp, ensureViewport, hasCdp } from './cdp-session.js';
 import { safeExec, execDom } from './page-exec.js';
+import { agentCursorEnabled } from './overlay.js';
 
 const MOD_BITS = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
 
@@ -106,18 +107,22 @@ export async function cdpClickAt(send, x, y, { button = 'left', clickCount = 1, 
   }
 }
 
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * Page-side: resolve the target through the shared DOM runtime (ref registry →
  * first visible selector match across shadow roots and same-origin iframes →
  * verified fallback), scroll it into view, optionally focus/select it, and
  * return its centre in TOP-level viewport coordinates (what CDP expects).
  * Also opens the lock shield for the agent's own trusted input for a few
- * seconds, since trusted events are otherwise blocked by it.
+ * seconds, since trusted events are otherwise blocked by it. With `cursor`
+ * ({ effect, count }) the agent cursor glides to that centre (`cursorMs`).
  * Kept self-contained: it is serialized into the page by chrome.scripting.
  */
-function pageLocate(ref, sel, fb, mode) {
+function pageLocate(ref, sel, fb, mode, cursor) {
   const D = globalThis.__bcDom;
-  if (!D) return { __needDom: true };
+  // An older runtime (installed before an extension update) has no cursor.
+  if (!D || (cursor && !D.cursor)) return { __needDom: true };
   let el = null;
   let via = 'ref';
   if (ref || sel || fb) {
@@ -180,6 +185,8 @@ function pageLocate(ref, sel, fb, mode) {
     const hit = D.elementAt(x, y);
     if (hit && !D.composedContains(el, hit) && !D.composedContains(hit, el)) occludedBy = D.describe(hit);
   } catch { /* detached mid-measure */ }
+  // Agent cursor (lib/page-dom.js): glide to the point the real input will hit.
+  const cursorMs = cursor && rect.width > 0 && rect.height > 0 && D.cursor ? D.cursor(x, y, cursor.effect, cursor.count) : 0;
   return {
     success: true,
     x, y,
@@ -190,6 +197,7 @@ function pageLocate(ref, sel, fb, mode) {
     needsSelectAll: hasValue && el.value.length > 0 && !fullySelected,
     hasText: hasValue ? el.value.length > 0 : (el.textContent || '').length > 0,
     ...(occludedBy ? { occludedBy } : {}),
+    ...(cursorMs ? { cursorMs } : {}),
     ...(via !== 'ref' ? { via } : {}),
     // A fallback re-resolution says what it actually hit, so a wrong guess is visible.
     ...(via === 'fallback' ? { target: { role: D.roleOf(el), name: D.nameOf(el).slice(0, 60) } } : {}),
@@ -214,17 +222,19 @@ function pageRelease() {
 
 /**
  * Page-side: what is at a top-level viewport point (pierces shadow roots and
- * same-origin frames), and open the shield pass-through for the agent's input.
+ * same-origin frames), open the shield pass-through for the agent's input,
+ * and glide the agent cursor there.
  */
-function pagePointInfo(x, y) {
+function pagePointInfo(x, y, effect, count) {
   const D = globalThis.__bcDom;
-  if (!D) return { __needDom: true };
+  if (!D || (effect && !D.cursor)) return { __needDom: true };
   window.__bcAgentInputUntil = Date.now() + 8000;
   const shield = document.getElementById('__bc-lock-shield');
   if (shield) shield.style.pointerEvents = 'none';
   const inView = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight;
+  const cursorMs = effect && D.cursor ? D.cursor(x, y, effect, count) : 0;
   const el = D.elementAt(x, y);
-  if (!el) return { inView };
+  if (!el) return { inView, cursorMs };
   // Report the control that owns the point (e.g. the <button> around an <svg>).
   let owner = el;
   for (let cur = el, i = 0; cur && i < 6; i++) {
@@ -234,23 +244,68 @@ function pagePointInfo(x, y) {
     cur = cur.parentElement || (r && r.host) || null;
   }
   const name = D.nameOf(owner).slice(0, 60);
-  return { inView, hit: { role: D.roleOf(owner), ...(name ? { name } : {}), tag: owner.tagName.toLowerCase() } };
+  return { inView, cursorMs, hit: { role: D.roleOf(owner), ...(name ? { name } : {}), tag: owner.tagName.toLowerCase() } };
 }
 
-/** Describe the element at (x, y) and let trusted input through the shield. */
-export async function pointInfo(tabId, x, y) {
-  try { return (await execDom(tabId, pagePointInfo, [x, y])) || {}; } catch { return {}; /* protected page: input still works */ }
+/**
+ * Describe the element at (x, y), let trusted input through the shield, and —
+ * when the agent cursor is switched on — glide it there (`effect`: 'move' |
+ * 'click', see lib/page-dom.js), resolving once it has arrived so the real
+ * input lands under it.
+ */
+export async function pointInfo(tabId, x, y, effect = 'move', count = 1) {
+  const cursor = (await agentCursorEnabled()) ? effect : null;
+  let info = {};
+  try { info = (await execDom(tabId, pagePointInfo, [x, y, cursor, count])) || {}; } catch { /* protected page: input still works */ }
+  if (info.cursorMs > 0) await sleep(info.cursorMs);
+  return info;
 }
 
-export async function locateTarget(tabId, { ref, selector, fb, mode = 'none' }) {
-  const loc = await execDom(tabId, pageLocate, [ref, selector, fb, mode]);
+export async function locateTarget(tabId, { ref, selector, fb, mode = 'none', cursor = null }) {
+  const loc = await execDom(tabId, pageLocate, [ref, selector, fb, mode, cursor]);
   // Never-shown background tab: size its viewport, then measure again.
   if (loc?.success && loc.zeroViewport && hasCdp(tabId)) {
     await ensureViewport(tabId).catch(() => {});
-    return execDom(tabId, pageLocate, [ref, selector, fb, mode]);
+    // The cursor's effect already played: just move it to the real point.
+    return execDom(tabId, pageLocate, [ref, selector, fb, mode, cursor && { effect: 'track' }]);
   }
   return loc;
 }
+
+/**
+ * locateTarget for mouse input. With the agent cursor switched on, it glides
+ * to the target first (`effect`: 'move' | 'click'); the glide takes time, so
+ * the target is measured again once the cursor has arrived: a layout shift
+ * during the animation must not make the click miss.
+ */
+export async function locatePointer(tabId, target, effect, count = 1) {
+  if (!(await agentCursorEnabled())) return locateTarget(tabId, target);
+  const loc = await locateTarget(tabId, { ...target, cursor: { effect, count } });
+  if (!loc?.success || !(loc.cursorMs > 0)) return loc;
+  await sleep(loc.cursorMs);
+  const again = await locateTarget(tabId, { ...target, cursor: { effect: 'track' } });
+  // Gone during the glide: report it rather than clicking where it used to be
+  // (and close the shield pass-through the first measurement opened).
+  if (again?.error === 'REF_GONE') { await releaseShield(tabId); return again; }
+  return again?.success ? again : loc;
+}
+
+function pageCursor(x, y, effect, count) {
+  const D = globalThis.__bcDom;
+  if (!D || !D.cursor) return { __needDom: true };
+  return { ms: D.cursor ? D.cursor(x, y, effect, count) : 0 };
+}
+
+/**
+ * Glide the agent cursor to (x, y) without waiting; returns the glide's
+ * duration in ms (0: nothing to wait for, or the cursor is switched off).
+ * Cosmetic, never throws.
+ */
+export async function cursorTo(tabId, x, y, effect = 'move', count = 1) {
+  if (!(await agentCursorEnabled())) return 0;
+  try { return (await execDom(tabId, pageCursor, [x, y, effect, count]))?.ms || 0; } catch { return 0; }
+}
+
 
 /** Let the agent's own trusted input through the lock shield (for raw-coordinate tools like drag). */
 export async function openShield(tabId) {

@@ -34,6 +34,8 @@ The server hides tool definitions until needed (`BROWSER_CONTROLLER_PROGRESSIVE=
 
 For large pages, scope with a selector: `browser_snapshot { tabId, selector: "main" }`.
 
+When the default tree mislabels or misses a control (custom widgets, `aria-labelledby` chains, `aria-hidden` overlays), ask for Chrome's own accessibility tree: `browser_snapshot { tabId, source: "native" }`. Same output shape and the refs work with every tool; it attaches the debugger (yellow banner) and falls back to the default tree, with `nativeUnavailable`, if it can't.
+
 Use `browser_text { tabId }` to extract raw text when you need full content.
 
 ### Reading efficiently (don't re-scan everything)

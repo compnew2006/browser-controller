@@ -448,6 +448,17 @@ bindDebouncedInput(enrollmentInput, 400, () => {
   });
 });
 
+// Agent cursor (opt-in, off by default): the background reads this key before
+// every mouse action, so flipping the switch applies to the next action.
+const agentCursorInput = document.getElementById('agentCursor');
+chrome.storage.local.get('agentCursor', (stored) => {
+  agentCursorInput.checked = stored.agentCursor === true;
+});
+agentCursorInput.addEventListener('change', () => {
+  chrome.storage.local.set({ agentCursor: agentCursorInput.checked });
+  addLog(agentCursorInput.checked ? 'Agent cursor on' : 'Agent cursor off');
+});
+
 // ── Row actions (event delegation over the re-rendered lists) ──────────────
 
 unlockAllBtn.addEventListener('click', () => {

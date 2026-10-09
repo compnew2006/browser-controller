@@ -70,8 +70,8 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "ws": "^8.21.3",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "ws": "^8.22.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -79,9 +79,9 @@
     "@babel/eslint-parser": "^8.0.6",
     "@babel/preset-typescript": "^8.0.1",
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.6.2",
-    "@types/ws": "^8.5.10",
-    "@vitest/coverage-v8": "^5.0.1",
+    "@types/node": "^26.6.3",
+    "@types/ws": "^8.18.2",
+    "@vitest/coverage-v8": "^5.0.2",
     "ai-context-kit": "^0.1.1",
     "eslint": "^10.11.0",
     "globals": "^17.12.0",

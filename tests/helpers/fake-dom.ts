@@ -132,8 +132,17 @@ export class FakeDocument {
   title = 'Fixture';
   activeElement: FakeElement | null = null;
   body: FakeElement;
+  /** The <html> element: parent of body, so element paths reach the document like a real page. */
+  documentElement: FakeElement;
+  parentNode = null;
+  get children() { return [this.documentElement]; }
   defaultView: { getComputedStyle: (el: FakeElement) => Record<string, string>; frameElement: FakeElement | null } = { getComputedStyle: (el: FakeElement) => ({ display: el.attrs.get('style')?.includes('display:contents') ? 'contents' : el.isHiddenInTree ? 'none' : 'block', visibility: 'visible', opacity: '1' }), frameElement: null };
-  constructor() { this.body = new FakeElement(this, 'BODY'); }
+  constructor() {
+    this.documentElement = new FakeElement(this, 'HTML');
+    this.body = new FakeElement(this, 'BODY');
+    this.documentElement.parentNode = this as unknown as FakeShadowRoot;
+    this.documentElement.append(this.body);
+  }
   el(tag: string, attrs: Record<string, string> = {}, ...kids: Array<FakeElement | string>) {
     return new FakeElement(this, tag, attrs).append(...kids);
   }

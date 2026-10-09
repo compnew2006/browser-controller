@@ -37,6 +37,7 @@ It already has your browser open right there. It just can't see it.
 - **Per-tab concurrency.** Two actions on the _same_ tab serialize (no races); actions on _different_ tabs run in parallel.
 - **Tab locking.** An agent can claim a tab so others queue behind it instead of racing (`browser_tabs { action: "lock" }`). Locks survive Chrome's service-worker recycling (`chrome.storage.session`).
 - **Agent-control shield.** While an agent works on a tab you see a translucent blue inner frame and your input on that tab is blocked (mouse, keyboard, wheel) — the badge shows `agent <name> controlling the tab` and disappears when the action finishes. Locking a tab keeps a plain frame for the lock's lifetime.
+- **Visible agent cursor (optional).** Switch on *Show agent cursor* in the popup's Settings and every agent mouse action (click, hover, wheel, drag — including `browser_act`) draws a blue pointer that glides to its target before the input lands — a ripple marks each click, the arrow presses in while dragging — so you can follow what the agent does. Off by default: the glide adds ~0.2–0.35 s to each mouse action on a visible tab (none in hidden tabs). It fades after a few idle seconds and stays out of the agent's own screenshots.
 - **Same-origin iframe piercing.** Legacy/enterprise UIs that live inside iframes (e.g. an ONT console in `iframe#mainFrame`) are reachable: all locator tools search iframe documents, and `find`/`click_text` walk every frame.
 - **Open-dialog rescue.** A native `alert`/`confirm`/`prompt` freezes the page's JS thread — `browser_handle_dialog` dismisses it out-of-band via CDP, no page JS needed, which also un-blocks every other tool on that tab. `browser_tabs close/focus` always work, even on a frozen tab.
 - **Authenticated local connection.** Token + one-time enrollment secret, so no other local process can silently drive your browser. Everything stays on localhost — no cloud, no telemetry.
@@ -45,6 +46,7 @@ It already has your browser open right there. It just can't see it.
 - **Batches.** `browser_batch` runs a list of tool calls in one round-trip and stops at the first failure — a click → type → Tab → wait → read sequence is one call instead of five.
 - **Console-style JavaScript.** `browser_evaluate` accepts code as you'd type it in DevTools: top-level `await`, several statements, the last expression's value is returned, DOM nodes come back as readable descriptions — and page CSP doesn't block it.
 - **Refs that stay right.** Snapshot/find refs resolve through one shared page runtime: the registered element first, then the first *visible* selector match (across open and closed shadow roots and same-origin iframes), then a verified fallback that only re-binds when role, tag and name identify one element — an ambiguous match is reported as gone instead of clicked. Hidden duplicates are skipped.
+- **Native Chrome accessibility tree.** `browser_snapshot { source: "native" }` reads the tree Chrome itself computes (CDP `Accessibility.getFullAXTree`): exact roles, accessible names (`aria-labelledby`, `<label>`, native widget semantics), states (`checked`, `expanded`, `invalid`, heading `level`…) and `aria-hidden`/`inert` exclusion — what a screen reader sees. Its refs work with every ref tool, including inside closed shadow roots and same-origin iframes. Opt-in; the default `source: "dom"` needs no debugger.
 - **Shadow DOM everywhere.** `snapshot`, `text`, `find`, `click_text`, `wait` and every locator see web components (open and closed roots, slots), so sites like caniuse read like any other page.
 - **Frozen tabs don't freeze the agent.** Every page call has an 8 s budget; a tab that stops answering is reported as `TAB_WEDGED` in seconds, later calls fail fast after a 1.5 s probe, and `browser_navigate` / `browser_tabs reload` replace the frozen tab in place (the result carries the new `tabId`).
 - **Coordinates when you need them.** Click, hover and wheel-scroll at `x`/`y`, triple-click, ctrl/shift-click, key sequences with `repeat`, and zoomed `region` screenshots that tell you how image pixels map to those coordinates.
@@ -246,6 +248,27 @@ The model is **tab-first**: the agent always says _which_ tab to act on. It neve
    If a ref is stale but the element still exists, it's found automatically via a robust selector + text/role scan (response carries `via: "fallback"`). If the element was scrolled away entirely (virtualized feeds), the response carries **`freshRefs: [...]`** with a fresh snapshot inline — retry with one of those new refs in the same step, no separate snapshot needed.
 4. **Verify** — snapshot or read text again after the action.
 
+### Native accessibility tree
+
+`browser_snapshot` has two sources. Both return the same shape (`ref`, `role`, `name`, `value`, state flags, `href`, `children`) and their refs are interchangeable with every ref tool.
+
+| | `source: "dom"` (default) | `source: "native"` |
+|---|---|---|
+| Built from | A walk of the DOM with ARIA rules re-implemented in the extension | Chrome's accessibility engine, via CDP `Accessibility.getFullAXTree` |
+| Roles / names / states | Approximation (explicit `role`, tag map, `aria-label`, `<label>`, text) | Exactly what assistive technology gets: name computation, native widget roles, `checked` / `expanded` / `invalid` / heading `level`, `aria-hidden` and `inert` honoured |
+| Debugger | Not used (no banner) | Attached (yellow "being debugged" banner, same as trusted input) |
+| Cost | ~tens of ms on typical pages | Same, plus Chrome's tree computation: roughly 2 s per 40k accessibility nodes on a very large page |
+| Custom clickable `<div tabindex>` | Listed | Listed only when it has an accessible name (Chrome calls it `generic`) |
+| If unavailable | — | Falls back to the DOM tree and adds `nativeUnavailable: "<reason>"` |
+
+```
+browser_snapshot { tabId: 15, source: "native" }
+→ { source: "native", tree: [ { ref: "s4k2-3", role: "textbox", name: "Search query", value: "abc", required: true }, … ] }
+browser_snapshot { tabId: 15, source: "native", selector: "form", compact: false }   // scoped, full tree incl. text
+```
+
+How refs are bound: every accessibility node carries a `backendDOMNodeId`; the extension resolves it to its element (closed shadow roots and same-origin iframes included) and registers it in the same page-side ref registry the DOM snapshot uses — no attribute or other mutation of the page. Because of that, `click` / `type` / `hover` / `select` / `scroll` / `drag` / `fill_form` act on the exact element (two buttons both named "Save" stay distinct) and keep the stale-ref fallback and `isNew` behaviour. Limits: at most 1500 refs per snapshot (`refLimited: true` when hit); cross-origin (out-of-process) iframes are reported in `skippedFrames`; controls with no page element to act on — Chrome-internal parts such as the sub-fields and picker button inside a date input, or an element that vanished mid-snapshot — are left out of the compact tree and listed without a `ref` in the full tree, counted in `unreachableNodes`.
+
 ### Safe Observe → Act workflow
 
 For automation that must fail safely when a page changes, use the Browser Controller 2.0 agent API. `browser_observe` captures one compact semantic state in a single page execution and returns session-, tab-, document-, and snapshot-owned refs:
@@ -341,7 +364,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 | Tool | What it does |
 |------|-------------|
 | `browser_observe` | Compact atomic semantic observation with snapshot/document identity, geometry, state, and dynamic allowed actions |
-| `browser_snapshot` | Accessibility tree with element refs. Compact mode (default) returns only interactive elements; `filter` / `depth` / `ref` (subtree) / `maxChars` (default 20k) keep it small. Traverses open + closed shadow DOM, slots and same-origin iframes. |
+| `browser_snapshot` | Accessibility tree with element refs. Compact mode (default) returns only interactive elements; `filter` / `depth` / `ref` or `selector` (subtree) / `maxChars` (default 20k) keep it small. Traverses open + closed shadow DOM, slots and same-origin iframes. `source: "native"` returns Chrome's own accessibility tree instead of the DOM-derived one ([details](#native-accessibility-tree)). |
 | `browser_screenshot` | Capture a tab as an image over CDP — `maxWidth` / `scale` / `jpeg` to cut tokens, `fullPage` for the whole page, `region` to zoom; reports the pixel → x/y mapping |
 | `browser_text` | Extract text from page or element (incl. shadow DOM); `mode:"article"` = main content only; `offset` paging |
 | `browser_find` | Query elements by natural language ("search input", "Save button") — tokenized, role-aware, shadow DOM + same-origin iframes |
