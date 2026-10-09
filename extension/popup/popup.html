@@ -159,6 +159,9 @@
       min-height: 0;
     }
     .panel[hidden] { display: none; }
+    /* Settings is a plain form, not a list: let it scroll in a short popup. */
+    .panel[data-panel="settings"] { overflow-y: auto; }
+    .panel[data-panel="settings"] > * { flex-shrink: 0; }
     .panel:not([hidden]) { animation: panelIn 140ms ease; }
     @keyframes panelIn { from { opacity: 0; transform: translateY(3px); } }
 
@@ -306,8 +309,9 @@
     .switch-row {
       display: flex; align-items: center; justify-content: space-between;
       gap: var(--space-md);
-      padding-top: var(--space-md);
-      border-top: 1px solid var(--border);
+      padding-bottom: var(--space-md);
+      margin-bottom: var(--space-md);
+      border-bottom: 1px solid var(--border);
       cursor: pointer;
     }
     .switch-title { display: block; font-size: 12.5px; color: var(--ink); }
@@ -460,6 +464,13 @@
       </section>
 
       <section class="panel" role="tabpanel" data-panel="settings" aria-label="Settings" hidden>
+        <label class="switch-row" for="agentCursor">
+          <span>
+            <span class="switch-title">Show agent cursor</span>
+            <span class="hint">Pointer + click ripples on the page. Adds ~0.2–0.35 s to each mouse action.</span>
+          </span>
+          <input type="checkbox" class="switch" id="agentCursor" role="switch">
+        </label>
         <div class="field">
           <label for="port">WebSocket Port</label>
           <input type="number" id="port" value="7225" min="1" max="65535">
@@ -473,13 +484,6 @@
           <input type="password" id="enrollment" placeholder="paste once on first setup" autocomplete="off">
           <div class="hint">One-time — printed by <code>npx browser-controller</code> on first run.</div>
         </div>
-        <label class="switch-row" for="agentCursor">
-          <span>
-            <span class="switch-title">Show agent cursor</span>
-            <span class="hint">Pointer + click ripples on the page. Adds ~0.2–0.35 s to each mouse action.</span>
-          </span>
-          <input type="checkbox" class="switch" id="agentCursor" role="switch">
-        </label>
       </section>
     </main>
 
