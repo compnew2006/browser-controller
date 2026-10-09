@@ -5,7 +5,7 @@
  */
 import { resolveTab, safeExec, execDom, getFallback } from '../lib/page-exec.js';
 import { withCdp } from '../lib/cdp-session.js';
-import { openShield, releaseShield } from '../lib/trusted-input.js';
+import { openShield, releaseShield, cursorTo, sleep } from '../lib/trusted-input.js';
 
 export async function handleDialog(params) {
   const { tabId, action = 'accept', promptText } = params;
@@ -87,11 +87,18 @@ export async function handleDrag(params) {
   }
 
   await openShield(tab.id);
+  // The agent cursor glides to the start and presses in…
+  await sleep(await cursorTo(tab.id, sx, sy, 'down'));
   return withCdp(tab.id, async (send) => {
     await send('Input.dispatchMouseEvent', {
       type: 'mousePressed', x: sx, y: sy, button: 'left', clickCount: 1,
     });
+    // …then carries the drag: the moves are spread over its glide to the end,
+    // paced by the clock so CDP round-trips don't let the cursor run ahead.
+    const glideMs = await cursorTo(tab.id, ex, ey, 'up');
+    const t0 = Date.now();
     for (let i = 1; i <= steps; i++) {
+      if (glideMs) await sleep(t0 + (glideMs * i) / steps - Date.now());
       const progress = i / steps;
       await send('Input.dispatchMouseEvent', {
         type: 'mouseMoved',

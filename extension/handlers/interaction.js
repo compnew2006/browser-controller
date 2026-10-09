@@ -5,7 +5,7 @@
  */
 import { resolveTab, requireTarget, hasPoint, execDom, getFallback } from '../lib/page-exec.js';
 import { autoReSnapshot } from './inspection.js';
-import { trustedSender, locateTarget, releaseShield, cdpClickAt, cdpKeyPress, cdpTypeText, keyDefinition, modifierBits, pointInfo } from '../lib/trusted-input.js';
+import { trustedSender, locateTarget, locatePointer, releaseShield, cdpClickAt, cdpKeyPress, cdpTypeText, keyDefinition, modifierBits, pointInfo, cursorTo, sleep } from '../lib/trusted-input.js';
 
 export { handleDialog, handleDrag, handleFillForm } from './interaction-advanced.js';
 
@@ -52,7 +52,7 @@ async function clickAtPoint(tabId, params) {
   const { x, y, button = 'left' } = params;
   if (!BUTTONS.has(button)) throw new Error(`Unknown button ${button}`);
   const send = await requireCdp(tabId, 'Clicking');
-  const info = await pointInfo(tabId, x, y);
+  const info = await pointInfo(tabId, x, y, 'click', clickCountOf(params));
   try {
     await cdpClickAt(send, x, y, { button, clickCount: clickCountOf(params), modifiers: clickModifiers(params) });
   } finally {
@@ -74,10 +74,11 @@ export async function handleClick(params) {
   const fb = getFallback(tabId, ref);
 
   // Trusted path: a real mouse click at the element's centre over CDP, so
-  // focus moves, default actions run and the page sees isTrusted:true.
+  // focus moves, default actions run and the page sees isTrusted:true. The
+  // agent cursor glides there first so a person can follow the click.
   const send = await trustedSender(tabId, trusted);
   if (send && BUTTONS.has(button)) {
-    const loc = await locateTarget(tabId, { ref, selector, fb });
+    const loc = await locatePointer(tabId, { ref, selector, fb }, 'click', clickCountOf(params));
     if (loc && loc.success === false && loc.error === 'REF_GONE') return refGone(tabId, loc, ref, selector);
     if (loc?.success && loc.visible) {
       try {
@@ -190,7 +191,10 @@ export async function handleType(params) {
       let after;
       try {
         // Not focusable by script (custom widget): click it like a user would.
-        if (!loc.focused) await cdpClickAt(send, loc.x, loc.y);
+        if (!loc.focused) {
+          await sleep(await cursorTo(tabId, loc.x, loc.y, 'click'));
+          await cdpClickAt(send, loc.x, loc.y);
+        }
         if (clear && loc.needsSelectAll) await cdpKeyPress(send, 'a', ['ctrl']);
         if (clear && loc.hasText && !text) await cdpKeyPress(send, 'Backspace');
         await cdpTypeText(send, text);
@@ -375,7 +379,7 @@ export async function handleHover(params) {
 
   const send = await trustedSender(tabId, trusted);
   if (send) {
-    const loc = await locateTarget(tabId, { ref, selector, fb });
+    const loc = await locatePointer(tabId, { ref, selector, fb }, 'move');
     if (loc?.success && loc.visible) {
       try {
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: loc.x, y: loc.y });
@@ -504,7 +508,7 @@ export async function handleClickByText(params) {
   // Trusted click on the parked element (same path as browser_click).
   const send = await trustedSender(tabId, trusted);
   if (send) {
-    const loc = await locateTarget(tabId, { ref: tempRef });
+    const loc = await locatePointer(tabId, { ref: tempRef }, 'click');
     if (loc?.success && loc.visible) {
       try {
         await cdpClickAt(send, loc.x, loc.y);
