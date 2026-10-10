@@ -213,6 +213,8 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .tab-title.active { color: var(--accent); font-weight: 600; }
+    /* a locked/controlled tab listed from another window */
+    .tab-title.other { font-style: italic; }
     .tab-pin { display: flex; align-items: center; gap: var(--space-xs); flex-shrink: 0; }
     .tab-pin select {
       background: var(--bg);
@@ -228,6 +230,12 @@
     .tab-pin select:hover { border-color: var(--border-2); }
     .tab-pin select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
     .lock-owner { color: var(--accent); font-size: 10px; white-space: nowrap; }
+    /* agent acting on the tab without a lock: running = green, lingering = muted */
+    .ctrl-owner {
+      color: var(--ok); font-size: 10px; white-space: nowrap;
+      max-width: 72px; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ctrl-owner.idle { color: var(--ink-2); }
 
     /* ── Agent rows ─────────────────────────────────────────────────── */
     .agent-row {
@@ -503,6 +511,6 @@
     <div class="resizer" id="resizer" title="Drag to resize"></div>
   </div>
 
-  <script src="popup.js"></script>
+  <script type="module" src="popup.js"></script>
 </body>
 </html>

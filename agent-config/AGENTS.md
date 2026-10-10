@@ -32,7 +32,7 @@ This is a multi-client server. **Never assume which tab your actions hit.** You 
 1. `browser_tabs` with `action: "list"` → get a `tabId`
 2. Pass that **same** `tabId` to every page-interaction tool
 3. Refs from a snapshot are valid **only for the tabId that produced them**
-4. For exclusive access: `browser_tabs { action: "lock", tabId }` → `unlock` when done
+4. For exclusive access: `browser_tabs { action: "lock", tabId }` → `unlock` when done. A listed tab with `controlledBy` is being driven by another agent right now — pick another tab or lock it first
 
 Note: while any tool runs on a tab, the USER sees a blue frame and their input on that tab is blocked (that is by design — it protects your workflow); a lock keeps the frame for the lock's whole lifetime.
 

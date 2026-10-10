@@ -3,6 +3,13 @@
 // never does. All background message types are preserved from the v1 column
 // layout (getStatus / setPort / setToken / setEnrollment / lockTab / unlockTab
 // / unlockAll + daemon /pair /status /kill).
+import {
+  escapeHtml,
+  agentLabelFor,
+  controlBadgeParts,
+  openTabsSignature,
+  renderOpenTabRows,
+} from './open-tabs-view.js';
 
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -30,7 +37,7 @@ versionEl.textContent = `v${manifest.version}`;
 // background getStatus. Each panel needs the other's data to render its
 // controls (the Pin dropdown lists agents). Keep the latest snapshot of both.
 let lastAgents = [];      // [{sessionId, name, connectedAt}]
-let lastTabs = [];        // [{id, url, title, active, lockedBy}]
+let lastTabs = [];        // [{id, url, title, active, lockedBy, controlledBy, otherWindow?}]
 
 // ── Tabs shell ─────────────────────────────────────────────────────────────
 const tabButtons = Array.from(document.querySelectorAll('.tabbar button[data-tab]'));
@@ -213,81 +220,65 @@ async function disconnectAgent(sessionId) {
 }
 
 // ── Open Tabs panel ────────────────────────────────────────────────────────
-// Signature of the last-rendered tab set — skip the innerHTML rebuild when
-// nothing material changed (avoids the 2s poll destroying an open <select> and
-// resetting its value, which made the Pin dropdown close/snaps-back-to-free).
+// Row HTML comes from open-tabs-view.js (pure, unit-tested). This side owns the
+// DOM: rebuild only on a structural change, patch the control badges in place
+// otherwise, and carry the user's pending Pin choice + keyboard focus across a
+// rebuild (the 2s poll used to destroy an open <select> and snap it back).
 let lastTabsSignature = '';
+/** Pin choices made in a row's dropdown but not applied yet: tabId → sessionId ('' = none). */
+const pendingPicks = new Map();
+
+openTabsEl.addEventListener('change', (e) => {
+  const select = e.target.closest('select[data-action="pickAgent"]');
+  if (select) pendingPicks.set(Number(select.dataset.tab), select.value);
+});
 
 function renderOpenTabs() {
   const tabs = lastTabs;
   tabsCountEl.textContent = tabs.length ? String(tabs.length) : '';
   if (!tabs || tabs.length === 0) {
+    pendingPicks.clear();
     if (lastTabsSignature !== 'empty') {
       openTabsEl.innerHTML = '<div class="empty">no tabs</div>';
       lastTabsSignature = 'empty';
     }
     return;
   }
-  // GUARD 1: if the user has a <select> open (mid-interaction), do NOT rebuild —
-  // replacing innerHTML closes the dropdown and loses the in-progress selection.
-  const openSelect = openTabsEl.querySelector('select[data-action="pickAgent"]');
-  if (openSelect && openSelect === document.activeElement) {
-    return; // user is interacting with a dropdown; leave the DOM alone
+  // A pending choice is moot once its tab is gone or got locked.
+  for (const id of pendingPicks.keys()) {
+    const t = tabs.find((x) => x.id === id);
+    if (!t || t.lockedBy) pendingPicks.delete(id);
   }
-  // GUARD 2: only rebuild if the tab set + lock state + agent roster changed.
-  const agents = (lastAgents || []).filter(Boolean);
-  const sig = JSON.stringify({
-    tabs: tabs.map(t => ({ id: t.id, title: t.title, lockedBy: t.lockedBy })),
-    agents: agents.map(a => a.sessionId),
-  });
-  if (sig === lastTabsSignature) return; // nothing changed — keep the DOM stable
+  const sig = openTabsSignature(tabs, lastAgents);
+  // GUARD 1: the user has a row's <select> focused (mid-interaction) — a rebuild
+  // would close the dropdown. GUARD 2: nothing structural changed. Either way
+  // keep the DOM and only refresh the running/idle badges.
+  const focused = document.activeElement;
+  const interacting = focused?.matches?.('select[data-action="pickAgent"]') && openTabsEl.contains(focused);
+  if (interacting || sig === lastTabsSignature) {
+    patchControlBadges(tabs);
+    return;
+  }
   lastTabsSignature = sig;
-
-  openTabsEl.innerHTML = tabs
-    .map((t) => {
-      const title = escapeHtml(t.title || t.url || `tab ${t.id}`);
-      const cls = t.active ? 'tab-title active' : 'tab-title';
-      const lockedBy = t.lockedBy;
-      if (lockedBy) {
-        // Locked: show owner + an unpin (✕) button. No dropdown.
-        const ownerName = agentLabelFor(lockedBy);
-        return `<div class="tab-row" data-tab="${t.id}">
-          <span class="${cls}" title="${escapeHtml(t.url || '')}">${title}</span>
-          <span class="tab-pin">
-            <span class="lock-owner">🔒 ${escapeHtml(ownerName)}</span>
-            <button class="icon-btn unpin" data-action="unlockTab" data-tab="${t.id}" title="Unpin this tab">✕</button>
-          </span>
-        </div>`;
-      }
-      // Unlocked: the unique session id is the lock identity. Display names
-      // are not unique when multiple clients run from the same IDE.
-      const opts = ['<option value="">— free —</option>']
-        .concat(agents.map((a) => {
-          const name = a.name || 'agent';
-          const label = escapeHtml(`${name} · ${a.sessionId}`);
-          const val = escapeHtml(a.sessionId);
-          return `<option value="${val}">${label}</option>`;
-        }))
-        .join('');
-      return `<div class="tab-row" data-tab="${t.id}">
-        <span class="${cls}" title="${escapeHtml(t.url || '')}">${title}</span>
-        <span class="tab-pin">
-          <select data-action="pickAgent" data-tab="${t.id}">${opts}</select>
-          <button class="icon-btn" data-action="lockTab" data-tab="${t.id}" title="Pin to selected agent">📌</button>
-        </span>
-      </div>`;
-    })
-    .join('');
+  // Keep keyboard focus on the same control (e.g. a 📌 reached with Tab).
+  const focusKey = focused && openTabsEl.contains(focused) && focused.dataset.action
+    ? `[data-action="${focused.dataset.action}"][data-tab="${focused.dataset.tab}"]`
+    : null;
+  openTabsEl.innerHTML = renderOpenTabRows(tabs, lastAgents, pendingPicks);
+  if (focusKey) openTabsEl.querySelector(focusKey)?.focus();
 }
 
-/** Human label for a sessionId, falling back to the bare id. */
-function agentLabelFor(sessionId) {
-  const a = (lastAgents || []).find((x) => x.sessionId === sessionId);
-  return a ? `${a.name || 'agent'} · ${sessionId}` : sessionId;
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+/** Refresh each control badge's running/idle state without touching the row. */
+function patchControlBadges(tabs) {
+  for (const t of tabs) {
+    if (!t.controlledBy || t.lockedBy) continue;
+    const el = openTabsEl.querySelector(`.ctrl-owner[data-ctrl-tab="${t.id}"]`);
+    if (!el) continue;
+    const b = controlBadgeParts(t.controlledBy, lastAgents);
+    el.classList.toggle('idle', b.idle);
+    el.textContent = b.text;
+    el.title = b.title;
+  }
 }
 
 // ── Status rendering ───────────────────────────────────────────────────────
@@ -491,7 +482,7 @@ document.addEventListener('click', (e) => {
     }
     chrome.runtime.sendMessage({ type: 'lockTab', tabId, sessionId }, (resp) => {
       if (resp?.success) {
-        addLog(`Pinned tab ${tabId} to ${agentLabelFor(sessionId)}${resp.shielded === false ? ' (shield failed — protected page)' : ''}`, resp.shielded === false ? 'warn' : 'ok');
+        addLog(`Pinned tab ${tabId} to ${agentLabelFor(lastAgents, sessionId)}${resp.shielded === false ? ' (shield failed — protected page)' : ''}`, resp.shielded === false ? 'warn' : 'ok');
         refreshStatus();
       } else {
         addLog(`Pin failed: ${resp?.error || 'unknown'}`, 'err');

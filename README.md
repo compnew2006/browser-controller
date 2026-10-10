@@ -706,7 +706,7 @@ Goes to a URL in a tab and, by default, returns a compact snapshot of the new pa
 Lists and manages tabs. This is where every `tabId` comes from.
 
 - `action`: `list`, `create`, `close`, `focus`, `reload`, `lock`, `unlock`; `tabId` is required for all but `list` and `create`
-- `list`: `fullUrls` (don't shorten long URLs). Each tab shows its `lockedBy`.
+- `list`: `fullUrls` (don't shorten long URLs). Each tab shows its `lockedBy`, and `controlledBy` when another agent's session acted on that unlocked tab in the last 30 s (steer clear or lock it first).
 - `create`: `url`, `active` (`false` opens it in the background so the user keeps their tab)
 - `focus`: `window: true` also brings the tab's window to the front
 - `reload`: `bypassCache` skips the HTTP cache; it also recovers a frozen (`TAB_WEDGED`) tab

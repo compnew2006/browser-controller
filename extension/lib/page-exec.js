@@ -2,7 +2,7 @@
  * Page-execution primitives (extracted from background.js): tab resolution,
  * the locator guard, and safeExec. Everything a handler needs to touch a page.
  */
-import { fallbackByTab, wedgedTabs, tabLocks, persistSessionState, gifRecordings, replacedTabs } from './state.js';
+import { fallbackByTab, wedgedTabs, tabLocks, tabControl, persistSessionState, gifRecordings, replacedTabs } from './state.js';
 import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from './page-dom.js';
 
 /**
@@ -111,6 +111,9 @@ export async function replaceFrozenTab(tab, url, sessionId = null) {
     tabLocks.lock(fresh.id, owner);
     persistSessionState();
   }
+  // So does the agent's control (incl. this very call): the popup must not list
+  // the replacement it is navigating as "free".
+  tabControl.move(tab.id, fresh.id);
   // A GIF recording moves with the tab: frames keep coming, export still works.
   const rec = gifRecordings.get(tab.id);
   if (rec) {

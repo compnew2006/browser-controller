@@ -100,7 +100,7 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 
 - Call `browser_tabs { action: "lock", tabId }` to claim a tab. Other agents' calls to that tab will queue (not fail) until you `unlock`.
 - Don't hold locks longer than needed.
-- The `browser_tabs list` response includes `lockedBy` per tab so you can see who owns what.
+- The `browser_tabs list` response includes `lockedBy` per tab so you can see who owns what, and `controlledBy` when another agent is driving an unlocked tab right now (or did within 30 s) — pick another tab or lock it first.
 
 ## Workflow
 

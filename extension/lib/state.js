@@ -13,7 +13,7 @@
  *     storage is wiped when the browser closes, which is exactly the right
  *     lifetime for both. See loadSessionState/persistSessionState.
  */
-import { TabMutexMap, TabLockMap } from './tab-concurrency.js';
+import { TabMutexMap, TabLockMap, TabControlMap } from './tab-concurrency.js';
 import { SnapshotRegistry } from './snapshot-registry.js';
 
 export const PER_TAB_CAP = 200;
@@ -62,6 +62,10 @@ export const observationSnapshots = new SnapshotRegistry();
 export const tabMutex = new TabMutexMap();
 export const windowCaptureMutex = new TabMutexMap();
 export const tabLocks = new TabLockMap();
+// Which agent is acting on a tab (in-flight + a short linger). In-memory only:
+// it is a live indicator for the popup, not a guarantee, so a worker recycle
+// may drop it harmlessly. Not exclusive — see TabControlMap.
+export const tabControl = new TabControlMap();
 
 export function getTabBuffer(map, tabId) {
   let arr = map.get(tabId);
@@ -153,6 +157,7 @@ export function dropTabState(tabId) {
   lastNativeFingerprints.delete(tabId);
   observationSnapshots.dropTab(tabId);
   tabLocks.release(tabId);
+  tabControl.release(tabId);
 }
 
 // Short refs ("s4k2-17"): a per-worker salt keeps refs from a recycled service

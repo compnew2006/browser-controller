@@ -7,7 +7,7 @@
  * release). The owner-CHECKED unlock (browser_tabs unlock) stays inline in
  * handlers/tabs.js because its ordering differs (check before shield removal).
  */
-import { tabLocks, persistSessionState } from './state.js';
+import { tabLocks, tabControl, persistSessionState } from './state.js';
 import { showLockShield, hideLockShield } from './overlay.js';
 import { broadcastStatus } from './connection.js';
 
@@ -31,11 +31,13 @@ export async function lockTabUi(tabId, owner, message) {
 
 /**
  * Release a tab's lock unconditionally, persist, drop the shield, broadcast.
+ * The tab is handed back, so it shows free at once (no control linger).
  * Returns the previous owner (for previousSession-style payloads).
  */
 export function releaseTabUi(tabId, message) {
   const was = tabLocks.owner(tabId);
   tabLocks.release(tabId);
+  tabControl.settle(tabId);
   persistSessionState();
   hideLockShield(tabId);
   if (message) broadcastStatus(message);

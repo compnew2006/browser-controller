@@ -5,7 +5,7 @@
  * background.js — this module must not import the router (that would cycle:
  * router → handlers → connection).
  */
-import { tabLocks, loadSessionState } from './state.js';
+import { tabLocks, tabControl, loadSessionState } from './state.js';
 import { showLockShield, hideLockShield } from './overlay.js';
 import { buildExtensionHelloAck, validateDaemonHello } from './protocol.js';
 
@@ -439,21 +439,36 @@ export function buildStatusPayload(message, tabs) {
 }
 
 /**
- * Open tabs in the current window, each annotated with its lock owner so the
- * popup can show "Locked: {session}" and preselect it in the Pin dropdown.
- * Mirrors the shape of the `browser_tabs list` tool result (handleTabs) so the
- * popup and the agent-facing tool stay consistent.
+ * Tabs for the popup's Open Tabs panel: every tab of the current window, then
+ * any tab in ANOTHER window that is locked or agent-controlled (flagged
+ * `otherWindow`) — an agent often works in a window the popup wasn't opened
+ * from, and such a tab must not be invisible. Each tab carries its lock owner
+ * (`lockedBy`) and the agent currently acting on it (`controlledBy`: session,
+ * name, running/idle; no lock needed) so a driven tab is not shown as "free".
+ * The agent-facing `browser_tabs list` (handleTabs) reports the same two facts
+ * more compactly: bare session ids, controlledBy only for OTHER sessions.
  */
 export async function getOpenTabs() {
   try {
-    const tabs = await chrome.tabs.query({ currentWindow: true });
-    return tabs.map((t) => ({
+    const [current, all] = await Promise.all([
+      chrome.tabs.query({ currentWindow: true }),
+      chrome.tabs.query({}),
+    ]);
+    const here = new Set(current.map((t) => t.id));
+    const row = (t, otherWindow) => ({
       id: t.id,
       url: t.url,
       title: t.title,
       active: t.active,
       lockedBy: tabLocks.owner(t.id) || null,
-    }));
+      controlledBy: tabControl.controller(t.id) || null,
+      ...(otherWindow ? { otherWindow: true } : {}),
+    });
+    const elsewhere = all
+      .filter((t) => !here.has(t.id))
+      .map((t) => row(t, true))
+      .filter((r) => r.lockedBy || r.controlledBy);
+    return [...current.map((t) => row(t, false)), ...elsewhere];
   } catch {
     return [];
   }

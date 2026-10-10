@@ -5,7 +5,7 @@
  * dispatch() rebuilt the tool map on every call.
  */
 import { runOnTab as runOnTabLib } from './tab-concurrency.js';
-import { tabLocks, tabMutex, observationSnapshots, persistSessionState, wedgedTabs } from './state.js';
+import { tabLocks, tabMutex, tabControl, observationSnapshots, persistSessionState, wedgedTabs } from './state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from './connection.js';
 import { showLockShield, hideLockShield } from './overlay.js';
 import { getActiveTab, handleNavigate } from '../handlers/navigation.js';
@@ -131,6 +131,7 @@ export async function handleMessage(msg) {
       // releaseByOwner is synchronous and returns the released tabIds before
       // any shield calls below run — no async race (review NOTE 7a).
       const released = tabLocks.releaseByOwner(owner);
+      tabControl.releaseByOwner(owner); // a gone agent no longer "controls" anything
       observationSnapshots.dropSession(owner);
       // Persist: without this, a service-worker recycle after the disconnect
       // would restore the just-released lock from session storage and
@@ -221,6 +222,14 @@ export async function handleMessage(msg) {
   if (tabId == null || bypassesMutex) {
     const controller = new AbortController();
     activeControllers.set(id, controller);
+    // tabs close/focus/reload and dialogs name a tab but skip the queue: they
+    // still count as the agent acting on it (tabs list/create have no tab).
+    // Skipping the queue also skips runOnTab's ownership gate, so a caller the
+    // tab's lock would refuse is not recorded as its controller.
+    const lockOwner = tabId == null ? undefined : tabLocks.owner(tabId);
+    const call = tabId != null && (lockOwner === undefined || lockOwner === sessionId)
+      ? tabControl.begin(tabId, sessionId, agentName)
+      : null;
     try {
       const result = await dispatch(
         tool,
@@ -240,6 +249,7 @@ export async function handleMessage(msg) {
       sendResponse(id, { success: false, error: err.message || String(err) });
     } finally {
       activeControllers.delete(id);
+      tabControl.end(call);
     }
     return;
   }
@@ -253,37 +263,46 @@ export async function handleMessage(msg) {
     tabId,
     sessionId,
     async () => {
-      setCurrentActivity(tool);
-      updateBadge('active');
-      // Agent control shows the blue input-blocking spectrum; the label names
-      // the AGENT (user request: "agent {name} controlling the tab"), not the
-      // running tool. agentName is a top-level WS field (audit M1); fall back
-      // to a generic label for anonymous direct-WS callers.
-      // Best effort and bounded: the shield is cosmetic, a frozen page must not block the tool.
-      if (!wedgedTabs.has(tabId)) {
-        await overlayStep(showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab'));
-      }
+      // Record that this agent is acting on the tab so the popup's Open Tabs
+      // list shows it as controlled rather than "free" (a plain call takes no
+      // lock). Started only once the call really runs, not while it queues;
+      // the outer finally ends it whatever the rest of this task throws.
+      const call = tabControl.begin(tabId, sessionId, agentName);
       try {
-        const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
-        sendToolResponse(id, result);
-        // GIF recording: capture the page after the action (the reply is already
-        // sent; the tab mutex keeps the next call from racing the capture).
-        // A frozen tab replaced by this call records on its replacement.
-        const frameTab = replacementOf(result) ?? tabId;
-        if (GIF_FRAME_TOOLS.has(tool) && isRecording(frameTab) && !(result && result.success === false)) {
-          await recordFrame(frameTab, tool, result);
-        }
-      } catch (err) {
-        sendResponse(id, { success: false, error: err.message || String(err) });
-      } finally {
-        setCurrentActivity(null);
-        updateBadge(isWsConnected() ? 'connected' : 'disconnected');
-        // A locked tab keeps a plain frame (no label) for the lock's lifetime;
-        // an unlocked tab loses the frame once this action completes.
+        setCurrentActivity(tool);
+        updateBadge('active');
+        // Agent control shows the blue input-blocking spectrum; the label names
+        // the AGENT (user request: "agent {name} controlling the tab"), not the
+        // running tool. agentName is a top-level WS field (audit M1); fall back
+        // to a generic label for anonymous direct-WS callers.
+        // Best effort and bounded: the shield is cosmetic, a frozen page must not block the tool.
         if (!wedgedTabs.has(tabId)) {
-          if (tabLocks.owner(tabId)) await overlayStep(showLockShield(tabId));
-          else await overlayStep(hideLockShield(tabId));
+          await overlayStep(showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab'));
         }
+        try {
+          const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
+          sendToolResponse(id, result);
+          // GIF recording: capture the page after the action (the reply is already
+          // sent; the tab mutex keeps the next call from racing the capture).
+          // A frozen tab replaced by this call records on its replacement.
+          const frameTab = replacementOf(result) ?? tabId;
+          if (GIF_FRAME_TOOLS.has(tool) && isRecording(frameTab) && !(result && result.success === false)) {
+            await recordFrame(frameTab, tool, result);
+          }
+        } catch (err) {
+          sendResponse(id, { success: false, error: err.message || String(err) });
+        } finally {
+          setCurrentActivity(null);
+          updateBadge(isWsConnected() ? 'connected' : 'disconnected');
+          // A locked tab keeps a plain frame (no label) for the lock's lifetime;
+          // an unlocked tab loses the frame once this action completes.
+          if (!wedgedTabs.has(tabId)) {
+            if (tabLocks.owner(tabId)) await overlayStep(showLockShield(tabId));
+            else await overlayStep(hideLockShield(tabId));
+          }
+        }
+      } finally {
+        tabControl.end(call);
       }
     },
   )

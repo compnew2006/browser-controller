@@ -10,10 +10,13 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const injections = vi.hoisted(() => [] as Array<{ target: number; func: string; args: unknown[] }>);
+const faults = vi.hoisted(() => ({ activeBadgeThrows: false }));
 
 vi.mock('../extension/lib/connection.js', () => ({
   sendJson: (obj: Record<string, unknown>) => { sent.push(obj); },
-  updateBadge: () => {},
+  updateBadge: (status: string) => {
+    if (status === 'active' && faults.activeBadgeThrows) throw new Error('badge API gone');
+  },
   broadcastStatus: async () => {},
   isWsConnected: () => true,
   setCurrentActivity: () => {},
@@ -52,7 +55,7 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
 
 const { handleMessage } = await import('../extension/lib/router.js');
 const { handleScreenshot } = await import('../extension/handlers/tabs.js');
-const { tabLocks } = await import('../extension/lib/state.js');
+const { tabLocks, tabControl } = await import('../extension/lib/state.js');
 
 const shieldInjections = () => injections.filter((i) => i.func.includes('__bc-lock-shield'));
 const overlayInjections = () => injections.filter((i) => i.func.includes('__bc-overlay'));
@@ -114,5 +117,80 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     await expect(handleScreenshot({ tabId: 3 }, 's1')).resolves.toMatchObject({ success: true });
     // and it must restore the shield afterwards
     expect(shieldInjections().length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('tab control tracking (popup Open Tabs must not say "free")', () => {
+  beforeEach(() => {
+    sent.length = 0;
+    tabStore.clear();
+    tabLocks.unlockAll();
+    tabControl.release(3);
+    tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
+  });
+
+  it('records the agent driving an UNLOCKED tab (queued path)', async () => {
+    await handleMessage({ id: 'c1', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await flush();
+    expect(tabLocks.owner(3)).toBeUndefined(); // still no lock…
+    // …but the tab is reported as controlled (lingering after the call).
+    expect(tabControl.controller(3)).toEqual({ sessionId: 's1', agentName: 'Vitest', active: false });
+  });
+
+  it('records calls that bypass the tab mutex too (tabs focus)', async () => {
+    await handleMessage({ id: 'c2', tool: 'browser_tabs', params: { action: 'focus', tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    expect(tabControl.controller(3)).toMatchObject({ sessionId: 's1', active: false });
+  });
+
+  it('does not record tab-agnostic calls (tabs list)', async () => {
+    await handleMessage({ id: 'c3', tool: 'browser_tabs', params: { action: 'list' }, sessionId: 's1' });
+    expect(tabControl.controller(3)).toBeUndefined();
+  });
+
+  it('clears control when the agent session is released (disconnect)', async () => {
+    await handleMessage({ id: 'c4', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await flush();
+    await handleMessage({ type: 'releaseSession', sessionId: 's1' });
+    expect(tabControl.controller(3)).toBeUndefined();
+  });
+
+  it('does not record a caller the lock refuses on the mutex-bypass path', async () => {
+    tabLocks.lock(3, 'owner-a');
+    await handleMessage({ id: 'c5', tool: 'browser_tabs', params: { action: 'focus', tabId: 3 }, sessionId: 's-b', agentName: 'Other' });
+    expect(sent.find((f) => f.id === 'c5')?.success).toBe(false); // refused: locked by owner-a
+    tabLocks.unlockAll();
+    // After the owner lets go, the tab must not claim s-b "controlled" it.
+    expect(tabControl.controller(3)).toBeUndefined();
+  });
+
+  it('an agent unlocking its tab hands it back: free at once, no 30s linger', async () => {
+    await handleMessage({ id: 'c6', tool: 'browser_tabs', params: { action: 'lock', tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await flush();
+    await handleMessage({ id: 'c7', tool: 'browser_tabs', params: { action: 'unlock', tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await flush();
+    expect(sent.find((f) => f.id === 'c7')?.success).toBe(true);
+    expect(tabControl.controller(3)).toBeUndefined();
+  });
+
+  it('ends control even when the task throws before the dispatch try (no stuck "running")', async () => {
+    faults.activeBadgeThrows = true;
+    try {
+      await handleMessage({ id: 'c8', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+      await flush();
+    } finally {
+      faults.activeBadgeThrows = false;
+    }
+    expect(sent.find((f) => f.id === 'c8')?.success).toBe(false);
+    expect(tabControl.controller(3)?.active).toBe(false);
+  });
+
+  it('browser_tabs list shows controlledBy to OTHER agents only', async () => {
+    await handleMessage({ id: 'c9', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await flush();
+    await handleMessage({ id: 'c10', tool: 'browser_tabs', params: { action: 'list' }, sessionId: 's2' });
+    await handleMessage({ id: 'c11', tool: 'browser_tabs', params: { action: 'list' }, sessionId: 's1' });
+    const tabsFor = (id: string) => (sent.find((f) => f.id === id)?.result as { tabs: Array<Record<string, unknown>> }).tabs;
+    expect(tabsFor('c10')[0]).toMatchObject({ id: 3, controlledBy: 's1' });
+    expect(tabsFor('c11')[0]).not.toHaveProperty('controlledBy'); // your own activity is not news
   });
 });

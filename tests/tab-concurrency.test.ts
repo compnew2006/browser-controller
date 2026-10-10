@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { TabMutexMap, TabLockMap, runOnTab } from '../extension/lib/tab-concurrency.js';
+import { TabMutexMap, TabLockMap, TabControlMap, runOnTab } from '../extension/lib/tab-concurrency.js';
 
 /**
  * Concurrency guarantees (plan tasks 2.1 + 2.4). These are the ONLY pieces of
@@ -241,5 +241,128 @@ describe('runOnTab (combined lock + mutex, tasks 2.1+2.2)', () => {
     locks.unlock(1, 'agentA');
     await expect(p).resolves.toBe('done');
     expect(events).toEqual(['b-ran']);
+  });
+});
+
+describe('TabControlMap (popup "controlled" indicator)', () => {
+  // Regression: a tab an agent was actively driving showed as "— free —" in the
+  // popup's Open Tabs list, because only an explicit lock was ever recorded.
+  let clock: number;
+  let control: TabControlMap;
+  beforeEach(() => {
+    clock = 1_000;
+    control = new TabControlMap(30_000, () => clock);
+  });
+
+  it('is active while a call is in flight', () => {
+    expect(control.controller(7)).toBeUndefined();
+    control.begin(7, 's1', 'Claude');
+    expect(control.controller(7)).toEqual({ sessionId: 's1', agentName: 'Claude', active: true });
+  });
+
+  it('lingers (inactive) between calls, then expires', () => {
+    control.end(control.begin(7, 's1', 'Claude'));
+    clock += 29_999;
+    expect(control.controller(7)).toEqual({ sessionId: 's1', agentName: 'Claude', active: false });
+    clock += 1;
+    expect(control.controller(7)).toBeUndefined();
+  });
+
+  it('never expires while a call is still running, however long', () => {
+    control.begin(7, 's1', 'Claude');
+    clock += 10 * 60_000; // a 10-minute navigate wait
+    expect(control.controller(7)?.active).toBe(true);
+  });
+
+  it('counts overlapping calls: active until the last one ends', () => {
+    const a = control.begin(7, 's1', 'Claude'); // e.g. dialog handling bypasses the tab mutex
+    const b = control.begin(7, 's1', 'Claude');
+    control.end(a);
+    expect(control.controller(7)?.active).toBe(true);
+    control.end(b);
+    expect(control.controller(7)?.active).toBe(false);
+  });
+
+  it('end() is idempotent and accepts a null handle (call not recorded)', () => {
+    const a = control.begin(7, 's1', 'Claude');
+    const b = control.begin(7, 's1', 'Claude');
+    control.end(a);
+    control.end(a); // double end must not end b's call too
+    expect(control.controller(7)?.active).toBe(true);
+    control.end(null);
+    control.end(b);
+    expect(control.controller(7)?.active).toBe(false);
+  });
+
+  it('labels the tab with the latest caller', () => {
+    control.end(control.begin(7, 's1', 'Claude'));
+    control.begin(7, 's2', 'Cursor');
+    expect(control.controller(7)).toMatchObject({ sessionId: 's2', agentName: 'Cursor' });
+  });
+
+  it('release forgets the tab; the released call ending later is a no-op', () => {
+    const a = control.begin(7, 's1', 'Claude');
+    control.release(7); // tab closed mid-call
+    control.end(a);
+    expect(control.controller(7)).toBeUndefined();
+  });
+
+  it('a stale end() after release never miscounts a newer call (desync regression)', () => {
+    const old = control.begin(7, 's1', 'Claude');
+    control.releaseByOwner('s1'); // s1 disconnected mid-call
+    const fresh = control.begin(7, 's2', 'Cursor');
+    control.end(old); // s1's cancelled call finally unwinds
+    expect(control.controller(7)).toEqual({ sessionId: 's2', agentName: 'Cursor', active: true });
+    control.end(fresh);
+    expect(control.controller(7)?.active).toBe(false);
+  });
+
+  it('releaseByOwner keeps a tab another session is still running a call on', () => {
+    control.begin(7, 's1', 'Claude'); // still running
+    control.begin(7, 's2', 'Cursor'); // labels the tab
+    control.releaseByOwner('s2');
+    // s1's call is still in flight: the tab stays controlled, now by s1.
+    expect(control.controller(7)).toEqual({ sessionId: 's1', agentName: 'Claude', active: true });
+    control.releaseByOwner('s1');
+    expect(control.controller(7)).toBeUndefined();
+  });
+
+  it('settle (lock released): free at once when idle, else as soon as the running call ends', () => {
+    control.end(control.begin(7, 's1', 'Claude'));
+    control.settle(7);
+    expect(control.controller(7)).toBeUndefined(); // no 30s linger after a hand-back
+
+    const unlockCall = control.begin(8, 's1', 'Claude'); // the unlock call itself
+    control.settle(8);
+    expect(control.controller(8)?.active).toBe(true);
+    control.end(unlockCall);
+    expect(control.controller(8)).toBeUndefined();
+
+    const next = control.begin(8, 's1', 'Claude'); // a later call lingers normally again
+    control.end(next);
+    expect(control.controller(8)?.active).toBe(false);
+  });
+
+  it('move (frozen tab replaced) carries control and running calls to the new tab', () => {
+    const nav = control.begin(7, 's1', 'Claude');
+    control.move(7, 9);
+    expect(control.controller(7)).toBeUndefined();
+    expect(control.controller(9)).toEqual({ sessionId: 's1', agentName: 'Claude', active: true });
+    control.end(nav);
+    expect(control.controller(9)?.active).toBe(false);
+  });
+
+  it('controller() is read-only; begin() prunes entries idle past the linger (no leak)', () => {
+    control.end(control.begin(987, 's1', 'Claude')); // e.g. a stale tab id that never existed
+    clock += 30_000;
+    expect(control.controller(987)).toBeUndefined();
+    expect(control.entries.has(987)).toBe(true); // a read never mutates
+    control.begin(7, 's1', 'Claude');
+    expect(control.entries.has(987)).toBe(false);
+  });
+
+  it('tolerates anonymous callers (no session / name)', () => {
+    control.begin(7, undefined as unknown as string, undefined as unknown as string);
+    expect(control.controller(7)).toEqual({ sessionId: null, agentName: null, active: true });
   });
 });

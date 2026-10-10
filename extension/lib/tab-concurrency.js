@@ -145,6 +145,135 @@ export class TabLockMap {
 }
 
 /**
+ * Who is ACTING on a tab right now (or just was). Unlike {@link TabLockMap} this
+ * is not exclusive ownership and never blocks anyone: it only records agent
+ * activity so the popup can show a tab an agent is driving as "controlled"
+ * instead of "free" (a plain call never creates a lock, so tabLocks alone says
+ * "free" for a tab that is being clicked and typed into). An entry counts as
+ * active while a call is in flight and for `lingerMs` after the last call
+ * ended, which bridges the gap while the agent thinks between calls.
+ *
+ * Each begin() returns a handle for its own call and end() takes that handle,
+ * so releasing a tab or a session mid-call can never make a stale end()
+ * miscount a newer call on the same tab.
+ */
+export const CONTROL_LINGER_MS = 30_000;
+
+export class TabControlMap {
+  /**
+   * @param {number} [lingerMs]
+   * @param {() => number} [now] injectable clock (unit tests)
+   */
+  constructor(lingerMs = CONTROL_LINGER_MS, now = Date.now) {
+    this.lingerMs = lingerMs;
+    this.now = now;
+    /**
+     * @type {Map<number, {tabId: number, calls: Set<object>, sessionId: string|null,
+     *   agentName: string|null, lastAt: number, linger: boolean}>}
+     */
+    this.entries = new Map();
+  }
+
+  /**
+   * A call from `sessionId` started acting on `tabId`. The latest caller wins
+   * the label. Returns the handle to pass to end().
+   */
+  begin(tabId, sessionId, agentName) {
+    this.prune();
+    let entry = this.entries.get(tabId);
+    if (!entry) {
+      entry = { tabId, calls: new Set(), sessionId: null, agentName: null, lastAt: 0, linger: true };
+      this.entries.set(tabId, entry);
+    }
+    const call = { entry, sessionId: sessionId ?? null, agentName: agentName ?? null };
+    entry.calls.add(call);
+    entry.sessionId = call.sessionId;
+    entry.agentName = call.agentName;
+    entry.linger = true;
+    entry.lastAt = this.now();
+    return call;
+  }
+
+  /**
+   * The call behind `call` finished. A no-op for a null handle or a call whose
+   * tab/session was released meanwhile.
+   */
+  end(call) {
+    const entry = call?.entry;
+    if (!entry || !entry.calls.delete(call)) return;
+    entry.lastAt = this.now();
+    if (entry.calls.size === 0 && !entry.linger && this.entries.get(entry.tabId) === entry) {
+      this.entries.delete(entry.tabId);
+    }
+  }
+
+  /**
+   * The current controller of `tabId`, or undefined when idle past the linger
+   * window. `active` is true while a call is running, false during the linger.
+   * Read-only: expired entries are dropped by prune(), never here.
+   * @returns {{sessionId: string|null, agentName: string|null, active: boolean}|undefined}
+   */
+  controller(tabId) {
+    const e = this.entries.get(tabId);
+    if (!e || this.expired(e)) return undefined;
+    return { sessionId: e.sessionId, agentName: e.agentName, active: e.calls.size > 0 };
+  }
+
+  /**
+   * The tab was handed back (lock released): skip the linger. Calls still
+   * running keep it controlled until they end; then it is free at once.
+   */
+  settle(tabId) {
+    const e = this.entries.get(tabId);
+    if (!e) return;
+    e.linger = false;
+    if (e.calls.size === 0) this.entries.delete(tabId);
+  }
+
+  /** A frozen tab was replaced: its control (and running calls) follow the new tab. */
+  move(fromTabId, toTabId) {
+    const e = this.entries.get(fromTabId);
+    if (!e) return;
+    this.entries.delete(fromTabId);
+    e.tabId = toTabId;
+    this.entries.set(toTabId, e);
+  }
+
+  /** Forget a tab (closed). */
+  release(tabId) {
+    this.entries.delete(tabId);
+  }
+
+  /**
+   * Forget `sessionId` (agent disconnected): drop its calls, and its label
+   * unless another session still has a call running on that tab.
+   */
+  releaseByOwner(sessionId) {
+    for (const [tabId, e] of this.entries) {
+      for (const call of e.calls) if (call.sessionId === sessionId) e.calls.delete(call);
+      if (e.sessionId !== sessionId) continue;
+      const last = [...e.calls].at(-1);
+      if (last) {
+        e.sessionId = last.sessionId;
+        e.agentName = last.agentName;
+      } else {
+        this.entries.delete(tabId);
+      }
+    }
+  }
+
+  /** Drop entries idle past the linger (also tab ids that never existed). */
+  prune() {
+    for (const [tabId, e] of this.entries) if (this.expired(e)) this.entries.delete(tabId);
+  }
+
+  /** @private */
+  expired(e) {
+    return e.calls.size === 0 && this.now() - e.lastAt >= this.lingerMs;
+  }
+}
+
+/**
  * Convenience wrapper combining lock + mutex, matching runOnTab in background.js.
  *
  * Ownership is re-checked INSIDE the mutex task: checking only before joining

@@ -6,6 +6,7 @@
 import { resolveTab, replaceFrozenTab, safeExec } from '../lib/page-exec.js';
 import {
   tabLocks,
+  tabControl,
   wedgedTabs,
   windowCaptureMutex,
   consoleByTab,
@@ -274,14 +275,19 @@ export async function handleTabs(params, sessionId) {
       const tabs = await chrome.tabs.query({});
       return {
         success: true,
-        // Compact: truncate long tracking URLs, omit lockedBy when null (saves
-        // tokens — a 20-tab list with full FB/Google URLs was ~3K tokens).
+        // Compact: truncate long tracking URLs, omit lockedBy/controlledBy when
+        // null (saves tokens — a 20-tab list with full FB/Google URLs was ~3K tokens).
         tabs: tabs.map((t) => {
           const entry = { id: t.id, windowId: t.windowId, title: t.title, active: t.active };
           const url = String(t.url || '');
           entry.url = params.fullUrls || url.length <= 80 ? url : url.slice(0, 77) + '...';
           const owner = tabLocks.owner(t.id);
           if (owner) entry.lockedBy = owner; // omit when null — saves tokens
+          // ANOTHER agent is driving this unlocked tab right now (or did within
+          // the last 30s): steer clear instead of racing it. Your own activity
+          // is left out — it is not news to you.
+          const ctrl = owner ? undefined : tabControl.controller(t.id);
+          if (ctrl?.sessionId && ctrl.sessionId !== sessionId) entry.controlledBy = ctrl.sessionId;
           return entry;
         }),
       };
@@ -372,6 +378,8 @@ export async function handleTabs(params, sessionId) {
       if (tabLocks.owner(tabId)) {
         throw new Error(`Tab ${tabId} is locked by another session`);
       }
+      // Handing the tab back: show it free now, not "controlled" for the linger.
+      tabControl.settle(tabId);
       persistSessionState();
       hideLockShield(tabId);
       broadcastStatus(`Tab ${tabId} unlocked (was ${was || "-"})`);

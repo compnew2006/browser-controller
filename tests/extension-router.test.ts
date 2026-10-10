@@ -54,7 +54,7 @@ const tabStore = new Map<
 };
 
 const { handleMessage, dispatchedTools } = await import('../extension/lib/router.js');
-const { tabLocks, observationSnapshots, wedgedTabs } = await import('../extension/lib/state.js');
+const { tabLocks, tabControl, observationSnapshots, wedgedTabs } = await import('../extension/lib/state.js');
 const { allTools } = await import('../mcp-server/src/tools/index.js');
 
 function lastFrame(): Record<string, unknown> {
@@ -129,6 +129,21 @@ describe("extension router (handleMessage)", () => {
     expect(fresh.id).toBe(99);
     expect(tabLocks.owner(99)).toBe('session-a');
     expect(tabLocks.owner(3)).toBeUndefined();
+    wedgedTabs.clear();
+  });
+
+  it('agent control follows a frozen tab to its replacement (popup must not show it "free")', async () => {
+    const { replaceFrozenTab } = await import('../extension/lib/page-exec.js');
+    (globalThis as any).chrome.tabs.create = async () => ({ id: 98 });
+    (globalThis as any).chrome.tabs.remove = async () => {};
+    wedgedTabs.set(3, Date.now());
+    const call = tabControl.begin(3, 'session-a', 'Claude'); // the recovering navigate
+    await replaceFrozenTab({ id: 3, windowId: 1, index: 0, active: true }, 'https://example.com/x', 'session-a');
+    expect(tabControl.controller(3)).toBeUndefined();
+    expect(tabControl.controller(98)).toEqual({ sessionId: 'session-a', agentName: 'Claude', active: true });
+    tabControl.end(call); // the call's end lands on the replacement
+    expect(tabControl.controller(98)?.active).toBe(false);
+    tabControl.release(98);
     wedgedTabs.clear();
   });
 

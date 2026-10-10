@@ -8,6 +8,7 @@ import {
   consoleByTab,
   networkByTab,
   tabLocks,
+  tabControl,
   getTabBuffer,
   pushCapped,
   persistSessionState,
@@ -76,7 +77,10 @@ export function registerEventListeners() {
       const prev = tabLocks.snapshot();
       tabLocks.unlockAll();
       persistSessionState();
-      for (const { tabId } of prev) hideLockShield(tabId);
+      for (const { tabId } of prev) {
+        tabControl.settle(tabId); // handed back: free now, not "controlled" for the linger
+        hideLockShield(tabId);
+      }
       broadcastStatus("All tab locks cleared");
       respond({ success: true });
       return false;
