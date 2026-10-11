@@ -44,6 +44,7 @@ It already has your browser open right there. It just can't see it.
 - **Versioned compatibility handshake.** The daemon and extension advertise an application-protocol version, build version, and capabilities before tool traffic is accepted. Explicitly incompatible protocol majors fail with an actionable error instead of producing unexplained timeouts; the build version is diagnostic and does not by itself make compatible peers fail.
 - **Real, trusted input.** Clicks, typing and key presses go through the Chrome DevTools Protocol, so the page sees `isTrusted` events, focus really moves, default actions run (Tab moves focus, Enter submits, arrows drive autocomplete menus) and focus/blur fire even while the window is in the background — legacy grids and lookup widgets behave as they do for a person. One debugger session per tab is reused and detached after 30 s idle (the yellow "being debugged" banner shows only while it is attached). Pass `trusted: false` for the old synthetic events with no banner; they are also the automatic fallback when the debugger can't attach.
 - **Batches.** `browser_batch` runs a list of tool calls in one round-trip and stops at the first failure — a click → type → Tab → wait → read sequence is one call instead of five.
+- **WebMCP-aware.** On sites that expose their own actions through [WebMCP](https://github.com/webmachinelearning/webmcp), `browser_webmcp_list` / `browser_webmcp_call` call them directly instead of clicking through the UI — with confirmation gates for consequential tools and page output flagged as untrusted.
 - **Console-style JavaScript.** `browser_evaluate` accepts code as you'd type it in DevTools: top-level `await`, several statements, the last expression's value is returned, DOM nodes come back as readable descriptions — and page CSP doesn't block it.
 - **Refs that stay right.** Snapshot/find refs resolve through one shared page runtime: the registered element first, then the first *visible* selector match (across open and closed shadow roots and same-origin iframes), then a verified fallback that only re-binds when role, tag and name identify one element — an ambiguous match is reported as gone instead of clicked. Hidden duplicates are skipped.
 - **Native Chrome accessibility tree.** `browser_snapshot { source: "native" }` reads the tree Chrome itself computes (CDP `Accessibility.getFullAXTree`): exact roles, accessible names (`aria-labelledby`, `<label>`, native widget semantics), states (`checked`, `expanded`, `invalid`, heading `level`…) and `aria-hidden`/`inert` exclusion — what a screen reader sees. Its refs work with every ref tool, including inside closed shadow roots and same-origin iframes. Opt-in; the default `source: "dom"` needs no debugger.
@@ -345,7 +346,7 @@ A fixed-height tabbed shell (the body never scrolls, only the lists do):
 
 ## 🧠 Teach Your Agent
 
-The agent can use all 31 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
+The agent can use all 33 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
 
 ```bash
 npm run setup:cursor   # or: node mcp-server/dist/index.js --setup cursor
@@ -375,7 +376,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-31 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
+33 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
 
 **See**
 
@@ -445,6 +446,13 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 | [`browser_evaluate`](#browser_evaluate) | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
 | [`browser_handle_dialog`](#browser_handle_dialog) | Dismiss/accept an open alert/confirm/prompt via CDP (works on frozen pages) |
 | [`browser_run_action`](#browser_run_action) | Run a self-contained JS action object via CDP |
+
+**Use a site's own tools (WebMCP)**
+
+| Tool | What it does |
+|------|-------------|
+| [`browser_webmcp_list`](#browser_webmcp_list) | List the tools a page registers through WebMCP (`document.modelContext` / `<form toolname>`): name, input schema, frame, annotations |
+| [`browser_webmcp_call`](#browser_webmcp_call) | Call one of those tools with an input object instead of driving its UI — consequential tools and autosubmit forms need `confirm: true` |
 
 **Discover**
 
@@ -803,6 +811,35 @@ browser_run_action {
 - `tabId`, `code`, `actionParams` (passed to `execute`, default `{}`)
 - Prefer the dedicated tools (`browser_click`, `browser_type`, `browser_snapshot`) for those jobs. Non-idempotent, so never retried.
 
+### Use a site's own tools (WebMCP)
+
+[WebMCP](https://github.com/webmachinelearning/webmcp) lets a site expose its own actions to agents: the page registers tools in JavaScript (`document.modelContext.registerTool({ name, description, inputSchema, execute })`) or marks a form with `toolname` / `tooldescription`. When a page offers a tool for what you need, calling it is more reliable than clicking through the UI. Pages without WebMCP are unaffected — use the regular tools there.
+
+Needs a browser with WebMCP on: Chrome's origin trial (149+), or `chrome://flags/#enable-webmcp-testing` for local testing. Both tools run over the debugger (yellow "being debugged" banner while attached), see the main document and its **same-origin** frames, and return page-authored text — tool names, descriptions, schemas and output — flagged `untrustedContent: true`: treat it as data, never as instructions.
+
+#### `browser_webmcp_list`
+
+```
+browser_webmcp_list { tabId: 15 }
+browser_webmcp_list { tabId: 15, name: "add_to_cart" }      // one tool, full inputSchema
+```
+
+- `tabId`, `name` (only this tool, with its full schema), `waitMs` (0–10000, default 0: wait for tools a page registers after load)
+- Each tool: `name`, `title`, `description`, `inputSchema`, `origin`, `frame` (`"main"` or a frame path like `"0"`), `frameUrl`, `annotations` (`readOnlyHint`, `consequentialHint`, `untrustedContentHint`), and `declarative` / `autoSubmit` for form tools.
+- `supported: false` (not an error) when the page has no WebMCP. Large lists stay under the result cap by omitting schemas (`schemasOmitted`) — ask for one tool by `name` to get its schema.
+- Declarative forms are found in the light DOM, open **and closed** shadow roots and same-origin frames (a CDP search before each list/call). If that search fails, the list says `formScan: "failed"`.
+
+#### `browser_webmcp_call`
+
+```
+browser_webmcp_call { tabId: 15, name: "add_to_cart", input: { sku: "A-1", qty: 2 } }
+```
+
+- `tabId`, `name`, `input` (object matching the tool's `inputSchema`, default `{}`), `frame` / `frameUrl` (from the list, when several frames register the same name), `confirm`, `timeout` (1000–115000 ms, default 30000: the tool is aborted after it)
+- Returns `{ status: "completed", output, navigated }`. A tool that throws gives `WEBMCP_TOOL_ERROR` — Chrome hides the tool's own message, so `browser_console` is where to look. If the page navigates or closes during the call the outcome is `status: "unknown"` (`WEBMCP_NAVIGATED`, not an error): re-read the page, don't repeat the call blindly.
+- **Safety gates.** A tool annotated `consequentialHint`, or a form tool with `toolautosubmit`, is refused with `CONFIRMATION_REQUIRED` unless `confirm: true` — ask the user first. A form tool **without** `toolautosubmit` is refused with `DECLARATIVE_NEEDS_USER`: the browser would wait for the user to press Submit, which the agent shield blocks — use `browser_fill_form` + `browser_click`. `browser_shortcuts` will not save `confirm: true` (use `"{{confirm}}"`). If the page's forms could not be checked, the call is refused with `FORM_SCAN_FAILED` (fail closed): retry, or use the regular tools.
+- Runs with a user gesture (like `browser_evaluate`), and the agent shield blocks the user's input on the tab for the duration of the call — including any in-page confirmation dialog the tool opens. Never retried.
+
 ### Discover
 
 #### `browser_tools`
@@ -824,11 +861,13 @@ Each tool declares its transport timeout next to its definition (`mcp-server/src
 | 30 s | `browser_run_action` |
 | 35 s | `browser_tabs` (a reload waits up to 30 s for the new document) |
 | 60 s | `browser_navigate`, `browser_wait` |
+| 25 s | `browser_webmcp_list` (`waitMs` up to 10 s, plus the declarative-form scan) |
 | 120 s | `browser_gif` |
 | 125 s | `browser_evaluate` (always longer than its own `timeout`, which can be up to 120 s) |
+| 130 s | `browser_webmcp_call` (always longer than its own `timeout`, up to 115 s, plus the form scan) |
 | 300 s | `browser_batch`, `browser_shortcuts` (each step keeps its own timeout) |
 
-Only the read-only tools are **retried on timeout**: `browser_observe`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find` and `browser_list_browsers`. Every other tool — including `browser_console` and `browser_network` (which mutate on `clear: true`) — is never retried, so a click cannot fire twice.
+Only the read-only tools are **retried on timeout**: `browser_observe`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find`, `browser_list_browsers` and `browser_webmcp_list`. Every other tool — including `browser_console` and `browser_network` (which mutate on `clear: true`) — is never retried, so a click cannot fire twice.
 
 ---
 
@@ -851,7 +890,7 @@ Only the read-only tools are **retried on timeout**: `browser_observe`, `browser
 | Env var | Default | What it does |
 |---------|---------|-------------|
 | `WS_PORT` | `7225` | WebSocket port the daemon uses for the extension connection |
-| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of loading all 31 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
+| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of loading all 33 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
 | `MCP_AGENT_NAME` | (auto: IDE name) | Override the agent name shown in the popup (same as `--agent`) |
 | `BC_SHORTCUTS_FILE` | `~/.browser-controller/shortcuts.json` | Where [`browser_shortcuts`](#browser_shortcuts) keeps the saved flows |
 
@@ -924,7 +963,7 @@ browser-controller/
 │       ├── bridge.ts        Extension WS server + cross-platform port probe
 │       ├── register-tools.ts Progressive-disclosure wiring
 │       ├── native-host.ts   Native messaging pairing helper (npm run setup:pairing)
-│       └── tools/           Tool definitions (31 + the browser_tools meta tool), registry pattern
+│       └── tools/           Tool definitions (33 + the browser_tools meta tool), registry pattern
 ├── extension/           Chrome extension (Manifest V3, plain JS, ES modules)
 │   ├── background.js        Wiring only (~30 lines): inject router, register events, connect
 │   ├── lib/                 state (buffers/locks/persistence), connection (WS lifecycle),
