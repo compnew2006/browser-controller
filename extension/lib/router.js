@@ -15,6 +15,7 @@ import { handleTabs, handleConsole, handleNetwork, handleScreenshot, handleResiz
 import { handleRunAction, handleUploadFile } from '../handlers/cdp.js';
 import { handleIntercept } from '../handlers/intercept.js';
 import { handleObserve, handleAct } from '../handlers/agent-api.js';
+import { handleWebMcpList, handleWebMcpCall } from '../handlers/webmcp.js';
 import { handleGif, isRecording, recordFrame, GIF_FRAME_TOOLS, currentTabId } from '../handlers/gif.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
@@ -53,6 +54,8 @@ const HANDLERS = {
   browser_hover: handleHover,
   browser_select: handleSelect,
   browser_evaluate: handleEvaluate,
+  browser_webmcp_list: handleWebMcpList,
+  browser_webmcp_call: handleWebMcpCall,
   browser_click_text: handleClickByText,
   browser_handle_dialog: handleDialog,
   browser_upload_file: handleUploadFile,

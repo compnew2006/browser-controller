@@ -122,6 +122,14 @@ export const shortcutsTool: ToolDefinition = {
         if (!p.actions || p.actions.length === 0) return jsonError({ success: false, error: 'actions (non-empty) are required to save a shortcut' });
         const bad = p.actions.find((a) => a.tool === 'browser_batch' || a.tool === 'browser_shortcuts' || a.tool === 'browser_tools');
         if (bad) return jsonError({ success: false, error: `${bad.tool} cannot be a shortcut step` });
+        // A saved confirm:true would approve a consequential WebMCP tool on every
+        // future run; a "{{confirm}}" placeholder keeps the decision per run.
+        if (p.actions.some((a) => a.tool === 'browser_webmcp_call' && a.params?.confirm === true)) {
+          return jsonError({
+            success: false,
+            error: 'browser_webmcp_call steps cannot save confirm:true (it would approve the tool on every future run). Use confirm:"{{confirm}}" and pass vars:{confirm:true} on a run the user approved.',
+          });
+        }
         const now = new Date().toISOString();
         all[p.name] = {
           name: p.name,
@@ -140,6 +148,16 @@ export const shortcutsTool: ToolDefinition = {
         const missing = existing.variables.filter((v) => !(v in vars));
         if (missing.length) return jsonError({ success: false, error: `Missing vars: ${missing.join(', ')}`, variables: existing.variables });
         const actions = substitute(existing.actions, vars) as Shortcut['actions'];
+        // The save-time guard cannot see a templated tool name ("{{t}}"): check
+        // again after substitution. Only a confirm:true SAVED in the shortcut is
+        // refused; one supplied through vars is this run's own decision.
+        const standing = actions.findIndex((a, i) => a.tool === 'browser_webmcp_call' && existing.actions[i]?.params?.confirm === true);
+        if (standing !== -1) {
+          return jsonError({
+            success: false,
+            error: `Step ${standing + 1} would call browser_webmcp_call with a saved confirm:true. Re-save it with confirm:"{{confirm}}" and pass vars:{confirm:true} on a run the user approved.`,
+          });
+        }
         // Lazy, through the registry: batch.ts and the registry import each
         // other, and the registry imports this module.
         const { toolMap } = await import('./index.js');

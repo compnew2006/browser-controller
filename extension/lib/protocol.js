@@ -7,6 +7,7 @@ export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   'cancellation',
   'observe-act-v2',
   'tab-locks',
+  'webmcp',
 ]);
 
 const REQUIRED_DAEMON_CAPABILITIES = Object.freeze(['tool-dispatch', 'ping-pong']);

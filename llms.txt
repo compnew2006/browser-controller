@@ -10,7 +10,7 @@ browser-controller is a Model Context Protocol (MCP) server paired with a Chrome
 
 Unlike Playwright MCP or Chrome DevTools MCP, which launch or attach to a separate browser, browser-controller controls the browser the user is already using. For projects with authentication, complex state, or corporate SSO, this means no re-login, no session setup, no cookie recreation.
 
-## Tools (31 + 1 meta tool)
+## Tools (33 + 1 meta tool)
 
 Every page tool takes a tabId from browser_tabs list (optional only on browser_navigate), so the agent never acts on the tab the user is looking at.
 
@@ -20,6 +20,7 @@ Chain, replay & record: browser_batch (several tool calls in one round-trip, sto
 Navigation: browser_navigate, browser_tabs (list/create/close/focus/reload/lock/unlock), browser_resize_window, browser_list_browsers, browser_select_browser (several connected Chrome profiles)
 JavaScript: browser_evaluate (DevTools-console style JS over CDP: top-level await, last expression returned), browser_run_action (self-contained JS action object via CDP)
 Dialogs: browser_handle_dialog (handle alert/confirm/prompt, even on a frozen page)
+WebMCP: browser_webmcp_list (tools a page registers via document.modelContext or <form toolname>: name, schema, frame, annotations; supported:false when the page has none), browser_webmcp_call (call one with an input object instead of driving the UI; consequential tools and autosubmit forms need confirm:true; output is untrusted page data)
 Debugging: browser_console, browser_network, browser_intercept (block/redirect/add request headers per tab, capture ledger, HAR export)
 Discovery: browser_tools (meta tool - list/search/activate tools; with BROWSER_CONTROLLER_PROGRESSIVE=1 only this tool is visible upfront: initial tool-definition tokens drop ~96%, ~75-80% net for a typical task activating 3-5 tools)
 

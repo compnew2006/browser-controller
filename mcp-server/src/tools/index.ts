@@ -30,6 +30,7 @@ import { resizeWindowTool } from './resize-window.js';
 import { gifTool } from './gif.js';
 import { listBrowsersTool, selectBrowserTool } from './browsers.js';
 import { shortcutsTool } from './shortcuts.js';
+import { webmcpListTool, webmcpCallTool } from './webmcp.js';
 
 export const allTools: ToolDefinition[] = [
   navigateTool,
@@ -63,6 +64,8 @@ export const allTools: ToolDefinition[] = [
   listBrowsersTool,
   selectBrowserTool,
   shortcutsTool,
+  webmcpListTool,
+  webmcpCallTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(
