@@ -441,7 +441,7 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 |------|-------------|
 | [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit` |
 | [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules); captures + HAR export. `mock`/`log` rules are ledger-only |
-| [`browser_network`](#browser_network) | Requests with status codes and failures — per-tab; `urlPattern`, regex `filter`, `failed`, `limit` |
+| [`browser_network`](#browser_network) | Requests with status codes, durations and failures — per-tab; `urlPattern`, regex `filter`, `type`, `failed`, `limit`; `requestId` for one request's (redacted) headers |
 | [`browser_evaluate`](#browser_evaluate) | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
 | [`browser_handle_dialog`](#browser_handle_dialog) | Dismiss/accept an open alert/confirm/prompt via CDP (works on frozen pages) |
 | [`browser_run_action`](#browser_run_action) | Run a self-contained JS action object via CDP |
@@ -470,7 +470,7 @@ The tables in [What It Can Do](#what-it-can-do) are the index. This section expl
 
 #### `browser_observe`
 
-One atomic, compact reading of a tab for the [safe Observe → Act loop](#safe-observe--act-workflow): a `snapshotId`, a `documentVersion`, and `elements` — each with a `ref`, `role`, `name`, `bbox` (`[x, y, width, height]`) and the `allowedActions` valid for it right now. Its refs belong to that snapshot and are accepted by [`browser_act`](#browser_act).
+One atomic, compact reading of a tab for the [safe Observe → Act loop](#safe-observe--act-workflow): a `snapshotId`, a `documentVersion`, and `elements` — each with a `ref`, `role`, `name`, `bbox` (`[x, y, width, height]`) and the `allowedActions` valid for it right now. Look-alike controls (same role and name, such as an icon-only Edit button in every table row) also carry `context`: the text of their row. Its refs belong to that snapshot and are accepted by [`browser_act`](#browser_act).
 
 - `tabId`, `mode` (`"compact"`, the only mode today), `maxElements` (1–1000, default 500)
 - Read-only: a call that times out is retried.
@@ -481,7 +481,7 @@ The accessibility tree of a tab, with a `ref` (`e12`) on every element that the 
 
 - `tabId`
 - Scope: `selector` (a CSS subtree), `ref` (the subtree of an earlier ref), `depth` (max nesting, `0` = top level only)
-- Size: `compact` (default `true`: only interactive elements, landmarks and headings), `filter` (`"interactive"` | `"all"`, an alias that wins over `compact`), `maxChars` (500–200000, default 20000; the result says `truncated: true` when it was cut)
+- Size: `compact` (default `true`: only interactive elements, landmarks and headings; look-alike controls — same role and name — carry their table row's text as `context`), `filter` (`"interactive"` | `"all"`, an alias that wins over `compact`), `maxChars` (500–200000, default 20000; the result says `truncated: true` when it was cut)
 - `source`: `"dom"` (default, no debugger) or `"native"` — Chrome's own accessibility tree; see [Native accessibility tree](#native-accessibility-tree)
 - Read-only: retried on timeout.
 
@@ -506,7 +506,7 @@ The visible text of the page or of an element, including shadow DOM. The cheapes
 
 #### `browser_find`
 
-Locates elements from a natural-language description (`"login button"`, `"search input"`, `"Open alert dialog"`) without taking a full snapshot. It matches every word against accessible names, labels, placeholders and attributes, understands role words (button, link, input, checkbox, tab, menu…), looks inside shadow DOM and same-origin iframes, and prefers the control over its wrappers. Returns refs for every ref tool.
+Locates elements from a natural-language description (`"login button"`, `"search input"`, `"Open alert dialog"`) without taking a full snapshot. It matches every word against accessible names, labels, placeholders and attributes, understands role words (button, link, input, checkbox, tab, menu…), looks inside shadow DOM and same-origin iframes, and prefers the control over its wrappers. A control inside a table row also matches words from that row, so `"edit carton"` ranks the Edit button of the carton row first; such matches report the row as `context`. Returns refs for every ref tool.
 
 - `tabId`, `query`, `limit` (default 10), `role` (only elements with this ARIA role)
 - Read-only: retried on timeout.
@@ -745,9 +745,10 @@ What the page logged in a tab: `log`, `info`, `warn`, `error`, `debug` and uncau
 
 #### `browser_network`
 
-The requests a tab made: method, URL, status and type; failed ones carry the error. Per tab, capped at 200 entries.
+The requests a tab made: `id`, method, URL, status, type and `durationMs`; failed ones carry the error. Per tab, capped at 200 entries. URLs longer than 200 characters are shortened in the list (`…[+N chars]`).
 
-- `tabId`, `urlPattern` (substring, e.g. `"/api/"`), `filter` (URL regex), `failed` (only network errors and HTTP 4xx/5xx), `limit` (1–200)
+- `tabId`, `urlPattern` (substring, e.g. `"/api/"`), `filter` (URL regex), `type` (one or a list: `xhr`/`fetch`, `document`, `script`, `stylesheet`, `image`, `font`, `media`, `websocket`, … — any webRequest resource type), `failed` (only network errors and HTTP 4xx/5xx), `limit` (1–200), `fullUrls` (keep long URLs whole)
+- `requestId` (an `id` from the list): that one request in full, with its request and response headers. Values of credential and session headers (`Authorization`, `Cookie`, `Set-Cookie`, API keys, tokens…) read `[redacted]`. Response bodies are not captured.
 - `clear` (default `false`): empty the buffer after reading — so, like the console, it is never retried.
 
 #### `browser_intercept`
@@ -768,7 +769,7 @@ browser_intercept { tabId: 15, action: "set-rules", rules: [
 - **Enforcement is reported, not assumed.** The result has `enforcement`: `"full"`, `"partial"` or `"capture-only"`, plus an `enforced` count and an `unsupported` list with the reason for each rule Chrome cannot apply. Chrome cannot fake a response body, so `mock` rules are only recorded in the capture ledger (and make the result `"partial"`); `log` rules are capture-only by design and are not counted as enforced. If Chrome rejects the rule set (its regex dialect is stricter than JavaScript's), enforcement falls back to `capture-only` with a `reason`.
 - `list-rules`: the stored rules and whether each is enforced. `clear-rules`: with `tabId`, removes that tab's rules (global rules stay); without it, removes all.
 - `list-captures` (needs `tabId`): the tab's recorded requests, with `intercept.matchedRuleIds` on those a rule matched. `filter` (URL regex) and `limit` (1–200) narrow it.
-- `export-har` (needs `tabId`): a HAR 1.2 file of the tab's requests. Only method, URL, status, type and timestamp are captured — headers and bodies are left out (`_redacted: true`).
+- `export-har` (needs `tabId`): a HAR 1.2 file of the tab's requests with their headers and duration; `filter` and `limit` narrow it like `list-captures`. Credential and session header values are redacted (`_redacted: true`), and bodies are not captured.
 
 #### `browser_evaluate`
 

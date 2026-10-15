@@ -18,6 +18,7 @@ import { showLockShield, hideLockShield, setAgentCursorHidden, agentCursorEnable
 import { broadcastStatus } from "../lib/connection.js";
 import { lockTabUi, releaseTabUi } from "../lib/lock-ops.js";
 import { withCdp, ensureViewport } from '../lib/cdp-session.js';
+import { listView, typeMatcher } from '../lib/network-capture.js';
 
 const CDP_CAPTURE_TIMEOUT_MS = 4000;
 
@@ -240,9 +241,19 @@ export async function handleConsole(params) {
 }
 
 export async function handleNetwork(params) {
-  const { tabId, clear = false, limit, filter, urlPattern, failed } = params;
+  const { tabId, clear = false, limit, filter, urlPattern, failed, type, requestId, fullUrls = false } = params;
   await resolveTab(tabId); // same as handleConsole — no empty fake successes
+  if (requestId != null) {
+    // One request in full: complete URL, duration, redacted request/response headers.
+    const hit = [...getTabBuffer(networkByTab, tabId)].reverse().find((r) => r.id === String(requestId));
+    if (!hit) {
+      return { success: false, error: `No captured request "${requestId}" in tab ${tabId} — list requests first (only the latest ones are kept).` };
+    }
+    return { success: true, request: { ...hit } };
+  }
+  const ofType = typeMatcher(type); // validates before anything is read
   let reqs = [...getTabBuffer(networkByTab, tabId)];
+  if (ofType) reqs = reqs.filter(ofType);
   // urlPattern: plain substring (Claude-in-Chrome style); filter: regex.
   if (urlPattern) reqs = reqs.filter((r) => String(r.url).includes(urlPattern));
   // failed:true = only requests that errored (DNS, blocked, aborted…) or got a 4xx/5xx.
@@ -262,7 +273,7 @@ export async function handleNetwork(params) {
     reqs = reqs.slice(-limit); // most recent N
   }
   if (clear) networkByTab.set(tabId, []);
-  return { success: true, requests: reqs };
+  return { success: true, requests: reqs.map((r) => listView(r, { fullUrls })) };
 }
 
 export async function handleTabs(params, sessionId) {

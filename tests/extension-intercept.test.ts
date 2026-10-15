@@ -246,6 +246,21 @@ describe("capture + HAR (S4)", () => {
     expect(res.har.log.entries[0].response._redacted).toBe(true);
   });
 
+  it("export-har carries the captured (redacted) headers and duration", async () => {
+    networkByTab.set(15, [{
+      id: "1", method: "GET", url: "https://app.example.com/api", status: 200, type: "xmlhttprequest", timestamp: 1, durationMs: 37,
+      requestHeaders: [{ name: "Authorization", value: "[redacted]" }],
+      responseHeaders: [{ name: "content-type", value: "application/json" }],
+    }]);
+    const [entry] = (await handleIntercept({ action: "export-har", tabId: 15 })).har.log.entries;
+    expect(entry).toMatchObject({
+      time: 37,
+      request: { headers: [{ name: "Authorization", value: "[redacted]" }] },
+      response: { headers: [{ name: "content-type", value: "application/json" }], _redacted: true },
+      timings: { wait: 37 },
+    });
+  });
+
   it("export-har honours filter and limit like list-captures", async () => {
     networkByTab.set(15, [
       { method: "GET", url: "https://app.example.com/", status: 200, type: "main_frame", timestamp: 1 },

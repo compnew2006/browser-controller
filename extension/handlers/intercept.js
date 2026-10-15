@@ -229,11 +229,13 @@ function extensionVersion() {
 }
 
 function buildHar(tabId, entries) {
+  // Headers come from the capture already redacted (lib/network-capture.js).
   const harEntries = entries.map((e) => ({
     startedDateTime: new Date(e.timestamp ?? Date.now()).toISOString(),
-    request: { method: e.method || "GET", url: e.url, headers: [] },
-    response: { status: e.status ?? 0, headers: [], _redacted: true },
-    timings: { wait: 0 },
+    time: e.durationMs ?? 0,
+    request: { method: e.method || "GET", url: e.url, headers: e.requestHeaders ?? [] },
+    response: { status: e.status ?? 0, headers: e.responseHeaders ?? [], _redacted: true },
+    timings: { wait: e.durationMs ?? 0 },
     _intercept: e.intercept ?? null,
   }));
   return {
