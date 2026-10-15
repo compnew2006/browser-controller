@@ -492,6 +492,7 @@ An image of the tab, captured over CDP. The result also carries a small JSON blo
 - `tabId`, `format` (`"png"` default | `"jpeg"`), `quality` (0–100, default 80, JPEG only)
 - Cut image tokens: `maxWidth` (100–4000, keeps the aspect ratio), `scale` (0.05–4), or `format: "jpeg"`
 - `fullPage` (default `false`) captures the whole scrollable page; `region` `{ x, y, width, height }` zooms into a viewport rectangle (`scale` up to 4, default 2 there)
+- `ref` or `selector`: just that element, scrolled into view, with a 4 px margin (`scale` defaults to 1). The result says `element.clipped: true` when the element is bigger than the viewport; an element that is gone or has no box is an error, never a full-viewport picture.
 - A background tab is shown for a moment and the tab you were on is switched straight back, because Chrome does not paint hidden tabs. The agent's blue control frame and the agent cursor are never in the picture.
 - Read-only: retried on timeout.
 

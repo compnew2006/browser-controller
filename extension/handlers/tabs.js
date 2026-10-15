@@ -3,7 +3,7 @@
  * lifecycle (list/create/close/focus/lock/unlock), console/network reads,
  * screenshot.
  */
-import { resolveTab, replaceFrozenTab, safeExec } from '../lib/page-exec.js';
+import { resolveTab, replaceFrozenTab, safeExec, execDom, getFallback } from '../lib/page-exec.js';
 import {
   tabLocks,
   tabControl,
@@ -142,9 +142,44 @@ export async function handleScreenshot(params) {
   }
 }
 
+/**
+ * Top-level viewport box of a ref/selector target (4 px margin), scrolled into
+ * view first; `clipped` when the element does not fit the viewport.
+ */
+async function elementRegion(tabId, ref, selector) {
+  return execDom(tabId, (_ref, _sel, _fb) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
+    const el = D.resolve(_ref, _sel, _fb).el;
+    if (!el) return { success: false, error: 'Element not found' };
+    el.scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'nearest' });
+    const { x, y, rect } = D.centerOf(el);
+    if (!(rect.width > 0 && rect.height > 0)) return { success: false, error: 'Element has no visible box (hidden or zero-size)' };
+    const pad = 4;
+    const left = x - rect.width / 2 - pad;
+    const top = y - rect.height / 2 - pad;
+    const width = rect.width + 2 * pad;
+    const height = rect.height + 2 * pad;
+    return {
+      success: true,
+      region: { x: Math.max(0, left), y: Math.max(0, top), width, height },
+      clipped: left < 0 || top < 0 || left + width > innerWidth || top + height > innerHeight,
+    };
+  }, [ref ?? null, selector ?? null, getFallback(tabId, ref)]);
+}
+
 async function captureScreenshot(params) {
-  const { tabId, format = 'png', quality = 80, scale, maxWidth, fullPage = false, region } = params;
+  const { tabId, format = 'png', quality = 80, maxWidth, fullPage = false, ref, selector } = params;
+  let { scale, region } = params;
   const tab = await resolveTab(tabId);
+  // ref / selector: just that element (an explicit region wins).
+  let element = null;
+  if ((ref || selector) && !region) {
+    element = await elementRegion(tabId, ref, selector);
+    if (!element?.success) return element || { success: false, error: 'Element not found' };
+    region = element.region;
+    scale = scale ?? 1; // a region zooms 2× by default; an element is shown as it is
+  }
   const protectedPage = /^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '');
   let cdpError = null;
   if (!protectedPage) {
@@ -153,7 +188,11 @@ async function captureScreenshot(params) {
     const wasLocked = !!tabLocks.owner(tabId);
     await hideLockShield(tabId);
     const opts = { format, quality, scale, maxWidth, fullPage, region };
-    const done = (shot, via) => ({ success: true, format, via, width: shot.width, height: shot.height, frame: shot.frame, data: shot.data });
+    const done = (shot, via) => ({
+      success: true, format, via, width: shot.width, height: shot.height, frame: shot.frame,
+      ...(element ? { element: { clipped: element.clipped } } : {}),
+      data: shot.data,
+    });
     try {
       if (tab.active) {
         const shot = await cdpScreenshot(tabId, opts);
