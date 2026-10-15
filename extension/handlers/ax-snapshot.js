@@ -18,7 +18,7 @@ import { resolveTab, execDom, safeExec, getFallback, assertResponsive, withTimeo
 import { withCdp } from '../lib/cdp-session.js';
 import { fallbackByTab, lastNativeFingerprints, persistSessionState, nextRefPrefix } from '../lib/state.js';
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
-import { mergeFrameTrees, shapeAxTree, applyBindings, backendIdAtPath, pathOfTarget } from '../lib/ax-native.js';
+import { mergeFrameTrees, shapeAxTree, applyBindings, attachRowContext, backendIdAtPath, lookAlikeRefs, pathOfTarget } from '../lib/ax-native.js';
 
 /** AX tree of a very large page can take seconds; a frozen renderer never answers. */
 const AX_TIMEOUT_MS = 12_000;
@@ -133,6 +133,10 @@ function pageBindNative(entries) {
     if (cur.tagName === 'A' && typeof cur.href === 'string' && cur.href) {
       bound[entry.ref].href = cur.href.startsWith(origin + '/') ? cur.href.slice(origin.length) : cur.href;
     }
+    if (entry.context && D.rowContextOf) {
+      const context = D.rowContextOf(cur);
+      if (context) bound[entry.ref].context = context;
+    }
     try { if (gen) fallbacks[entry.ref] = gen(cur); } catch { /* descriptor is best-effort */ }
   }
   return { success: true, bound, fallbacks };
@@ -195,9 +199,14 @@ export async function handleNativeSnapshot(params, { compact, maxChars }) {
   const { shaped, paths, skippedFrames } = stage;
 
   // Bind refs to elements in the page registry (after the fallback generator is installed).
+  // Look-alike controls (compact) also read their table row's text while bound.
+  const lookAlikes = compact ? lookAlikeRefs(shaped.tree) : new Set();
   const bindEntries = shaped.entries
     .filter((e) => paths.has(e.backendNodeId))
-    .map((e) => ({ ref: e.ref, path: paths.get(e.backendNodeId).path, tag: paths.get(e.backendNodeId).tag }));
+    .map((e) => ({
+      ref: e.ref, path: paths.get(e.backendNodeId).path, tag: paths.get(e.backendNodeId).tag,
+      ...(lookAlikes.has(e.ref) ? { context: true } : {}),
+    }));
   let bound = {};
   if (bindEntries.length) {
     await safeExec(tabId, PAGE_FALLBACK_INSTALL, []);
@@ -213,6 +222,8 @@ export async function handleNativeSnapshot(params, { compact, maxChars }) {
     }
   }
   const tree = applyBindings(shaped.tree, bound, { dropUnbound: compact });
+  const contextCut = lookAlikes.size > 0
+    && attachRowContext(tree, bound, maxChars - JSON.stringify(tree).length).truncated;
   lastNativeFingerprints.set(tabId, shaped.fingerprints);
 
   const unbound = shaped.entries.length - Object.keys(bound).length;
@@ -224,7 +235,7 @@ export async function handleNativeSnapshot(params, { compact, maxChars }) {
     title: current.title || '',
     compact,
     tree,
-    ...(shaped.truncated ? {
+    ...(shaped.truncated || contextCut ? {
       truncated: true,
       hint: 'Output capped (maxChars/depth). Scope it with selector or ref (a subtree), or raise maxChars.',
     } : {}),

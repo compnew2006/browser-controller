@@ -210,6 +210,24 @@ describe('browser_snapshot source:"native"', () => {
     expect(dupA.events).not.toContain('click');
   });
 
+  it('look-alike controls in table rows carry their row text; same-named controls outside rows do not', async () => {
+    const rows = ['Piece', 'Dozen'].map((name, i) => {
+      const edit = doc.el('button', { title: 'Edit' });
+      return { edit, tr: doc.el('tr', {}, doc.el('td', {}, String(i + 1)), doc.el('td', {}, name), doc.el('td', {}, edit)) };
+    });
+    const table = doc.el('table', {}, ...rows.map((r) => r.tr));
+    doc.body.append(table);
+    mainAx = axNodes({ role: 'RootWebArea', name: 'Fixture', el: doc.documentElement, kids: [
+      { role: 'button', name: 'Dup', el: dupA },
+      { role: 'button', name: 'Dup', el: dupB },
+      { role: 'table', el: table, kids: rows.map((r) => ({ role: 'button', name: 'Edit', el: r.edit })) },
+    ] });
+    const res = await native();
+    expect(flat(res.tree).map((n) => [n.name, n.context])).toEqual([
+      ['Dup', undefined], ['Dup', undefined], ['Edit', '1 Piece'], ['Edit', '2 Dozen'],
+    ]);
+  });
+
   it('records a smart-selector fallback for every bound ref (stale-ref recovery works for native refs)', async () => {
     // The real generator needs tree walkers the fake DOM lacks: stub it (the installer is idempotent).
     (globalThis as any).__browserControllerFallbackRuntime = {

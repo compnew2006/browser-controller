@@ -123,7 +123,10 @@ export function validateFreshness(observed = {}, current = {}) {
  * function deliberately has no extension-scope dependencies.
  */
 export function PAGE_V2_INSTALL() {
-  if (globalThis.__browserControllerV2Runtime) return false;
+  // Bump when the helpers change: a document keeps the runtime an older build
+  // installed. A literal, because this source is serialized into the page.
+  const RUNTIME_VERSION = 2;
+  if (globalThis.__browserControllerV2Runtime?.version === RUNTIME_VERSION) return false;
 
   /** Pure semantic policy shared by observation and action revalidation. */
   function inferAllowedActions(descriptor = {}) {
@@ -326,6 +329,27 @@ export function PAGE_V2_INSTALL() {
     return chain(hit).includes(target) || chain(target).includes(hit);
   }
 
+  /** Text of the table/grid row holding `element`, minus its own cell(s); '' outside a row. */
+  function rowContextOf(element, max = 80) {
+    let row = element;
+    for (;;) {
+      let root = null;
+      try { root = row.getRootNode?.(); } catch {}
+      row = row.parentElement || root?.host || null;
+      if (!row) return '';
+      const tag = String(row.tagName || '').toUpperCase();
+      if (tag === 'TR' || attr(row, 'role') === 'row') break;
+      if (tag === 'TABLE' || tag === 'BODY') return '';
+    }
+    const parts = [];
+    for (const cell of Array.from(row.children || [])) {
+      if (composedContains(cell, element)) continue;
+      const text = clean(cell.innerText || cell.textContent, max);
+      if (text) parts.push(text);
+    }
+    return clean(parts.join(' '), max);
+  }
+
   function collectContexts(rootDocument) {
     const contexts = [];
     const seenRoots = new Set();
@@ -353,7 +377,8 @@ export function PAGE_V2_INSTALL() {
   }
 
   globalThis.__browserControllerV2Runtime = Object.freeze({
-    helpers: Object.freeze({ clean, attr, roleOf, nameOf, descriptorOf, rectOf, visibilityOf, composedContains, collectContexts }),
+    version: RUNTIME_VERSION,
+    helpers: Object.freeze({ clean, attr, roleOf, nameOf, descriptorOf, rectOf, visibilityOf, composedContains, rowContextOf, collectContexts }),
     inferAllowedActions,
   });
   return true;
@@ -470,6 +495,16 @@ export function PAGE_OBSERVE_V2(config) {
       });
     }
     if (elements.length >= config.maxElements) break;
+  }
+
+  // Look-alike controls ("Edit" in every row) get their table row's text.
+  const key = (item) => `${item.role}|${item.name || ''}`;
+  const counts = new Map();
+  for (const item of elements) counts.set(key(item), (counts.get(key(item)) || 0) + 1);
+  for (const item of elements) {
+    if (counts.get(key(item)) < 2) continue;
+    const context = helpers.rowContextOf(refs.get(item.ref).element);
+    if (context) item.context = context;
   }
 
   const documentVersion = `${state.documentId}:${state.routeEpoch}:${state.revision}`;

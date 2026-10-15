@@ -6,7 +6,7 @@ export const observeTool: ToolDefinition = {
   name: 'browser_observe',
   summary: 'Observe compact actionable state for one tab',
   description:
-    'Capture one atomic, compact semantic observation with snapshot ownership, document version, geometry, element state, and allowed actions. Use its snapshotId and refs with browser_act.',
+    'Capture one atomic, compact semantic observation with snapshot ownership, document version, geometry, element state, and allowed actions. Look-alike controls (same role+name, e.g. an Edit button per table row) carry their row text as context. Use its snapshotId and refs with browser_act.',
   inputSchema: z.object({
     tabId: requireTabId(),
     mode: z.enum(['compact']).optional().default('compact')

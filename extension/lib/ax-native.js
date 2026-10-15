@@ -295,6 +295,41 @@ export function applyBindings(tree, bound, { dropUnbound = false } = {}) {
   return settled.length === 0 ? null : settled.length === 1 ? settled[0] : settled;
 }
 
+/** Depth-first nodes of a shaped tree (root object, array of roots, or null). */
+function nodesOf(tree) {
+  const out = [];
+  const walk = (list) => { for (const node of list) { out.push(node); if (node.children) walk(node.children); } };
+  walk(Array.isArray(tree) ? tree : tree ? [tree] : []);
+  return out;
+}
+
+/**
+ * Refs of look-alike controls: interactive nodes whose role+name repeats (an
+ * icon-only "Edit" button in every table row). Only these get row context.
+ */
+export function lookAlikeRefs(tree) {
+  const controls = nodesOf(tree).filter((n) => n.ref && AX_INTERACTIVE_ROLES.has(n.role));
+  const key = (n) => `${n.role}|${n.name || ''}`;
+  const counts = new Map();
+  for (const n of controls) counts.set(key(n), (counts.get(key(n)) || 0) + 1);
+  return new Set(controls.filter((n) => counts.get(key(n)) > 1).map((n) => n.ref));
+}
+
+/**
+ * Attach the row text the page bound (`bound[ref].context`) in document order
+ * while it fits in `room` chars, so the snapshot stays inside maxChars.
+ */
+export function attachRowContext(tree, bound, room) {
+  for (const node of nodesOf(tree)) {
+    const context = node.ref && bound[node.ref] && bound[node.ref].context;
+    if (!context) continue;
+    if (room < context.length + 13) return { truncated: true }; // `,"context":""`
+    room -= context.length + 13;
+    node.context = context;
+  }
+  return { truncated: false };
+}
+
 /**
  * Locate a DOM node in a `DOM.getDocument({pierce:true})` dump by the same
  * structural path the page-side `pathOf` produced, and return its backendNodeId.

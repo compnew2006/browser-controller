@@ -210,6 +210,52 @@ describe('page-side Observation Engine V2', () => {
     });
   });
 
+  it('look-alike controls carry their table row text; unique controls stay lean', () => {
+    const document = new FakeDocument();
+    document.add('button', 'اضافة جديد');
+    for (const [i, name] of ['قطعه', 'درزن'].entries()) {
+      const row = document.add('tr');
+      const cells = [document.add('td', String(i + 1)), document.add('td', name), document.add('td')];
+      for (const cell of cells) cell.parentElement = row;
+      (row as any).children = cells;
+      document.add('button', '', { title: 'تعديل' }).parentElement = cells[2];
+    }
+    const result = observe(document);
+    expect(result.elements.map((e: any) => [e.name, e.context])).toEqual([
+      ['اضافة جديد', undefined],
+      ['تعديل', '1 قطعه'],
+      ['تعديل', '2 درزن'],
+    ]);
+  });
+
+  it('row context comes from ARIA rows too, and is absent outside rows or directly under a table', () => {
+    const document = new FakeDocument();
+    const loose = document.add('div');
+    const table = document.add('table');
+    for (const name of ['Alpha', 'Beta']) {
+      const row = document.add('div', '', { role: 'row' });
+      const cells = [document.add('div', name), document.add('div'), document.add('div')];
+      for (const cell of cells) cell.parentElement = row;
+      (row as any).children = cells;
+      document.add('button', 'Open').parentElement = cells[2];
+      document.add('button', 'Copy').parentElement = loose;
+      document.add('button', 'Sort').parentElement = table;
+    }
+    const contexts = observe(document).elements.map((e: any) => `${e.name}:${e.context ?? '-'}`);
+    expect(contexts).toEqual(['Open:Alpha', 'Copy:-', 'Sort:-', 'Open:Beta', 'Copy:-', 'Sort:-']);
+  });
+
+  it('a runtime installed by an older extension build is replaced, not reused', () => {
+    (globalThis as any).__browserControllerV2Runtime = Object.freeze({ helpers: {}, inferAllowedActions: () => [] });
+    try {
+      expect(PAGE_V2_INSTALL()).toBe(true);
+      expect(typeof (globalThis as any).__browserControllerV2Runtime.helpers.rowContextOf).toBe('function');
+      expect(PAGE_V2_INSTALL()).toBe(false);
+    } finally {
+      delete (globalThis as any).__browserControllerV2Runtime; // never leak a stub into later tests
+    }
+  });
+
   it('excludes controls hidden by a composed ancestor or containing iframe', () => {
     const shadowDocument = new FakeDocument();
     const host = shadowDocument.add('div');
