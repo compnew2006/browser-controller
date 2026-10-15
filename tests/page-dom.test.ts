@@ -180,6 +180,17 @@ describe('repeated row controls (icon buttons in table rows)', () => {
     expect(buttons.filter((b) => b.includes('"name":"تعديل"')).map((b) => JSON.parse(b).context)).toEqual(['1 قطعه', '2 درزن']);
   });
 
+  it('row context leaves out cells the user cannot see (hidden columns)', async () => {
+    // SMACC's units grid carries a display:none column ("غير الأبعاد") in every row.
+    const rows = ['قطعه', 'درزن'].map((n, i) => doc.el('tr', {},
+      doc.el('td', {}, String(i + 1)), doc.el('td', {}, n), doc.el('td', { style: 'display:none' }, 'غير الأبعاد'),
+      doc.el('td', {}, doc.el('button', { title: 'تعديل' }))));
+    doc.body.append(doc.el('table', {}, doc.el('tbody', {}, ...rows)));
+    const res = await handleSnapshot({ tabId: 1 });
+    const contexts = (JSON.stringify(res.tree).match(/"context":"[^"]*"/g) ?? []).map((c) => JSON.parse(`{${c}}`).context);
+    expect(contexts).toEqual(['1 قطعه', '2 درزن']);
+  });
+
   it('row context stays inside maxChars on a long grid', async () => {
     // The 41 control nodes fit in 3000 chars; their row contexts (~50 chars each) would not.
     unitsTable(Array.from({ length: 20 }, (_, i) => `صنف رقم ${i} وصف طويل للصنف لاختبار حد الحجم`));

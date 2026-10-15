@@ -234,7 +234,9 @@ describe('page-side Observation Engine V2', () => {
     const table = document.add('table');
     for (const name of ['Alpha', 'Beta']) {
       const row = document.add('div', '', { role: 'row' });
-      const cells = [document.add('div', name), document.add('div'), document.add('div')];
+      const hiddenColumn = document.add('div', 'Secret');
+      hiddenColumn.style.display = 'none'; // not what the user sees: stays out of the context
+      const cells = [document.add('div', name), hiddenColumn, document.add('div'), document.add('div')];
       for (const cell of cells) cell.parentElement = row;
       (row as any).children = cells;
       document.add('button', 'Open').parentElement = cells[2];

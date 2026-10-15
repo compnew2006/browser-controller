@@ -125,7 +125,7 @@ export function validateFreshness(observed = {}, current = {}) {
 export function PAGE_V2_INSTALL() {
   // Bump when the helpers change: a document keeps the runtime an older build
   // installed. A literal, because this source is serialized into the page.
-  const RUNTIME_VERSION = 2;
+  const RUNTIME_VERSION = 3;
   if (globalThis.__browserControllerV2Runtime?.version === RUNTIME_VERSION) return false;
 
   /** Pure semantic policy shared by observation and action revalidation. */
@@ -344,6 +344,9 @@ export function PAGE_V2_INSTALL() {
     const parts = [];
     for (const cell of Array.from(row.children || [])) {
       if (composedContains(cell, element)) continue;
+      let style = null;
+      try { style = cell.ownerDocument?.defaultView?.getComputedStyle?.(cell); } catch {}
+      if (style?.display === 'none' || style?.visibility === 'hidden') continue; // a hidden column is not what the user reads
       const text = clean(cell.innerText || cell.textContent, max);
       if (text) parts.push(text);
     }

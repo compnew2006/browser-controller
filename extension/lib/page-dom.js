@@ -15,7 +15,7 @@
  * ambiguous is reported as gone instead of guessed.
  */
 
-export const PAGE_DOM_VERSION = 3;
+export const PAGE_DOM_VERSION = 4;
 
 export function PAGE_DOM_INSTALL(version) {
   if (globalThis.__bcDom && globalThis.__bcDom.v === version) return false;
@@ -376,6 +376,8 @@ export function PAGE_DOM_INSTALL(version) {
     const parts = [];
     for (const cell of flatChildren(row)) {
       if (cell.nodeType !== 1 || composedContains(cell, el)) continue;
+      const st = styleOf(cell);
+      if (st && (st.display === 'none' || st.visibility === 'hidden')) continue; // a hidden column is not what the user reads
       const t = composedText(cell, max);
       if (t) parts.push(t);
     }
