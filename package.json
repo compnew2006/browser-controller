@@ -20,6 +20,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "smoke:real-chrome": "node scripts/smoke-real-chrome.mjs",
+    "smoke:webmcp": "node scripts/smoke-webmcp.mjs",
     "lint": "eslint mcp-server/src tests extension vitest.config.ts eslint.config.js",
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "typecheck": "tsc -p mcp-server/tsconfig.json --noEmit",

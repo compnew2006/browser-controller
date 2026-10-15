@@ -60,4 +60,28 @@ describe('browser_shortcuts', () => {
     expect((await run({ action: 'save', name: 'x', actions: [{ tool: 'browser_batch', params: {} }] })).isError).toBe(true);
     expect((await run({ action: 'save', name: 'bad name!', actions: [{ tool: 'browser_click' }] })).isError).toBe(true);
   });
+
+  it('refuses to save a standing WebMCP approval, but a {{confirm}} placeholder is decided per run', async () => {
+    const saved = await run({ action: 'save', name: 'order', actions: [{ tool: 'browser_webmcp_call', params: { tabId: 1, name: 'place_order', confirm: true } }] });
+    expect(saved.isError).toBe(true);
+    expect(body(saved).error).toMatch(/cannot save confirm:true/);
+
+    const ok = await run({ action: 'save', name: 'order', actions: [{ tool: 'browser_webmcp_call', params: { tabId: 1, name: 'place_order', confirm: '{{confirm}}' } }] });
+    expect(ok.isError).toBeFalsy();
+    expect(body(ok).saved.variables).toEqual(['confirm']);
+    await run({ action: 'run', name: 'order', vars: { confirm: true } });
+    expect(calls.at(-1)).toMatchObject({ tool: 'browser_webmcp_call', params: { confirm: true } });
+  });
+
+  it('refuses a templated tool name that resolves to browser_webmcp_call with a saved confirm:true', async () => {
+    for (const tool of ['{{t}}', 'browser_webmcp_{{x}}']) {
+      const saved = await run({ action: 'save', name: 'sneaky', actions: [{ tool, params: { tabId: 1, name: 'place_order', confirm: true } }] });
+      expect(saved.isError).toBeFalsy(); // not knowable at save time
+      calls.length = 0;
+      const ran = await run({ action: 'run', name: 'sneaky', vars: { t: 'browser_webmcp_call', x: 'call' } });
+      expect(ran.isError).toBe(true);
+      expect(body(ran).error).toMatch(/saved confirm:true/);
+      expect(calls).toHaveLength(0);
+    }
+  });
 });

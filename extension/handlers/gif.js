@@ -14,7 +14,7 @@ import { handleScreenshot } from './tabs.js';
 export const GIF_FRAME_TOOLS = new Set([
   'browser_navigate', 'browser_click', 'browser_type', 'browser_press_key', 'browser_scroll', 'browser_hover',
   'browser_select', 'browser_click_text', 'browser_drag', 'browser_fill_form', 'browser_act', 'browser_upload_file',
-  'browser_handle_dialog', 'browser_run_action', 'browser_evaluate', 'browser_wait',
+  'browser_handle_dialog', 'browser_run_action', 'browser_evaluate', 'browser_wait', 'browser_webmcp_call',
 ]);
 
 const MAX_FRAMES_CAP = 500;
