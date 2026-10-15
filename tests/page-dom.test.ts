@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installFakePage, installFakeFrame, type FakeDocument } from './helpers/fake-dom.js';
 
 // chrome mock: executeScript runs the page function in-process against the fake page.
@@ -13,7 +13,7 @@ import { installFakePage, installFakeFrame, type FakeDocument } from './helpers/
 const { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } = await import('../extension/lib/page-dom.js');
 const { handleFind, handleSnapshot, handleGetPageText, handleWait } = await import('../extension/handlers/inspection.js');
 const { handleClick, handleClickByText, handleType } = await import('../extension/handlers/interaction.js');
-const { fallbackByTab } = await import('../extension/lib/state.js');
+const { fallbackByTab, lastSnapshotFingerprints } = await import('../extension/lib/state.js');
 
 let doc: FakeDocument;
 const D = () => (globalThis as any).__bcDom;
@@ -139,6 +139,53 @@ describe('browser_find (tokenized, role-aware, wrapper-suppressing)', () => {
     const res = await handleFind({ tabId: 1, query: 'checkout button' });
     expect(res.matches).toHaveLength(0);
     expect(res.hint).toMatch(/snapshot|text/);
+  });
+});
+
+describe('repeated row controls (icon buttons in table rows)', () => {
+  beforeEach(() => { doc = installFakePage(); fallbackByTab.clear(); PAGE_DOM_INSTALL(PAGE_DOM_VERSION); });
+  // A snapshot here must not make later tests' first snapshot report isNew.
+  afterEach(() => { lastSnapshotFingerprints.clear(); });
+
+  // Smacc-style grid: code + name cells, then icon-only buttons named by title.
+  function unitsTable(names: string[]) {
+    const rows = names.map((n, i) => doc.el('tr', {},
+      doc.el('td', {}, String(i + 1)),
+      doc.el('td', {}, n),
+      doc.el('td', {}, doc.el('button', { title: 'تعديل' }), doc.el('button', { title: 'حذف' }))));
+    doc.body.append(doc.el('button', {}, 'اضافة جديد'), doc.el('table', {}, doc.el('tbody', {}, ...rows)));
+    return rows;
+  }
+
+  it('cell boundaries separate words in composed names; inline markup does not', () => {
+    const [row] = unitsTable(['قطعه']);
+    expect(D().nameOf(row)).toBe('1 قطعه');
+    expect(D().nameOf(doc.el('a', { href: '/l' }, 'Lo', doc.el('b', {}, 'g'), 'in'))).toBe('Login');
+  });
+
+  it('find ranks the button in the row the query names first, and says which row', async () => {
+    const rows = unitsTable(['قطعه', 'درزن', 'بكت', 'كرتون', 'ربطة']);
+    const res = await handleFind({ tabId: 1, query: 'تعديل كرتون', limit: 3 });
+    expect(res.matches[0]).toMatchObject({ role: 'button', name: 'تعديل', context: '4 كرتون' });
+    const click = await handleClick({ tabId: 1, ref: res.matches[0].ref });
+    expect(click.success).toBe(true);
+    expect(rows[3].children[2].children[0].events).toContain('click');
+  });
+
+  it('compact snapshot adds row context only to controls whose role+name repeats', async () => {
+    unitsTable(['قطعه', 'درزن']);
+    const res = await handleSnapshot({ tabId: 1 });
+    const buttons = JSON.stringify(res.tree).match(/\{[^{}]*"role":"button"[^{}]*\}/g) ?? [];
+    expect(buttons.find((b) => b.includes('اضافة جديد'))).not.toContain('context');
+    expect(buttons.filter((b) => b.includes('"name":"تعديل"')).map((b) => JSON.parse(b).context)).toEqual(['1 قطعه', '2 درزن']);
+  });
+
+  it('row context stays inside maxChars on a long grid', async () => {
+    // The 41 control nodes fit in 3000 chars; their row contexts (~50 chars each) would not.
+    unitsTable(Array.from({ length: 20 }, (_, i) => `صنف رقم ${i} وصف طويل للصنف لاختبار حد الحجم`));
+    const res = await handleSnapshot({ tabId: 1, maxChars: 3000 });
+    expect(res.truncated).toBe(true);
+    expect(JSON.stringify(res.tree).length).toBeLessThan(3000);
   });
 });
 

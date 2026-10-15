@@ -6,7 +6,7 @@ export const snapshotTool: ToolDefinition = {
   name: 'browser_snapshot',
   summary: 'Get the accessibility tree with element refs',
   description:
-    'Get an accessibility tree snapshot of the page, including shadow DOM (web components), slotted content and same-origin iframes. Returns element refs you can use with click, type, and every other ref tool. Use compact mode (default) for smaller output - only interactive elements, landmarks and headings. Output is capped by maxChars (default 20000); scope big pages with selector or ref. source:"native" reads Chrome\'s own accessibility tree (exact roles, names and states as assistive technology computes them; uses the debugger, falls back to the DOM tree if it cannot attach); the default "dom" builds the tree from the page without the debugger.',
+    'Get an accessibility tree snapshot of the page, including shadow DOM (web components), slotted content and same-origin iframes. Returns element refs you can use with click, type, and every other ref tool. Use compact mode (default) for smaller output - only interactive elements, landmarks and headings; look-alike controls (same role+name, e.g. an Edit button per table row) carry their row text as context. Output is capped by maxChars (default 20000); scope big pages with selector or ref. source:"native" reads Chrome\'s own accessibility tree (exact roles, names and states as assistive technology computes them; uses the debugger, falls back to the DOM tree if it cannot attach); the default "dom" builds the tree from the page without the debugger.',
   inputSchema: z.object({
     tabId: requireTabId(),
     selector: z.string().optional().describe('CSS selector to scope the snapshot'),

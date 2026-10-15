@@ -213,6 +213,12 @@ function filterByPattern(entries, filter) {
   return entries.filter((e) => re.test(e.url));
 }
 
+/** Captures for one tab, narrowed by the URL regex and to the latest `limit` (list-captures and export-har). */
+function selectCaptures(tabId, filter, limit) {
+  const entries = filterByPattern(collectCaptures(tabId), filter);
+  return limit && Number.isInteger(limit) && limit > 0 ? entries.slice(-limit) : entries;
+}
+
 /** The running extension's version (manifest), reported as the HAR creator version. */
 function extensionVersion() {
   try {
@@ -304,21 +310,16 @@ export async function handleIntercept(params) {
     case "list-captures": {
       if (tabId == null) throw new Error("tabId required for list-captures");
       await resolveTab(tabId);
-      let entries = collectCaptures(tabId);
-      entries = filterByPattern(entries, filter);
-      if (limit && Number.isInteger(limit) && limit > 0)
-        entries = entries.slice(-limit);
       return {
         success: true,
         enforcement: currentEnforcement(),
-        captures: entries,
+        captures: selectCaptures(tabId, filter, limit),
       };
     }
     case "export-har": {
       if (tabId == null) throw new Error("tabId required for export-har");
       await resolveTab(tabId);
-      const entries = collectCaptures(tabId);
-      const har = buildHar(tabId, entries);
+      const har = buildHar(tabId, selectCaptures(tabId, filter, limit));
       return { success: true, entries: har.log.entries.length, har };
     }
     default:

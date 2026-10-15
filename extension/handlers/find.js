@@ -60,14 +60,24 @@ export async function handleFind(params) {
         const interactive = D.isInteractive(el);
         let score = 0;
         let covered = 0;
+        const missing = [];
         for (const w of content) {
           const inName = name.includes(w);
           const inAttr = attrs.includes(w);
           if (inName) score += new RegExp(`(^|[^\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}([^\\p{L}\\p{N}]|$)`, 'u').test(name) ? 6 : 4;
           else if (inAttr) score += 3;
           if (inName || inAttr) covered++;
+          else missing.push(w);
         }
         if (content.length && covered === 0) continue;
+        // "Edit carton": the name says Edit, the table row says which one. Only a
+        // control the name already matched may borrow words from its row.
+        let context = '';
+        if (missing.length && interactive) {
+          context = D.rowContextOf(el);
+          const ctx = context.toLowerCase();
+          for (const w of missing) if (ctx.includes(w)) { score += 3; covered++; }
+        }
         if (phrase && name === phrase) score += 12;
         else if (phrase && content.length > 1 && name.includes(phrase)) score += 6;
         if (roleHints.size) {
@@ -83,7 +93,7 @@ export async function handleFind(params) {
         if (coverage < 0.5) continue;
         score = Math.round(score * coverage * 10) / 10;
         if (score <= 0) continue;
-        cands.push({ el, r, name, score, interactive });
+        cands.push({ el, r, name, score, interactive, context });
       }
     }
     cands.sort((a, b) => b.score - a.score);
@@ -107,6 +117,7 @@ export async function handleFind(params) {
       const rect = D.centerOf(c.el).rect;
       matches.push({
         ref, role: c.r, name: D.nameOf(c.el).slice(0, 80), tag: c.el.tagName.toLowerCase(), score: c.score,
+        ...(c.context ? { context: c.context } : {}),
         bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
       });
     });

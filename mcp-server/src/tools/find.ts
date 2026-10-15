@@ -5,7 +5,7 @@ import { requireTabId, forwardHandler } from './types.js';
 export const findTool: ToolDefinition = {
   name: 'browser_find',
   summary: 'Find elements by natural language description',  description:
-    'Find elements on the page using natural language (e.g. "login button", "search input", "Open alert dialog"). Matches every word against accessible names, labels, placeholders and attributes, understands role words (button, link, input, checkbox, tab, menu...), looks inside shadow DOM and same-origin iframes, and prefers the control over its wrappers. Returns refs you can use with click/type/every ref tool.',
+    'Find elements on the page using natural language (e.g. "login button", "search input", "Open alert dialog"). Matches every word against accessible names, labels, placeholders and attributes, understands role words (button, link, input, checkbox, tab, menu...), looks inside shadow DOM and same-origin iframes, and prefers the control over its wrappers. A control inside a table row also matches words from that row ("edit carton" → the Edit button in the carton row), reported as context. Returns refs you can use with click/type/every ref tool.',
   inputSchema: z.object({
     tabId: requireTabId(),
     query: z.string().describe('Natural language description of what to find'),
