@@ -439,7 +439,7 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 
 | Tool | What it does |
 |------|-------------|
-| [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit` |
+| [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit`; `browser: true` adds Chrome-reported messages and DevTools Issues |
 | [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules); captures + HAR export. `mock`/`log` rules are ledger-only |
 | [`browser_network`](#browser_network) | Requests with status codes, durations and failures — per-tab; `urlPattern`, regex `filter`, `type`, `failed`, `limit`; `requestId` for one request's (redacted) headers |
 | [`browser_evaluate`](#browser_evaluate) | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
@@ -741,7 +741,8 @@ Routes all of this session's tool calls to one connected browser, by `browserId`
 What the page logged in a tab: `log`, `info`, `warn`, `error`, `debug` and uncaught errors. The buffer is per tab and holds 200 entries.
 
 - `tabId`, `pattern` (case-insensitive regex, e.g. `"error|fail"`), `level` (one level or a list), `limit` (1–200, the most recent N matches)
-- `clear` (default `false`): empty the tab's buffer after reading. Because it can mutate, the tool is never retried on timeout.
+- `browser` (default `false`): also return `browser.messages` — what Chrome itself reported for the page and the page's console never sees: failed resource loads (`Failed to load resource … 404`), deprecations, interventions, violations, security warnings — and `browser.issues`, the DevTools Issues (CORS, CSP, mixed content, cookies, form fields…) as `{ code, type, url, count }`. Both cover the current document from its load, read through the debugger (yellow banner); `pattern` / `level` / `limit` apply to them too.
+- `clear` (default `false`): empty the tab's buffer after reading (with `browser`, Chrome's log too). Because it can mutate, the tool is never retried on timeout.
 
 #### `browser_network`
 
@@ -819,8 +820,8 @@ Each tool declares its transport timeout next to its definition (`mcp-server/src
 
 | Timeout | Tools |
 |---------|-------|
-| 5 s | `browser_press_key`, `browser_hover`, `browser_console`, `browser_network`, `browser_handle_dialog`, `browser_list_browsers`, `browser_select_browser` |
-| 10 s | `browser_click`, `browser_click_text`, `browser_scroll`, `browser_select`, `browser_drag`, `browser_observe`, `browser_intercept`, `browser_resize_window` |
+| 5 s | `browser_press_key`, `browser_hover`, `browser_network`, `browser_handle_dialog`, `browser_list_browsers`, `browser_select_browser` |
+| 10 s | `browser_click`, `browser_click_text`, `browser_scroll`, `browser_select`, `browser_drag`, `browser_observe`, `browser_intercept`, `browser_resize_window`, `browser_console` |
 | 15 s | `browser_type`, `browser_fill_form`, `browser_upload_file`, `browser_act`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find` |
 | 30 s | `browser_run_action` |
 | 35 s | `browser_tabs` (a reload waits up to 30 s for the new document) |

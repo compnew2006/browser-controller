@@ -17,7 +17,8 @@ import {
 import { showLockShield, hideLockShield, setAgentCursorHidden, agentCursorEnabled } from "../lib/overlay.js";
 import { broadcastStatus } from "../lib/connection.js";
 import { lockTabUi, releaseTabUi } from "../lib/lock-ops.js";
-import { withCdp, ensureViewport } from '../lib/cdp-session.js';
+import { withCdp, ensureViewport, subscribeCdpEvents } from '../lib/cdp-session.js';
+import { collectBrowserLog } from '../lib/browser-log.js';
 import { listView, typeMatcher } from '../lib/network-capture.js';
 
 const CDP_CAPTURE_TIMEOUT_MS = 4000;
@@ -219,25 +220,37 @@ async function captureScreenshot(params) {
 }
 
 export async function handleConsole(params) {
-  const { tabId, clear = false, pattern, level, limit } = params;
+  const { tabId, clear = false, pattern, level, limit, browser = false } = params;
   // Validate the tab (audit finding, seen live): a wrong tabId used to return
   // an empty success instead of an actionable error.
   await resolveTab(tabId);
-  const buf = getTabBuffer(consoleByTab, tabId);
-  let msgs = [...buf];
-  const total = msgs.length;
-  if (level) {
-    const want = new Set((Array.isArray(level) ? level : [level]).map((l) => String(l).toLowerCase()));
-    msgs = msgs.filter((m) => want.has(String(m.level).toLowerCase()));
-  }
+  let re = null;
   if (pattern) {
-    let re;
     try { re = new RegExp(pattern, 'i'); } catch (err) { throw new Error(`Invalid pattern regex: ${err?.message || err}`, { cause: err }); }
-    msgs = msgs.filter((m) => re.test(m.text));
   }
-  if (Number.isInteger(limit) && limit > 0 && msgs.length > limit) msgs = msgs.slice(-limit);
+  const want = level ? new Set((Array.isArray(level) ? level : [level]).map((l) => String(l).toLowerCase())) : null;
+  const pick = (list) => {
+    let out = list;
+    if (want) out = out.filter((m) => want.has(String(m.level).toLowerCase()));
+    if (re) out = out.filter((m) => re.test(m.text));
+    if (Number.isInteger(limit) && limit > 0 && out.length > limit) out = out.slice(-limit);
+    return out;
+  };
+  const buf = getTabBuffer(consoleByTab, tabId);
+  const msgs = pick([...buf]);
+  const total = buf.length;
+  // browser:true — what Chrome itself reported (failed loads, deprecations,
+  // violations…) and DevTools Issues. Needs the debugger, so only on request.
+  let chromeLog = null;
+  if (browser) {
+    const read = await withCdp(tabId, (send) => collectBrowserLog(send, (fn) => subscribeCdpEvents(tabId, fn), { clear }));
+    chromeLog = {
+      messages: pick(read.messages),
+      issues: re ? read.issues.filter((i) => re.test(`${i.code} ${i.type || ''} ${i.url || ''}`)) : read.issues,
+    };
+  }
   if (clear) consoleByTab.set(tabId, []);
-  return { success: true, messages: msgs, ...(msgs.length !== total ? { total } : {}) };
+  return { success: true, messages: msgs, ...(msgs.length !== total ? { total } : {}), ...(chromeLog ? { browser: chromeLog } : {}) };
 }
 
 export async function handleNetwork(params) {
