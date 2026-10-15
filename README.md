@@ -345,7 +345,7 @@ A fixed-height tabbed shell (the body never scrolls, only the lists do):
 
 ## 🧠 Teach Your Agent
 
-The agent can use all 31 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
+The agent can use all 32 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
 
 ```bash
 npm run setup:cursor   # or: node mcp-server/dist/index.js --setup cursor
@@ -375,7 +375,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-31 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
+32 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
 
 **See**
 
@@ -433,6 +433,7 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 | [`browser_navigate`](#browser_navigate) | Go to a URL in a tab (`tabId` optional, defaults to active); replaces a frozen tab |
 | [`browser_tabs`](#browser_tabs) | List / create (`active:false` for background) / close / focus / reload / **lock** / **unlock** tabs |
 | [`browser_resize_window`](#browser_resize_window) | Resize or maximize the window holding a tab (responsive testing) |
+| [`browser_emulate`](#browser_emulate) | Offline / slow 3G, CPU throttling, geolocation, dark mode, reduced motion or another user agent for one tab |
 | [`browser_list_browsers`](#browser_list_browsers) / [`browser_select_browser`](#browser_select_browser) | See the connected browsers (profiles) and route this session to one |
 
 **Debug & Advanced**
@@ -727,6 +728,21 @@ browser_resize_window { tabId: 15, width: 390, height: 844 }
 - Sizes apply to a normal window, so giving `width` / `height` restores a maximized window first. With a non-normal `state`, `width` and `height` are ignored.
 - `viewport` is the page's `innerWidth` × `innerHeight` after the resize (left out on protected pages).
 
+#### `browser_emulate`
+
+Puts one tab in other conditions through its debugger session — offline or on slow 3G, a slower CPU, another location, dark mode, reduced motion, another user agent — to see how the page copes.
+
+```
+browser_emulate { tabId: 15, network: "slow-3g", cpuThrottling: 4, colorScheme: "dark" }
+→ { success: true, active: { network: "slow-3g", cpuThrottling: 4, colorScheme: "dark" }, note: "…" }
+```
+
+- `network`: `"offline"`, `"slow-3g"`, `"fast-3g"` (Chrome DevTools' presets) or `"none"`; `cpuThrottling` (1–20, `1` = off)
+- `geolocation` `{ latitude, longitude, accuracy }` (`null` clears) — the page still needs location permission
+- `colorScheme` (`"light"` | `"dark"` | `"none"`), `reducedMotion` (`"reduce"` | `"none"`), `userAgent` (`""` clears)
+- Settings merge with what is already active, and the result lists everything that is (`active`); with no setting the call only reports it.
+- Overrides last while the debugger session stays attached — it is kept attached instead of being dropped after 30 s idle, so the yellow banner stays. `reset: true` clears everything (detaches the session); closing the banner clears it too.
+
 #### `browser_list_browsers`
 
 Lists every browser (Chrome profile or instance with the extension) connected to the daemon: `browserId`, `label`, `connectedAt`, a `default` flag on the most recently connected one, and `selected` on the one this session uses. With a single browser connected you never need it. Answered by the daemon itself; read-only, so it is retried.
@@ -822,7 +838,7 @@ Each tool declares its transport timeout next to its definition (`mcp-server/src
 | Timeout | Tools |
 |---------|-------|
 | 5 s | `browser_press_key`, `browser_hover`, `browser_network`, `browser_handle_dialog`, `browser_list_browsers`, `browser_select_browser` |
-| 10 s | `browser_click`, `browser_click_text`, `browser_scroll`, `browser_select`, `browser_drag`, `browser_observe`, `browser_intercept`, `browser_resize_window`, `browser_console` |
+| 10 s | `browser_click`, `browser_click_text`, `browser_scroll`, `browser_select`, `browser_drag`, `browser_observe`, `browser_intercept`, `browser_resize_window`, `browser_console`, `browser_emulate` |
 | 15 s | `browser_type`, `browser_fill_form`, `browser_upload_file`, `browser_act`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find` |
 | 30 s | `browser_run_action` |
 | 35 s | `browser_tabs` (a reload waits up to 30 s for the new document) |

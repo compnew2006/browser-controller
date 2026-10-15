@@ -14,6 +14,7 @@ import { handleWait, handleScroll, handleSnapshot, handleFind, handleGetPageText
 import { handleTabs, handleConsole, handleNetwork, handleScreenshot, handleResizeWindow } from '../handlers/tabs.js';
 import { handleRunAction, handleUploadFile } from '../handlers/cdp.js';
 import { handleIntercept } from '../handlers/intercept.js';
+import { handleEmulate } from '../handlers/emulate.js';
 import { handleObserve, handleAct } from '../handlers/agent-api.js';
 import { handleGif, isRecording, recordFrame, GIF_FRAME_TOOLS, currentTabId } from '../handlers/gif.js';
 
@@ -65,6 +66,7 @@ const HANDLERS = {
   browser_observe: handleObserve,
   browser_act: handleAct,
   browser_resize_window: handleResizeWindow,
+  browser_emulate: handleEmulate,
   browser_gif: handleGif,
 };
 

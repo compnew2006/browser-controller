@@ -32,7 +32,21 @@ function armIdle(tabId) {
   if (!s) return;
   clearTimeout(s.timer);
   if (s.busy > 0) return; // a long withCdp() call is still using the session
+  if (s.emulation && Object.keys(s.emulation).length) return; // detaching would drop the overrides
   s.timer = setTimeout(() => { detachCdp(tabId); }, IDLE_MS);
+}
+
+/** Overrides browser_emulate set on the tab's live session ({} when none or detached). */
+export function getCdpEmulation(tabId) {
+  return { ...(sessions.get(tabId)?.emulation || {}) };
+}
+
+/** Record the active overrides; while any are set the session is not idle-detached. */
+export function setCdpEmulation(tabId, state) {
+  const s = sessions.get(tabId);
+  if (!s) return;
+  s.emulation = { ...state };
+  armIdle(tabId);
 }
 
 async function attach(tabId) {

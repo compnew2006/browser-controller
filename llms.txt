@@ -17,10 +17,10 @@ Every page tool takes a tabId from browser_tabs list (optional only on browser_n
 Reading: browser_observe (compact semantic observation whose snapshotId/refs feed browser_act), browser_snapshot (compact mode default - interactive elements only; source:"native" returns Chrome's own accessibility tree), browser_screenshot, browser_text (cheapest read), browser_find (find elements by natural-language description)
 Interaction: browser_act (safe action on a browser_observe snapshot - rejects stale, hidden or covered targets), browser_click, browser_click_text, browser_type, browser_press_key, browser_scroll, browser_hover, browser_select, browser_wait, browser_fill_form, browser_drag, browser_upload_file
 Chain, replay & record: browser_batch (several tool calls in one round-trip, stops at the first error), browser_shortcuts (save a flow with {{variables}}, replay it in one call), browser_gif (record the agent's actions in a tab as an animated GIF, clicks marked with a red ring; export writes the .gif and returns its path)
-Navigation: browser_navigate, browser_tabs (list/create/close/focus/reload/lock/unlock), browser_resize_window, browser_list_browsers, browser_select_browser (several connected Chrome profiles)
+Navigation: browser_navigate, browser_tabs (list/create/close/focus/reload/lock/unlock), browser_resize_window, browser_emulate (offline/slow-3g network, CPU throttling, geolocation, dark mode, user agent), browser_list_browsers, browser_select_browser (several connected Chrome profiles)
 JavaScript: browser_evaluate (DevTools-console style JS over CDP: top-level await, last expression returned), browser_run_action (self-contained JS action object via CDP)
 Dialogs: browser_handle_dialog (handle alert/confirm/prompt, even on a frozen page)
-Debugging: browser_console, browser_network, browser_intercept (block/redirect/add request headers per tab, capture ledger, HAR export)
+Debugging: browser_console (browser:true adds Chrome-reported messages and DevTools Issues), browser_network (type filter, requestId for redacted headers), browser_intercept (block/redirect/add request headers per tab, capture ledger, HAR export)
 Discovery: browser_tools (meta tool - list/search/activate tools; with BROWSER_CONTROLLER_PROGRESSIVE=1 only this tool is visible upfront: initial tool-definition tokens drop ~96%, ~75-80% net for a typical task activating 3-5 tools)
 
 Full per-tool reference (parameters, behavior, timeouts): the "Tool reference" section of README.md.

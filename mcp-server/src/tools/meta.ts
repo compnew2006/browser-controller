@@ -100,6 +100,8 @@ const TOOL_GUIDANCE: Record<string, string> = {
     'Use to show the user what you did: start before a flow, export after — writes an animated .gif (clicks marked) and returns its path.',
   browser_resize_window:
     'Use to test responsive layouts or maximize/restore the window holding a tab. Resizes the user\'s window — prefer a separate window for experiments.',
+  browser_emulate:
+    'Use to test a page offline / on slow 3G, with a slow CPU, at a given location, in dark mode, with reduced motion or another user agent. Overrides stay until reset:true.',
   browser_select:
     'Use to pick an option in a native <select> dropdown.',
   browser_press_key:

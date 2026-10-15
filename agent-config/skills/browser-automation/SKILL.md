@@ -123,6 +123,7 @@ Block, redirect or add request headers for one tab with `action: "set-rules"` (r
 ## Windows and Browsers
 
 - `browser_resize_window { tabId, width: 390, height: 844 }` for responsive checks — it resizes the user's window, so prefer a separate one; `state` (`"normal"`, `"maximized"`, `"minimized"`, `"fullscreen"`) switches the window state
+- `browser_emulate { tabId, network: "slow-3g", colorScheme: "dark" }` tests the page offline / throttled / in dark mode / elsewhere; overrides stay until `reset: true`
 - Several Chrome profiles connected? `browser_list_browsers`, then `browser_select_browser { browserId }`. Tab ids belong to their browser — list tabs again after switching
 
 ## Dynamic Content (SPAs, social media)
@@ -134,8 +135,8 @@ Block, redirect or add request headers for one tab with `action: "set-rules"` (r
 
 ## Debugging (per-tab)
 
-- `browser_console { tabId, pattern: "error|fail" }` reads console output for that tab (filter with `pattern`, `level`, `limit`)
-- `browser_network { tabId, failed: true }` shows requests for that tab (`urlPattern`, `filter`, `failed`, `limit`)
+- `browser_console { tabId, pattern: "error|fail" }` reads console output for that tab (filter with `pattern`, `level`, `limit`); `browser: true` adds what Chrome reported (failed loads, deprecations) and DevTools Issues
+- `browser_network { tabId, failed: true }` shows requests for that tab (`urlPattern`, `filter`, `type`, `failed`, `limit`); `requestId` returns one request with its (redacted) headers
 - `browser_screenshot { tabId, maxWidth: 1024, format: "jpeg" }` captures the tab over CDP (a background tab is shown for a moment); `maxWidth` and JPEG keep the image small
 
 ## Common Mistakes

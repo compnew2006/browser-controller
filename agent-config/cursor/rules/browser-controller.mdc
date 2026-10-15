@@ -52,6 +52,7 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 - `browser_navigate` - Go to a URL (or `"back"` / `"forward"`); returns an inline snapshot unless `snapshot: false`. Params: `url`, `tabId` (optional, defaults to active — pass it anyway), `waitUntil`, `snapshot`
 - `browser_tabs` - Params: `action` (list|create|close|focus|reload|lock|unlock), `tabId`, `url`, `active` (create: `false` = background), `window`, `bypassCache`, `fullUrls`
 - `browser_resize_window` - Resize/maximize the window holding a tab (responsive checks; it resizes the user's window). Params: `tabId`, `width`, `height`, `state`
+- `browser_emulate` - Offline / slow-3g / fast-3g network, CPU throttling, geolocation, colorScheme, reducedMotion, userAgent for one tab (kept until `reset: true`). Params: `tabId`, `network`, `cpuThrottling`, `geolocation`, `colorScheme`, `reducedMotion`, `userAgent`, `reset`
 - `browser_list_browsers` / `browser_select_browser` - Only when several Chrome profiles are connected. Params: `browserId` (select; `"auto"` = default). List tabs again after switching.
 
 ### Interaction (all require `tabId`)
@@ -71,7 +72,7 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 - `browser_text` - Visible text, the cheapest read. Params: `tabId`, `selector`, `maxLength`, `mode` (`"article"` = main content), `offset`
 - `browser_snapshot` - Accessibility tree with refs. Params: `tabId`, `selector`, `ref`, `compact`, `filter`, `depth`, `maxChars`, `source` (`"dom"` default | `"native"` = Chrome's own computed tree via the debugger)
 - `browser_find` - Find elements by natural language. Params: `tabId`, `query`, `limit`, `role`
-- `browser_screenshot` - Image over CDP; the result maps image pixels to click `x`/`y`. Params: `tabId`, `format`, `quality`, `maxWidth`, `scale`, `region`, `fullPage`
+- `browser_screenshot` - Image over CDP; the result maps image pixels to click `x`/`y`. Params: `tabId`, `format`, `quality`, `maxWidth`, `scale`, `region`, `fullPage`, `ref` / `selector` (one element)
 - `browser_observe` - Compact actionable state + `snapshotId` for `browser_act`. Params: `tabId`, `maxElements`
 
 ### Chain, Replay & Record
@@ -88,8 +89,8 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 - `browser_wait` - Wait for an element, text, a URL change or a delay. Params: `tabId`, `selector`, `state`, `text`, `urlIncludes`, `timeout`, `delay`
 
 ### Debug (per-tab buffers, capped at 200 entries)
-- `browser_console` - Console messages for a tab. Params: `tabId`, `pattern`, `level`, `limit`, `clear`
-- `browser_network` - Network requests for a tab. Params: `tabId`, `urlPattern`, `filter`, `failed`, `limit`, `clear`
+- `browser_console` - Console messages for a tab. Params: `tabId`, `pattern`, `level`, `limit`, `clear`, `browser` (Chrome-reported messages + DevTools Issues)
+- `browser_network` - Network requests for a tab. Params: `tabId`, `urlPattern`, `filter`, `type`, `failed`, `limit`, `clear`, `fullUrls`, `requestId` (one request with redacted headers)
 - `browser_intercept` - Block / redirect / add request headers per tab, captures, HAR export. Params: `action` (set-rules|list-rules|clear-rules|list-captures|export-har), `tabId`, `rules`, `filter`, `limit`. Check `enforcement` in the result: `capture-only` = rules are not applied.
 
 ## Safe observe → act
