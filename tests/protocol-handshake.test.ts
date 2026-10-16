@@ -115,14 +115,20 @@ describe('ExtensionBridge protocol handshake', () => {
     return bridge;
   }
 
-  async function connectWs(port: number): Promise<WebSocket> {
+  // The bridge sends hello as soon as the socket opens. When that frame arrives in the
+  // same chunk as the upgrade response, ws emits it before an `await` on 'open' resumes,
+  // so the first message is captured from the start instead of after connecting.
+  async function connectWs(port: number): Promise<{ client: WebSocket; hello: Promise<any> }> {
     const client = new WebSocket(`ws://localhost:${port}`);
     clients.push(client);
+    const hello = new Promise<any>((resolve) => {
+      client.once('message', (data) => resolve(JSON.parse(data.toString())));
+    });
     await new Promise<void>((resolve, reject) => {
       client.once('open', resolve);
       client.once('error', reject);
     });
-    return client;
+    return { client, hello };
   }
 
   it('sends extension hello immediately after the socket opens and accepts helloAck', async () => {
@@ -130,10 +136,8 @@ describe('ExtensionBridge protocol handshake', () => {
     const bridge = createBridge(port);
     await bridge.start();
 
-    const client = await connectWs(port);
-    const hello = await new Promise<any>((resolve) => {
-      client.once('message', (data) => resolve(JSON.parse(data.toString())));
-    });
+    const { client, hello: firstMessage } = await connectWs(port);
+    const hello = await firstMessage;
 
     expect(hello).toMatchObject({
       type: 'hello',
@@ -158,8 +162,8 @@ describe('ExtensionBridge protocol handshake', () => {
     const bridge = createBridge(port, { defaultTimeoutMs: 80 });
     await bridge.start();
 
-    const client = await connectWs(port);
-    await new Promise<void>((resolve) => client.once('message', () => resolve()));
+    const { client, hello } = await connectWs(port);
+    await hello;
     client.send(JSON.stringify({ type: 'helloAck', protocolVersion: PROTOCOL_VERSION + 1, capabilities: [] }));
 
     await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(/unsupported protocol/i);
@@ -170,7 +174,7 @@ describe('ExtensionBridge protocol handshake', () => {
     const bridge = createBridge(port);
     await bridge.start();
 
-    const client = await connectWs(port);
+    const { client } = await connectWs(port);
     client.on('message', (data) => {
       const msg = JSON.parse(data.toString());
       if (msg.tool) {
