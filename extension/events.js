@@ -17,6 +17,7 @@ import {
 } from "./lib/state.js";
 import { showLockShield, hideLockShield } from "./lib/overlay.js";
 import { enrichCapture } from "./handlers/intercept.js";
+import { createNetworkCapture } from "./lib/network-capture.js";
 import { lockTabUi, releaseTabUi } from "./lib/lock-ops.js";
 import {
   getOpenTabs,
@@ -114,42 +115,25 @@ export function registerEventListeners() {
     return false; // unrecognized message — no async response promised
   });
 
-  chrome.webRequest.onCompleted.addListener(
-    (details) => {
-      if (details.tabId == null || details.tabId < 0) return; // not a real tab
-      const buf = getTabBuffer(networkByTab, details.tabId);
-      const entry = {
-        method: details.method,
-        url: details.url,
-        status: details.statusCode,
-        type: details.type,
-        timestamp: details.timeStamp,
-      };
-      pushCapped(buf, entry);
-      // Intercept ledger enrichment (best-effort; never breaks capture).
-      try {
-        enrichCapture(details.tabId, entry);
-      } catch {}
+  // Network capture: id, duration and redacted headers per request
+  // (lib/network-capture.js). Requests that never completed (DNS failure,
+  // blocked, aborted, CORS…) arrive through onErrorOccurred.
+  const capture = createNetworkCapture({
+    store: (tabId, entry) => {
+      pushCapped(getTabBuffer(networkByTab, tabId), entry);
+      // Intercept ledger enrichment for completed requests (best-effort; never breaks capture).
+      if (!entry.error) {
+        try {
+          enrichCapture(tabId, entry);
+        } catch {}
+      }
     },
-    { urls: ["<all_urls>"] },
-  );
-
-  // Requests that never completed (DNS failure, blocked, aborted, CORS…):
-  // onCompleted never fires for them, so without this they were invisible.
-  chrome.webRequest.onErrorOccurred.addListener(
-    (details) => {
-      if (details.tabId == null || details.tabId < 0) return;
-      const buf = getTabBuffer(networkByTab, details.tabId);
-      pushCapped(buf, {
-        method: details.method,
-        url: details.url,
-        error: details.error,
-        type: details.type,
-        timestamp: details.timeStamp,
-      });
-    },
-    { urls: ['<all_urls>'] },
-  );
+  });
+  const allUrls = { urls: ["<all_urls>"] };
+  chrome.webRequest.onBeforeRequest.addListener(capture.onBeforeRequest, allUrls);
+  chrome.webRequest.onSendHeaders.addListener(capture.onSendHeaders, allUrls, ["requestHeaders"]);
+  chrome.webRequest.onCompleted.addListener(capture.onCompleted, allUrls, ["responseHeaders"]);
+  chrome.webRequest.onErrorOccurred.addListener(capture.onErrorOccurred, allUrls);
 
   // A tab closing should release its lock and drop its buffers.
   // NOTE: no hideLockShield here — the tab/page is already gone, so a shield

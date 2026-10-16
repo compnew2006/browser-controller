@@ -15,7 +15,7 @@
  * ambiguous is reported as gone instead of guessed.
  */
 
-export const PAGE_DOM_VERSION = 2;
+export const PAGE_DOM_VERSION = 4;
 
 export function PAGE_DOM_INSTALL(version) {
   if (globalThis.__bcDom && globalThis.__bcDom.v === version) return false;
@@ -151,6 +151,12 @@ export function PAGE_DOM_INSTALL(version) {
     return map[tag] || 'generic';
   }
 
+  // Block and table-cell boundaries are word boundaries ("1</td><td>قطعه" → "1 قطعه");
+  // inline markup is not ("Lo<b>g</b>in" stays "Login"). Tag-based: no style reads.
+  const SEPARATED_TAGS = new Set(['TD', 'TH', 'TR', 'LI', 'DIV', 'P', 'BR', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'DT', 'DD',
+    'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'CAPTION', 'UL', 'OL', 'DL', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'NAV',
+    'ASIDE', 'MAIN', 'FIGCAPTION', 'BLOCKQUOTE', 'PRE', 'OPTION', 'FIELDSET', 'LEGEND', 'FORM']);
+
   /** Composed text (includes shadow content) — innerText misses shadow roots. */
   function composedText(el, max = 300) {
     let out = '';
@@ -163,7 +169,10 @@ export function PAGE_DOM_INSTALL(version) {
       }
       if (n.nodeType !== 1 && n.nodeType !== 11) return;
       if (n.nodeType === 1 && (n.tagName === 'SCRIPT' || n.tagName === 'STYLE')) return;
+      const sep = n.nodeType === 1 && SEPARATED_TAGS.has(n.tagName) ? ' ' : '';
+      out += sep;
       for (const c of flatChildren(n)) walk(c);
+      out += sep;
     };
     walk(el);
     return clean(out, max);
@@ -343,6 +352,36 @@ export function PAGE_DOM_INSTALL(version) {
       cur = cur.parentElement || (root && root.host) || frameEl || null;
     }
     return false;
+  }
+
+  /**
+   * Text of the table/grid row holding `el` (a TR or role="row" ancestor,
+   * across shadow roots), minus the cell(s) that contain `el` itself: tells
+   * apart look-alike controls such as one icon-only "Edit" button per row.
+   * '' when `el` is not inside a row.
+   */
+  function rowContextOf(el, max = 80) {
+    const up = (n) => {
+      if (n.parentElement) return n.parentElement;
+      let root = null;
+      try { root = n.getRootNode(); } catch {}
+      return root && root.host ? root.host : null;
+    };
+    let row = up(el);
+    while (row && row.tagName !== 'TR' && roleOf(row) !== 'row') {
+      if (row.tagName === 'TABLE' || row.tagName === 'BODY') return '';
+      row = up(row);
+    }
+    if (!row) return '';
+    const parts = [];
+    for (const cell of flatChildren(row)) {
+      if (cell.nodeType !== 1 || composedContains(cell, el)) continue;
+      const st = styleOf(cell);
+      if (st && (st.display === 'none' || st.visibility === 'hidden')) continue; // a hidden column is not what the user reads
+      const t = composedText(cell, max);
+      if (t) parts.push(t);
+    }
+    return clean(parts.join(' '), max);
   }
 
   function describe(el) {
@@ -538,7 +577,7 @@ export function PAGE_DOM_INSTALL(version) {
     v: version,
     clean, attr, shadowOf, frameDoc, allRoots, queryAll, isVisible, flatChildren, hasShadowHosts,
     roleOf, nameOf, composedText, isInteractive, preciseMatch, resolve, centerOf, elementAt,
-    composedContains, describe, registry, flatText, articleRoot, pageText, styleOf, connected, cursor,
+    composedContains, rowContextOf, describe, registry, flatText, articleRoot, pageText, styleOf, connected, cursor,
   });
   return true;
 }

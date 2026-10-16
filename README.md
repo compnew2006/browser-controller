@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.5.5-blue?style=flat-square" alt="v2.5.5" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.6.0-blue?style=flat-square" alt="v2.6.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -412,7 +412,7 @@ A fixed-height tabbed shell (the body never scrolls, only the lists do):
 
 ## 🧠 Teach Your Agent
 
-The agent can use all 33 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
+The agent can use all 34 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
 
 ```bash
 npm run setup:cursor   # or: node mcp-server/dist/index.js --setup cursor
@@ -442,7 +442,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-33 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
+34 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
 
 **See**
 
@@ -500,15 +500,16 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 | [`browser_navigate`](#browser_navigate) | Go to a URL in a tab (`tabId` optional, defaults to active); replaces a frozen tab |
 | [`browser_tabs`](#browser_tabs) | List / create (`active:false` for background) / close / focus / reload / **lock** / **unlock** tabs |
 | [`browser_resize_window`](#browser_resize_window) | Resize or maximize the window holding a tab (responsive testing) |
+| [`browser_emulate`](#browser_emulate) | Offline / slow 3G, CPU throttling, geolocation, dark mode, reduced motion or another user agent for one tab |
 | [`browser_list_browsers`](#browser_list_browsers) / [`browser_select_browser`](#browser_select_browser) | See the connected browsers (profiles) and route this session to one |
 
 **Debug & Advanced**
 
 | Tool | What it does |
 |------|-------------|
-| [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit` |
+| [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit`; `browser: true` adds Chrome-reported messages and DevTools Issues |
 | [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules); captures + HAR export. `mock`/`log` rules are ledger-only |
-| [`browser_network`](#browser_network) | Requests with status codes and failures — per-tab; `urlPattern`, regex `filter`, `failed`, `limit` |
+| [`browser_network`](#browser_network) | Requests with status codes, durations and failures — per-tab; `urlPattern`, regex `filter`, `type`, `failed`, `limit`; `requestId` for one request's (redacted) headers |
 | [`browser_evaluate`](#browser_evaluate) | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
 | [`browser_handle_dialog`](#browser_handle_dialog) | Dismiss/accept an open alert/confirm/prompt via CDP (works on frozen pages) |
 | [`browser_run_action`](#browser_run_action) | Run a self-contained JS action object via CDP |
@@ -544,7 +545,7 @@ The tables in [What It Can Do](#what-it-can-do) are the index. This section expl
 
 #### `browser_observe`
 
-One atomic, compact reading of a tab for the [safe Observe → Act loop](#safe-observe--act-workflow): a `snapshotId`, a `documentVersion`, and `elements` — each with a `ref`, `role`, `name`, `bbox` (`[x, y, width, height]`) and the `allowedActions` valid for it right now. Its refs belong to that snapshot and are accepted by [`browser_act`](#browser_act).
+One atomic, compact reading of a tab for the [safe Observe → Act loop](#safe-observe--act-workflow): a `snapshotId`, a `documentVersion`, and `elements` — each with a `ref`, `role`, `name`, `bbox` (`[x, y, width, height]`) and the `allowedActions` valid for it right now. Look-alike controls (same role and name, such as an icon-only Edit button in every table row) also carry `context`: the text of their row. Its refs belong to that snapshot and are accepted by [`browser_act`](#browser_act).
 
 - `tabId`, `mode` (`"compact"`, the only mode today), `maxElements` (1–1000, default 500)
 - Read-only: a call that times out is retried.
@@ -555,7 +556,7 @@ The accessibility tree of a tab, with a `ref` (`e12`) on every element that the 
 
 - `tabId`
 - Scope: `selector` (a CSS subtree), `ref` (the subtree of an earlier ref), `depth` (max nesting, `0` = top level only)
-- Size: `compact` (default `true`: only interactive elements, landmarks and headings), `filter` (`"interactive"` | `"all"`, an alias that wins over `compact`), `maxChars` (500–200000, default 20000; the result says `truncated: true` when it was cut)
+- Size: `compact` (default `true`: only interactive elements, landmarks and headings; look-alike controls — same role and name — carry their table row's text as `context`), `filter` (`"interactive"` | `"all"`, an alias that wins over `compact`), `maxChars` (500–200000, default 20000; the result says `truncated: true` when it was cut)
 - `source`: `"dom"` (default, no debugger) or `"native"` — Chrome's own accessibility tree; see [Native accessibility tree](#native-accessibility-tree)
 - Read-only: retried on timeout.
 
@@ -566,6 +567,7 @@ An image of the tab, captured over CDP. The result also carries a small JSON blo
 - `tabId`, `format` (`"png"` default | `"jpeg"`), `quality` (0–100, default 80, JPEG only)
 - Cut image tokens: `maxWidth` (100–4000, keeps the aspect ratio), `scale` (0.05–4), or `format: "jpeg"`
 - `fullPage` (default `false`) captures the whole scrollable page; `region` `{ x, y, width, height }` zooms into a viewport rectangle (`scale` up to 4, default 2 there)
+- `ref` or `selector`: just that element, scrolled into view, with a 4 px margin (`scale` defaults to 1). The result says `element.clipped: true` when the element is bigger than the viewport; an element that is gone or has no box is an error, never a full-viewport picture.
 - A background tab is shown for a moment and the tab you were on is switched straight back, because Chrome does not paint hidden tabs. The agent's blue control frame and the agent cursor are never in the picture.
 - Read-only: retried on timeout.
 
@@ -580,7 +582,7 @@ The visible text of the page or of an element, including shadow DOM. The cheapes
 
 #### `browser_find`
 
-Locates elements from a natural-language description (`"login button"`, `"search input"`, `"Open alert dialog"`) without taking a full snapshot. It matches every word against accessible names, labels, placeholders and attributes, understands role words (button, link, input, checkbox, tab, menu…), looks inside shadow DOM and same-origin iframes, and prefers the control over its wrappers. Returns refs for every ref tool.
+Locates elements from a natural-language description (`"login button"`, `"search input"`, `"Open alert dialog"`) without taking a full snapshot. It matches every word against accessible names, labels, placeholders and attributes, understands role words (button, link, input, checkbox, tab, menu…), looks inside shadow DOM and same-origin iframes, and prefers the control over its wrappers. A control inside a table row also matches words from that row, so `"edit carton"` ranks the Edit button of the carton row first; such matches report the row as `context`. Returns refs for every ref tool.
 
 - `tabId`, `query`, `limit` (default 10), `role` (only elements with this ARIA role)
 - Read-only: retried on timeout.
@@ -800,6 +802,21 @@ browser_resize_window { tabId: 15, width: 390, height: 844 }
 - Sizes apply to a normal window, so giving `width` / `height` restores a maximized window first. With a non-normal `state`, `width` and `height` are ignored.
 - `viewport` is the page's `innerWidth` × `innerHeight` after the resize (left out on protected pages).
 
+#### `browser_emulate`
+
+Puts one tab in other conditions through its debugger session — offline or on slow 3G, a slower CPU, another location, dark mode, reduced motion, another user agent — to see how the page copes.
+
+```
+browser_emulate { tabId: 15, network: "slow-3g", cpuThrottling: 4, colorScheme: "dark" }
+→ { success: true, active: { network: "slow-3g", cpuThrottling: 4, colorScheme: "dark" }, note: "…" }
+```
+
+- `network`: `"offline"`, `"slow-3g"`, `"fast-3g"` (Chrome DevTools' presets) or `"none"`; `cpuThrottling` (1–20, `1` = off)
+- `geolocation` `{ latitude, longitude, accuracy }` (`null` clears) — the page still needs location permission
+- `colorScheme` (`"light"` | `"dark"` | `"none"`), `reducedMotion` (`"reduce"` | `"none"`), `userAgent` (`""` clears)
+- Settings merge with what is already active, and the result lists everything that is (`active`); with no setting the call only reports it.
+- Overrides last while the debugger session stays attached — it is kept attached instead of being dropped after 30 s idle, so the yellow banner stays. `reset: true` clears everything (detaches the session); closing the banner clears it too.
+
 #### `browser_list_browsers`
 
 Lists every browser (Chrome profile or instance with the extension) connected to the daemon: `browserId`, `label`, `connectedAt`, a `default` flag on the most recently connected one, and `selected` on the one this session uses. With a single browser connected you never need it. Answered by the daemon itself; read-only, so it is retried.
@@ -815,13 +832,15 @@ Routes all of this session's tool calls to one connected browser, by `browserId`
 What the page logged in a tab: `log`, `info`, `warn`, `error`, `debug` and uncaught errors. The buffer is per tab and holds 200 entries.
 
 - `tabId`, `pattern` (case-insensitive regex, e.g. `"error|fail"`), `level` (one level or a list), `limit` (1–200, the most recent N matches)
-- `clear` (default `false`): empty the tab's buffer after reading. Because it can mutate, the tool is never retried on timeout.
+- `browser` (default `false`): also return `browser.messages` — what Chrome itself reported for the page and the page's console never sees: failed resource loads (`Failed to load resource … 404`), deprecations, interventions, violations, security warnings — and `browser.issues`, the DevTools Issues (CORS, CSP, mixed content, cookies, form fields…) as `{ code, type, url, count }`. Both cover the current document from its load, read through the debugger (yellow banner); `pattern` / `level` / `limit` apply to them too.
+- `clear` (default `false`): empty the tab's buffer after reading (with `browser`, Chrome's log too). Because it can mutate, the tool is never retried on timeout.
 
 #### `browser_network`
 
-The requests a tab made: method, URL, status and type; failed ones carry the error. Per tab, capped at 200 entries.
+The requests a tab made: `id`, method, URL, status, type and `durationMs`; failed ones carry the error. Per tab, capped at 200 entries. URLs longer than 200 characters are shortened in the list (`…[+N chars]`).
 
-- `tabId`, `urlPattern` (substring, e.g. `"/api/"`), `filter` (URL regex), `failed` (only network errors and HTTP 4xx/5xx), `limit` (1–200)
+- `tabId`, `urlPattern` (substring, e.g. `"/api/"`), `filter` (URL regex), `type` (one or a list: `xhr`/`fetch`, `document`, `script`, `stylesheet`, `image`, `font`, `media`, `websocket`, … — any webRequest resource type), `failed` (only network errors and HTTP 4xx/5xx), `limit` (1–200), `fullUrls` (keep long URLs whole)
+- `requestId` (an `id` from the list): that one request in full, with its request and response headers. Values of credential and session headers (`Authorization`, `Cookie`, `Set-Cookie`, API keys, tokens…) read `[redacted]`. Response bodies are not captured.
 - `clear` (default `false`): empty the buffer after reading — so, like the console, it is never retried.
 
 #### `browser_intercept`
@@ -842,7 +861,7 @@ browser_intercept { tabId: 15, action: "set-rules", rules: [
 - **Enforcement is reported, not assumed.** The result has `enforcement`: `"full"`, `"partial"` or `"capture-only"`, plus an `enforced` count and an `unsupported` list with the reason for each rule Chrome cannot apply. Chrome cannot fake a response body, so `mock` rules are only recorded in the capture ledger (and make the result `"partial"`); `log` rules are capture-only by design and are not counted as enforced. If Chrome rejects the rule set (its regex dialect is stricter than JavaScript's), enforcement falls back to `capture-only` with a `reason`.
 - `list-rules`: the stored rules and whether each is enforced. `clear-rules`: with `tabId`, removes that tab's rules (global rules stay); without it, removes all.
 - `list-captures` (needs `tabId`): the tab's recorded requests, with `intercept.matchedRuleIds` on those a rule matched. `filter` (URL regex) and `limit` (1–200) narrow it.
-- `export-har` (needs `tabId`): a HAR 1.2 file of the tab's requests. Only method, URL, status, type and timestamp are captured — headers and bodies are left out (`_redacted: true`).
+- `export-har` (needs `tabId`): a HAR 1.2 file of the tab's requests with their headers and duration; `filter` and `limit` narrow it like `list-captures`. Credential and session header values are redacted (`_redacted: true`), and bodies are not captured.
 
 #### `browser_evaluate`
 
@@ -921,8 +940,8 @@ Each tool declares its transport timeout next to its definition (`mcp-server/src
 
 | Timeout | Tools |
 |---------|-------|
-| 5 s | `browser_press_key`, `browser_hover`, `browser_console`, `browser_network`, `browser_handle_dialog`, `browser_list_browsers`, `browser_select_browser` |
-| 10 s | `browser_click`, `browser_click_text`, `browser_scroll`, `browser_select`, `browser_drag`, `browser_observe`, `browser_intercept`, `browser_resize_window` |
+| 5 s | `browser_press_key`, `browser_hover`, `browser_network`, `browser_handle_dialog`, `browser_list_browsers`, `browser_select_browser` |
+| 10 s | `browser_click`, `browser_click_text`, `browser_scroll`, `browser_select`, `browser_drag`, `browser_observe`, `browser_intercept`, `browser_resize_window`, `browser_console`, `browser_emulate` |
 | 15 s | `browser_type`, `browser_fill_form`, `browser_upload_file`, `browser_act`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find` |
 | 30 s | `browser_run_action` |
 | 35 s | `browser_tabs` (a reload waits up to 30 s for the new document) |

@@ -3,7 +3,7 @@
  * lifecycle (list/create/close/focus/lock/unlock), console/network reads,
  * screenshot.
  */
-import { resolveTab, replaceFrozenTab, safeExec } from '../lib/page-exec.js';
+import { resolveTab, replaceFrozenTab, safeExec, execDom, getFallback } from '../lib/page-exec.js';
 import {
   tabLocks,
   tabControl,
@@ -17,7 +17,9 @@ import {
 import { showLockShield, hideLockShield, setAgentCursorHidden, agentCursorEnabled } from "../lib/overlay.js";
 import { broadcastStatus } from "../lib/connection.js";
 import { lockTabUi, releaseTabUi } from "../lib/lock-ops.js";
-import { withCdp, ensureViewport } from '../lib/cdp-session.js';
+import { withCdp, ensureViewport, subscribeCdpEvents } from '../lib/cdp-session.js';
+import { collectBrowserLog } from '../lib/browser-log.js';
+import { listView, typeMatcher } from '../lib/network-capture.js';
 
 const CDP_CAPTURE_TIMEOUT_MS = 4000;
 
@@ -140,9 +142,44 @@ export async function handleScreenshot(params) {
   }
 }
 
+/**
+ * Top-level viewport box of a ref/selector target (4 px margin), scrolled into
+ * view first; `clipped` when the element does not fit the viewport.
+ */
+async function elementRegion(tabId, ref, selector) {
+  return execDom(tabId, (_ref, _sel, _fb) => {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
+    const el = D.resolve(_ref, _sel, _fb).el;
+    if (!el) return { success: false, error: 'Element not found' };
+    el.scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'nearest' });
+    const { x, y, rect } = D.centerOf(el);
+    if (!(rect.width > 0 && rect.height > 0)) return { success: false, error: 'Element has no visible box (hidden or zero-size)' };
+    const pad = 4;
+    const left = x - rect.width / 2 - pad;
+    const top = y - rect.height / 2 - pad;
+    const width = rect.width + 2 * pad;
+    const height = rect.height + 2 * pad;
+    return {
+      success: true,
+      region: { x: Math.max(0, left), y: Math.max(0, top), width, height },
+      clipped: left < 0 || top < 0 || left + width > innerWidth || top + height > innerHeight,
+    };
+  }, [ref ?? null, selector ?? null, getFallback(tabId, ref)]);
+}
+
 async function captureScreenshot(params) {
-  const { tabId, format = 'png', quality = 80, scale, maxWidth, fullPage = false, region } = params;
+  const { tabId, format = 'png', quality = 80, maxWidth, fullPage = false, ref, selector } = params;
+  let { scale, region } = params;
   const tab = await resolveTab(tabId);
+  // ref / selector: just that element (an explicit region wins).
+  let element = null;
+  if ((ref || selector) && !region) {
+    element = await elementRegion(tabId, ref, selector);
+    if (!element?.success) return element || { success: false, error: 'Element not found' };
+    region = element.region;
+    scale = scale ?? 1; // a region zooms 2× by default; an element is shown as it is
+  }
   const protectedPage = /^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '');
   let cdpError = null;
   if (!protectedPage) {
@@ -151,7 +188,11 @@ async function captureScreenshot(params) {
     const wasLocked = !!tabLocks.owner(tabId);
     await hideLockShield(tabId);
     const opts = { format, quality, scale, maxWidth, fullPage, region };
-    const done = (shot, via) => ({ success: true, format, via, width: shot.width, height: shot.height, frame: shot.frame, data: shot.data });
+    const done = (shot, via) => ({
+      success: true, format, via, width: shot.width, height: shot.height, frame: shot.frame,
+      ...(element ? { element: { clipped: element.clipped } } : {}),
+      data: shot.data,
+    });
     try {
       if (tab.active) {
         const shot = await cdpScreenshot(tabId, opts);
@@ -218,31 +259,53 @@ async function captureScreenshot(params) {
 }
 
 export async function handleConsole(params) {
-  const { tabId, clear = false, pattern, level, limit } = params;
+  const { tabId, clear = false, pattern, level, limit, browser = false } = params;
   // Validate the tab (audit finding, seen live): a wrong tabId used to return
   // an empty success instead of an actionable error.
   await resolveTab(tabId);
-  const buf = getTabBuffer(consoleByTab, tabId);
-  let msgs = [...buf];
-  const total = msgs.length;
-  if (level) {
-    const want = new Set((Array.isArray(level) ? level : [level]).map((l) => String(l).toLowerCase()));
-    msgs = msgs.filter((m) => want.has(String(m.level).toLowerCase()));
-  }
+  let re = null;
   if (pattern) {
-    let re;
     try { re = new RegExp(pattern, 'i'); } catch (err) { throw new Error(`Invalid pattern regex: ${err?.message || err}`, { cause: err }); }
-    msgs = msgs.filter((m) => re.test(m.text));
   }
-  if (Number.isInteger(limit) && limit > 0 && msgs.length > limit) msgs = msgs.slice(-limit);
+  const want = level ? new Set((Array.isArray(level) ? level : [level]).map((l) => String(l).toLowerCase())) : null;
+  const pick = (list) => {
+    let out = list;
+    if (want) out = out.filter((m) => want.has(String(m.level).toLowerCase()));
+    if (re) out = out.filter((m) => re.test(m.text));
+    if (Number.isInteger(limit) && limit > 0 && out.length > limit) out = out.slice(-limit);
+    return out;
+  };
+  const buf = getTabBuffer(consoleByTab, tabId);
+  const msgs = pick([...buf]);
+  const total = buf.length;
+  // browser:true — what Chrome itself reported (failed loads, deprecations,
+  // violations…) and DevTools Issues. Needs the debugger, so only on request.
+  let chromeLog = null;
+  if (browser) {
+    const read = await withCdp(tabId, (send) => collectBrowserLog(send, (fn) => subscribeCdpEvents(tabId, fn), { clear }));
+    chromeLog = {
+      messages: pick(read.messages),
+      issues: re ? read.issues.filter((i) => re.test(`${i.code} ${i.type || ''} ${i.url || ''}`)) : read.issues,
+    };
+  }
   if (clear) consoleByTab.set(tabId, []);
-  return { success: true, messages: msgs, ...(msgs.length !== total ? { total } : {}) };
+  return { success: true, messages: msgs, ...(msgs.length !== total ? { total } : {}), ...(chromeLog ? { browser: chromeLog } : {}) };
 }
 
 export async function handleNetwork(params) {
-  const { tabId, clear = false, limit, filter, urlPattern, failed } = params;
+  const { tabId, clear = false, limit, filter, urlPattern, failed, type, requestId, fullUrls = false } = params;
   await resolveTab(tabId); // same as handleConsole — no empty fake successes
+  if (requestId != null) {
+    // One request in full: complete URL, duration, redacted request/response headers.
+    const hit = [...getTabBuffer(networkByTab, tabId)].reverse().find((r) => r.id === String(requestId));
+    if (!hit) {
+      return { success: false, error: `No captured request "${requestId}" in tab ${tabId} — list requests first (only the latest ones are kept).` };
+    }
+    return { success: true, request: { ...hit } };
+  }
+  const ofType = typeMatcher(type); // validates before anything is read
   let reqs = [...getTabBuffer(networkByTab, tabId)];
+  if (ofType) reqs = reqs.filter(ofType);
   // urlPattern: plain substring (Claude-in-Chrome style); filter: regex.
   if (urlPattern) reqs = reqs.filter((r) => String(r.url).includes(urlPattern));
   // failed:true = only requests that errored (DNS, blocked, aborted…) or got a 4xx/5xx.
@@ -262,7 +325,7 @@ export async function handleNetwork(params) {
     reqs = reqs.slice(-limit); // most recent N
   }
   if (clear) networkByTab.set(tabId, []);
-  return { success: true, requests: reqs };
+  return { success: true, requests: reqs.map((r) => listView(r, { fullUrls })) };
 }
 
 export async function handleTabs(params, sessionId) {

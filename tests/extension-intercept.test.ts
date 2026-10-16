@@ -246,6 +246,39 @@ describe("capture + HAR (S4)", () => {
     expect(res.har.log.entries[0].response._redacted).toBe(true);
   });
 
+  it("export-har carries the captured (redacted) headers and duration", async () => {
+    networkByTab.set(15, [{
+      id: "1", method: "GET", url: "https://app.example.com/api", status: 200, type: "xmlhttprequest", timestamp: 1, durationMs: 37,
+      requestHeaders: [{ name: "Authorization", value: "[redacted]" }],
+      responseHeaders: [{ name: "content-type", value: "application/json" }],
+    }]);
+    const [entry] = (await handleIntercept({ action: "export-har", tabId: 15 })).har.log.entries;
+    expect(entry).toMatchObject({
+      time: 37,
+      request: { headers: [{ name: "Authorization", value: "[redacted]" }] },
+      response: { headers: [{ name: "content-type", value: "application/json" }], _redacted: true },
+      timings: { wait: 37 },
+    });
+  });
+
+  it("export-har honours filter and limit like list-captures", async () => {
+    networkByTab.set(15, [
+      { method: "GET", url: "https://app.example.com/", status: 200, type: "main_frame", timestamp: 1 },
+      { method: "GET", url: "https://app.example.com/api/data", status: 200, type: "xmlhttprequest", timestamp: 2 },
+      { method: "GET", url: "https://app.example.com/api/data?sync=1", status: 200, type: "xmlhttprequest", timestamp: 3 },
+    ]);
+    const filtered = await handleIntercept({ action: "export-har", tabId: 15, filter: "api/data" });
+    expect(filtered.entries).toBe(2);
+    expect(filtered.har.log.entries.map((e: { request: { url: string } }) => e.request.url))
+      .toEqual(["https://app.example.com/api/data", "https://app.example.com/api/data?sync=1"]);
+    const latest = await handleIntercept({ action: "export-har", tabId: 15, filter: "api/data", limit: 1 });
+    expect(latest.har.log.entries.map((e: { request: { url: string } }) => e.request.url))
+      .toEqual(["https://app.example.com/api/data?sync=1"]);
+    await expect(
+      handleIntercept({ action: "export-har", tabId: 15, filter: "([" }),
+    ).rejects.toThrow(/Invalid filter regex/);
+  });
+
   it("list-captures requires tabId", async () => {
     await expect(handleIntercept({ action: "list-captures" })).rejects.toThrow(
       /tabId required/,

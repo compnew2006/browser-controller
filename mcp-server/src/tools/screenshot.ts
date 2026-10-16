@@ -5,7 +5,7 @@ import { requireTabId, imageResult, jsonError, payloadOf } from './types.js';
 export const screenshotTool: ToolDefinition = {
   name: 'browser_screenshot',
   summary: 'Capture a screenshot of a tab',
-  description: 'Capture a screenshot of a tab over CDP. Use maxWidth / scale and format:"jpeg" to shrink the image (far fewer tokens); fullPage captures the whole scrollable page; region zooms into a rectangle. The result says how image pixels map to the x/y that click/hover/scroll take. A background tab is shown for a moment and the user\'s tab is switched straight back (Chrome does not paint hidden tabs). The agent\'s blue control frame is never in the picture.',
+  description: 'Capture a screenshot of a tab over CDP. Use maxWidth / scale and format:"jpeg" to shrink the image (far fewer tokens); fullPage captures the whole scrollable page; region zooms into a rectangle; ref or selector captures just that element (scrolled into view). The result says how image pixels map to the x/y that click/hover/scroll take. A background tab is shown for a moment and the user\'s tab is switched straight back (Chrome does not paint hidden tabs). The agent\'s blue control frame is never in the picture.',
   inputSchema: z.object({
     tabId: requireTabId(),
     format: z.enum(['png', 'jpeg']).optional().default('png'),
@@ -16,6 +16,8 @@ export const screenshotTool: ToolDefinition = {
     }).optional().describe('Capture only this viewport rectangle (CSS px, the same coordinates click/hover/scroll x/y use) — zoom in on small UI'),
     maxWidth: z.number().int().min(100).max(4000).optional().describe('Cap the image width in pixels (keeps aspect ratio), e.g. 1024'),
     fullPage: z.boolean().optional().default(false).describe('Capture the whole scrollable page, not just the viewport'),
+    ref: z.string().optional().describe('Capture just this element (ref from snapshot/find); scale defaults to 1'),
+    selector: z.string().optional().describe('Capture just the first visible element matching this CSS selector'),
   }),
   // Read-only: safe to retry.
   idempotent: true,
@@ -30,6 +32,7 @@ export const screenshotTool: ToolDefinition = {
         width?: number;
         height?: number;
         frame?: { scale: number; origin: [number, number]; viewport: [number, number]; page?: boolean };
+        element?: { clipped: boolean };
       };
     } catch (err) {
       // Unified error channel: surface a payload-carrying rejection intact.
@@ -37,6 +40,8 @@ export const screenshotTool: ToolDefinition = {
       if (payload !== undefined) return jsonError(payload);
       throw err;
     }
+    // An element the page could not find (or that has no box) is the real error.
+    if (result.success === false) return jsonError(result);
     if (result.data) {
       const mimeType = result.format === 'jpeg' ? 'image/jpeg' : 'image/png';
       const image = imageResult(result.data, mimeType);
@@ -46,7 +51,7 @@ export const screenshotTool: ToolDefinition = {
         const map = f.page
           ? `page coords = imagePx / ${f.scale} (scroll first; viewport y = pageY - ${(f as { scrollY?: number }).scrollY ?? 0})`
           : `x = ${f.origin[0]} + imageX / ${f.scale}, y = ${f.origin[1]} + imageY / ${f.scale}`;
-        image.content.push({ type: 'text', text: JSON.stringify({ image: [result.width, result.height], viewport: f.viewport, toViewport: map }) });
+        image.content.push({ type: 'text', text: JSON.stringify({ image: [result.width, result.height], viewport: f.viewport, toViewport: map, ...(result.element ? { element: result.element } : {}) }) });
       }
       return image;
     }

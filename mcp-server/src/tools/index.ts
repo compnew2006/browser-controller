@@ -27,6 +27,7 @@ import { observeTool } from './observe.js';
 import { actTool } from './act.js';
 import { batchTool } from './batch.js';
 import { resizeWindowTool } from './resize-window.js';
+import { emulateTool } from './emulate.js';
 import { gifTool } from './gif.js';
 import { listBrowsersTool, selectBrowserTool } from './browsers.js';
 import { shortcutsTool } from './shortcuts.js';
@@ -60,6 +61,7 @@ export const allTools: ToolDefinition[] = [
   actTool,
   batchTool,
   resizeWindowTool,
+  emulateTool,
   gifTool,
   listBrowsersTool,
   selectBrowserTool,

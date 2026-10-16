@@ -132,6 +132,31 @@ describe('browser_screenshot over CDP', () => {
     expect(res).toMatchObject({ width: 800, frame: { scale: 0.8 } });
   });
 
+  it('ref/selector screenshots just that element (with a small margin), at scale 1 by default', async () => {
+    const scripting = (globalThis as any).chrome.scripting;
+    const original = scripting.executeScript;
+    const pageCalls: unknown[][] = [];
+    // The page reports the element's top-level box after scrolling it into view.
+    scripting.executeScript = async (o: { args?: unknown[] }) => {
+      pageCalls.push(o.args ?? []);
+      return [{ result: { success: true, region: { x: 96, y: 196, width: 58, height: 38 }, clipped: false } }];
+    };
+    try {
+      const res = await handleScreenshot({ tabId: 1, ref: 's1-4' });
+      expect(res).toMatchObject({ success: true, via: 'cdp', element: { clipped: false } });
+      const cap = cdp.find((c) => c.method === 'Page.captureScreenshot')!;
+      expect(cap.params).toMatchObject({ clip: { x: 96, y: 246, width: 58, height: 38, scale: 1 } }); // y: viewport pageY 50 + 196
+      expect(pageCalls.some((args) => args[0] === 's1-4')).toBe(true);
+      // An element the page cannot find is an error, not a full-viewport picture.
+      scripting.executeScript = async () => [{ result: { success: false, error: 'Element not found' } }];
+      cdp.length = 0;
+      expect(await handleScreenshot({ tabId: 1, selector: '#nope' })).toEqual({ success: false, error: 'Element not found' });
+      expect(cdp.some((c) => c.method === 'Page.captureScreenshot')).toBe(false);
+    } finally {
+      scripting.executeScript = original;
+    }
+  });
+
   it('fullPage clips the whole content', async () => {
     await handleScreenshot({ tabId: 1, format: 'png', fullPage: true });
     const cap = cdp.find((c) => c.method === 'Page.captureScreenshot')!;

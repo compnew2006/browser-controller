@@ -32,7 +32,21 @@ function armIdle(tabId) {
   if (!s) return;
   clearTimeout(s.timer);
   if (s.busy > 0) return; // a long withCdp() call is still using the session
+  if (s.emulation && Object.keys(s.emulation).length) return; // detaching would drop the overrides
   s.timer = setTimeout(() => { detachCdp(tabId); }, IDLE_MS);
+}
+
+/** Overrides browser_emulate set on the tab's live session ({} when none or detached). */
+export function getCdpEmulation(tabId) {
+  return { ...(sessions.get(tabId)?.emulation || {}) };
+}
+
+/** Record the active overrides; while any are set the session is not idle-detached. */
+export function setCdpEmulation(tabId, state) {
+  const s = sessions.get(tabId);
+  if (!s) return;
+  s.emulation = { ...state };
+  armIdle(tabId);
 }
 
 async function attach(tabId) {
@@ -114,6 +128,27 @@ export async function detachCdp(tabId) {
 
 export function hasCdp(tabId) {
   return sessions.has(tabId);
+}
+
+/** tabId -> Set<(method, params) => void> */
+const eventSubscribers = new Map();
+
+/** Receive the tab's CDP events (method, params) until the returned function is called. */
+export function subscribeCdpEvents(tabId, fn) {
+  let subs = eventSubscribers.get(tabId);
+  if (!subs) { subs = new Set(); eventSubscribers.set(tabId, subs); }
+  subs.add(fn);
+  return () => {
+    subs.delete(fn);
+    if (!subs.size) eventSubscribers.delete(tabId);
+  };
+}
+
+if (typeof chrome !== 'undefined' && chrome.debugger?.onEvent) {
+  chrome.debugger.onEvent.addListener((source, method, params) => {
+    const subs = eventSubscribers.get(source.tabId);
+    if (subs) for (const fn of [...subs]) { try { fn(method, params); } catch { /* one bad subscriber must not starve the rest */ } }
+  });
 }
 
 // The user can dismiss the debugger banner, or the tab can close/navigate to a

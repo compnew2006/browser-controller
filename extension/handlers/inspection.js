@@ -267,6 +267,9 @@ export async function handleSnapshot(params) {
       return node;
     }
 
+    /** Compact-mode controls, so look-alikes ("Edit" in every row) can get row context afterwards. */
+    const controls = [];
+
     function buildCompact(el, d) {
       if (!el || el.nodeType !== 1) return null;
       if (skipTags.has(el.tagName)) return null;
@@ -283,6 +286,7 @@ export async function handleSnapshot(params) {
       if (own) {
         if (d > maxDepth) { truncated = true; return null; }
         node = emit(el, r, elName(el, r), {}, true);
+        if (ia) controls.push({ el, node });
       }
       const kids = [];
       if (!(own && d >= maxDepth)) {
@@ -340,6 +344,18 @@ export async function handleSnapshot(params) {
     if (!root) return { success: false, error: 'Root element not found' };
 
     const tree = _compact ? buildCompact(root, 0) : buildFull(root, 0);
+    // The compact tree drops the cell text that tells look-alike controls apart:
+    // controls sharing role+name get their table row's text. Unique ones stay lean.
+    const seen = new Map();
+    for (const c of controls) { const k = `${c.node.role}|${c.node.name || ''}`; seen.set(k, (seen.get(k) || 0) + 1); }
+    for (const c of controls) {
+      if (seen.get(`${c.node.role}|${c.node.name || ''}`) < 2) continue;
+      const context = D.rowContextOf(c.el);
+      if (!context) continue;
+      if (budget < context.length + 13) { truncated = true; break; } // `,"context":""` counts against maxChars too
+      budget -= context.length + 13;
+      c.node.context = context;
+    }
     return {
       success: true,
       url: location.href,

@@ -3,8 +3,10 @@ import {
   AX_INTERACTIVE_ROLES,
   MAX_NATIVE_REFS,
   applyBindings,
+  attachRowContext,
   axProps,
   backendIdAtPath,
+  lookAlikeRefs,
   mergeFrameTrees,
   shapeAxTree,
 } from '../extension/lib/ax-native.js';
@@ -254,6 +256,30 @@ describe('mergeFrameTrees', () => {
     const merged = mergeFrameTrees(main, [{ nodes: frameNodes(), ownerBackendNodeId: 9999 }]);
     expect(JSON.stringify(main)).toBe(before);
     expect(flat(shapeAxTree(merged).tree).map((n) => n.name)).toEqual(['Top']);
+  });
+});
+
+describe('row context for look-alike controls', () => {
+  const grid = () => [
+    { role: 'button', name: 'Add', ref: 'a' },
+    { role: 'row', children: [{ role: 'button', name: 'Edit', ref: 'e1' }] },
+    { role: 'row', children: [{ role: 'button', name: 'Edit', ref: 'e2' }] },
+    { role: 'heading', name: 'Edit', ref: 'h' },
+  ];
+  const rows = { e1: { context: '1 Piece' }, e2: { context: '2 Dozen' } };
+
+  it('lookAlikeRefs names only interactive controls whose role+name repeats', () => {
+    expect([...lookAlikeRefs(grid())].sort()).toEqual(['e1', 'e2']);
+    expect(lookAlikeRefs(null).size).toBe(0);
+  });
+
+  it('attachRowContext adds the bound row text in document order within the room it is given', () => {
+    const roomy = grid();
+    expect(attachRowContext(roomy, rows, 1000)).toEqual({ truncated: false });
+    expect([roomy[1].children[0].context, roomy[2].children[0].context]).toEqual(['1 Piece', '2 Dozen']);
+    const tight = grid();
+    expect(attachRowContext(tight, rows, 25)).toEqual({ truncated: true });
+    expect([tight[1].children[0].context, tight[2].children[0].context]).toEqual(['1 Piece', undefined]);
   });
 });
 
