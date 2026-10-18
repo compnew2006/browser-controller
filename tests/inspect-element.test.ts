@@ -105,6 +105,18 @@ describe('DOM helpers', () => {
   it('describes a node as tag#id.classes', () => {
     expect(describeNode(el('BUTTON', ['id', 'go', 'class', 'btn  primary', 'type', 'submit']))).toBe('button#go.btn.primary');
     expect(describeNode(el('DIV'))).toBe('div');
+    // An attribute VALUE equal to "class"/"id" must not be mistaken for the attribute.
+    expect(describeNode(el('DIV', ['data-role', 'class', 'class', 'btn primary']))).toBe('div.btn.primary');
+    expect(describeNode(el('A', ['title', 'id', 'id', 'go']))).toBe('a#go');
+  });
+
+  it('flags a flat tree that differs from the DOM chain (slotted light-DOM content)', () => {
+    const slotted = el('SPAN', [], { backendNodeId: 3 });
+    const host = el('MY-CARD', [], { backendNodeId: 2, children: [slotted], shadowRoots: [{ shadowRootType: 'open', children: [] }] });
+    const plain = el('P', [], { backendNodeId: 4 });
+    const root = { nodeType: 9, children: [el('BODY', [], { backendNodeId: 1, children: [host, plain] })] };
+    expect(nodesAtPath(root, [0, 0, 0], 'span').flatTreeDiffers).toBe(true);
+    expect(nodesAtPath(root, [0, 1], 'p').flatTreeDiffers).toBe(false);
   });
 
   it('walks a structural path to the target and its ancestors within its own document', () => {
@@ -117,7 +129,7 @@ describe('DOM helpers', () => {
     const found = nodesAtPath(root, [0, 1, 0, -2, 0, 1, 0, -1, 0], 'span');
     expect(found.target.backendNodeId).toBe(9);
     expect(found.ancestors.map((n: any) => n.backendNodeId)).toEqual([7, 6, 5]); // nearest first, stops at the frame
-    expect(found.crossesShadow).toBe(true);
+    expect(found.flatTreeDiffers).toBe(true);
     expect(nodesAtPath(root, [0, 1, 0, -2, 0, 1, 0, -1, 0], 'div')).toBeNull();
     expect(nodesAtPath(root, [0, 5], null)).toBeNull();
   });

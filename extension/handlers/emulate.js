@@ -2,11 +2,16 @@
  * browser_emulate: network / CPU throttling, geolocation, color scheme,
  * reduced motion and user agent for one tab, through its debugger session.
  * The session stays attached while an override is active (an idle detach
- * would silently drop them); reset detaches it, which clears everything.
+ * would silently drop them); reset detaches it, which clears everything —
+ * unless a body capture or a mock is using the session: then each active
+ * override is cleared instead.
  */
 import { resolveTab } from '../lib/page-exec.js';
-import { withCdp, detachCdp, getCdpEmulation, setCdpEmulation } from '../lib/cdp-session.js';
+import { withCdp, detachCdp, getCdpEmulation, setCdpEmulation, isCdpPinned } from '../lib/cdp-session.js';
 import { emulationPlan } from '../lib/emulation.js';
+
+/** The settings that clear each override emulationPlan knows. */
+const CLEARED = { network: 'none', cpuThrottling: 1, geolocation: null, colorScheme: 'none', reducedMotion: 'none', userAgent: '' };
 
 export async function handleEmulate(params) {
   const { tabId, reset = false } = params;
@@ -15,8 +20,17 @@ export async function handleEmulate(params) {
     throw new Error(`Cannot access protected page (${tab.url}). Tab ${tabId} is a browser-internal page.`);
   }
   if (reset) {
-    await detachCdp(tabId);
-    return { success: true, active: {} };
+    if (!isCdpPinned(tabId)) {
+      await detachCdp(tabId);
+      return { success: true, active: {} };
+    }
+    const active = getCdpEmulation(tabId);
+    const plan = emulationPlan(Object.fromEntries(Object.keys(active).map((key) => [key, CLEARED[key]])), active);
+    await withCdp(tabId, async (send) => {
+      for (const [method, args] of plan.commands) await send(method, args);
+    });
+    setCdpEmulation(tabId, plan.state);
+    return { success: true, active: plan.state };
   }
   const plan = emulationPlan(params, getCdpEmulation(tabId)); // validates before attaching
   if (!plan.commands.length) return { success: true, active: plan.state };

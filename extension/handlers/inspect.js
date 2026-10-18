@@ -29,8 +29,8 @@ async function matchedRules(tabId, send, found) {
     const { nodeIds } = await send('DOM.pushNodesByBackendIdsToFrontend', { backendNodeIds: [found.target.backendNodeId] });
     await send('CSS.enable');
     const matched = await send('CSS.getMatchedStylesForNode', { nodeId: nodeIds[0] });
-    // Across a shadow boundary the inherited chain follows the flat tree: label by level.
-    const ancestors = found.crossesShadow ? [] : found.ancestors.map(describeNode);
+    // With a shadow tree on the way the inherited chain follows the flat tree: label by level.
+    const ancestors = found.flatTreeDiffers ? [] : found.ancestors.map(describeNode);
     return shapeMatchedStyles(matched, { sheets, ancestors });
   } finally {
     off();

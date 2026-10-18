@@ -11,6 +11,8 @@
 export const REDACTED = '[redacted]';
 export const MAX_BODIES = 50;
 export const MAX_BODY_CHARS = 100_000;
+/** Bodies bigger than this on the wire are not read at all (they would only be cut to MAX_BODY_CHARS). */
+const MAX_READ_BYTES = 5_000_000;
 
 const BODY_TYPES = new Set(['Document', 'XHR', 'Fetch']);
 // webRequest and CDP stamp the same request a few ms apart.
@@ -22,22 +24,31 @@ const TEXT_MIME = /^text\/|json|xml|javascript|ecmascript|x-www-form-urlencoded|
 const SENSITIVE_KEY = /token|secret|passw|api[-_]?key|^authorization$|^cookie$|^session[-_]?id$/i;
 
 /**
- * Replace string values of credential keys (access_token, password, apiKey…)
- * in a JSON body. Text that is not JSON, or has nothing to redact, comes back unchanged.
+ * Replace the string values under credential keys (access_token, password,
+ * apiKey…) in a JSON body, at any depth below the key ({"tokens": ["…"]},
+ * {"secret": {"value": "…"}}); numbers stay ("max_tokens": 50). Text that is
+ * not JSON, or has nothing to redact, comes back unchanged.
  */
 export function redactJsonBody(text) {
   let data;
   try { data = JSON.parse(text); } catch { return { text, redacted: [] }; }
   const redacted = new Set();
-  const walk = (node) => {
-    if (Array.isArray(node)) { node.forEach(walk); return; }
+  const walk = (node, under) => {
+    if (Array.isArray(node)) {
+      node.forEach((value, i) => {
+        if (under && typeof value === 'string') { node[i] = REDACTED; redacted.add(under); }
+        else walk(value, under);
+      });
+      return;
+    }
     if (!node || typeof node !== 'object') return;
     for (const [key, value] of Object.entries(node)) {
-      if (typeof value === 'string' && SENSITIVE_KEY.test(key)) { node[key] = REDACTED; redacted.add(key); }
-      else walk(value);
+      const owner = under || (SENSITIVE_KEY.test(key) ? key : null);
+      if (typeof value !== 'string') walk(value, owner);
+      else if (owner) { node[key] = REDACTED; redacted.add(owner); }
     }
   };
-  walk(data);
+  walk(data, null);
   return redacted.size ? { text: JSON.stringify(data), redacted: [...redacted] } : { text, redacted: [] };
 }
 
@@ -88,6 +99,9 @@ export function createBodyCapture({ getBody, maxBodies = MAX_BODIES, maxChars = 
         const r = inflight.get(p.requestId);
         if (!r) return undefined;
         inflight.delete(p.requestId);
+        // Never pull a video or a zip into the service worker just to report its size.
+        if (r.mimeType && !TEXT_MIME.test(r.mimeType)) return keep({ ...r, binary: true, transferSize: p.encodedDataLength });
+        if (p.encodedDataLength > MAX_READ_BYTES) return keep({ ...r, tooLarge: true, transferSize: p.encodedDataLength });
         return getBody(p.requestId).then(
           (res) => keep({ ...r, ...bodyView(res, r.mimeType, maxChars) }),
           (err) => keep({ ...r, error: String(err?.message || err).slice(0, 200) }),

@@ -70,6 +70,13 @@ describe("mockFulfillParams", () => {
     expect(header(preflight, "access-control-allow-headers")).toBe("content-type");
     const own = mockFulfillParams({ headers: { "Access-Control-Allow-Origin": "*" } }, { method: "GET", url: "https://api.test/", headers: { origin: "https://app.test" } });
     expect(own.responseHeaders.filter((h: any) => /allow-origin/i.test(h.name))).toEqual([{ name: "Access-Control-Allow-Origin", value: "*" }]);
+    // The rule's own CORS headers answer its preflight too (else the real request is never sent).
+    const ownPreflight = mockFulfillParams({ headers: { "Access-Control-Allow-Origin": "*", "X-Mock": "1" } }, {
+      method: "OPTIONS", url: "https://api.test/", headers: { Origin: "https://app.test", "Access-Control-Request-Method": "PUT" },
+    });
+    expect(ownPreflight.responseHeaders).toEqual([
+      { name: "Access-Control-Allow-Origin", value: "*" }, { name: "Access-Control-Allow-Methods", value: "PUT" },
+    ]);
   });
 
   it("maps CDP resource types to the webRequest names rules use", () => {
@@ -78,6 +85,7 @@ describe("mockFulfillParams", () => {
     expect(cdpResourceTypes("Document")).toEqual(["main_frame", "sub_frame"]);
     expect(cdpResourceTypes("Stylesheet")).toEqual(["stylesheet"]);
     expect(cdpResourceTypes("Prefetch")).toEqual(["other"]);
+    expect(cdpResourceTypes("Preflight")).toEqual(["xmlhttprequest"]); // the fetch/XHR it precedes
   });
 });
 
@@ -99,6 +107,7 @@ describe("browser_intercept mock rules (Fetch domain)", () => {
     });
     expect(res).toMatchObject({ success: true, enforcement: "full", enforced: 1 });
     expect(res.unsupported).toBeUndefined();
+    // Every request pauses: Chrome cannot filter a preflight by type, and a typed mock must answer it.
     expect(commands(15, "Fetch.enable")).toEqual([{ patterns: [{ urlPattern: "*", requestStage: "Request" }] }]);
 
     await pause(15, "p1", "https://app.test/api/items?page=2");
@@ -128,6 +137,33 @@ describe("browser_intercept mock rules (Fetch domain)", () => {
     expect(hasCdp(15)).toBe(false);
   });
 
+  it("a preflight of a typed mock is answered", async () => {
+    await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ match: "api\\.test/save", action: "mock", mockBody: "{}", types: ["xmlhttprequest"] }] });
+    await pause(15, "pre", "https://api.test/save", { method: "OPTIONS", resourceType: "Preflight", headers: { Origin: "https://app.test", "Access-Control-Request-Method": "POST" } });
+    expect(commands(15, "Fetch.fulfillRequest").map((p) => [p.requestId, p.responseCode])).toEqual([["pre", 204]]);
+  });
+
+  it("a global mock never answers, even on a tab another mock attached", async () => {
+    await handleIntercept({ action: "set-rules", rules: [{ id: "g", match: "/api/user", action: "mock", mockStatus: 500, mockBody: "{}" }] });
+    await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ id: "t", match: "/api/user", action: "mock", mockStatus: 200, mockBody: "{}" }] });
+    await pause(15, "u", "https://app.test/api/user");
+    expect(commands(15, "Fetch.fulfillRequest").map((p) => p.responseCode)).toEqual([200]);
+  });
+
+  it("without declarativeNetRequest a live mock still counts: partial, not capture-only", async () => {
+    const dnr = (globalThis as any).chrome.declarativeNetRequest;
+    (globalThis as any).chrome.declarativeNetRequest = undefined;
+    try {
+      const res = await handleIntercept({ action: "set-rules", tabId: 15, rules: [
+        { id: "m", match: "/api/", action: "mock", mockBody: "{}" }, { id: "b", match: "ads", action: "block" },
+      ] });
+      expect(res).toMatchObject({ enforcement: "partial", enforced: 1 });
+      expect((await handleIntercept({ action: "list-rules", tabId: 15 })).enforcement).toBe("partial");
+    } finally {
+      (globalThis as any).chrome.declarativeNetRequest = dnr;
+    }
+  });
+
   it("only the tabs a mock targets pause their requests", async () => {
     await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ match: "/api/", action: "mock", mockBody: "{}" }] });
     await handleIntercept({ action: "set-rules", tabId: 16, rules: [{ match: "ads", action: "block" }] });
@@ -137,12 +173,12 @@ describe("browser_intercept mock rules (Fetch domain)", () => {
 
   it("global mocks and tabs without a debugger are reported, not claimed", async () => {
     const global = await handleIntercept({ action: "set-rules", rules: [{ id: "g", match: "/api/", action: "mock", mockBody: "{}" }] });
-    expect(global).toMatchObject({ enforcement: "partial", enforced: 0 });
+    expect(global).toMatchObject({ enforcement: "capture-only", enforced: 0 }); // nothing is applied
     expect(global.unsupported).toEqual([expect.objectContaining({ id: "g", reason: expect.stringMatching(/need a tabId/) })]);
 
     attachFails = true;
     const denied = await handleIntercept({ action: "set-rules", tabId: 16, rules: [{ id: "d", match: "/api/", action: "mock", mockBody: "{}" }] });
-    expect(denied).toMatchObject({ enforcement: "partial", enforced: 0 });
+    expect(denied).toMatchObject({ enforcement: "capture-only", enforced: 0 });
     expect(denied.unsupported).toEqual([expect.objectContaining({ id: "d", reason: expect.stringMatching(/debugger unavailable on tab 16.*chrome:\/\//) })]);
   });
 
@@ -150,7 +186,7 @@ describe("browser_intercept mock rules (Fetch domain)", () => {
     await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ id: "m", match: "/api/", action: "mock", mockBody: "{}" }] });
     dropSession({ tabId: 15 });
     const listed = await handleIntercept({ action: "list-rules", tabId: 15 });
-    expect(listed.enforcement).toBe("partial");
+    expect(listed.enforcement).toBe("capture-only"); // its only rule is no longer applied
     expect(listed.rules.map((r: any) => r.enforced)).toEqual([false]);
   });
 

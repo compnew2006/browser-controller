@@ -78,39 +78,45 @@ export function pageInspect(ref, selector, fb, properties, keyStyles) {
 
 /** "button#go.btn.primary" from a CDP DOM.Node. */
 export function describeNode(node) {
-  const attrs = node.attributes || [];
-  const get = (name) => { const i = attrs.indexOf(name); return i >= 0 && i % 2 === 0 ? attrs[i + 1] : ''; };
+  const attrs = node.attributes || []; // [name, value, name, value, …]
+  const get = (name) => { for (let i = 0; i < attrs.length; i += 2) if (attrs[i] === name) return attrs[i + 1] || ''; return ''; };
   const id = get('id');
   const classes = get('class').split(/\s+/).filter(Boolean);
   return `${String(node.nodeName).toLowerCase()}${id ? `#${id}` : ''}${classes.map((c) => `.${c}`).join('')}`;
 }
 
+const hasAuthorShadow = (node) => (node.shadowRoots || []).some((r) => r.shadowRootType !== 'user-agent');
+
 /**
  * Follow a structural path (lib/ax-native.js grammar) in a DOM.getDocument
  * pierce dump: the target node and its ancestor elements within its own
- * document, nearest first. null when the path no longer leads to `tag`.
+ * document, nearest first. `flatTreeDiffers` when a shadow tree is on the way
+ * (entered, or a host's light children slotted elsewhere): CSS inheritance then
+ * follows the flat tree, so these ancestors are not the ones it lists.
+ * null when the path no longer leads to `tag`.
  */
 export function nodesAtPath(root, path, tag) {
   let cur = root;
   let chain = [];
-  let crossesShadow = false;
+  let flatTreeDiffers = false;
   for (const step of path) {
     if (!cur) return null;
     if (step === -1) {
       cur = (cur.shadowRoots || []).find((r) => r.shadowRootType !== 'user-agent') || null;
-      crossesShadow = true;
+      flatTreeDiffers = true;
     } else if (step === -2) {
       cur = cur.contentDocument || null;
       chain = []; // a frame's elements inherit nothing from the embedding page
-      crossesShadow = false;
+      flatTreeDiffers = false;
     } else {
+      if (hasAuthorShadow(cur)) flatTreeDiffers = true;
       cur = (cur.children || []).filter((c) => c.nodeType === 1)[step] || null;
       if (cur) chain.push(cur);
     }
   }
   if (!cur || cur.nodeType !== 1) return null;
   if (tag && String(cur.nodeName).toUpperCase() !== String(tag).toUpperCase()) return null;
-  return { target: cur, ancestors: chain.slice(0, -1).reverse(), crossesShadow };
+  return { target: cur, ancestors: chain.slice(0, -1).reverse(), flatTreeDiffers };
 }
 
 function cap(text, max) {

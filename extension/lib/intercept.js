@@ -91,8 +91,9 @@ export function evaluateRules(rules, req) {
   return (rules || []).filter((r) => matchRule(r, req));
 }
 
+// A CORS preflight belongs to the fetch/XHR it precedes.
 const CDP_TO_WEBREQUEST = {
-  Document: ["main_frame", "sub_frame"], XHR: ["xmlhttprequest"], Fetch: ["xmlhttprequest"],
+  Document: ["main_frame", "sub_frame"], XHR: ["xmlhttprequest"], Fetch: ["xmlhttprequest"], Preflight: ["xmlhttprequest"],
   Stylesheet: ["stylesheet"], Script: ["script"], Image: ["image"], Font: ["font"], Media: ["media"],
   WebSocket: ["websocket"], Ping: ["ping"], CSPViolationReport: ["csp_report"],
 };
@@ -137,8 +138,9 @@ export function mockFulfillParams(rule, request) {
     const asked = get("access-control-request-headers");
     return {
       responseCode: 204,
-      responseHeaders: [...cors, { name: "Access-Control-Allow-Methods", value: preflightMethod },
-        ...(asked ? [{ name: "Access-Control-Allow-Headers", value: asked }] : [])],
+      responseHeaders: [...cors, ...custom.filter((h) => /^access-control-/i.test(h.name)),
+        ...(has("access-control-allow-methods") ? [] : [{ name: "Access-Control-Allow-Methods", value: preflightMethod }]),
+        ...(asked && !has("access-control-allow-headers") ? [{ name: "Access-Control-Allow-Headers", value: asked }] : [])],
     };
   }
   const body = rule.mockBody ?? "";

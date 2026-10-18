@@ -56,8 +56,10 @@ export function unpinCdp(tabId, reason) {
   armIdle(tabId);
 }
 
+/** Pinned for `reason`, or for anything when no reason is given. */
 export function isCdpPinned(tabId, reason) {
-  return !!sessions.get(tabId)?.pins?.has(reason);
+  const pins = sessions.get(tabId)?.pins;
+  return reason === undefined ? !!pins?.size : !!pins?.has(reason);
 }
 
 /** Overrides browser_emulate set on the tab's live session ({} when none or detached). */

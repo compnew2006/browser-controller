@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest';
 const { createBodyCapture, redactJsonBody, REDACTED } = await import('../extension/lib/response-bodies.js');
 
 /** CDP Network events for one request: sent → response → finished (or failed). */
-function load(c: any, id: string, url: string, { method = 'GET', type = 'XHR', wallTime = 1000, mimeType = 'application/json', status = 200, failed = false } = {}) {
+function load(c: any, id: string, url: string, { method = 'GET', type = 'XHR', wallTime = 1000, mimeType = 'application/json', status = 200, failed = false, encodedDataLength = 300 } = {}) {
   c.onEvent('Network.requestWillBeSent', { requestId: id, request: { url, method }, wallTime, type });
   c.onEvent('Network.responseReceived', { requestId: id, type, response: { url, status, mimeType } });
   return failed
     ? c.onEvent('Network.loadingFailed', { requestId: id, errorText: 'net::ERR_ABORTED' })
-    : c.onEvent('Network.loadingFinished', { requestId: id });
+    : c.onEvent('Network.loadingFinished', { requestId: id, encodedDataLength });
 }
 
 function capture(bodies: Record<string, { body: string; base64Encoded?: boolean } | Error>, opts: object = {}) {
@@ -66,20 +66,24 @@ describe('response body capture (CDP Network → per-tab body store)', () => {
       .toMatchObject({ error: 'No resource with given identifier found' });
   });
 
-  it('decodes base64 text, reports binary bodies without their bytes, truncates long text', async () => {
-    const { c } = capture({
+  it('decodes base64 text, never reads binary or huge bodies, truncates long text', async () => {
+    const { c, asked } = capture({
       t: { body: Buffer.from('{"ok":true}').toString('base64'), base64Encoded: true },
-      bin: { body: Buffer.from([0, 1, 2, 3, 4, 5]).toString('base64'), base64Encoded: true },
+      bin: { body: 'never read' },
+      huge: { body: 'never read' },
       long: { body: 'x'.repeat(50) },
     }, { maxChars: 20 });
     await load(c, 't', 'https://x.test/t');
-    await load(c, 'bin', 'https://x.test/bin', { mimeType: 'application/octet-stream' });
+    await load(c, 'bin', 'https://x.test/bin', { mimeType: 'video/mp4', encodedDataLength: 40_000_000 });
+    await load(c, 'huge', 'https://x.test/huge', { encodedDataLength: 6_000_000 });
     await load(c, 'long', 'https://x.test/long', { mimeType: 'text/plain' });
+    expect(asked).toEqual(['t', 'long']);
     const at = { timestamp: 1_000_010, durationMs: 10, method: 'GET' };
     expect(c.find({ ...at, url: 'https://x.test/t' })).toMatchObject({ text: '{"ok":true}', length: 11 });
     const bin = c.find({ ...at, url: 'https://x.test/bin' });
-    expect(bin).toMatchObject({ binary: true, length: 6, mimeType: 'application/octet-stream' });
+    expect(bin).toMatchObject({ binary: true, transferSize: 40_000_000, mimeType: 'video/mp4' });
     expect(bin.text).toBeUndefined();
+    expect(c.find({ ...at, url: 'https://x.test/huge' })).toMatchObject({ tooLarge: true, transferSize: 6_000_000 });
     expect(c.find({ ...at, url: 'https://x.test/long' })).toMatchObject({ text: 'x'.repeat(20), length: 50, truncated: true });
   });
 
@@ -109,6 +113,10 @@ describe('redactJsonBody', () => {
       redacted: ['sessionId', 'apiKey'],
     });
     expect(redactJsonBody('[{"refresh_token":"r"}]').redacted).toEqual(['refresh_token']);
+    // Strings anywhere below a credential key, not just directly under it; numbers stay.
+    const nested = redactJsonBody('{"tokens":["eyJ1","r1"],"secret":{"value":"sk_live","n":2},"pin":{"password":1234}}');
+    expect(JSON.parse(nested.text)).toEqual({ tokens: [REDACTED, REDACTED], secret: { value: REDACTED, n: 2 }, pin: { password: 1234 } });
+    expect(nested.redacted).toEqual(['tokens', 'secret']);
     expect(redactJsonBody('{"a":1}')).toEqual({ text: '{"a":1}', redacted: [] }); // untouched text keeps its formatting
     expect(redactJsonBody('token=abc')).toEqual({ text: 'token=abc', redacted: [] });
   });

@@ -38,14 +38,24 @@ function scopedRulesForTab(tabId) {
   return out;
 }
 
-/** What Chrome enforces right now (capture-only without DNR). */
+/**
+ * What Chrome applies right now, counted rule by rule: DNR rules while
+ * installed, mock rules while their tabs' Fetch interception is live (a closed
+ * banner stops it). log rules are capture-only by design and not counted.
+ */
 function currentEnforcement() {
-  if (!dnrAvailable()) return "capture-only";
-  if (rulesByScope.size === 0) return "full";
-  // A mock stops when its debugger session goes (banner closed): report it.
-  const mockDown = [...rulesByScope].some(([scope, rules]) =>
-    rules.some((r) => r.action === "mock" && r.enabled !== false && !isEnforced(scope, r)));
-  return mockDown && lastSync.enforcement === "full" ? "partial" : lastSync.enforcement;
+  let total = 0;
+  let enforced = 0;
+  for (const [scope, rules] of rulesByScope) {
+    for (const rule of rules) {
+      if (rule.enabled === false || rule.action === "log") continue;
+      total++;
+      if (isEnforced(scope, rule)) enforced++;
+    }
+  }
+  if (total === 0) return dnrAvailable() ? "full" : "capture-only";
+  if (enforced === total) return "full";
+  return enforced === 0 ? "capture-only" : "partial";
 }
 
 function dnrAvailable() {
@@ -69,7 +79,7 @@ const DNR_TYPES = new Set([
  * Result of the last sync: which stored rules Chrome actually enforces.
  * installed: Map<"scope|ruleId", dnrId>; unsupported: [{id, scope, action, reason}].
  */
-let lastSync = { enforcement: "capture-only", installed: new Map(), unsupported: [], reason: "not synced" };
+let lastSync = { installed: new Map(), unsupported: [], reason: "not synced" };
 
 /** Tab ids a stored scope applies to (null = every tab). */
 function scopeTabs(scope) {
@@ -116,7 +126,7 @@ function toDnrRule(rule, scope, id) {
  */
 async function syncDnr() {
   if (!dnrAvailable()) {
-    lastSync = { enforcement: "capture-only", installed: new Map(), unsupported: [], reason: "no-dnr" };
+    lastSync = { installed: new Map(), unsupported: [], reason: "no-dnr" };
     return lastSync;
   }
   const dnr = globalThis.chrome.declarativeNetRequest;
@@ -146,13 +156,12 @@ async function syncDnr() {
     const removeRuleIds = existing.map((x) => x.id).filter((id) => id >= DNR_ID_BASE && id <= DNR_ID_MAX);
     await dnr.updateSessionRules({ removeRuleIds, addRules });
     lastSync = {
-      enforcement: unsupported.length ? "partial" : "full",
       installed,
       unsupported,
       reason: unsupported.length ? "some rules are ledger-only (see unsupported)" : undefined,
     };
   } catch (err) {
-    lastSync = { enforcement: "capture-only", installed: new Map(), unsupported, reason: err?.message || String(err) };
+    lastSync = { installed: new Map(), unsupported, reason: err?.message || String(err) };
   }
   return lastSync;
 }
@@ -174,8 +183,9 @@ function mockActive(tabId) {
 async function answerPaused(tabId, send, paused) {
   const { url } = paused.request;
   const types = cdpResourceTypes(paused.resourceType);
-  const hit = scopedRulesForTab(tabId).find(({ rule }) =>
-    rule.action === "mock" && types.some((type) => matchRule(rule, { url, type, tabId })));
+  // A global mock is reported unsupported, so it never answers (not even on a tab another mock attached).
+  const hit = scopedRulesForTab(tabId).find(({ scope, rule }) =>
+    rule.action === "mock" && mockRuleTabs(scope, rule)?.includes(tabId) && types.some((type) => matchRule(rule, { url, type, tabId })));
   if (hit) {
     try {
       await send("Fetch.fulfillRequest", { requestId: paused.requestId, ...mockFulfillParams(hit.rule, paused.request) });
@@ -194,6 +204,8 @@ async function startMocks(tabId) {
       return true;
     });
     try {
+      // Every request pauses: Chrome cannot filter a CORS preflight by type
+      // (no 'Preflight' in Fetch patterns), and a typed mock must answer it too.
       await send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
     } catch (err) {
       off();
@@ -256,10 +268,7 @@ async function syncAll(touched) {
   const mockUnsupported = await syncMocks(touched);
   if (mockUnsupported.length) {
     sync.unsupported.push(...mockUnsupported);
-    if (sync.enforcement === "full") {
-      sync.enforcement = "partial";
-      sync.reason = "some rules are ledger-only (see unsupported)";
-    }
+    sync.reason ??= "some rules are ledger-only (see unsupported)";
   }
   return sync;
 }
@@ -384,7 +393,7 @@ export async function handleIntercept(params) {
       const unsupported = sync.unsupported.filter((u) => u.scope === scope);
       return {
         success: true,
-        enforcement: sync.enforcement,
+        enforcement: currentEnforcement(),
         ...(sync.reason ? { reason: sync.reason } : {}),
         scope,
         ruleCount: withIds.length,
