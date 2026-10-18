@@ -111,7 +111,7 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_console:
     "Use to read console messages (log/warn/error) from a tab. Useful for debugging.",
   browser_network:
-    "Use to read network requests the page made (filter by URL). Useful for seeing API calls.",
+    "Use to read network requests the page made (filter by URL). Useful for seeing API calls. captureBodies:true, then repeat the request, to read what an API actually returned (requestId → responseBody).",
   browser_upload_file:
     'Use to upload a file through an <input type="file">. Works even on strict-CSP pages (uses CDP).',
   browser_drag:

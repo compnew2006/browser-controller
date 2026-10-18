@@ -94,7 +94,7 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 
 ### Debug (per-tab buffers, capped at 200 entries)
 - `browser_console` - Console messages for a tab. Params: `tabId`, `pattern`, `level`, `limit`, `clear`, `browser` (Chrome-reported messages + DevTools Issues)
-- `browser_network` - Network requests for a tab. Params: `tabId`, `urlPattern`, `filter`, `type`, `failed`, `limit`, `clear`, `fullUrls`, `requestId` (one request with redacted headers)
+- `browser_network` - Network requests for a tab. Params: `tabId`, `urlPattern`, `filter`, `type`, `failed`, `limit`, `clear`, `fullUrls`, `requestId` (one request with redacted headers, plus `responseBody` when captured), `captureBodies` (`true` keeps document/xhr/fetch response bodies from then on, `false` stops)
 - `browser_intercept` - Block / redirect / add request headers per tab, captures, HAR export. Params: `action` (set-rules|list-rules|clear-rules|list-captures|export-har), `tabId`, `rules`, `filter`, `limit`. Check `enforcement` in the result: `capture-only` = rules are not applied.
 
 ## Safe observe → act

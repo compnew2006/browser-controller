@@ -140,7 +140,7 @@ Some sites expose their actions to agents through WebMCP. `browser_webmcp_list {
 ## Debugging (per-tab)
 
 - `browser_console { tabId, pattern: "error|fail" }` reads console output for that tab (filter with `pattern`, `level`, `limit`); `browser: true` adds what Chrome reported (failed loads, deprecations) and DevTools Issues
-- `browser_network { tabId, failed: true }` shows requests for that tab (`urlPattern`, `filter`, `type`, `failed`, `limit`); `requestId` returns one request with its (redacted) headers
+- `browser_network { tabId, failed: true }` shows requests for that tab (`urlPattern`, `filter`, `type`, `failed`, `limit`); `requestId` returns one request with its (redacted) headers. To see what an API returned: `browser_network { tabId, captureBodies: true }`, repeat the action, then `requestId` also gives `responseBody` (`captureBodies: false` when done)
 - `browser_screenshot { tabId, maxWidth: 1024, format: "jpeg" }` captures the tab over CDP (a background tab is shown for a moment); `maxWidth` and JPEG keep the image small
 
 ## Common Mistakes

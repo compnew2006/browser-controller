@@ -33,7 +33,31 @@ function armIdle(tabId) {
   clearTimeout(s.timer);
   if (s.busy > 0) return; // a long withCdp() call is still using the session
   if (s.emulation && Object.keys(s.emulation).length) return; // detaching would drop the overrides
+  if (s.pins?.size) return; // a capture (response bodies…) is running on it
   s.timer = setTimeout(() => { detachCdp(tabId); }, IDLE_MS);
+}
+
+/**
+ * Keep the tab's live session attached for `reason` until unpinned. The pin
+ * lives on the session, so it is gone once the session detaches (banner
+ * closed, tab closed): isCdpPinned() then tells the caller its capture stopped.
+ */
+export function pinCdp(tabId, reason) {
+  const s = sessions.get(tabId);
+  if (!s) return false;
+  (s.pins ||= new Set()).add(reason);
+  clearTimeout(s.timer);
+  return true;
+}
+
+export function unpinCdp(tabId, reason) {
+  const s = sessions.get(tabId);
+  if (!s?.pins?.delete(reason)) return;
+  armIdle(tabId);
+}
+
+export function isCdpPinned(tabId, reason) {
+  return !!sessions.get(tabId)?.pins?.has(reason);
 }
 
 /** Overrides browser_emulate set on the tab's live session ({} when none or detached). */

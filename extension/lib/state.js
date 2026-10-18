@@ -27,6 +27,12 @@ export const consoleByTab = new Map();
 /** @type {Map<number, Array<object>>} */
 export const networkByTab = new Map();
 /**
+ * browser_network captureBodies: tabId -> { bodies (lib/response-bodies.js),
+ * unsubscribe (CDP events; null once stopped) }. In memory, like the buffers.
+ * @type {Map<number, {bodies: object, unsubscribe: (() => void) | null}>}
+ */
+export const bodyCaptureByTab = new Map();
+/**
  * Smart-selector fallbacks (plan tasks 2–4). Map<tabId, Map<ref, fallback>>.
  * Populated at snapshot time; consumed by click/type when a ref no longer
  * resolves. Never sent to the agent — it keeps payloads token-cheap.
@@ -152,6 +158,8 @@ export function dropTabState(tabId) {
   wedgedTabs.delete(tabId);
   consoleByTab.delete(tabId);
   networkByTab.delete(tabId);
+  bodyCaptureByTab.get(tabId)?.unsubscribe?.();
+  bodyCaptureByTab.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
   lastNativeFingerprints.delete(tabId);
