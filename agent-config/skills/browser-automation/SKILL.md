@@ -114,7 +114,7 @@ Read-only tools (snapshot, text, find…) add no frames; add one with `action: "
 
 ## Network Control: `browser_intercept`
 
-Block, redirect or add request headers for one tab with `action: "set-rules"` (rules match a URL regex), see matched requests with `list-captures`, and export a HAR with `export-har` (headers and bodies are left out). Always check `enforcement` in the result: `capture-only` means Chrome is not applying the rules, and `mock` rules are only recorded — Chrome can't fake response bodies.
+Block, redirect or add request headers for one tab with `action: "set-rules"` (rules match a URL regex), see matched requests with `list-captures`, and export a HAR with `export-har` (headers and bodies are left out). Always check `enforcement` in the result: `capture-only` means Chrome is not applying the rules. A `mock` rule with a `tabId` really answers the page (`mockStatus`, `mockBody`, response `headers`) — use it to test an empty list, an error status or a slow/failed API without touching the server; `clear-rules` when done. A global mock (no `tabId`) is reported under `unsupported`.
 
 ## Sites with their own tools (WebMCP)
 

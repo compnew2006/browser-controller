@@ -508,7 +508,7 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 | Tool | What it does |
 |------|-------------|
 | [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit`; `browser: true` adds Chrome-reported messages and DevTools Issues |
-| [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules); captures + HAR export. `mock`/`log` rules are ledger-only |
+| [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules), mock responses per tab (the page gets the mock); captures + HAR export. `log` rules are ledger-only |
 | [`browser_network`](#browser_network) | Requests with status codes, durations and failures — per-tab; `urlPattern`, regex `filter`, `type`, `failed`, `limit`; `requestId` for one request's (redacted) headers; `captureBodies` for response bodies |
 | [`browser_evaluate`](#browser_evaluate) | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
 | [`browser_handle_dialog`](#browser_handle_dialog) | Dismiss/accept an open alert/confirm/prompt via CDP (works on frozen pages) |
@@ -854,7 +854,7 @@ browser_network { tabId: 15, requestId: "8" }                 // → request.res
 
 #### `browser_intercept`
 
-Captures, blocks, redirects or adds request headers to a tab's network traffic using Chrome's `declarativeNetRequest` session rules.
+Captures, blocks, redirects or adds request headers to a tab's network traffic using Chrome's `declarativeNetRequest` session rules, and mocks responses through the tab's debugger.
 
 ```
 browser_intercept { tabId: 15, action: "set-rules", rules: [
@@ -865,9 +865,18 @@ browser_intercept { tabId: 15, action: "set-rules", rules: [
 ```
 
 - `action`: `set-rules`, `list-rules`, `clear-rules`, `list-captures`, `export-har`
-- **Rules** (`set-rules`, up to 50): `match` (a URL regex, ≤500 characters; match-all patterns such as `.*` are rejected), `action` (`block` | `redirect` | `header` | `log` | `mock`), `id`, `types` (resource types such as `xmlhttprequest`, `script`, `image`), `tabIds`, `enabled` (default `true`), and per action `redirectUrl`, `headers` (set on matching *requests*), `mockStatus` / `mockBody`.
+- **Rules** (`set-rules`, up to 50): `match` (a URL regex, ≤500 characters; match-all patterns such as `.*` are rejected), `action` (`block` | `redirect` | `header` | `log` | `mock`), `id`, `types` (resource types such as `xmlhttprequest`, `script`, `image`, `main_frame`), `tabIds`, `enabled` (default `true`), and per action `redirectUrl`, `headers` (`header` rules: set on matching *requests*; `mock` rules: the mock's *response* headers), `mockStatus` (default 200) / `mockBody`.
+- **Mocks really answer the page.** A `mock` rule on a tab makes every matching request — `fetch`/XHR, a script, even a page navigation with `types: ["main_frame"]` — receive `mockStatus`, `headers` and `mockBody` instead of going to the network; the server never sees it. `Content-Type` defaults to `application/json` for a JSON body (else `text/plain`). A cross-origin caller is allowed (its `Origin` is echoed, the rule's headers exposed) and the CORS preflight Chrome sends first is answered too. Mocks run through the tab's debugger (Fetch domain): they need a `tabId` (or `tabIds`) — a global mock is reported under `unsupported` — and the yellow banner stays while they are set. `clear-rules` (or closing the banner) lets requests through again; `list-rules` then shows the mock as not enforced.
+
+```
+browser_intercept { tabId: 15, action: "set-rules", rules: [
+  { id: "empty-cart", match: "/api/cart$", action: "mock", mockBody: "{\"items\":[]}" },
+  { id: "save-fails", match: "api\\.example\\.com/save", action: "mock", mockStatus: 503, mockBody: "{\"error\":\"down\"}" }
+] }
+→ { success: true, enforcement: "full", scope: "tabs:15", ruleCount: 2, enforced: 2 }
+```
 - **Scope:** rules apply to the `tabId` you pass (or to each rule's `tabIds`); with neither they are global. Calling `set-rules` again replaces the rules of that scope, and an empty list removes them.
-- **Enforcement is reported, not assumed.** The result has `enforcement`: `"full"`, `"partial"` or `"capture-only"`, plus an `enforced` count and an `unsupported` list with the reason for each rule Chrome cannot apply. Chrome cannot fake a response body, so `mock` rules are only recorded in the capture ledger (and make the result `"partial"`); `log` rules are capture-only by design and are not counted as enforced. If Chrome rejects the rule set (its regex dialect is stricter than JavaScript's), enforcement falls back to `capture-only` with a `reason`.
+- **Enforcement is reported, not assumed.** The result has `enforcement`: `"full"`, `"partial"` or `"capture-only"`, plus an `enforced` count and an `unsupported` list with the reason for each rule Chrome cannot apply (a global mock, a tab whose debugger cannot attach). `log` rules are capture-only by design and are not counted as enforced. If Chrome rejects the rule set (its regex dialect is stricter than JavaScript's), enforcement falls back to `capture-only` with a `reason`.
 - `list-rules`: the stored rules and whether each is enforced. `clear-rules`: with `tabId`, removes that tab's rules (global rules stay); without it, removes all.
 - `list-captures` (needs `tabId`): the tab's recorded requests, with `intercept.matchedRuleIds` on those a rule matched. `filter` (URL regex) and `limit` (1–200) narrow it.
 - `export-har` (needs `tabId`): a HAR 1.2 file of the tab's requests with their headers and duration; `filter` and `limit` narrow it like `list-captures`. Credential and session header values are redacted (`_redacted: true`), and bodies are not captured.

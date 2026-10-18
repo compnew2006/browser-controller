@@ -119,7 +119,7 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_handle_dialog:
     'Use to handle or dismiss a JS dialog (alert/confirm/prompt) that blocks the page.',
   browser_intercept:
-    "Use to block/redirect/mock network traffic per tab (rules by URL regex) or export a redacted HAR. Check the enforcement flag — capture-only means rules are ledger-marked, not applied.",
+    "Use to block/redirect/mock network traffic per tab (rules by URL regex) or export a redacted HAR. A tab-scoped mock really answers the page's requests (fake an API response, an error status, an empty list). Check the enforcement flag — capture-only means rules are ledger-marked, not applied.",
   browser_observe:
     'Use as the primary AI-facing page read before browser_act. It returns compact, session-owned refs with allowed actions and geometry.',
   browser_act:

@@ -157,7 +157,10 @@ export function hasCdp(tabId) {
 /** tabId -> Set<(method, params) => void> */
 const eventSubscribers = new Map();
 
-/** Receive the tab's CDP events (method, params) until the returned function is called. */
+/**
+ * Receive the tab's CDP events (method, params) until the returned function is
+ * called. A subscriber that answers a Fetch.requestPaused returns true.
+ */
 export function subscribeCdpEvents(tabId, fn) {
   let subs = eventSubscribers.get(tabId);
   if (!subs) { subs = new Set(); eventSubscribers.set(tabId, subs); }
@@ -171,7 +174,16 @@ export function subscribeCdpEvents(tabId, fn) {
 if (typeof chrome !== 'undefined' && chrome.debugger?.onEvent) {
   chrome.debugger.onEvent.addListener((source, method, params) => {
     const subs = eventSubscribers.get(source.tabId);
-    if (subs) for (const fn of [...subs]) { try { fn(method, params); } catch { /* one bad subscriber must not starve the rest */ } }
+    let answered = false;
+    if (subs) for (const fn of [...subs]) { try { if (fn(method, params) === true) answered = true; } catch { /* one bad subscriber must not starve the rest */ } }
+    // A paused request nobody answers would hang the page for good (the worker
+    // restarted and lost its mock rules, the rules were just cleared): let it
+    // through and stop pausing.
+    if (method === 'Fetch.requestPaused' && !answered) {
+      const target = { tabId: source.tabId };
+      chrome.debugger.sendCommand(target, 'Fetch.continueRequest', { requestId: params.requestId }).catch(() => {});
+      chrome.debugger.sendCommand(target, 'Fetch.disable').catch(() => {});
+    }
   });
 }
 

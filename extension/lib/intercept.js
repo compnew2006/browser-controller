@@ -91,6 +91,61 @@ export function evaluateRules(rules, req) {
   return (rules || []).filter((r) => matchRule(r, req));
 }
 
+const CDP_TO_WEBREQUEST = {
+  Document: ["main_frame", "sub_frame"], XHR: ["xmlhttprequest"], Fetch: ["xmlhttprequest"],
+  Stylesheet: ["stylesheet"], Script: ["script"], Image: ["image"], Font: ["font"], Media: ["media"],
+  WebSocket: ["websocket"], Ping: ["ping"], CSPViolationReport: ["csp_report"],
+};
+
+/** The webRequest type names (what rule.types holds) for a CDP resourceType. */
+export function cdpResourceTypes(resourceType) {
+  return CDP_TO_WEBREQUEST[resourceType] || ["other"];
+}
+
+function base64Utf8(text) {
+  let bin = "";
+  for (const byte of new TextEncoder().encode(text)) bin += String.fromCharCode(byte);
+  return btoa(bin);
+}
+
+function looksLikeJson(text) {
+  if (!/^\s*[[{]/.test(text)) return false;
+  try { JSON.parse(text); return true; } catch { return false; }
+}
+
+/**
+ * Fetch.fulfillRequest params for a mock rule and the paused request:
+ * rule.headers are the mock's response headers, a cross-origin caller is
+ * allowed (its Origin echoed), and the CORS preflight Chrome sends before a
+ * non-simple cross-origin request is answered too — it pauses like the request.
+ */
+export function mockFulfillParams(rule, request) {
+  const sent = Object.entries(request.headers || {});
+  const get = (name) => sent.find(([k]) => k.toLowerCase() === name)?.[1];
+  const custom = Object.entries(rule.headers || {}).map(([name, value]) => ({ name, value: String(value) }));
+  const has = (name) => custom.some((h) => h.name.toLowerCase() === name);
+  const origin = get("origin");
+  const cors = origin && !has("access-control-allow-origin")
+    ? [{ name: "Access-Control-Allow-Origin", value: origin }, { name: "Access-Control-Allow-Credentials", value: "true" }]
+    : [];
+  // A cross-origin page only sees the mock's own headers when they are exposed.
+  if (cors.length && custom.length && !has("access-control-expose-headers")) {
+    cors.push({ name: "Access-Control-Expose-Headers", value: custom.map((h) => h.name).join(", ") });
+  }
+  const preflightMethod = request.method === "OPTIONS" && get("access-control-request-method");
+  if (preflightMethod) {
+    const asked = get("access-control-request-headers");
+    return {
+      responseCode: 204,
+      responseHeaders: [...cors, { name: "Access-Control-Allow-Methods", value: preflightMethod },
+        ...(asked ? [{ name: "Access-Control-Allow-Headers", value: asked }] : [])],
+    };
+  }
+  const body = rule.mockBody ?? "";
+  const type = has("content-type") ? [] : [{ name: "Content-Type", value: looksLikeJson(body) ? "application/json" : "text/plain; charset=utf-8" }];
+  return { responseCode: rule.mockStatus ?? 200, responseHeaders: [...type, ...cors, ...custom], body: base64Utf8(body) };
+}
+
 /** Scope key for storage: global or sorted tab list. */
 export function scopeKey(tabIds) {
   if (!tabIds || tabIds.length === 0) return "global";

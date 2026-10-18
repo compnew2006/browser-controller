@@ -11,9 +11,9 @@ const ruleSchema = z.object({
   tabIds: z.array(z.number().int()).max(50).optional(),
   action: ruleAction,
   redirectUrl: z.string().max(2000).optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-  mockStatus: z.number().int().min(100).max(599).optional(),
-  mockBody: z.string().max(20_000).optional(),
+  headers: z.record(z.string(), z.string()).optional().describe("header rules: request headers to set. mock rules: response headers of the mock (Content-Type defaults to application/json for a JSON body, else text/plain)"),
+  mockStatus: z.number().int().min(100).max(599).optional().describe("mock rules: response status (default 200)"),
+  mockBody: z.string().max(20_000).optional().describe("mock rules: response body"),
   enabled: z.boolean().optional().default(true),
 });
 
@@ -21,7 +21,7 @@ export const interceptTool: ToolDefinition = {
   name: "browser_intercept",
   summary: "Manage request intercept rules and captures per tab",
   description:
-    "Capture, block, redirect, or add request headers to network traffic per tab (Chrome session rules). Actions: set-rules, list-rules, clear-rules, list-captures, export-har. 'mock' and 'log' rules are recorded in the capture ledger only — Chrome cannot fake response bodies — and set-rules reports them under unsupported with enforcement 'partial'.",
+    "Capture, block, redirect, add request headers to, or mock network traffic per tab. Actions: set-rules, list-rules, clear-rules, list-captures, export-har. block/redirect/header use Chrome session rules. 'mock' rules answer matching requests with mockStatus/mockBody/headers instead of the network — the page really receives the mock (cross-origin callers and their CORS preflight are allowed) — through the tab's debugger, so they need a tabId (or tabIds) and the yellow banner stays while they are set; a global mock or a tab whose debugger cannot attach is reported under unsupported. 'log' rules are recorded in the capture ledger only. Check enforcement/enforced in the result.",
   inputSchema: z.object({
     tabId: z
       .number()
