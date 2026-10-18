@@ -442,7 +442,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-34 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
+35 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
 
 **See**
 
@@ -508,6 +508,7 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 | Tool | What it does |
 |------|-------------|
 | [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit`; `browser: true` adds Chrome-reported messages and DevTools Issues |
+| [`browser_inspect_element`](#browser_inspect_element) | Why an element looks/behaves as it does: computed styles, matching CSS rules with file:line and what was overridden, inherited and `::before`/`::after` rules, event listeners (own + delegated to ancestors) |
 | [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules), mock responses per tab (the page gets the mock); captures + HAR export. `log` rules are ledger-only |
 | [`browser_network`](#browser_network) | Requests with status codes, durations and failures — per-tab; `urlPattern`, regex `filter`, `type`, `failed`, `limit`; `requestId` for one request's (redacted) headers; `captureBodies` for response bodies |
 | [`browser_evaluate`](#browser_evaluate) | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
@@ -881,6 +882,32 @@ browser_intercept { tabId: 15, action: "set-rules", rules: [
 - `list-captures` (needs `tabId`): the tab's recorded requests, with `intercept.matchedRuleIds` on those a rule matched. `filter` (URL regex) and `limit` (1–200) narrow it.
 - `export-har` (needs `tabId`): a HAR 1.2 file of the tab's requests with their headers and duration; `filter` and `limit` narrow it like `list-captures`. Credential and session header values are redacted (`_redacted: true`), and bodies are not captured.
 
+#### `browser_inspect_element`
+
+Why an element looks and behaves the way it does — what the DevTools Elements panel shows, in one call.
+
+```
+browser_inspect_element { tabId: 15, ref: "e12" }
+→ { success: true,
+    element: { tag: "button", id: "go", classes: ["btn"], text: "Go", box: { x: 11, y: 8, width: 41, height: 25 } },
+    styles: { display: "block", color: "rgb(0, 0, 255)", cursor: "pointer", margin: "0px 0px 0px 3px", … },
+    rules: [
+      { selector: "element.style", style: "margin-left: 3px" },
+      { selector: "#go.btn", source: "https://app.example/:4", style: "color: blue !important; background: yellow" },
+      { selector: ".btn", source: "https://app.example/site.css:1", style: "cursor: pointer; color: orange", overridden: ["color"] }
+    ],
+    inherited: [{ from: "div#root.wrap", selector: ".wrap", source: "https://app.example/:2", style: "font-size: 20px; color: purple", overridden: ["font-size", "color"] }],
+    pseudo: [{ pseudo: "::before", selector: ".btn::before", style: "content: \"*\"" }],
+    listeners: [{ type: "click", handler: "function onclick(event) { save() }", line: 9, column: 111 }],
+    delegated: [{ on: "div#root.wrap", types: ["click (capture)"] }] }
+```
+
+- `tabId`, `ref` or `selector` (open and closed shadow roots and same-origin iframes included), `include` (any of `"styles"`, `"rules"`, `"listeners"`; default all three), `properties` (computed properties to return, e.g. `["z-index", "pointer-events"]`; `["*"]` = all of them)
+- `styles`: computed values. By default the layout and visual properties that differ from their default value (so an untouched `opacity: 1` or `transform: none` is left out); `display`, size, color and font are always there.
+- `rules`: the author CSS rules that match, **highest priority first** with `element.style` (the `style` attribute) on top — each with `source` (file:line), `media`, its declarations, `overridden` (properties that lost the cascade to a later rule, the inline style or an `!important`) and `invalid` (declarations Chrome could not parse). `inherited` lists what ancestors pass down (inheritable properties only, nearest ancestor first, overridden when the element or a nearer ancestor sets it — a browser default counts: a `<button>` keeps its own font), `pseudo` the `::before` / `::after` rules. Browser-default rules are not listed.
+- `listeners`: event listeners on the element — `type`, `capture` / `passive` / `once`, the handler's source text and its `line` / `column`. `delegated`: the event types its ancestors, the `document` and the `window` listen to — they see the element's bubbling events (React and jQuery handle clicks there).
+- `rules` and `listeners` read through the debugger (yellow banner); `include: ["styles"]` does not. Read-only — the page is not touched — and retried on timeout.
+
 #### `browser_evaluate`
 
 Runs JavaScript in a tab the way you would in the DevTools console: top-level `await` works, several statements are fine, and the value of the **last expression** is returned (no IIFE or `return` needed). DOM nodes come back as readable descriptions.
@@ -960,7 +987,7 @@ Each tool declares its transport timeout next to its definition (`mcp-server/src
 |---------|-------|
 | 5 s | `browser_press_key`, `browser_hover`, `browser_handle_dialog`, `browser_list_browsers`, `browser_select_browser` |
 | 10 s | `browser_click`, `browser_click_text`, `browser_scroll`, `browser_select`, `browser_drag`, `browser_observe`, `browser_intercept`, `browser_resize_window`, `browser_console`, `browser_network`, `browser_emulate` |
-| 15 s | `browser_type`, `browser_fill_form`, `browser_upload_file`, `browser_act`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find` |
+| 15 s | `browser_type`, `browser_fill_form`, `browser_upload_file`, `browser_act`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find`, `browser_inspect_element` |
 | 30 s | `browser_run_action` |
 | 35 s | `browser_tabs` (a reload waits up to 30 s for the new document) |
 | 60 s | `browser_navigate`, `browser_wait` |
@@ -970,7 +997,7 @@ Each tool declares its transport timeout next to its definition (`mcp-server/src
 | 130 s | `browser_webmcp_call` (always longer than its own `timeout`, up to 115 s, plus the form scan) |
 | 300 s | `browser_batch`, `browser_shortcuts` (each step keeps its own timeout) |
 
-Only the read-only tools are **retried on timeout**: `browser_observe`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find`, `browser_list_browsers` and `browser_webmcp_list`. Every other tool — including `browser_console` and `browser_network` (which mutate on `clear: true`) — is never retried, so a click cannot fire twice.
+Only the read-only tools are **retried on timeout**: `browser_observe`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find`, `browser_inspect_element`, `browser_list_browsers` and `browser_webmcp_list`. Every other tool — including `browser_console` and `browser_network` (which mutate on `clear: true`) — is never retried, so a click cannot fire twice.
 
 ---
 
@@ -994,7 +1021,7 @@ Only the read-only tools are **retried on timeout**: `browser_observe`, `browser
 | Env var | Default | What it does |
 |---------|---------|-------------|
 | `WS_PORT` | `7225` | WebSocket port the daemon uses for the extension connection |
-| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of loading all 33 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
+| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of loading all 35 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
 | `MCP_AGENT_NAME` | (auto: IDE name) | Override the agent name shown in the popup (same as `--agent`) |
 | `BC_SHORTCUTS_FILE` | `~/.browser-controller/shortcuts.json` | Where [`browser_shortcuts`](#browser_shortcuts) keeps the saved flows |
 
@@ -1067,7 +1094,7 @@ browser-controller/
 │       ├── bridge.ts        Extension WS server + cross-platform port probe
 │       ├── register-tools.ts Progressive-disclosure wiring
 │       ├── native-host.ts   Native messaging pairing helper (npm run setup:pairing)
-│       └── tools/           Tool definitions (33 + the browser_tools meta tool), registry pattern
+│       └── tools/           Tool definitions (35 + the browser_tools meta tool), registry pattern
 ├── extension/           Chrome extension (Manifest V3, plain JS, ES modules)
 │   ├── background.js        Wiring only (~30 lines): inject router, register events, connect
 │   ├── lib/                 state (buffers/locks/persistence), connection (WS lifecycle),
