@@ -5,19 +5,19 @@ import { requireTabId, imageResult, jsonError, payloadOf } from './types.js';
 export const screenshotTool: ToolDefinition = {
   name: 'browser_screenshot',
   summary: 'Capture a screenshot of a tab',
-  description: 'Capture a screenshot of a tab over CDP. Use maxWidth / scale and format:"jpeg" to shrink the image (far fewer tokens); fullPage captures the whole scrollable page; region zooms into a rectangle; ref or selector captures just that element (scrolled into view). The result says how image pixels map to the x/y that click/hover/scroll take. A background tab is shown for a moment and the user\'s tab is switched straight back (Chrome does not paint hidden tabs). The agent\'s blue control frame is never in the picture.',
+  description: 'Screenshot a tab over CDP (a background tab is shown for a moment). maxWidth / scale and format:"jpeg" cut tokens; fullPage, region (a viewport rectangle, zoomed) or ref/selector (one element). The result maps image pixels to click x/y.',
   inputSchema: z.object({
     tabId: requireTabId(),
     format: z.enum(['png', 'jpeg']).optional().default('png'),
-    quality: z.number().min(0).max(100).optional().default(80).describe('JPEG quality (ignored for PNG)'),
-    scale: z.number().min(0.05).max(4).optional().describe('Downscale factor, e.g. 0.5 = half size (max 1 for the viewport/page; up to 4 to zoom into a region, default 2 there)'),
+    quality: z.number().min(0).max(100).optional().default(80).describe('JPEG only'),
+    scale: z.number().min(0.05).max(4).optional().describe('Up to 1 (a region: up to 4, default 2)'),
     region: z.object({
       x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive(),
-    }).optional().describe('Capture only this viewport rectangle (CSS px, the same coordinates click/hover/scroll x/y use) — zoom in on small UI'),
-    maxWidth: z.number().int().min(100).max(4000).optional().describe('Cap the image width in pixels (keeps aspect ratio), e.g. 1024'),
-    fullPage: z.boolean().optional().default(false).describe('Capture the whole scrollable page, not just the viewport'),
-    ref: z.string().optional().describe('Capture just this element (ref from snapshot/find); scale defaults to 1'),
-    selector: z.string().optional().describe('Capture just the first visible element matching this CSS selector'),
+    }).optional(),
+    maxWidth: z.number().int().min(100).max(4000).optional().describe('Max image width (px)'),
+    fullPage: z.boolean().optional().default(false),
+    ref: z.string().optional(),
+    selector: z.string().optional(),
   }),
   // Read-only: safe to retry.
   idempotent: true,

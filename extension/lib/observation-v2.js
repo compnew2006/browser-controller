@@ -471,8 +471,10 @@ export function PAGE_OBSERVE_V2(config) {
       const value = descriptor.inputType === 'password'
         ? undefined
         : helpers.clean(element.value ?? (element.isContentEditable ? element.textContent : ''), 200);
+      // Lean by design (tokens): only state that differs from the default, no
+      // `visible` (every listed element is), `interactable` only when false.
       const stateView = {
-        disabled: descriptor.disabled,
+        ...(descriptor.disabled ? { disabled: true } : {}),
         ...(descriptor.readOnly ? { readOnly: true } : {}),
         ...(typeof element.checked === 'boolean' ? { checked: element.checked } : {}),
         ...(typeof element.selected === 'boolean' ? { selected: element.selected } : {}),
@@ -483,10 +485,9 @@ export function PAGE_OBSERVE_V2(config) {
         role: descriptor.role,
         ...(descriptor.name ? { name: descriptor.name } : {}),
         ...(value ? { value } : {}),
-        state: stateView,
-        bbox: [rect.x, rect.y, rect.width, rect.height],
-        visible: visibility.visible,
-        interactable: visibility.interactable,
+        ...(Object.keys(stateView).length ? { state: stateView } : {}),
+        bbox: [rect.x, rect.y, rect.width, rect.height].map(Math.round),
+        ...(visibility.interactable ? {} : { interactable: false }),
         allowedActions: enabledActions,
       };
       elements.push(publicElement);
@@ -508,6 +509,22 @@ export function PAGE_OBSERVE_V2(config) {
     if (counts.get(key(item)) < 2) continue;
     const context = helpers.rowContextOf(refs.get(item.ref).element);
     if (context) item.context = context;
+  }
+
+  // Same budget idea as browser_snapshot's maxChars: page order, cut once the
+  // list's JSON passes the cap; refs past the cut are not kept either.
+  let truncated = false;
+  if (Number.isFinite(config.maxChars) && config.maxChars > 0) {
+    let used = 2;
+    let kept = elements.length;
+    for (let i = 0; i < elements.length; i++) {
+      used += JSON.stringify(elements[i]).length + 1;
+      if (used > config.maxChars) { kept = i; break; }
+    }
+    if (kept < elements.length) {
+      for (const item of elements.splice(kept)) refs.delete(item.ref);
+      truncated = true;
+    }
   }
 
   const documentVersion = `${state.documentId}:${state.routeEpoch}:${state.revision}`;
@@ -537,6 +554,7 @@ export function PAGE_OBSERVE_V2(config) {
       scrollY: Math.round(globalThis.scrollY || 0),
     },
     elements,
+    ...(truncated ? { truncated: true, hint: 'Elements capped (maxChars). Raise maxChars, or scroll and observe again.' } : {}),
     text,
     pageState: { readyState: document.readyState },
   };

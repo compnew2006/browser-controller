@@ -6,16 +6,15 @@ export const dialogTool: ToolDefinition = {
   name: "browser_handle_dialog",
   summary: "Handle or dismiss browser dialogs (alert/confirm/prompt)",
   description:
-    "Handle JavaScript dialogs (alert, confirm, prompt). Dialogs block page interaction until handled.",
+    "Accept or dismiss an alert/confirm/prompt — works even while the dialog freezes the page.",
   inputSchema: z.object({
     tabId: requireTabId(),
     action: z
-      .enum(["accept", "dismiss"])
-      .describe("Accept or dismiss the dialog"),
+      .enum(["accept", "dismiss"]),
     promptText: z
       .string()
       .optional()
-      .describe("Text to enter for prompt() dialogs"),
+      .describe("Text for prompt()"),
   }),
   timeoutMs: 5_000,
   handler: forwardHandler("browser_handle_dialog"),

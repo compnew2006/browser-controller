@@ -17,15 +17,15 @@ export const gifTool: ToolDefinition = {
   name: 'browser_gif',
   summary: 'Record the agent\'s actions in a tab as an animated GIF',
   description:
-    'Record what happens in a tab as an animated GIF (to show the user what was done). start begins recording: a frame is captured after every page-changing action (navigate, click, type, keys, scroll, hover, select, drag, forms…), clicks are marked with a red ring. frame adds one now, stop pauses, status/clear, export writes the .gif file (default ~/Downloads) and returns its path — the image itself is not returned. A background tab is shown for a moment per frame (Chrome does not paint hidden tabs); activate:false records only while the tab is visible.',
+    'Record a tab as an animated GIF to show the user: start, then a frame after every page-changing action (clicks ringed); export writes the .gif and returns its path. Also frame, stop, status, clear.',
   inputSchema: z.object({
     tabId: requireTabId(),
-    action: z.enum(['start', 'frame', 'stop', 'status', 'export', 'clear']).describe('Recording action'),
-    width: z.number().int().min(200).max(1600).optional().describe('start: frame width in px (default 800)'),
-    maxFrames: z.number().int().min(1).max(500).optional().describe('start: stop capturing after this many frames (default 300)'),
-    activate: z.boolean().optional().describe('start: briefly show a background tab to capture it (default true)'),
-    path: z.string().optional().describe('export: where to write the .gif (default ~/Downloads/browser-recording-<time>.gif)'),
-    clear: z.boolean().optional().describe('export: drop the frames afterwards (default true)'),
+    action: z.enum(['start', 'frame', 'stop', 'status', 'export', 'clear']),
+    width: z.number().int().min(200).max(1600).optional().describe('start: px (default 800)'),
+    maxFrames: z.number().int().min(1).max(500).optional().describe('start: default 300'),
+    activate: z.boolean().optional().describe('start: show a background tab briefly per frame (default true)'),
+    path: z.string().optional().describe('export: default ~/Downloads'),
+    clear: z.boolean().optional().describe('export: drop the frames after (default true)'),
   }),
   timeoutMs: 120_000,
   async handler(host, params) {

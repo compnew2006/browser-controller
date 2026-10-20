@@ -9,7 +9,7 @@ export const listBrowsersTool: ToolDefinition = {
   name: 'browser_list_browsers',
   summary: 'List the connected browsers (Chrome profiles)',
   description:
-    'List every browser (Chrome profile / instance with the extension) connected to Browser Controller: browserId, label, which one is the default and which one this session uses. With one browser connected you never need this.',
+    'Connected browsers (Chrome profiles): browserId, label, the default and the one this session uses. Only needed with several.',
   inputSchema: z.object({}),
   idempotent: true,
   timeoutMs: 5_000,
@@ -20,9 +20,9 @@ export const selectBrowserTool: ToolDefinition = {
   name: 'browser_select_browser',
   summary: 'Send this session\'s browser calls to one browser',
   description:
-    'Route all of this session\'s browser tool calls to one connected browser (by browserId or label from browser_list_browsers). "auto" goes back to the default (the most recently connected browser). Tab ids belong to their browser — list tabs again after switching.',
+    'Route this session to one connected browser (browserId or label; "auto" = the default). List tabs again after switching.',
   inputSchema: z.object({
-    browserId: z.string().describe('browserId or label from browser_list_browsers, or "auto"'),
+    browserId: z.string(),
   }),
   timeoutMs: 5_000,
   handler: forwardHandler('browser_select_browser'),

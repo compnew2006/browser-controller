@@ -16,6 +16,8 @@ import { agentCursorEnabled } from '../lib/overlay.js';
 import { handleUploadFile } from './cdp.js';
 
 const sessionKey = (sessionId) => String(sessionId || 'anonymous');
+/** Default cap on the observed elements' JSON — the same budget browser_snapshot uses. */
+const OBSERVE_MAX_CHARS = 20_000;
 
 /**
  * Install the (idempotent) page runtime, then run the observe/act entrypoint.
@@ -68,6 +70,7 @@ export async function handleObserve(params = {}, sessionId, _agentName, signal) 
     sessionId: sessionKey(sessionId),
     mode,
     maxElements: Math.min(1000, Math.max(1, Number(params.maxElements) || 500)),
+    maxChars: Math.min(200_000, Math.max(500, Number(params.maxChars) || OBSERVE_MAX_CHARS)),
     maxSnapshots: SNAPSHOT_MAX_ENTRIES,
     ttlMs: SNAPSHOT_TTL_MS,
     now: createdAt,

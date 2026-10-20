@@ -58,23 +58,21 @@ export const batchTool: ToolDefinition = {
   name: 'browser_batch',
   summary: 'Run several browser actions in one call (stops at first error)',
   description:
-    'Run a sequence of browser tool calls (up to 200) in ONE call, in order, and get their results back (output:"last"/"errors" to keep long batches cheap). Use it to cut round-trips when you already know the next steps, e.g. click a field → type → press Tab → wait → read text. Stops at the first failing step (remaining steps are skipped) unless continueOnError is true. A top-level tabId is applied to every step that does not set its own. Steps cannot be nested batches.',
+    'Run up to 200 tool calls in order in ONE call; stops at the first failure unless continueOnError. A top-level tabId fills steps that have none. output "last" / "errors" keeps long batches cheap.',
   inputSchema: z.object({
-    tabId: optionalTabId().describe('Default tab id for every step that does not set its own tabId'),
+    tabId: optionalTabId().describe('For every step without its own tabId'),
     actions: z
       .array(z.object({
-        tool: z.string().describe('Tool name, e.g. "browser_click"'),
-        params: z.record(z.string(), z.unknown()).optional().describe('That tool\'s arguments'),
+        tool: z.string().describe('e.g. "browser_click"'),
+        params: z.record(z.string(), z.unknown()).optional(),
       }))
       .min(1)
-      .max(MAX_STEPS)
-      .describe(`Steps to run in order (max ${MAX_STEPS})`),
-    continueOnError: z.boolean().optional().default(false).describe('Keep going after a failing step'),
+      .max(MAX_STEPS),
+    continueOnError: z.boolean().optional().default(false),
     output: z
       .enum(['all', 'last', 'errors'])
       .optional()
-      .default('all')
-      .describe('all = the result of every step; last = only the last step result (+ any failure); errors = only failures. Use last/errors for long batches to save tokens.'),
+      .default('all'),
   }),
   // Longest a single MCP call may reasonably take; each step keeps its own
   // transport timeout.

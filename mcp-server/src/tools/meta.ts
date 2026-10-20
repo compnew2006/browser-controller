@@ -6,8 +6,8 @@ import { allTools, toolMap } from "./index.js";
 /**
  * Progressive disclosure meta tool (Anthropic "Code Execution with MCP" pattern).
  *
- * Instead of loading all 24 tool definitions into the agent's context upfront
- * (~4200 tokens), only `browser_tools` is registered as visible. The agent uses
+ * Instead of loading every tool definition into the agent's context upfront
+ * (~7,100 tokens), only `browser_tools` is registered as visible. The agent uses
  * it to discover, search, and activate other tools on demand:
  *
  *   browser_tools { action: "search", query: "click" }
@@ -17,7 +17,7 @@ import { allTools, toolMap } from "./index.js";
  *     → { name, description, inputSchema } + activates the tool
  *
  *   browser_tools { action: "list" }
- *     → all tool names + summaries (~400 tokens vs ~4200)
+ *     → all tool names + one-line summaries (~900 tokens)
  *
  * The activation callback (`onActivate`) is injected by index.ts at registration
  * time. When the agent requests `details`, the tool is enabled via the SDK's
@@ -43,18 +43,14 @@ export interface MetaToolDeps {
  * summary already does that).
  */
 const TASK_PREAMBLE =
-  'Task → tool:\n' +
-  '• Click / type / keys → browser_click / browser_type / browser_press_key (real trusted input over CDP, works in background windows; trusted:false = synthetic, no debugger banner). Fill a form → browser_fill_form. Prefer these over raw JS.\n' +
-  '• Several known steps → browser_batch (one call, stops at the first error).\n' +
-  '• Read visible text → browser_text (cheapest). Page structure / element refs → browser_snapshot. Screenshot → browser_screenshot (cannot be done via JS).\n' +
-  '• Safe Observe → Act loop → browser_observe, then browser_act with its snapshotId/ref. This adds freshness, geometry, allowed-action, and click-occlusion checks.\n' +
-  '• Read/write DOM OR call an internal API (fetch) OR read cookies → browser_evaluate (DevTools-console style: top-level await, last value returned; runs over CDP by default, so page CSP does not block it; yellow debugger banner while attached). mode:"scripting" avoids the banner but a strict CSP can block it.\n' +
-  '• browser_run_action runs an action object ({ execute(params) } + actionParams) or a plain expression — always over CDP, never falling back to chrome.scripting.\n' +
-  '• Navigate (incl. hash routes) → browser_navigate. Manage tabs → browser_tabs. Wait for something → browser_wait.';
+  'Task → tool: click / type / keys → browser_click / browser_type / browser_press_key; a form → browser_fill_form; ' +
+  'known steps → browser_batch; read text → browser_text; refs → browser_snapshot or browser_find; ' +
+  'act safely → browser_observe + browser_act; JS or an internal API → browser_evaluate; ' +
+  'pages and tabs → browser_navigate, browser_tabs, browser_wait. "details" on a tool activates it.';
 
 /**
- * Per-tool "use this when… / not for…" guidance, returned alongside each tool
- * in `list` and `details`. This is a relational concern (how a tool relates to
+ * Per-tool "use this when… / not for…" guidance, returned with each tool in
+ * `search` and `details`. This is a relational concern (how a tool relates to
  * its alternatives), so it lives here in a central map rather than inside each
  * ToolDefinition (which would couple every tool file to its siblings). If a tool
  * has no entry here, it falls back to an empty string.
@@ -136,14 +132,7 @@ export function createMetaTool(deps: MetaToolDeps): ToolDefinition {
   return {
     name: "browser_tools",
     summary: "Discover and activate browser tools (progressive disclosure)",
-    description: `Discover, search, and activate browser control tools. Instead of loading all tool definitions upfront, use this to find the right tool for your task.
-
-Actions:
-- "list": See all available tools with short summaries (~400 tokens).
-- "search": Find tools by keyword (e.g. query:"click" matches browser_click, browser_click_text).
-- "details": Get the full schema + description for one tool AND activate it so you can call it.
-
-Workflow: call "list" or "search" first, then "details" on the tool you need, then call that tool directly.`,
+    description: 'Discover browser tools: "list" (every tool with a one-line summary), "search" (query), "details" (one tool\'s full schema; this also activates it, so you can call it directly).',
     inputSchema: z.object({
       action: z
         .enum(["list", "search", "details"])
@@ -171,10 +160,11 @@ Workflow: call "list" or "search" first, then "details" on the tool you need, th
       if (action === "list") {
         const tools = allTools
           .filter((t) => t.name !== "browser_tools") // don't list the meta tool itself
+          // No per-tool guidance here: it comes with "details" (and "search"),
+          // once the agent has picked a tool. The list stays in the context.
           .map((t) => ({
             name: t.name,
             summary: t.summary,
-            guidance: TOOL_GUIDANCE[t.name] ?? "",
             active: deps.isActive(t.name),
           }));
         return textResult(JSON.stringify({ preamble: TASK_PREAMBLE, tools }));

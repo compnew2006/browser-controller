@@ -6,13 +6,12 @@ export const observeTool: ToolDefinition = {
   name: 'browser_observe',
   summary: 'Observe compact actionable state for one tab',
   description:
-    'Capture one atomic, compact semantic observation with snapshot ownership, document version, geometry, element state, and allowed actions. Look-alike controls (same role+name, e.g. an Edit button per table row) carry their row text as context. Use its snapshotId and refs with browser_act.',
+    'Compact list of actionable elements (ref, role, name, state, bbox, allowedActions) plus a snapshotId for browser_act. Capped at maxChars (default 20000, then truncated:true).',
   inputSchema: z.object({
     tabId: requireTabId(),
-    mode: z.enum(['compact']).optional().default('compact')
-      .describe('Observation mode. Phase 1 supports compact; the field is versioned for future modes.'),
-    maxElements: z.number().int().min(1).max(1000).optional().default(500)
-      .describe('Maximum actionable elements returned.'),
+    mode: z.enum(['compact']).optional().default('compact'),
+    maxElements: z.number().int().min(1).max(1000).optional().default(500),
+    maxChars: z.number().int().min(500).max(200_000).optional().describe('Cap on the elements JSON (default 20000)'),
   }),
   idempotent: true,
   timeoutMs: 10_000,

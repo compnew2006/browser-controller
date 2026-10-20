@@ -24,12 +24,12 @@ export interface ToolResult {
  * MUST target a specific tab (the agent gets the id from `browser_tabs list`)
  * so the active tab the user is looking at never gets hijacked.
  */
+// Integer checked by refine, not .int(): .int() publishes ±2^53 bounds in the
+// JSON schema of all 34 tools that take a tabId (~850 tokens per tools/list).
 export const tabIdParam = z
   .number()
-  .int()
-  .describe(
-    "Target tab id (from browser_tabs list). Actions apply to THIS tab, not the active tab.",
-  );
+  .refine(Number.isInteger, "tabId must be an integer")
+  .describe("Tab id from browser_tabs list");
 
 /** Mandatory tabId (click/type/snapshot/…). */
 export function requireTabId() {
@@ -40,7 +40,7 @@ export function requireTabId() {
 export function optionalTabId() {
   return tabIdParam
     .optional()
-    .describe("Target tab id. If omitted, uses the active tab.");
+    .describe("Default: the active tab");
 }
 
 export interface ToolDefinition {
@@ -48,8 +48,8 @@ export interface ToolDefinition {
   /**
    * One-line summary (max ~60 chars) used by progressive disclosure: the
    * `browser_tools` meta tool returns this instead of the full description
-   * when listing/searching. Must be concise enough that 22 of them fit in
-   * ~400 tokens (vs ~4200 for full definitions). Example: "Click an element by ref or CSS selector".
+   * when listing/searching. Keep it short: all of them are listed together
+   * (~900 tokens for the whole list). Example: "Click an element by ref or CSS selector".
    */
   summary: string;
   description: string;

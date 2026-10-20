@@ -115,6 +115,15 @@ describe("Tool Registry", () => {
     }
   });
 
+  // Tool definitions are re-sent every turn: no ±2^53 bounds from unbounded
+  // .int() (tabId alone cost ~850 tokens across 34 tools), validation kept.
+  it('tabId stays integer-only without publishing safe-integer bounds', () => {
+    const click = toolMap.get('browser_click')!;
+    expect(click.inputSchema.safeParse({ tabId: 1.5, selector: 'a' }).success).toBe(false);
+    expect(click.inputSchema.safeParse({ tabId: 15, selector: 'a' }).success).toBe(true);
+    expect(JSON.stringify(toolManifest.map((t) => t.inputSchema))).not.toContain('9007199254740991');
+  });
+
   // --- Idempotency classification (audit M2) --------------------------------
   // Reads are retry-safe; mutating tools must NOT be. browser_console/network
   // mutate when clear:true, so they are explicitly non-idempotent.

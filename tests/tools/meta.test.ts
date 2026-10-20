@@ -89,7 +89,7 @@ describe('browser_tools meta tool (progressive disclosure)', () => {
     expect(schema.properties).toBeTruthy();
     expect(schema.properties.tabId).toBeTruthy();
     // .describe() text must survive serialization — the agent needs param docs
-    expect(schema.properties.tabId.description).toContain('tab id');
+    expect(schema.properties.tabId.description).toMatch(/tab id/i);
     // regression guard: Zod v4 internals leak as a "def" key per property
     expect(schema.properties.tabId.def).toBeUndefined();
     expect(JSON.stringify(schema)).not.toContain('"checks"');

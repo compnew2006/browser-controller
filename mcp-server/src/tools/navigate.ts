@@ -4,20 +4,19 @@ import { optionalTabId, forwardHandler } from './types.js';
 
 export const navigateTool: ToolDefinition = {
   name: 'browser_navigate',
-  summary: 'Navigate a tab to a URL (+ optional inline snapshot)',  description: 'Navigate to a URL in a browser tab. If tabId is omitted, navigates the active tab (or use browser_tabs create to open a new one). By default also returns a compact snapshot of the new page so you can act immediately; set snapshot:false to skip it and save tokens.',
+  summary: 'Navigate a tab to a URL (+ optional inline snapshot)',  description: 'Go to a URL (or "back" / "forward") in a tab and return a compact snapshot of the new page (snapshot:false skips it). Without tabId the active tab is used.',
   inputSchema: z.object({
-    url: z.string().describe('The URL to navigate to, or "back" / "forward" to move through the tab history'),
+    url: z.string().describe('URL, or "back" / "forward"'),
     tabId: optionalTabId(),
     waitUntil: z
       .enum(['load', 'domcontentloaded'])
       .optional()
-      .default('load')
-      .describe('When to consider navigation complete'),
+      .default('load'),
     snapshot: z
       .boolean()
       .optional()
       .default(true)
-      .describe('Return an inline snapshot of the new page (default true). Set false to save tokens when you will call browser_snapshot yourself.'),
+      .describe('Inline snapshot of the new page (default true)'),
   }),
   timeoutMs: 60_000,
   handler: forwardHandler('browser_navigate'),

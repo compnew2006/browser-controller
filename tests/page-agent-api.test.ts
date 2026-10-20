@@ -184,8 +184,8 @@ describe('page-side Observation Engine V2', () => {
 
     expect(result.elements).toEqual([
       expect.objectContaining({
-        ref: 'e1', role: 'button', name: 'Continue', state: { disabled: false, checked: false, selected: false },
-        bbox: [10, 20, 120, 32], visible: true, interactable: true,
+        ref: 'e1', role: 'button', name: 'Continue', state: { checked: false, selected: false },
+        bbox: [10, 20, 120, 32],
         allowedActions: ['click', 'focus', 'hover'],
       }),
       expect.objectContaining({
@@ -197,6 +197,27 @@ describe('page-side Observation Engine V2', () => {
     expect(result.metrics.payloadBytes).toBeLessThan(10_000);
     expect(JSON.stringify(result)).not.toContain('outerHTML');
     expect(JSON.stringify(result)).not.toContain('className');
+    // Lean elements: no always-true `visible`, `interactable` and `disabled` only when they say something.
+    expect(result.elements[0]).not.toHaveProperty('visible');
+    expect(result.elements[0]).not.toHaveProperty('interactable');
+    expect(result.elements[1].state?.disabled).toBeUndefined();
+    expect(result.truncated).toBeUndefined();
+  });
+
+  it('caps the elements at maxChars, page order, and keeps no refs past the cut', async () => {
+    const document = new FakeDocument();
+    for (let i = 0; i < 40; i++) document.add('button', `Button number ${i}`);
+    install(document);
+    const result = PAGE_OBSERVE_V2({
+      snapshotId: 's_cap', sessionId: 'session-a', mode: 'compact', maxElements: 100, maxChars: 600,
+      maxSnapshots: 10, ttlMs: 60_000, now: Date.now(),
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.hint).toMatch(/maxChars/);
+    expect(JSON.stringify(result.elements).length).toBeLessThanOrEqual(600);
+    expect(result.elements.map((e: any) => e.ref)).toEqual(result.elements.map((_: any, i: number) => `e${i + 1}`));
+    const cut = `e${result.elements.length + 1}`;
+    expect(await act(result, { tabId: 1, action: 'click', ref: cut })).toMatchObject({ success: false });
   });
 
   it('keeps disabled controls observable but advertises no invalid action', () => {

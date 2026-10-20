@@ -546,9 +546,9 @@ The tables in [What It Can Do](#what-it-can-do) are the index. This section expl
 
 #### `browser_observe`
 
-One atomic, compact reading of a tab for the [safe Observe → Act loop](#safe-observe--act-workflow): a `snapshotId`, a `documentVersion`, and `elements` — each with a `ref`, `role`, `name`, `bbox` (`[x, y, width, height]`) and the `allowedActions` valid for it right now. Look-alike controls (same role and name, such as an icon-only Edit button in every table row) also carry `context`: the text of their row. Its refs belong to that snapshot and are accepted by [`browser_act`](#browser_act).
+One atomic, compact reading of a tab for the [safe Observe → Act loop](#safe-observe--act-workflow): a `snapshotId`, a `documentVersion`, and `elements` — each with a `ref`, `role`, `name`, `bbox` (`[x, y, width, height]`, whole CSS pixels) and the `allowedActions` valid for it right now. Elements stay lean: `state` lists only what differs from the default (`disabled`, `readOnly`, `checked`, `selected`, `expanded`), `interactable: false` appears only when the element is covered or unclickable, and hidden elements are not listed at all. Look-alike controls (same role and name, such as an icon-only Edit button in every table row) also carry `context`: the text of their row. Its refs belong to that snapshot and are accepted by [`browser_act`](#browser_act).
 
-- `tabId`, `mode` (`"compact"`, the only mode today), `maxElements` (1–1000, default 500)
+- `tabId`, `mode` (`"compact"`, the only mode today), `maxElements` (1–1000, default 500), `maxChars` (500–200000, default 20000 — the same budget as `browser_snapshot`): elements are kept in page order until their JSON reaches it, then the result says `truncated: true` and refs past the cut are not kept. Raise `maxChars`, or scroll and observe again.
 - Read-only: a call that times out is retried.
 
 #### `browser_snapshot`
@@ -1021,7 +1021,7 @@ Only the read-only tools are **retried on timeout**: `browser_observe`, `browser
 | Env var | Default | What it does |
 |---------|---------|-------------|
 | `WS_PORT` | `7225` | WebSocket port the daemon uses for the extension connection |
-| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of loading all 35 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
+| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~170 tokens instead of ~7,100 for all 35 definitions; measured with the o200k tokenizer). Its `list` is ~900 tokens; each tool activated with `details` adds its definition (~200–350 tokens) from then on, so a task that activates 8 tools pays ~4,900 tokens per request instead of ~7,300. The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
 | `MCP_AGENT_NAME` | (auto: IDE name) | Override the agent name shown in the popup (same as `--agent`) |
 | `BC_SHORTCUTS_FILE` | `~/.browser-controller/shortcuts.json` | Where [`browser_shortcuts`](#browser_shortcuts) keeps the saved flows |
 

@@ -4,14 +4,14 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const consoleTool: ToolDefinition = {
   name: 'browser_console',
-  summary: 'Read console messages from a tab',  description: 'Read console messages (log, info, warn, error, debug, uncaught errors) the page produced in a specific tab. Filter with pattern (regex) / level, and keep only the latest with limit. browser:true also returns what Chrome itself reported for the page — failed resource loads, deprecations, interventions, violations — and DevTools Issues (CORS, CSP, mixed content, cookies, forms), read through the debugger (yellow banner).',
+  summary: 'Read console messages from a tab',  description: 'Console messages of a tab (log … error, uncaught errors), filtered by pattern (regex), level and limit. browser:true adds what Chrome itself reported (failed loads, deprecations) and DevTools Issues, via the debugger.',
   inputSchema: z.object({
     tabId: requireTabId(),
-    browser: z.boolean().optional().describe('Also read Chrome-reported messages and DevTools Issues for the page (uses the debugger)'),
-    clear: z.boolean().optional().default(false).describe('Clear this tab\'s messages after reading'),
-    pattern: z.string().optional().describe('Case-insensitive regex the message text must match, e.g. "error|fail"'),
-    level: z.union([z.enum(['log', 'info', 'warn', 'error', 'debug']), z.array(z.enum(['log', 'info', 'warn', 'error', 'debug']))]).optional().describe('Only these levels'),
-    limit: z.number().int().min(1).max(200).optional().describe('Return only the most recent N matching messages'),
+    browser: z.boolean().optional(),
+    clear: z.boolean().optional().default(false).describe('Empty the buffer after reading'),
+    pattern: z.string().optional().describe('Case-insensitive regex'),
+    level: z.union([z.enum(['log', 'info', 'warn', 'error', 'debug']), z.array(z.enum(['log', 'info', 'warn', 'error', 'debug']))]).optional(),
+    limit: z.number().int().min(1).max(200).optional().describe('Latest N'),
   }),
   // NOT idempotent: `clear:true` mutates the buffer. A timeout-retry would
   // return an empty buffer (first call already cleared it) and silently lose

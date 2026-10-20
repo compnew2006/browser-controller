@@ -6,12 +6,12 @@ export const evaluateTool: ToolDefinition = {
   name: 'browser_evaluate',
   summary: 'Run JavaScript in the page (top-level await, last value returned)',
   description:
-    'Execute JavaScript in a tab and return the result. Write code as in the DevTools console: top-level `await` works, several statements are fine and the value of the LAST expression is returned (no IIFE / return needed), DOM nodes come back as readable descriptions. Runs over CDP, so page CSP does not block it. mode:"scripting" uses chrome.scripting instead (no debugger banner, CSP-restricted, no top-level await). Prefer browser_click/browser_type over dispatching events by hand here.',
+    'Run JavaScript in a tab like the DevTools console: top-level await, the last expression\'s value is returned. Over CDP, so page CSP does not block it; mode:"scripting" = no debugger, CSP-bound, no top-level await. Prefer browser_click/browser_type for input.',
   inputSchema: z.object({
     tabId: requireTabId(),
-    expression: z.string().describe('JavaScript to run, e.g. `const r = await fetch("/api"); (await r.json()).items.length`'),
-    timeout: z.number().int().min(1000).max(120_000).optional().default(30_000).describe('Max ms to wait for the result (awaits included), default 30000'),
-    mode: z.enum(['cdp', 'scripting']).optional().default('cdp').describe('cdp (default) or scripting (banner-free, CSP-bound)'),
+    expression: z.string(),
+    timeout: z.number().int().min(1000).max(120_000).optional().default(30_000).describe('ms (default 30000)'),
+    mode: z.enum(['cdp', 'scripting']).optional().default('cdp'),
   }),
   // Must exceed the largest `timeout` so the page-side budget decides.
   timeoutMs: 125_000,

@@ -81,19 +81,19 @@ export const shortcutsTool: ToolDefinition = {
   name: 'browser_shortcuts',
   summary: 'Save and replay named action sequences (with {{variables}})',
   description:
-    'Saved, replayable browser workflows. save stores a named list of steps (same format as browser_batch actions; put {{variable}} placeholders in any string param), run replays it in ONE call with vars filled in (it runs as a browser_batch: stops at the first failing step unless continueOnError), list/show/delete manage them. Stored locally in ~/.browser-controller/shortcuts.json.',
+    'Saved workflows: save a named list of steps (browser_batch format, {{variable}} placeholders), then run it in one call with vars; list / show / delete.',
   inputSchema: z.object({
-    action: z.enum(['list', 'show', 'save', 'run', 'delete']).describe('Shortcut action'),
-    name: z.string().optional().describe('Shortcut name (letters, digits, _ . -)'),
-    description: z.string().max(500).optional().describe('save: what it does / when to use it'),
+    action: z.enum(['list', 'show', 'save', 'run', 'delete']),
+    name: z.string().optional().describe('Letters, digits, _ . -'),
+    description: z.string().max(500).optional().describe('save: what it is for'),
     actions: z.array(z.object({
       tool: z.string(),
       params: z.record(z.string(), z.unknown()).optional(),
-    })).max(200).optional().describe('save: the steps, like browser_batch actions'),
-    vars: z.record(z.string(), z.unknown()).optional().describe('run: values for the {{variables}}'),
+    })).max(200).optional().describe('save: steps'),
+    vars: z.record(z.string(), z.unknown()).optional().describe('run: values for {{variables}}'),
     tabId: optionalTabId().describe('run: default tab for every step without its own tabId'),
-    continueOnError: z.boolean().optional().describe('run: keep going after a failing step'),
-    output: z.enum(['all', 'last', 'errors']).optional().describe('run: like browser_batch output (default last)'),
+    continueOnError: z.boolean().optional(),
+    output: z.enum(['all', 'last', 'errors']).optional(),
   }),
   // A run can hold up to 200 steps, like browser_batch.
   timeoutMs: 300_000,
