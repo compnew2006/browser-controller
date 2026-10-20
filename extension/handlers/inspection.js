@@ -3,7 +3,7 @@
  * find, text, evaluate — the read side of the toolset.
  */
 import { safeExec, execDom, resolveTab, getFallback, assertResponsive, hasPoint } from '../lib/page-exec.js';
-import { trustedSender, pointInfo, releaseShield } from '../lib/trusted-input.js';
+import { cdpSender, pointInfo, releaseShield } from '../lib/trusted-input.js';
 import { fallbackByTab, lastSnapshotFingerprints, MAX_RESULT_CHARS, persistSessionState, nextRefPrefix } from '../lib/state.js';
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
 import { withCdp } from '../lib/cdp-session.js';
@@ -13,8 +13,13 @@ import { handleFind } from './find.js';
 /** Default output cap for snapshots (characters of lines). */
 export const SNAPSHOT_MAX_CHARS = 12_000;
 
+const MAX_DELAY_MS = 30_000;
+const MAX_WAIT_MS = 50_000;
+
 export async function handleWait(params, _sessionId, _agentName, signal) {
-  const { tabId, selector, state = 'visible', timeout = 10000, delay, text, urlIncludes } = params;
+  const { tabId, selector, state = 'visible', delay, text, urlIncludes } = params;
+  // Below the tool's 60 s transport timeout, so the answer is ours and not a generic timeout.
+  const timeout = Math.min(Number(params.timeout) > 0 ? Number(params.timeout) : 10_000, MAX_WAIT_MS);
 
   // A promise that rejects when this call is cancelled (client gone / bridge
   // timeout forwarded). Long waits race against it so a cancelled call releases
@@ -28,13 +33,14 @@ export async function handleWait(params, _sessionId, _agentName, signal) {
 
   const hasCondition = !!selector || text != null || !!urlIncludes;
   if (delay) {
-    const sleep = new Promise((r) => setTimeout(r, Math.min(delay, 30000)));
+    const ms = Math.min(delay, MAX_DELAY_MS);
+    const sleep = new Promise((r) => setTimeout(r, ms));
     try {
       await (abortRace ? Promise.race([sleep, abortRace]) : sleep);
     } catch {
       return { success: false, error: 'aborted', waited: 0 };
     }
-    return { success: true, waited: delay }; // documented: a delay ignores the conditions
+    return { success: true, waited: ms }; // documented: a delay ignores the conditions
   }
 
   if (!hasCondition) return { success: false, error: 'Need selector, text, urlIncludes or delay' };
@@ -90,69 +96,43 @@ export async function handleWait(params, _sessionId, _agentName, signal) {
 export async function handleScroll(params) {
   const { tabId, direction = 'down', amount = 500, selector, toElement, position } = params;
   await resolveTab(tabId);
+  const deltaX = direction === 'right' ? amount : direction === 'left' ? -amount : 0;
+  const deltaY = direction === 'down' ? amount : direction === 'up' ? -amount : 0;
   // x/y: a real mouse-wheel event at that point — scrolls whatever is under
   // it (inner panels, maps, virtual lists) exactly like a user's wheel.
   if (hasPoint(params) && !toElement && !position && !selector) {
-    const send = await trustedSender(tabId, true);
-    if (!send) throw new Error(`Scrolling at x/y needs the debugger (CDP), which could not attach to tab ${tabId}. Use selector/toElement instead.`);
-    const deltaX = direction === 'right' ? amount : direction === 'left' ? -amount : 0;
-    const deltaY = direction === 'down' ? amount : direction === 'up' ? -amount : 0;
+    const send = await cdpSender(tabId);
     const info = await pointInfo(tabId, params.x, params.y);
     try {
       await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: params.x, y: params.y, deltaX, deltaY });
     } finally {
       await releaseShield(tabId);
     }
-    return { success: true, input: 'cdp', at: { x: params.x, y: params.y }, deltaX, deltaY, refsMayBeStale: true, ...(info.hit ? { over: info.hit } : {}) };
+    return { success: true, ...(info.hit ? { over: info.hit } : {}) };
   }
   const fb = getFallback(tabId, toElement);
 
-  return execDom(tabId, (_dir, _amt, _sel, _toEl, _pos, _fb) => {
+  return execDom(tabId, (_dx, _dy, _sel, _toEl, _pos, _fb) => {
     const D = globalThis.__bcDom;
     if (!D) return { __needDom: true };
     if (_toEl) {
       // toElement accepts a ref or a CSS selector (first visible match).
       let el = D.resolve(_toEl, null, _fb).el;
       if (!el) { try { el = D.resolve(null, _toEl, null).el; } catch { el = null; } }
-      if (el) {
-        el.scrollIntoView({ behavior: 'instant', block: 'center' });
-        return { success: true, scrolledTo: 'element' };
-      }
-      return { success: false, error: 'Element not found' };
+      if (!el) return { success: false, error: 'Element not found' };
+      el.scrollIntoView({ behavior: 'instant', block: 'center' });
+      return { success: true };
     }
-
-    const target = _sel ? D.resolve(null, _sel, null).el : window;
-    if (!target) return { success: false, error: 'Scroll container not found' };
-
-    if (_pos === 'top') {
-      if (target === window) window.scrollTo({ top: 0, behavior: 'smooth' });
-      else target.scrollTop = 0;
-      return { success: true, scrolledTo: 'top' };
-    }
-    if (_pos === 'bottom') {
-      if (target === window) window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-      else target.scrollTop = target.scrollHeight;
-      return { success: true, scrolledTo: 'bottom' };
-    }
-
-    const scrollOpts = { behavior: 'smooth' };
-    if (_dir === 'down') scrollOpts.top = _amt;
-    else if (_dir === 'up') scrollOpts.top = -_amt;
-    else if (_dir === 'right') scrollOpts.left = _amt;
-    else if (_dir === 'left') scrollOpts.left = -_amt;
-
-    if (target === window) window.scrollBy(scrollOpts);
-    else target.scrollBy(scrollOpts);
-
-    return { success: true, direction: _dir, amount: _amt };
-  }, [direction, amount, selector, toElement, position, fb]).then((res) => {
-    // Scrolling a virtualized feed (FB/IG/Twitter) recycles DOM nodes, so any
-    // refs the agent holds are now likely stale. Hint it to re-snapshot. We
-    // don't auto-snapshot here (every scroll would be expensive); the hint is
-    // enough for a well-behaved agent to snapshot before its next interaction.
-    if (res && res.success) res.refsMayBeStale = true;
-    return res;
-  });
+    const target = _sel ? D.resolve(null, _sel, null).el : null;
+    if (_sel && !target) return { success: false, error: 'Scroll container not found' };
+    // Instant, so the position below (and the next snapshot) is where the page ends up.
+    const box = target || document.scrollingElement || document.documentElement;
+    if (_pos === 'top') box.scrollTop = 0;
+    else if (_pos === 'bottom') box.scrollTop = box.scrollHeight;
+    else box.scrollBy({ left: _dx, top: _dy, behavior: 'instant' });
+    const max = box.scrollHeight - box.clientHeight;
+    return { success: true, scrollTop: Math.round(box.scrollTop), ...(box.scrollTop >= max - 2 ? { atBottom: true } : {}) };
+  }, [deltaX, deltaY, selector, toElement, position, fb]);
 }
 
 /**

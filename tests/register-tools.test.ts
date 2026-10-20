@@ -53,7 +53,7 @@ describe('registerTools', () => {
     const { client, host } = await setup();
     const result = await client.callTool({ name: 'browser_click', arguments: { tabId: 1 } });
     expect(result.isError).toBe(true);
-    expect((result.content as Array<{ text: string }>)[0].text).toContain('ref or selector');
+    expect((result.content as Array<{ text: string }>)[0].text).toContain('ref, selector or text');
     expect(host.calls).toHaveLength(0);
   });
 

@@ -27,12 +27,12 @@ describe('browser_batch', () => {
       actions: [
         { tool: 'browser_click', params: { selector: '#a' } },
         { tool: 'browser_type', params: { selector: '#a', text: 'x', tabId: 3 } },
-        { tool: 'browser_press_key', params: { key: 'Tab' } },
+        { tool: 'browser_type', params: { key: 'Tab' } },
       ],
     });
     expect(res.isError).toBeUndefined();
     expect(calls.map((c) => [c.tool, c.params.tabId])).toEqual([
-      ['browser_click', 9], ['browser_type', 3], ['browser_press_key', 9],
+      ['browser_click', 9], ['browser_type', 3], ['browser_type', 9],
     ]);
     expect((res.content[0] as { text: string }).text).toBe('batch: 3/3 steps ok');
   });
@@ -44,7 +44,7 @@ describe('browser_batch', () => {
       actions: [
         { tool: 'browser_click', params: { selector: '#a' } },
         { tool: 'browser_type', params: { selector: '#a', text: 'x' } },
-        { tool: 'browser_press_key', params: { key: 'Tab' } },
+        { tool: 'browser_type', params: { key: 'Tab' } },
       ],
     });
     expect(res.isError).toBe(true);
@@ -59,7 +59,7 @@ describe('browser_batch', () => {
       continueOnError: true,
       actions: [
         { tool: 'browser_click', params: { selector: '#a' } },
-        { tool: 'browser_press_key', params: { key: 'Tab' } },
+        { tool: 'browser_type', params: { key: 'Tab' } },
       ],
     });
     expect(res.isError).toBe(true);
@@ -69,9 +69,9 @@ describe('browser_batch', () => {
 
   it('validates each step with its own schema and rejects nesting / unknown tools', async () => {
     const { host, calls } = fakeHost();
-    const bad = await run(host, { tabId: 1, actions: [{ tool: 'browser_type', params: { selector: '#a' } }] });
+    const bad = await run(host, { tabId: 1, actions: [{ tool: 'browser_fill', params: { fields: [] } }] });
     expect(bad.isError).toBe(true);
-    expect(JSON.stringify(bad.content)).toMatch(/Invalid tool arguments for browser_type/);
+    expect(JSON.stringify(bad.content)).toMatch(/Invalid tool arguments for browser_fill/);
     const nested = await run(host, { actions: [{ tool: 'browser_batch', params: {} }] });
     expect(JSON.stringify(nested.content)).toMatch(/cannot be used inside a batch/);
     const unknown = await run(host, { actions: [{ tool: 'nope' }] });
@@ -86,13 +86,13 @@ describe('browser_batch', () => {
       output: 'last',
       actions: [
         { tool: 'browser_click', params: { selector: '#a' } },
-        { tool: 'browser_press_key', params: { key: 'Tab' } },
+        { tool: 'browser_type', params: { key: 'Tab' } },
       ],
     });
     const texts = res.content.map((c) => (c.type === 'text' ? c.text : ''));
     expect(texts[0]).toBe('batch: 2/2 steps ok');
     expect(texts.some((t) => t.startsWith('[1/2]'))).toBe(false);
-    expect(texts.some((t) => t.startsWith('[2/2] browser_press_key ok'))).toBe(true);
+    expect(texts.some((t) => t.startsWith('[2/2] browser_type ok'))).toBe(true);
   });
 
   it('runs a pure delay locally and retries a rate-limited step', async () => {
@@ -122,12 +122,12 @@ describe('browser_batch', () => {
       tabId: 1,
       actions: [
         { tool: 'browser_click', params: { selector: '#a' } },
-        { tool: 'browser_press_key', params: { key: 'Tab' } },
+        { tool: 'browser_type', params: { key: 'Tab' } },
       ],
     });
     const texts = res.content.map((c) => (c.type === 'text' ? c.text : ''));
     expect(texts.some((t) => /^\[1\/2\] browser_click ok \d+ ms$/.test(t))).toBe(true);
-    expect(texts.some((t) => /^\[2\/2\] browser_press_key ok \d+ ms$/.test(t))).toBe(true);
+    expect(texts.some((t) => /^\[2\/2\] browser_type ok \d+ ms$/.test(t))).toBe(true);
     expect(texts[texts.length - 1]).toMatch(/^timing: total \d+ ms; steps \d+, \d+ ms$/);
     expect(texts[0]).toBe('batch: 2/2 steps ok');
   });

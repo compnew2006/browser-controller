@@ -12,13 +12,10 @@ describe("Tool Registry", () => {
   // the per-tool presence loop below derive from this list, so adding a tool
   // only requires appending its name here (no fragile hard-coded count).
   const expectedTools = [
-    'browser_navigate', 'browser_click', 'browser_type', 'browser_scroll',
-    'browser_press_key', 'browser_wait', 'browser_snapshot', 'browser_screenshot',
+    'browser_navigate', 'browser_click', 'browser_type', 'browser_fill', 'browser_scroll',
+    'browser_wait', 'browser_snapshot', 'browser_screenshot',
     'browser_console', 'browser_network', 'browser_tabs',
-    'browser_text', 'browser_hover', 'browser_select', 'browser_evaluate',
-    'browser_click_text', 'browser_handle_dialog',
-    'browser_upload_file',
-    'browser_drag', 'browser_fill_form', 'browser_intercept',
+    'browser_text', 'browser_evaluate', 'browser_handle_dialog', 'browser_intercept',
     'browser_batch', 'browser_resize_window', 'browser_emulate',
     'browser_list_browsers', 'browser_select_browser', 'browser_inspect_element',
   ];

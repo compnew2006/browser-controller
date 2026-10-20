@@ -4,9 +4,9 @@
  * Synthetic DOM events (el.dispatchEvent) are isTrusted:false, never move real
  * focus, never run default actions (Tab focus traversal, Enter form submit,
  * autocomplete menus) and never fire focus/blur while the window is in the
- * background. Legacy grids and lookup widgets depend on all of that, so the
- * write tools now drive the page the way a user does, like Claude in Chrome.
- * The synthetic path stays as the fallback when CDP can't attach.
+ * background. So every input tool drives the page the way a user does, over
+ * the tab's debugger session; when the debugger cannot attach the call fails
+ * with CDP_UNAVAILABLE instead of quietly doing something weaker.
  */
 import { ensureCdp, ensureViewport, hasCdp } from './cdp-session.js';
 import { safeExec, execDom } from './page-exec.js';
@@ -153,7 +153,8 @@ function pageLocate(ref, sel, fb, mode, cursor) {
   const shield = document.getElementById('__bc-lock-shield');
   if (shield) shield.style.pointerEvents = 'none';
 
-  if (via !== 'active') el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+  // 'measure': where it is now (a drag's drop target must not scroll the start away).
+  if (via !== 'active' && mode !== 'measure') el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
   if (mode === 'focus' || mode === 'clear' || mode === 'focused-clear') {
     if (typeof el.focus === 'function') el.focus();
     if (mode === 'clear' || mode === 'focused-clear') {
@@ -201,6 +202,7 @@ function pageLocate(ref, sel, fb, mode, cursor) {
     needsSelectAll: hasValue && el.value.length > 0 && !fullySelected,
     hasText: hasValue ? el.value.length > 0 : (el.textContent || '').length > 0,
     ...(occludedBy ? { occludedBy } : {}),
+    ...(mode === 'measure' ? { inView: x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight } : {}),
     ...(cursorMs ? { cursorMs } : {}),
     ...(via !== 'ref' ? { via } : {}),
     // A fallback re-resolution says what it actually hit, so a wrong guess is visible.
@@ -328,15 +330,14 @@ export async function releaseShield(tabId) {
 }
 
 /**
- * Attach the tab's CDP session or return null when CDP is unavailable
- * (another debugger owns the tab, policy blocks chrome.debugger…) so callers
- * fall back to synthetic events. `trusted:false` forces the synthetic path.
+ * The tab's CDP session. When the debugger cannot attach (DevTools or another
+ * debugger owns the tab, a protected page, a policy) the call fails and says
+ * why: there is no weaker fallback that would report a click it did not make.
  */
-export async function trustedSender(tabId, trusted) {
-  if (trusted === false) return null;
+export async function cdpSender(tabId) {
   try {
     return await ensureCdp(tabId);
-  } catch {
-    return null;
+  } catch (err) {
+    throw new Error(`CDP_UNAVAILABLE: the debugger could not attach to tab ${tabId} (${err?.message || err}). Close DevTools on that tab, or use another tab; chrome:// and Web Store pages cannot be driven.`, { cause: err });
   }
 }

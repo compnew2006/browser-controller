@@ -10,10 +10,10 @@ import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivi
 import { showLockShield, hideLockShield } from './overlay.js';
 import { openDialog } from './cdp-session.js';
 import { getActiveTab, handleNavigate } from '../handlers/navigation.js';
-import { handleClick, handleType, handlePressKey, handleHover, handleSelect, handleClickByText, handleDialog, handleDrag, handleFillForm } from '../handlers/interaction.js';
+import { handleClick, handleType, handleDialog } from '../handlers/interaction.js';
+import { handleFill } from '../handlers/fill.js';
 import { handleWait, handleScroll, handleSnapshot, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
 import { handleTabs, handleConsole, handleNetwork, handleScreenshot, handleResizeWindow } from '../handlers/tabs.js';
-import { handleUploadFile } from '../handlers/cdp.js';
 import { handleIntercept } from '../handlers/intercept.js';
 import { handleEmulate } from '../handlers/emulate.js';
 import { handleInspectElement } from '../handlers/inspect.js';
@@ -44,21 +44,15 @@ const HANDLERS = {
   browser_click: handleClick,
   browser_type: handleType,
   browser_scroll: handleScroll,
-  browser_press_key: handlePressKey,
   browser_wait: handleWait,
   browser_snapshot: handleSnapshot,
   browser_screenshot: handleScreenshot,
   browser_console: handleConsole,
   browser_network: handleNetwork,
   browser_tabs: handleTabs,
-  browser_hover: handleHover,
-  browser_select: handleSelect,
   browser_evaluate: handleEvaluate,
-  browser_click_text: handleClickByText,
   browser_handle_dialog: handleDialog,
-  browser_upload_file: handleUploadFile,
-  browser_drag: handleDrag,
-  browser_fill_form: handleFillForm,
+  browser_fill: handleFill,
   browser_text: handleGetPageText,
   browser_intercept: handleIntercept,
   browser_resize_window: handleResizeWindow,

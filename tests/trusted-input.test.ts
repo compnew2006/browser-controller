@@ -31,6 +31,8 @@ let attachCount = 0;
     detach: async () => {},
     sendCommand: async (_t: unknown, method: string, params: Record<string, unknown> = {}) => {
       cdp.push({ method, params });
+      // The file input browser_fill marked in the page, found from the main world.
+      if (method === 'Runtime.evaluate' && String(params.expression).includes('data-bc-upload')) return { result: { objectId: 'obj-1' } };
       return {};
     },
     onDetach: { addListener: () => {} },
@@ -39,7 +41,8 @@ let attachCount = 0;
 
 const ti = await import('../extension/lib/trusted-input.js');
 const session = await import('../extension/lib/cdp-session.js');
-const { handleClick, handleClickByText, handleType, handlePressKey, handleDrag, parseKeyCombo } = await import('../extension/handlers/interaction.js');
+const { handleClick, handleType, parseKeyCombo } = await import('../extension/handlers/interaction.js');
+const { handleFill } = await import('../extension/handlers/fill.js');
 
 const inputs = () => cdp.filter((c) => c.method.startsWith('Input.'));
 
@@ -90,55 +93,100 @@ describe('trusted input (CDP)', () => {
   it('click: real mouse events at the located centre', async () => {
     pageResults.push({ success: true, x: 100, y: 40, visible: true, focused: false });
     const res = await handleClick({ tabId: 5, selector: '#go' });
-    expect(res).toMatchObject({ success: true, input: 'cdp' });
+    expect(res).toEqual({ success: true });
     expect(inputs().map((c) => c.params.type)).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
     expect(inputs()[1].params).toMatchObject({ x: 100, y: 40, button: 'left', clickCount: 1 });
   });
 
-  it('click by ref/selector reports the point it clicked (browser_gif rings it)', async () => {
-    pageResults.push({ success: true, x: 100, y: 40, visible: true });
-    expect(await handleClick({ tabId: 5, selector: '#go' })).toMatchObject({ at: { x: 100, y: 40 } });
+  it('click by text: finds the control in the page, then a real click on it', async () => {
+    pageResults.push({ success: true, clicked: 'button "Go"' });
+    pageResults.push({ success: true, x: 12, y: 34, visible: true });
+    const res = await handleClick({ tabId: 5, text: 'go' });
+    expect(res).toEqual({ success: true, clicked: 'button "Go"' });
+    expect(pageArgs[1][0]).toBe(pageArgs[0][1]); // the click targets the ref the text search parked
+    expect(inputs()[1].params).toMatchObject({ type: 'mousePressed', x: 12, y: 34 });
   });
 
-  it('click_text reports the point it clicked (browser_gif rings it)', async () => {
-    pageResults.push({ success: true, clicked: 'Go', role: 'button', matchCount: 1 });
-    pageResults.push({ success: true, x: 12, y: 34, visible: true });
-    const res = await handleClickByText({ tabId: 5, text: 'go' });
-    expect(res).toMatchObject({ success: true, input: 'cdp', at: { x: 12, y: 34 } });
-    expect(inputs()[1].params).toMatchObject({ type: 'mousePressed', x: 12, y: 34 });
+  it('click by text says when several elements match equally', async () => {
+    pageResults.push({ success: true, clicked: 'button "Edit"', matches: 3 });
+    pageResults.push({ success: true, x: 1, y: 2, visible: true });
+    expect(await handleClick({ tabId: 5, text: 'edit' })).toMatchObject({ success: true, matches: 3, hint: expect.stringMatching(/clicked the first/) });
   });
 
   it('click: double click sends clickCount 1 then 2', async () => {
     pageResults.push({ success: true, x: 1, y: 2, visible: true });
-    await handleClick({ tabId: 5, selector: '#go', doubleClick: true });
+    await handleClick({ tabId: 5, selector: '#go', clickCount: 2 });
     expect(inputs().filter((c) => c.params.type === 'mousePressed').map((c) => c.params.clickCount)).toEqual([1, 2]);
   });
 
   it('click at x/y: no element lookup, real click at the point, triple click', async () => {
     pageResults.push({ inView: true, hit: { role: 'button', name: 'Go', tag: 'button' } });
     const res = await handleClick({ tabId: 5, x: 30, y: 40, clickCount: 3, modifiers: ['ctrl'] });
-    expect(res).toMatchObject({ success: true, input: 'cdp', at: { x: 30, y: 40 }, hit: { name: 'Go' } });
+    expect(res).toEqual({ success: true, hit: { role: 'button', name: 'Go', tag: 'button' } });
     const presses = inputs().filter((c) => c.params.type === 'mousePressed');
     expect(presses.map((c) => c.params.clickCount)).toEqual([1, 2, 3]);
     expect(presses[0].params).toMatchObject({ x: 30, y: 40, modifiers: 2 });
   });
 
-  it('press_key: space-separated sequences and repeat', async () => {
-    pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true });
-    await handlePressKey({ tabId: 5, key: 'ArrowDown ArrowDown Enter' });
+  it('a disabled, hidden or covered target is not clicked; hover may rest on a disabled one', async () => {
+    pageResults.push({ success: true, x: 1, y: 2, visible: true, disabled: true });
+    expect(await handleClick({ tabId: 5, selector: '#go' })).toMatchObject({ success: false, error: expect.stringMatching(/^DISABLED/) });
+    pageResults.push({ success: true, x: 1, y: 2, visible: true, occludedBy: 'div.modal' });
+    expect(await handleClick({ tabId: 5, selector: '#go' })).toMatchObject({ success: false, error: expect.stringMatching(/^COVERED: div.modal/) });
+    expect(inputs()).toHaveLength(0);
+    pageResults.push({ success: true, x: 5, y: 6, visible: true, disabled: true });
+    expect(await handleClick({ tabId: 5, selector: '#go', hover: true })).toEqual({ success: true });
+    expect(inputs().map((c) => c.params.type)).toEqual(['mouseMoved']);
+  });
+
+  it('dragTo: presses on the element, moves in steps, releases on the drop target measured where it is', async () => {
+    pageResults.push({ success: true, x: 10, y: 10, visible: true });
+    pageResults.push({ success: true, x: 110, y: 10, visible: true, inView: true });
+    const res = await handleClick({ tabId: 5, ref: 's1-2', dragTo: { ref: 's1-5' } });
+    expect(res).toEqual({ success: true });
+    expect(pageArgs[1].slice(0, 4)).toEqual(['s1-5', null, null, 'measure']); // the drop target is not scrolled
+    const types = inputs().map((c) => c.params.type);
+    expect(types[0]).toBe('mouseMoved');
+    expect(types[1]).toBe('mousePressed');
+    expect(types.filter((t) => t === 'mouseMoved')).toHaveLength(11);
+    expect(inputs().at(-1)?.params).toMatchObject({ type: 'mouseReleased', x: 110, y: 10 });
+  });
+
+  it('dragTo: a drop target out of view fails before the mouse is pressed', async () => {
+    pageResults.push({ success: true, x: 10, y: 10, visible: true });
+    pageResults.push({ success: true, x: 110, y: 2000, visible: true, inView: false });
+    const res = await handleClick({ tabId: 5, selector: '#a', dragTo: { selector: '#b' } });
+    expect(res).toMatchObject({ success: false, error: expect.stringMatching(/not in view/) });
+    expect(inputs().filter((c) => c.params.type === 'mousePressed')).toHaveLength(0);
+  });
+
+  it('type key: space-separated sequences go to the focused element or the page', async () => {
+    pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true, via: 'active' });
+    pageResults.push({ value: 'x', focusedTag: 'input#q' });
+    const res = await handleType({ tabId: 5, key: 'ArrowDown ArrowDown Enter' });
+    expect(res).toEqual({ success: true, focused: 'input#q' });
+    expect(pageArgs[0][3]).toBe('active');
     expect(inputs().filter((c) => c.params.type !== 'keyUp').map((c) => c.params.key)).toEqual(['ArrowDown', 'ArrowDown', 'Enter']);
-    cdp.length = 0;
+  });
+
+  it('type text then key: the text is typed into the field, then the key is pressed', async () => {
     pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true });
-    const res = await handlePressKey({ tabId: 5, key: 'ctrl+a Backspace', repeat: 2 });
-    expect(res).toMatchObject({ success: true, repeat: 2 });
-    const downs = inputs().filter((c) => c.params.type !== 'keyUp');
-    expect(downs.map((c) => [c.params.key, c.params.modifiers])).toEqual([['a', 2], ['Backspace', 0], ['a', 2], ['Backspace', 0]]);
+    pageResults.push({ value: '', focusedTag: 'input#next' });
+    const res = await handleType({ tabId: 5, selector: '#q', text: 'hi', key: 'Tab' });
+    expect(res).toEqual({ success: true, focused: 'input#next' });
+    expect(inputs().filter((c) => c.params.type !== 'keyUp').map((c) => c.params.key)).toEqual(['h', 'i', 'Tab']);
+  });
+
+  it('type: an unknown key fails before anything is pressed', async () => {
+    await expect(handleType({ tabId: 5, text: 'hello', key: 'Enter Submit' })).rejects.toThrow(/Unknown key "Submit"/);
+    expect(attachCount).toBe(0);
+    expect(inputs()).toHaveLength(0);
   });
 
   it('type without ref/selector types into the focused field, and refuses the page body', async () => {
     pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true, via: 'active' });
     pageResults.push({ value: 'hi' });
-    expect(await handleType({ tabId: 5, text: 'hi' })).toMatchObject({ success: true, value: 'hi', via: 'active' });
+    expect(await handleType({ tabId: 5, text: 'hi' })).toEqual({ success: true, value: 'hi' });
     pageResults.push({ success: false, error: 'NO_FOCUS' });
     expect(await handleType({ tabId: 5, text: 'hi' })).toMatchObject({ success: false, error: expect.stringMatching(/No field has focus/) });
   });
@@ -147,7 +195,7 @@ describe('trusted input (CDP)', () => {
     pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true, needsSelectAll: true, hasText: true });
     pageResults.push({ value: 'ab' });
     const res = await handleType({ tabId: 5, selector: '#f', text: 'ab', clear: true });
-    expect(res).toMatchObject({ success: true, input: 'cdp', value: 'ab' });
+    expect(res).toEqual({ success: true, value: 'ab' });
     const downs = inputs().filter((c) => c.params.type !== 'keyUp');
     expect(downs.map((c) => c.params.key)).toEqual(['a', 'a', 'b']);
     expect(downs[0].params.modifiers).toBe(2); // Ctrl+A
@@ -160,10 +208,9 @@ describe('trusted input (CDP)', () => {
     expect(inputs().map((c) => c.params.key)).toEqual(['Backspace', 'Backspace']);
   });
 
-  it('press_key: combo goes through CDP', async () => {
+  it('type key: a combo goes through CDP with its modifiers', async () => {
     pageResults.push({ success: true, x: 0, y: 0, visible: true });
-    const res = await handlePressKey({ tabId: 5, key: 'shift+Tab' });
-    expect(res).toMatchObject({ success: true, key: 'Tab', modifiers: ['shift'], input: 'cdp' });
+    await handleType({ tabId: 5, key: 'shift+Tab' });
     expect(inputs()[0].params).toMatchObject({ key: 'Tab', modifiers: 8 });
   });
 
@@ -176,9 +223,10 @@ describe('trusted input (CDP)', () => {
     expect(pageArgs.at(-2)).toEqual([30, 40, null, 1]); // pointInfo: no cursor effect
     cdp.length = 0;
     pageArgs.length = 0;
-    await handleDrag({ tabId: 5, startX: 10, startY: 10, endX: 110, endY: 10, steps: 2 });
-    expect(pageArgs).toHaveLength(2); // openShield + releaseShield only
-    expect(inputs().map((c) => c.params.type)).toEqual(['mousePressed', 'mouseMoved', 'mouseMoved', 'mouseReleased']);
+    pageResults.push({ inView: true });
+    await handleClick({ tabId: 5, x: 10, y: 10, dragTo: { x: 110, y: 10 } });
+    expect(pageArgs).toHaveLength(2); // pointInfo + releaseShield only
+    expect(inputs().filter((c) => c.params.type === 'mouseMoved')).toHaveLength(11);
   });
 
   it('click: the agent cursor glides first, then the target is measured again and clicked there', async () => {
@@ -189,7 +237,7 @@ describe('trusted input (CDP)', () => {
     const t0 = Date.now();
     const res = await handleClick({ tabId: 5, selector: '#go', clickCount: 2 });
     expect(Date.now() - t0).toBeGreaterThanOrEqual(25);
-    expect(res).toMatchObject({ success: true, input: 'cdp' });
+    expect(res).toEqual({ success: true });
     expect(pageArgs[0][4]).toEqual({ effect: 'click', count: 2 });
     expect(pageArgs[1][4]).toEqual({ effect: 'track' });
     expect(inputs().find((c) => c.params.type === 'mousePressed')?.params).toMatchObject({ x: 100, y: 90 });
@@ -216,29 +264,52 @@ describe('trusted input (CDP)', () => {
 
   it('drag: the cursor presses at the start and the moves follow its glide to the end', async () => {
     cursorOn = true;
-    pageResults.push({}); // openShield
-    pageResults.push({ ms: 0 }); // cursor to the start ('down')
+    pageResults.push({ inView: true }); // pointInfo at the start ('down')
     pageResults.push({ ms: 40 }); // cursor glide to the end ('up')
     const t0 = Date.now();
-    const res = await handleDrag({ tabId: 5, startX: 10, startY: 10, endX: 110, endY: 10, steps: 4 });
+    const res = await handleClick({ tabId: 5, x: 10, y: 10, dragTo: { x: 110, y: 10 } });
     expect(Date.now() - t0).toBeGreaterThanOrEqual(35);
-    expect(res).toMatchObject({ success: true, from: { x: 10, y: 10 }, to: { x: 110, y: 10 } });
-    expect(pageArgs[1]).toEqual([10, 10, 'down', 1]);
-    expect(pageArgs[2]).toEqual([110, 10, 'up', 1]);
-    expect(inputs().map((c) => c.params.type)).toEqual(['mousePressed', 'mouseMoved', 'mouseMoved', 'mouseMoved', 'mouseMoved', 'mouseReleased']);
+    expect(res).toEqual({ success: true });
+    expect(pageArgs[0]).toEqual([10, 10, 'down', 1]);
+    expect(pageArgs[1]).toEqual([110, 10, 'up', 1]);
   });
 
-  it('falls back to synthetic events when the debugger cannot attach', async () => {
-    attachError = new Error('Another debugger is attached');
-    pageResults.push({ success: true });
-    const res = await handleClick({ tabId: 5, selector: '#go' });
-    expect(res).toEqual({ success: true });
+  it('fill: a text field gets its value in one insertion after its old value is selected', async () => {
+    pageResults.push({ kind: 'text' });
+    pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true, needsSelectAll: false, hasText: true });
+    const res = await handleFill({ tabId: 5, fields: [{ selector: '#name', value: 'Ada' }] });
+    expect(res).toEqual({ success: true, filled: 1 });
+    expect(pageArgs[1][3]).toBe('clear');
+    expect(inputs()).toEqual([{ method: 'Input.insertText', params: { text: 'Ada' } }]);
+  });
+
+  it('fill: an empty value deletes the selected old one', async () => {
+    pageResults.push({ kind: 'text' });
+    pageResults.push({ success: true, x: 1, y: 2, visible: true, focused: true, hasText: true });
+    await handleFill({ tabId: 5, fields: [{ ref: 's1-3', value: '' }] });
+    expect(inputs().map((c) => c.params.key)).toEqual(['Delete', 'Delete']);
+  });
+
+  it('fill: select/checkbox are set in the page; files go through DOM.setFileInputFiles; only failures are listed', async () => {
+    pageResults.push({ done: true }); // <select>
+    pageResults.push({ kind: 'file' });
+    pageResults.push(null); // unmark
+    pageResults.push({ error: 'no option "Mars"; options: Earth | Venus' });
+    const res = await handleFill({ tabId: 5, fields: [
+      { selector: '#country', value: 'Egypt' },
+      { selector: '#cv', value: ['/tmp/a.pdf', '/tmp/b.pdf'] },
+      { selector: '#planet', value: 'Mars' },
+    ] });
+    expect(res).toEqual({ success: false, error: '1 of 3 fields failed', failed: [{ field: '#planet', error: 'no option "Mars"; options: Earth | Venus' }] });
+    expect(cdp.find((c) => c.method === 'DOM.setFileInputFiles')?.params).toEqual({ files: ['/tmp/a.pdf', '/tmp/b.pdf'], objectId: 'obj-1' });
     expect(inputs()).toHaveLength(0);
   });
 
-  it('trusted:false forces the synthetic path', async () => {
-    pageResults.push({ success: true });
-    await handleClick({ tabId: 5, selector: '#go', trusted: false });
-    expect(attachCount).toBe(0);
+  it('no debugger, no input: CDP_UNAVAILABLE says why instead of a weaker fallback', async () => {
+    attachError = new Error('Cannot attach to this target.');
+    await expect(handleClick({ tabId: 5, selector: '#go' })).rejects.toThrow(/^CDP_UNAVAILABLE: .*Cannot attach/);
+    await expect(handleType({ tabId: 5, selector: '#q', text: 'x' })).rejects.toThrow(/CDP_UNAVAILABLE/);
+    await expect(handleFill({ tabId: 5, fields: [{ selector: '#q', value: 'x' }] })).rejects.toThrow(/CDP_UNAVAILABLE/);
+    expect(pageArgs).toHaveLength(0);
   });
 });

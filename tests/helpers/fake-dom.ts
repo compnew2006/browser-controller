@@ -94,7 +94,8 @@ export class FakeElement {
     return { x: 10, y: 10, left: 10, top: 10, width: w, height: w ? 20 : 0, right: 10 + w, bottom: 30 };
   }
   checkVisibility() { return !this.isHiddenInTree; }
-  scrollIntoView() {}
+  /** Recorded: the input tools scroll the element they located into view. */
+  scrollIntoView() { this.events.push('scrollIntoView'); }
   focus() { this.ownerDocument.activeElement = this; }
   dispatchEvent(e: { type: string }) { this.events.push(e.type); return true; }
   selfAndDescendants(): FakeElement[] {

@@ -399,7 +399,8 @@ describe('ExtensionBridge', () => {
 
   it('forwards a cancel control message on timeout', async () => {
     const port = nextPort();
-    // Non-idempotent tool with a tiny timeout so it fires deterministically.
+    // A tool without its own timeout gets the tiny default, so the timeout fires at once
+    // (browser_click's own 15 s would outlast the test).
     const bridge = new ExtensionBridge({ port, maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 60 });
     bridges.push(bridge);
     await bridge.start();
@@ -411,7 +412,7 @@ describe('ExtensionBridge', () => {
       received.push(msg);
     });
 
-    await expect(bridge.callTool('browser_click', { ref: 'e1' })).rejects.toThrow(/timed out/i);
+    await expect(bridge.callTool('browser_test_no_timeout', { ref: 'e1' })).rejects.toThrow(/timed out/i);
     // Give the control message a tick to flush through the WS.
     await new Promise((r) => setTimeout(r, 50));
     const cancelMsg = received.find((m) => m.type === 'cancel');

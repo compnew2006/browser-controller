@@ -4,7 +4,6 @@ import { navigateTool } from './navigate.js';
 import { clickTool } from './click.js';
 import { typeTool } from './type.js';
 import { scrollTool } from './scroll.js';
-import { pressKeyTool } from './press-key.js';
 import { waitTool } from './wait.js';
 import { snapshotTool } from './snapshot.js';
 import { screenshotTool } from './screenshot.js';
@@ -12,15 +11,10 @@ import { consoleTool } from './console.js';
 import { networkTool } from './network.js';
 import { tabsTool } from './tabs.js';
 import { textTool } from './text.js';
-import { hoverTool } from './hover.js';
-import { selectTool } from './select.js';
 import { evaluateTool } from './evaluate.js';
-import { clickTextTool } from './click-text.js';
 import { dialogTool } from './dialog.js';
-import { uploadFileTool } from './upload-file.js';
 import { interceptTool } from './intercept.js';
-import { dragTool } from './drag.js';
-import { fillFormTool } from './fill-form.js';
+import { fillTool } from './fill.js';
 import { batchTool } from './batch.js';
 import { resizeWindowTool } from './resize-window.js';
 import { emulateTool } from './emulate.js';
@@ -31,8 +25,8 @@ export const allTools: ToolDefinition[] = [
   navigateTool,
   clickTool,
   typeTool,
+  fillTool,
   scrollTool,
-  pressKeyTool,
   waitTool,
   snapshotTool,
   screenshotTool,
@@ -40,14 +34,8 @@ export const allTools: ToolDefinition[] = [
   networkTool,
   tabsTool,
   textTool,
-  hoverTool,
-  selectTool,
   evaluateTool,
-  clickTextTool,
   dialogTool,
-  uploadFileTool,
-  dragTool,
-  fillFormTool,
   interceptTool,
   batchTool,
   resizeWindowTool,

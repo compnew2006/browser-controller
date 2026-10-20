@@ -147,7 +147,7 @@ describe("extension router (handleMessage)", () => {
   });
 
   it("converts a THROWN handler error into a wire-level error", async () => {
-    // click with neither ref nor selector throws in requireTarget.
+    // click with no target throws before touching the page.
     await handleMessage({
       id: "c1",
       tool: "browser_click",
@@ -158,7 +158,7 @@ describe("extension router (handleMessage)", () => {
     const frame = lastFrame();
     expect(frame.id).toBe("c1");
     expect(frame.success).toBe(false);
-    expect(frame.error as string).toContain("ref or selector is required");
+    expect(frame.error as string).toContain("Give ref, selector or text");
   });
 
   it("routes a successful tool through the mutex and replies success", async () => {

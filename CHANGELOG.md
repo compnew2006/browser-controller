@@ -6,11 +6,20 @@
 - `browser_tools` and progressive mode (`BROWSER_CONTROLLER_PROGRESSIVE`): every tool is listed directly; Claude Code already loads MCP tool schemas on demand.
 - `browser_gif`, `browser_webmcp_list`, `browser_webmcp_call`, `browser_shortcuts`, `browser_run_action` (use `browser_evaluate`).
 - `browser_observe` / `browser_act` (a second, synthetic-only action pipeline with its own refs; `browser_snapshot` + the action tools cover it), `browser_find` (now `browser_snapshot {query}`), and `browser_snapshot source:"native"`, `compact`, `filter`, `depth`. `browser_text mode:"article"` (it dropped real paragraphs).
+- `browser_click_text`, `browser_hover`, `browser_drag` (now `browser_click` `text` / `hover` / `dragTo`), `browser_press_key` (now `browser_type` `key`), `browser_select`, `browser_fill_form`, `browser_upload_file` (now `browser_fill`).
+- Synthetic input: `trusted:false` and the silent fallback to `dispatchEvent` when the debugger could not attach. A tab the debugger cannot attach to now fails with `CDP_UNAVAILABLE` and the reason, instead of reporting a click that no handler may have seen.
+- `browser_click doubleClick` (use `clickCount: 2`), `browser_press_key repeat` / `modifiers` (write the sequence or the combo), `browser_fill_form submit` / `clear` (click the submit button; fill always replaces), upload from `imageBase64` / `fromScreenshot` / onto a drop zone (`browser_fill` takes local file paths), and the `at` / `input` / `typed` / `refsMayBeStale` fields of action results.
 
 ### Changed
 - `browser_snapshot` returns indented lines `role "name" [ref]` with state, value and the row text of look-alike controls, instead of JSON; "+ " marks what is new since the previous snapshot; link targets only with `links: true`. On the 8 test pages the inline snapshot of `browser_navigate` went from 38,287 to 21,475 tokens while showing about twice as many elements (1 page cut at the limit instead of 5). Elements under `opacity:0`, `inert` or `aria-hidden` are left out; the extension's own frame never shows up. Default `maxChars` 12 000.
 - A stale ref answers `REF_GONE` with a hint to take a new snapshot (it used to attach 40 unrelated refs, ~800 tokens).
 - `browser_text` and `browser_wait text` include same-origin iframe text on every page (it depended on the page having shadow DOM).
+- `browser_click` takes `text` (visible text or label: controls first, an exact match first; says `matches: N` when several are equally good), `hover: true` (move only) and `dragTo: { ref | selector | x,y }`. A drop target is measured where it is (not scrolled, which used to move the start away) and must be in view.
+- `browser_type` takes `key` (`"Enter"`, `"ctrl+a"`, `"ArrowDown ArrowDown Enter"`), pressed after `text`: typing and submitting is one call. An unknown key fails before anything is typed. After keys it reports where focus is, not a field value.
+- New `browser_fill { fields: [{ ref | selector, value }] }`: text fields and textareas (one real insertion, old value replaced), `<select>` by value or label (case-insensitive; a list for `multiple`), checkbox / radio / switch (`true` / `false`), date / time / color / range, contentEditable, and file inputs (absolute path or list of paths). Success is `{ filled: N }`; otherwise only the failing fields are listed with the reason (a bad option lists the options).
+- `browser_scroll` scrolls instantly (it was `smooth`, so the next snapshot could see the page mid-scroll) and returns `scrollTop` and `atBottom`.
+- `browser_wait` returns how long a `delay` really waited (capped at 30 s); `timeout` is capped at 50 s, below the tool's own 60 s, so a long wait ends with its own message.
+- Tools: 21 (was 27).
 
 ### Fixed
 - While no daemon was running, the extension retried every ~30 s and each try added "WebSocket connection to 'ws://127.0.0.1:7225/' failed … ERR_CONNECTION_REFUSED" to chrome://extensions → Errors (6 in the first 45 s, then one every 30 s). It now checks with a silent request first and only opens the WebSocket when the daemon answers.

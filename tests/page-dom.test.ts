@@ -1,18 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installFakePage, installFakeFrame, type FakeDocument } from './helpers/fake-dom.js';
 
+const cdp: Array<Record<string, any>> = [];
+/** Mouse presses the tools sent over CDP. */
+const presses = () => cdp.filter((c) => c.method === 'Input.dispatchMouseEvent' && c.type === 'mousePressed');
+
 // chrome mock: executeScript runs the page function in-process against the fake page.
 (globalThis as any).chrome = {
   tabs: { get: async (id: number) => ({ id, url: 'https://example.test/page', windowId: 1 }), query: async () => [], onRemoved: { addListener: () => {} } },
   scripting: { executeScript: async (o: { func: (...a: any[]) => unknown; args?: unknown[] }) => [{ result: await o.func(...(o.args ?? [])) }] },
   storage: { session: { get: async () => ({}), set: async () => {} }, local: { get: async () => ({}), set: async () => {} } },
-  // No debugger: interaction tools take their synthetic path.
-  debugger: { attach: async () => { throw new Error('no debugger in tests'); }, detach: async () => {}, sendCommand: async () => ({}), onDetach: { addListener: () => {} } },
+  // The debugger records the input the tools send; the page functions run against the fake page.
+  debugger: { attach: async () => {}, detach: async () => {}, sendCommand: async (_t: unknown, method: string, params: any = {}) => { cdp.push({ method, ...params }); return {}; }, onDetach: { addListener: () => {} } },
 };
 
 const { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } = await import('../extension/lib/page-dom.js');
 const { handleFind, handleSnapshot, handleGetPageText, handleWait } = await import('../extension/handlers/inspection.js');
-const { handleClick, handleClickByText, handleType } = await import('../extension/handlers/interaction.js');
+const { handleClick, handleType } = await import('../extension/handlers/interaction.js');
 const { fallbackByTab, lastSnapshotFingerprints } = await import('../extension/lib/state.js');
 
 let doc: FakeDocument;
@@ -120,9 +124,11 @@ describe('browser_find (tokenized, role-aware, wrapper-suppressing)', () => {
     expect(res.matches[0]).toMatchObject({ role: 'button', name: 'Open alert dialog' });
     expect(res.matches.every((m: any) => m.tag !== 'div')).toBe(true);
     // The ref works in the action tools (registry-backed).
+    cdp.length = 0;
     const click = await handleClick({ tabId: 1, ref: res.matches[0].ref });
     expect(click.success).toBe(true);
-    expect(btn.events).toContain('click');
+    expect(btn.events).toContain('scrollIntoView'); // the element the real click was aimed at
+    expect(presses()).toHaveLength(1);
   });
 
   it('finds controls inside shadow DOM and honours the role filter', async () => {
@@ -169,7 +175,8 @@ describe('repeated row controls (icon buttons in table rows)', () => {
     expect(res.matches[0]).toMatchObject({ role: 'button', name: 'تعديل', context: '4 كرتون' });
     const click = await handleClick({ tabId: 1, ref: res.matches[0].ref });
     expect(click.success).toBe(true);
-    expect(rows[3].children[2].children[0].events).toContain('click');
+    expect(rows[3].children[2].children[0].events).toContain('scrollIntoView');
+    expect(rows[2].children[2].children[0].events).not.toContain('scrollIntoView');
   });
 
   it('compact snapshot adds row context only to controls whose role+name repeats', async () => {
@@ -200,25 +207,35 @@ describe('repeated row controls (icon buttons in table rows)', () => {
   });
 });
 
-describe('browser_click_text', () => {
-  beforeEach(() => { doc = installFakePage(); });
+describe('browser_click text', () => {
+  beforeEach(() => { doc = installFakePage(); cdp.length = 0; });
 
   it('matches case-insensitively and clicks the control that owns the text', async () => {
     const span = doc.el('span', {}, 'Open alert dialog');
     const btn = doc.el('button', { class: 'MuiButton-root' }, span);
     doc.body.append(doc.el('div', {}, btn));
-    const res = await handleClickByText({ tabId: 1, text: 'OPEN ALERT DIALOG', exact: true });
-    expect(res).toMatchObject({ success: true, role: 'button', matchCount: 1 });
-    expect(btn.events).toContain('click');
-    expect(span.events).not.toContain('click');
+    const res = await handleClick({ tabId: 1, text: 'OPEN ALERT DIALOG' });
+    expect(res).toEqual({ success: true, clicked: 'button "Open alert dialog"' });
+    expect(btn.events).toContain('scrollIntoView');
+    expect(span.events).not.toContain('scrollIntoView');
+    expect(presses()).toHaveLength(1);
   });
 
-  it('synthetic clicks report the top-level point they clicked (browser_gif rings it)', async () => {
-    const btn = doc.el('button', { id: 'go' }, 'Go');
-    doc.body.append(btn);
-    // Fake boxes sit at (10, 10), 100 × 20: centre (60, 20).
-    expect(await handleClick({ tabId: 1, selector: '#go' })).toMatchObject({ success: true, at: { x: 60, y: 20 } });
-    expect(await handleClickByText({ tabId: 1, text: 'go', exact: true })).toMatchObject({ success: true, at: { x: 60, y: 20 } });
+  it('plain text: the element holding it, not the wrappers around it', async () => {
+    const p = doc.el('p', {}, 'Payment received');
+    const inner = doc.el('div', {}, p);
+    doc.body.append(doc.el('section', {}, inner));
+    expect(await handleClick({ tabId: 1, text: 'payment received' })).toMatchObject({ success: true, clicked: expect.stringContaining('"Payment received"') });
+    expect(p.events).toContain('scrollIntoView');
+    expect(inner.events).not.toContain('scrollIntoView');
+  });
+
+  it('an exact match beats a longer one; equal matches are counted', async () => {
+    const save = doc.el('button', {}, 'Save');
+    doc.body.append(doc.el('button', {}, 'Save draft'), save, doc.el('button', {}, 'Save'));
+    const res = await handleClick({ tabId: 1, text: 'save' });
+    expect(res).toMatchObject({ success: true, clicked: 'button "Save"', matches: 2 });
+    expect(save.events).toContain('scrollIntoView');
   });
 
   it('reaches text inside shadow roots', async () => {
@@ -226,9 +243,9 @@ describe('browser_click_text', () => {
     const accept = doc.el('button', {}, 'Accept all');
     host.attachShadow().append(accept);
     doc.body.append(host);
-    const res = await handleClickByText({ tabId: 1, text: 'accept all' });
+    const res = await handleClick({ tabId: 1, text: 'accept all' });
     expect(res.success).toBe(true);
-    expect(accept.events).toContain('click');
+    expect(accept.events).toContain('scrollIntoView');
   });
 });
 
@@ -244,8 +261,8 @@ describe('selector actions skip hidden duplicates', () => {
     doc.body.append(hidden, shown);
     const res = await handleType({ tabId: 1, selector: 'input[name="q"]', text: 'abc' });
     expect(res.success).toBe(true);
-    expect(shown.value).toBe('abc');
-    expect(hidden.value).toBe('');
+    expect(doc.activeElement).toBe(shown); // focused, then real key presses
+    expect(cdp.filter((c) => c.method === 'Input.dispatchKeyEvent' && c.type === 'keyDown').map((c) => c.key)).toEqual(['a', 'b', 'c']);
   });
 
   it('wait(visible) succeeds when ANY match is visible', async () => {

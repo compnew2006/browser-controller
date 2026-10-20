@@ -13,8 +13,8 @@ export const waitTool: ToolDefinition = {
       .enum(['visible', 'hidden', 'attached'])
       .optional()
       .default('visible'),
-    timeout: z.number().optional().default(10000).describe('ms'),
-    delay: z.number().optional().describe('ms; ignores the other conditions'),
+    timeout: z.number().optional().default(10000).describe('ms, at most 50000'),
+    delay: z.number().optional().describe('ms, at most 30000; ignores the other conditions'),
     text: z.string().optional().describe('Case-insensitive'),
     urlIncludes: z.string().optional(),
   }),
