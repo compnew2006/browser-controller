@@ -15,11 +15,10 @@ function sourceLineCount(relativePath: string): number {
 
 describe('maintenance quality gates', () => {
   it('keeps production modules below the agreed 600-line boundary', () => {
-    const files = [
-      'mcp-server/src/bridge.ts',
-      'extension/handlers/interaction.js',
-      'extension/lib/observation-v2.js',
-    ];
+    const files = ['extension', 'extension/lib', 'extension/handlers', 'extension/utils', 'mcp-server/src', 'mcp-server/src/tools']
+      .flatMap((dir) => fs.readdirSync(path.join(ROOT, dir))
+        .filter((f) => /\.(js|ts)$/.test(f))
+        .map((f) => `${dir}/${f}`));
     const oversized = Object.fromEntries(
       files
         .map((file) => [file, sourceLineCount(file)] as const)

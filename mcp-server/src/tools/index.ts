@@ -11,7 +11,6 @@ import { screenshotTool } from './screenshot.js';
 import { consoleTool } from './console.js';
 import { networkTool } from './network.js';
 import { tabsTool } from './tabs.js';
-import { findTool } from './find.js';
 import { textTool } from './text.js';
 import { hoverTool } from './hover.js';
 import { selectTool } from './select.js';
@@ -22,8 +21,6 @@ import { uploadFileTool } from './upload-file.js';
 import { interceptTool } from './intercept.js';
 import { dragTool } from './drag.js';
 import { fillFormTool } from './fill-form.js';
-import { observeTool } from './observe.js';
-import { actTool } from './act.js';
 import { batchTool } from './batch.js';
 import { resizeWindowTool } from './resize-window.js';
 import { emulateTool } from './emulate.js';
@@ -42,7 +39,6 @@ export const allTools: ToolDefinition[] = [
   consoleTool,
   networkTool,
   tabsTool,
-  findTool,
   textTool,
   hoverTool,
   selectTool,
@@ -53,8 +49,6 @@ export const allTools: ToolDefinition[] = [
   dragTool,
   fillFormTool,
   interceptTool,
-  observeTool,
-  actTool,
   batchTool,
   resizeWindowTool,
   emulateTool,

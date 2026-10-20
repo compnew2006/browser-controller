@@ -131,10 +131,10 @@ describe('legacy snapshot refs', () => {
   it('snapshot registers refs without stamping data-mcp-ref attributes into the page DOM', async () => {
     const button = fakeDocument.body.append(new FakeElement('BUTTON', 'Save'));
 
-    const result = await handleSnapshot({ tabId: 9, compact: true });
+    const result = await handleSnapshot({ tabId: 9 });
 
     expect(result.success).toBe(true);
-    expect(result.tree.ref).toMatch(/^s[a-z0-9]+-\d+$/);
+    expect(result.snapshot).toMatch(/^- button "Save" \[s[a-z0-9]+-\d+\]$/);
     expect(button.getAttribute('data-mcp-ref')).toBeNull();
   });
 

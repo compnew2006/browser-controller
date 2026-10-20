@@ -161,15 +161,14 @@ export async function handleNavigate(params, sessionId, _agentName, signal) {
     return { url, status: 'navigated', ...httpStatus, tabId: tab.id, ...(replacedTabId ? { replacedTabId, note: `tab ${replacedTabId} was frozen and has been replaced by tab ${tab.id}` } : {}) };
   }
   try {
-    const snap = await handleSnapshot({ tabId: tab.id, compact: true });
-    const snapObj = typeof snap === 'string' ? JSON.parse(snap) : snap;
+    const snap = await handleSnapshot({ tabId: tab.id });
     return {
       url,
       status: 'navigated',
       ...httpStatus,
       tabId: tab.id,
       ...(replacedTabId ? { replacedTabId, note: `tab ${replacedTabId} was frozen and has been replaced by tab ${tab.id}` } : {}),
-      snapshot: snapObj && snapObj.content ? snapObj.content : snapObj,
+      ...(typeof snap?.snapshot === 'string' ? { title: snap.title, snapshot: snap.snapshot, ...(snap.truncated ? { truncated: true, hint: snap.hint } : {}) } : {}),
     };
   } catch {
     // snapshot failed (protected page / 401 / etc) — navigation still succeeded.

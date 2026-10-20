@@ -5,19 +5,18 @@
  * dispatch() rebuilt the tool map on every call.
  */
 import { runOnTab as runOnTabLib } from './tab-concurrency.js';
-import { tabLocks, tabMutex, tabControl, observationSnapshots, persistSessionState, wedgedTabs } from './state.js';
+import { tabLocks, tabMutex, tabControl, persistSessionState, wedgedTabs } from './state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from './connection.js';
 import { showLockShield, hideLockShield } from './overlay.js';
 import { openDialog } from './cdp-session.js';
 import { getActiveTab, handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType, handlePressKey, handleHover, handleSelect, handleClickByText, handleDialog, handleDrag, handleFillForm } from '../handlers/interaction.js';
-import { handleWait, handleScroll, handleSnapshot, handleFind, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
+import { handleWait, handleScroll, handleSnapshot, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
 import { handleTabs, handleConsole, handleNetwork, handleScreenshot, handleResizeWindow } from '../handlers/tabs.js';
 import { handleUploadFile } from '../handlers/cdp.js';
 import { handleIntercept } from '../handlers/intercept.js';
 import { handleEmulate } from '../handlers/emulate.js';
 import { handleInspectElement } from '../handlers/inspect.js';
-import { handleObserve, handleAct } from '../handlers/agent-api.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -60,11 +59,8 @@ const HANDLERS = {
   browser_upload_file: handleUploadFile,
   browser_drag: handleDrag,
   browser_fill_form: handleFillForm,
-  browser_find: handleFind,
   browser_text: handleGetPageText,
   browser_intercept: handleIntercept,
-  browser_observe: handleObserve,
-  browser_act: handleAct,
   browser_resize_window: handleResizeWindow,
   browser_emulate: handleEmulate,
   browser_inspect_element: handleInspectElement,
@@ -133,7 +129,6 @@ export async function handleMessage(msg) {
       // any shield calls below run — no async race (review NOTE 7a).
       const released = tabLocks.releaseByOwner(owner);
       tabControl.releaseByOwner(owner); // a gone agent no longer "controls" anything
-      observationSnapshots.dropSession(owner);
       // Persist: without this, a service-worker recycle after the disconnect
       // would restore the just-released lock from session storage and
       // resurrect stale exclusivity (spec-review finding).

@@ -14,12 +14,12 @@ describe("Tool Registry", () => {
   const expectedTools = [
     'browser_navigate', 'browser_click', 'browser_type', 'browser_scroll',
     'browser_press_key', 'browser_wait', 'browser_snapshot', 'browser_screenshot',
-    'browser_console', 'browser_network', 'browser_tabs', 'browser_find',
+    'browser_console', 'browser_network', 'browser_tabs',
     'browser_text', 'browser_hover', 'browser_select', 'browser_evaluate',
     'browser_click_text', 'browser_handle_dialog',
     'browser_upload_file',
     'browser_drag', 'browser_fill_form', 'browser_intercept',
-    'browser_observe', 'browser_act', 'browser_batch', 'browser_resize_window', 'browser_emulate',
+    'browser_batch', 'browser_resize_window', 'browser_emulate',
     'browser_list_browsers', 'browser_select_browser', 'browser_inspect_element',
   ];
   // Tools that run entirely in the MCP process (they call other tools' handlers)
@@ -114,8 +114,6 @@ describe("Tool Registry", () => {
       expect(isIdempotent('browser_snapshot')).toBe(true);
       expect(isIdempotent('browser_screenshot')).toBe(true);
       expect(isIdempotent('browser_text')).toBe(true);
-      expect(isIdempotent('browser_find')).toBe(true);
-      expect(isIdempotent('browser_observe')).toBe(true);
     });
     it("marks clear-able capture tools as NON-idempotent (clear mutates)", () => {
       expect(isIdempotent("browser_console")).toBe(false);
@@ -132,7 +130,6 @@ describe("Tool Registry", () => {
       ]) {
         expect(isIdempotent(t), `${t} must not be retried`).toBe(false);
       }
-      expect(isIdempotent('browser_act')).toBe(false);
     });
   });
 

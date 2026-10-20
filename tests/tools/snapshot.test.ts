@@ -2,38 +2,35 @@ import { describe, expect, it } from "vitest";
 import { snapshotTool } from "../../mcp-server/src/tools/snapshot.js";
 import type { ToolHost } from "../../mcp-server/src/tools/types.js";
 
-describe("browser_snapshot schema", () => {
+describe("browser_snapshot tool", () => {
   const parse = (extra: Record<string, unknown>) =>
     snapshotTool.inputSchema.safeParse({ tabId: 1, ...extra });
 
-  it('accepts source "dom" and "native", and leaves it optional (DOM stays the default)', () => {
-    expect(parse({ source: "native" }).success).toBe(true);
-    expect(parse({ source: "dom" }).success).toBe(true);
-    const bare = parse({});
-    expect(bare.success).toBe(true);
-    expect(bare.success && bare.data.source).toBeUndefined();
+  it("takes query / selector / ref / maxChars, all optional", () => {
+    expect(parse({}).success).toBe(true);
+    expect(parse({ query: "save button", maxChars: 2000 }).success).toBe(true);
+    expect(parse({ maxChars: 10 }).success).toBe(false);
   });
 
-  it("rejects an unknown source", () => {
-    expect(parse({ source: "axtree" }).success).toBe(false);
-  });
-
-  it("documents the native option for agents", () => {
-    expect(snapshotTool.description).toContain('source:"native"');
-  });
-
-  it("forwards source to the extension untouched", async () => {
-    const seen: Array<{ tool: string; params: Record<string, unknown> }> = [];
+  it("hands the model plain lines, not escaped JSON", async () => {
+    const seen: Array<Record<string, unknown>> = [];
     const host: ToolHost = {
-      callTool: async (tool, params) => {
-        seen.push({ tool, params });
-        return { success: true, source: "native" };
+      callTool: async (_tool, params) => {
+        seen.push(params);
+        return { success: true, url: "https://a.test/", title: "A", snapshot: '- button "Save" [s1-0]', truncated: true, hint: "Cut at maxChars" };
       },
     };
-    await snapshotTool.handler(host, { tabId: 4, source: "native", compact: false });
-    expect(seen).toEqual([
-      { tool: "browser_snapshot", params: { tabId: 4, source: "native", compact: false } },
-    ]);
+    const out = await snapshotTool.handler(host, { tabId: 4 });
+    expect(seen).toEqual([{ tabId: 4 }]);
+    expect(out.content).toEqual([{ type: "text", text: 'Page: A (https://a.test/)\n- button "Save" [s1-0]\n[Cut at maxChars]' }]);
+  });
+
+  it("labels query results and passes failures through as errors", async () => {
+    const host: ToolHost = { callTool: async () => ({ success: true, query: "save", snapshot: '- button "Save" [f1-0]' }) };
+    expect((await snapshotTool.handler(host, { tabId: 1, query: "save" })).content[0]).toEqual({ type: "text", text: 'Matches for "save":\n- button "Save" [f1-0]' });
+    const failing: ToolHost = { callTool: async () => ({ success: false, error: "Invalid CSS selector: [" }) };
+    const out = await snapshotTool.handler(failing, { tabId: 1, selector: "[" });
+    expect(out.isError).toBe(true);
   });
 
   it("stays idempotent (safe to retry on timeout)", () => {

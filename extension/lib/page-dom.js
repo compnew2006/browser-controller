@@ -15,7 +15,7 @@
  * ambiguous is reported as gone instead of guessed.
  */
 
-export const PAGE_DOM_VERSION = 5;
+export const PAGE_DOM_VERSION = 6;
 
 export function PAGE_DOM_INSTALL(version) {
   if (globalThis.__bcDom && globalThis.__bcDom.v === version) return false;
@@ -399,16 +399,12 @@ export function PAGE_DOM_INSTALL(version) {
   }
 
   const BLOCK_DISPLAY = /^(block|flex|grid|list-item|table|table-row|table-caption|flow-root|inline-block)$/;
-  const ARTICLE_SKIP_ROLES = new Set(['navigation', 'banner', 'contentinfo', 'complementary', 'search', 'menu', 'menubar', 'toolbar', 'dialog', 'alertdialog']);
-  const ARTICLE_SKIP_TAGS = new Set(['NAV', 'FOOTER', 'ASIDE', 'HEADER', 'FORM', 'BUTTON', 'DIALOG']);
-  const ARTICLE_SKIP_HINT = /(^|[-_ ])(cookie|consent|sidebar|side-bar|menu|navbar|nav|footer|breadcrumbs?|share|social|advert|ads|promo|newsletter|related|comments?)([-_ ]|$)/i;
 
   /**
    * Visible text of the flat tree (shadow roots, slots, same-origin frames),
-   * block elements on their own lines. `article` skips navigation, headers,
-   * footers, sidebars, banners and similar page chrome.
+   * block elements on their own lines.
    */
-  function flatText(root, { article = false, max = 1e7 } = {}) {
+  function flatText(root, { max = 1e7 } = {}) {
     const parts = [];
     let len = 0;
     const push = (t) => { parts.push(t); len += t.length; };
@@ -426,13 +422,6 @@ export function PAGE_DOM_INSTALL(version) {
       const tag = n.tagName;
       if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE' || tag === 'svg' || tag === 'SVG') return;
       if (tag === 'BR') { push('\n'); return; }
-      if (article && n !== root) {
-        if (ARTICLE_SKIP_TAGS.has(tag) && !(tag === 'HEADER' && n.closest && n.closest('article, main'))) return;
-        if (ARTICLE_SKIP_ROLES.has(roleOf(n))) return;
-        const hint = `${n.id || ''} ${typeof n.className === 'string' ? n.className : ''}`;
-        if (hint.trim() && ARTICLE_SKIP_HINT.test(hint)) return;
-        if (attr(n, 'aria-hidden') === 'true') return;
-      }
       const st = styleOf(n);
       if (st && (st.display === 'none' || st.visibility === 'hidden' || st.contentVisibility === 'hidden')) return;
       const block = st ? BLOCK_DISPLAY.test(st.display) : false;
@@ -451,27 +440,15 @@ export function PAGE_DOM_INSTALL(version) {
       .trim();
   }
 
-  /** Main-content root for article mode: the visible <article>/<main>/[role=main] with the most text. */
-  function articleRoot() {
-    let best = null;
-    let bestLen = 0;
-    for (const root of allRoots(false)) {
-      let els = [];
-      try { els = root.querySelectorAll('article, main, [role="main"], [itemprop="articleBody"]'); } catch {}
-      for (const el of els) {
-        const l = (el.textContent || '').length;
-        if (l > bestLen && isVisible(el)) { best = el; bestLen = l; }
-      }
-    }
-    return best || document.body;
-  }
-
-  /** Page text: native innerText when there is no shadow DOM (fast), the flat-tree walker otherwise. */
-  function pageText(root, { article = false, max = 1e7 } = {}) {
-    if (!article && root.ownerDocument === document && typeof root.innerText === 'string' && !hasShadowHosts()) {
+  /**
+   * Page text: native innerText when the page has no shadow DOM and no frames
+   * (fast); the flat-tree walker otherwise, so their text is always included.
+   */
+  function pageText(root, { max = 1e7 } = {}) {
+    if (root.ownerDocument === document && typeof root.innerText === 'string' && !hasShadowHosts() && !document.querySelector('iframe')) {
       return root.innerText.replace(/\t/g, ' ').replace(/\n\s*\n/g, '\n\n').replace(/ +/g, ' ').trim();
     }
-    return flatText(root, { article, max });
+    return flatText(root, { max });
   }
 
   /**
@@ -585,7 +562,7 @@ export function PAGE_DOM_INSTALL(version) {
     v: version,
     clean, attr, shadowOf, frameDoc, allRoots, queryAll, isVisible, flatChildren, hasShadowHosts,
     roleOf, nameOf, composedText, isInteractive, preciseMatch, resolve, centerOf, elementAt,
-    composedContains, rowContextOf, describe, registry, flatText, articleRoot, pageText, styleOf, connected, cursor,
+    composedContains, rowContextOf, describe, registry, flatText, pageText, styleOf, connected, cursor,
   });
   return true;
 }

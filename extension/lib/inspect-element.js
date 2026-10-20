@@ -88,7 +88,7 @@ export function describeNode(node) {
 const hasAuthorShadow = (node) => (node.shadowRoots || []).some((r) => r.shadowRootType !== 'user-agent');
 
 /**
- * Follow a structural path (lib/ax-native.js grammar) in a DOM.getDocument
+ * Follow a structural path (pathOfTarget's grammar, below) in a DOM.getDocument
  * pierce dump: the target node and its ancestor elements within its own
  * document, nearest first. `flatTreeDiffers` when a shadow tree is on the way
  * (entered, or a host's light children slotted elsewhere): CSS inheritance then
@@ -239,4 +239,51 @@ export function shapeListeners(listeners) {
 export function listenerTypes(listeners) {
   const types = [...new Set(listeners.map((l) => (l.useCapture ? `${l.type} (capture)` : l.type)))];
   return types.length > MAX_TYPES ? [...types.slice(0, MAX_TYPES), `…+${types.length - MAX_TYPES} more`] : types;
+}
+
+/**
+ * Structural path of an element from its top document. ONE definition, run in
+ * both worlds (serialized with Function#toString, so it must stay
+ * self-contained and close over nothing):
+ *   - main world via CDP `Runtime.callFunctionOn`, with `element` given;
+ *   - the extension's isolated world via chrome.scripting, resolving
+ *     `ref` / `selector` / `fb` through the shared page runtime (scoped snapshots).
+ * Returns `{ path, tag }`, or `{ error }` (INVALID_SELECTOR, REF_GONE, DETACHED).
+ */
+export function pathOfTarget(ref, selector, fb, element) {
+  let el = element || null;
+  if (!el) {
+    const D = globalThis.__bcDom;
+    if (!D) return { __needDom: true };
+    const hit = D.resolve(ref, selector, fb);
+    if (hit.error) return { error: hit.error };
+    el = hit.el;
+  }
+  if (!el || el.nodeType !== 1) return { error: 'REF_GONE' };
+  const path = [];
+  let node = el;
+  for (let guard = 0; guard < 400; guard++) {
+    if (!node) return { error: 'DETACHED' };
+    if (node.nodeType === 9) {
+      let frame;
+      try { frame = node.defaultView && node.defaultView.frameElement; } catch { frame = null; }
+      if (!frame) return { path, tag: el.tagName };
+      path.unshift(-2);
+      node = frame;
+      continue;
+    }
+    const parent = node.parentNode;
+    if (!parent) return { error: 'DETACHED' };
+    const index = Array.prototype.indexOf.call(parent.children, node);
+    if (index < 0) return { error: 'DETACHED' };
+    if (parent.nodeType === 11) {
+      if (!parent.host) return { error: 'DETACHED' };
+      path.unshift(-1, index);
+      node = parent.host;
+    } else {
+      path.unshift(index);
+      node = parent;
+    }
+  }
+  return { error: 'DETACHED' };
 }

@@ -8,10 +8,10 @@ import { fallbackByTab, lastSnapshotFingerprints, MAX_RESULT_CHARS, persistSessi
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
 import { withCdp } from '../lib/cdp-session.js';
 import { cdpEvaluate } from '../lib/cdp-evaluate.js';
-import { handleNativeSnapshot } from './ax-snapshot.js';
+import { handleFind } from './find.js';
 
-/** Default output cap for snapshots (chars of serialized tree). */
-export const SNAPSHOT_MAX_CHARS = 20_000;
+/** Default output cap for snapshots (characters of lines). */
+export const SNAPSHOT_MAX_CHARS = 12_000;
 
 export async function handleWait(params, _sessionId, _agentName, signal) {
   const { tabId, selector, state = 'visible', timeout = 10000, delay, text, urlIncludes } = params;
@@ -156,257 +156,189 @@ export async function handleScroll(params) {
 }
 
 /**
- * Snapshot (task 2.4): builds an accessibility tree INCLUDING shadow DOM and
- * same-origin iframes (source:"dom", the default; source:"native" reads Chrome's
- * real AX tree instead — handlers/ax-snapshot.js). Refs are returned to the agent, while element recovery
- * state is stored in the extension fallback registry instead of mutating page
- * DOM with permanent data-mcp-ref attributes.
+ * Page-side snapshot: interactive elements, landmarks and headings of the
+ * flat tree (shadow DOM, slots, same-origin iframes) as indented lines,
+ *   - role "name" [ref] checked value="…" (row: …)   (+ → /path for links with _links)
+ * "+ " instead of "- " marks an element that was not in the previous snapshot.
+ * Refs go into the shared page registry (lib/page-dom.js); recovery
+ * descriptors come back in __fallbacks for the extension to keep.
  */
-export async function handleSnapshot(params) {
-  const { tabId, selector, ref: rootRef, depth, maxChars = SNAPSHOT_MAX_CHARS } = params;
-  // filter:"interactive"|"all" (Claude-in-Chrome naming) is an alias of compact.
-  const compact = params.filter === 'all' ? false : params.filter === 'interactive' ? true : params.compact !== false;
-  await resolveTab(tabId);
+function pageSnapshot(_sel, _rootRef, _prevFingerprints, _refPrefix, _maxChars, _links) {
+  const D = globalThis.__bcDom;
+  if (!D) return { __needDom: true };
+  const genFallback = (globalThis.__browserControllerFallbackRuntime || {}).generateFallback || null;
+  const fallbacks = {};
+  const fingerprints = [];
+  const prevSet = _prevFingerprints ? new Set(_prevFingerprints) : null;
+  const skipTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'PATH', 'BR', 'HR', 'WBR', 'META', 'LINK']);
+  const landmarkRoles = new Set(['navigation', 'main', 'banner', 'contentinfo', 'form', 'search', 'complementary', 'region', 'dialog']);
+  let budget = _maxChars;
+  let truncated = false;
+  let refCount = 0;
 
-  // source:"native": Chrome's own accessibility tree (CDP). When the debugger
-  // can't attach (or the AX read fails) the DOM snapshot below answers instead
-  // and says why in `nativeUnavailable`.
-  let nativeUnavailable;
-  if (params.source === 'native') {
-    const native = await handleNativeSnapshot(params, { compact, maxChars });
-    if (!native.__fallback) return native;
-    nativeUnavailable = native.__fallback;
+  // 'show' = render normally, 'pass' = no box of its own (display:contents,
+  // slots, hidden-but-overridable) but children may render, false = hidden subtree.
+  function vis(el) {
+    const s = D.styleOf(el);
+    if (!s || s.display === 'none' || el.inert || D.attr(el, 'aria-hidden') === 'true') return false;
+    if (s.display === 'contents' || el.tagName === 'SLOT') return 'pass';
+    if (s.visibility === 'hidden' || s.visibility === 'collapse') return 'pass'; // inherited, can be re-enabled below
+    if (parseFloat(s.opacity) === 0) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return 'show';
+    return el.childElementCount > 0 || D.shadowOf(el) ? 'pass' : false;
+  }
+  // Landmarks are named only by an explicit label: their text is just their children again.
+  const nameFor = (el, r) => (landmarkRoles.has(r) && r !== 'dialog'
+    ? D.clean(D.attr(el, 'aria-label') || D.attr(el, 'title'))
+    : D.nameOf(el)).slice(0, 80);
+  const origin = location.origin;
+  const short = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
+  function hrefOf(el) {
+    const h = el.href;
+    if (!h || typeof h !== 'string' || h.startsWith('javascript:') || h.endsWith('#')) return '';
+    if (h.startsWith(origin + '/')) return short(h.slice(origin.length), 60);
+    return short(h.replace(/^https?:\/\//, ''), 60);
   }
 
-  // Install the fallback page runtime first (v2 install-once pattern): the
-  // generator's source is injected natively as a chrome.scripting `func:`.
-  // Rebuilding it from a source string via eval() is impossible — MV3's
-  // extension CSP (script-src 'self', no unsafe-eval) throws in every
-  // isolated world, which silently killed fallback capture before this fix.
-  await safeExec(tabId, PAGE_FALLBACK_INSTALL, []);
-  // isNew feature: pass the fingerprints seen in the PREVIOUS snapshot so the
-  // page function can mark newly-appeared elements. Array is serializable.
-  const prevFingerprints = lastSnapshotFingerprints.get(tabId) || null;
-  const refPrefix = nextRefPrefix('s');
-
-  return execDom(tabId, (_sel, _compact, _prevFingerprints, _refPrefix, _rootRef, _depth, _maxChars) => {
-    const D = globalThis.__bcDom;
-    if (!D) return { __needDom: true };
-    let refCount = 0;
-    /** @type {Record<string, object>} ref -> fallback, returned to background */
-    const fallbacks = {};
-    /** @type {string[]} fingerprints of THIS snapshot (role|name), returned to background */
-    const fingerprints = [];
-    // No previous snapshot → nothing is "new" (marking every node wasted tokens).
-    const prevSet = _prevFingerprints ? new Set(_prevFingerprints) : null;
-    // Descriptor generator comes from the pre-installed page runtime.
-    const genFallback = (globalThis.__browserControllerFallbackRuntime || {}).generateFallback || null;
-    const skipTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'PATH', 'BR', 'HR', 'WBR', 'META', 'LINK']);
-    const maxDepth = Number.isInteger(_depth) && _depth >= 0 ? _depth : Infinity;
-    // Output budget: stop emitting nodes once the serialized size reaches it.
-    let budget = Number.isInteger(_maxChars) && _maxChars > 0 ? _maxChars : Infinity;
-    let truncated = false;
-
-    // 'show' = render normally, 'pass' = no box of its own (display:contents,
-    // slots) but its children may render, false = hidden subtree.
-    function vis(el) {
-      const s = D.styleOf(el);
-      if (!s || s.display === 'none') return false;
-      if (s.display === 'contents' || el.tagName === 'SLOT') return 'pass';
-      if (s.visibility === 'hidden' || s.visibility === 'collapse' || parseFloat(s.opacity) === 0) {
-        // visibility is inherited but can be re-enabled below; keep walking.
-        return 'pass';
-      }
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) return 'show';
-      // Zero-size wrappers (custom-element hosts, overflow containers) can still hold visible children.
-      return el.childElementCount > 0 || D.shadowOf(el) ? 'pass' : false;
-    }
-
-    const role = (el) => D.roleOf(el);
-    // Landmarks/regions are named only by an explicit label: their text is just
-    // their children's names again (token noise).
-    const elName = (el, r) => (landmarkRoles.has(r) && r !== 'dialog'
-      ? D.clean(D.attr(el, 'aria-label') || D.attr(el, 'title'))
-      : D.nameOf(el)).slice(0, 80);
-    const isInteractive = (el) => D.isInteractive(el);
-
-    const landmarkRoles = new Set(['navigation', 'main', 'banner', 'contentinfo', 'form', 'search', 'complementary', 'region', 'dialog']);
-
-    // Flat-tree children: open AND closed shadow roots, slotted content,
-    // same-origin iframe bodies (lib/page-dom.js flatChildren).
-    function childrenOf(el) {
-      return D.flatChildren(el).filter((c) => c.nodeType === 1);
-    }
-
-    const origin = location.origin;
-    function hrefOf(el) {
-      const h = el.href;
-      if (!h || typeof h !== 'string') return null;
-      if (h.startsWith(origin + '/')) return h.slice(origin.length); // same-origin: path only
-      return h;
-    }
-
-    function emit(el, r, n, extra, isNewCheck) {
-      const ref = `${_refPrefix}${refCount++}`;
-      D.registry.set(ref, el);
-      try { if (genFallback) fallbacks[ref] = genFallback(el); } catch {}
-      const fp = `${r}|${n}`;
-      fingerprints.push(fp);
-      const node = { ref, role: r, ...extra };
-      if (n) node.name = n;
-      if (isNewCheck && prevSet && !prevSet.has(fp)) node.isNew = true;
+  const entries = []; // in document order
+  const controls = [];
+  function emit(el, r, depth) {
+    const ref = `${_refPrefix}${refCount++}`;
+    D.registry.set(ref, el);
+    try { if (genFallback) fallbacks[ref] = genFallback(el); } catch {}
+    const name = nameFor(el, r).replace(/"/g, "'");
+    const fp = `${r}|${name}`;
+    fingerprints.push(fp);
+    let line = `${r}${name ? ` "${name}"` : ''} [${ref}]`;
+    if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) { if (el.checked) line += ' checked'; }
+    else if (D.attr(el, 'aria-checked') === 'true') line += ' checked';
+    const exp = D.attr(el, 'aria-expanded');
+    if (exp) line += exp === 'true' ? ' expanded' : ' collapsed';
+    if (D.attr(el, 'aria-selected') === 'true') line += ' selected';
+    if (el.disabled || D.attr(el, 'aria-disabled') === 'true') line += ' disabled';
+    if (el.value !== undefined && el.value !== '' && typeof el.value !== 'object'
+      && !['checkbox', 'radio', 'submit', 'button', 'reset', 'image'].includes(el.type)) {
       // A password field shows only that it is filled (and how long), never its value.
-      if (el.value !== undefined && el.value !== '' && typeof el.value !== 'object') node.value = el.type === 'password' ? '•'.repeat(Math.min(String(el.value).length, 20)) : String(el.value).slice(0, 200);
-      if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) node.checked = el.checked;
-      else if (D.attr(el, 'aria-checked')) node.checked = D.attr(el, 'aria-checked') === 'true';
-      if (D.attr(el, 'aria-expanded')) node.expanded = D.attr(el, 'aria-expanded') === 'true';
-      if (D.attr(el, 'aria-selected') === 'true') node.selected = true;
-      if (el.disabled) node.disabled = true;
-      if (el.tagName === 'A') { const h = hrefOf(el); if (h) node.href = h; }
-      budget -= JSON.stringify(node).length + 16;
-      return node;
+      const v = el.type === 'password' ? '•'.repeat(Math.min(String(el.value).length, 20)) : short(String(el.value), 80).replace(/"/g, "'");
+      line += ` value="${v}"`;
     }
+    if (_links && el.tagName === 'A') { const h = hrefOf(el); if (h) line += ` → ${h}`; }
+    const entry = { depth, el, key: `${r}|${name}`, line, isNew: !!(prevSet && !prevSet.has(fp)) };
+    entries.push(entry);
+    budget -= depth * 2 + line.length + 3;
+    return entry;
+  }
 
-    /** Compact-mode controls, so look-alikes ("Edit" in every row) can get row context afterwards. */
-    const controls = [];
-
-    function buildCompact(el, d) {
-      if (!el || el.nodeType !== 1) return null;
-      if (skipTags.has(el.tagName)) return null;
-      if (budget <= 0) { truncated = true; return null; }
-      const v = vis(el);
-      if (!v) return null;
-
-      const ia = v === 'show' && isInteractive(el);
-      const r = role(el);
-      const isLandmark = v === 'show' && (landmarkRoles.has(r) || (r === 'heading'));
-      const own = ia || isLandmark;
-
-      let node = null;
-      if (own) {
-        if (d > maxDepth) { truncated = true; return null; }
-        node = emit(el, r, elName(el, r), {}, true);
-        if (ia) controls.push({ el, node });
-      }
-      const kids = [];
-      if (!(own && d >= maxDepth)) {
-        for (const c of childrenOf(el)) {
-          const cn = buildCompact(c, own ? d + 1 : d);
-          if (cn) Array.isArray(cn) ? kids.push(...cn) : kids.push(cn);
-        }
-      } else if (childrenOf(el).length) truncated = true;
-
-      if (!own) return kids.length === 0 ? null : kids.length === 1 ? kids[0] : kids;
-      if (kids.length) node.children = kids;
-      return node;
+  function walk(el, depth) {
+    if (!el || el.nodeType !== 1 || skipTags.has(el.tagName)) return;
+    if (budget <= 0) { truncated = true; return; }
+    if (el.id && el.id.startsWith('__bc')) return; // the extension's own frame and cursor
+    const v = vis(el);
+    if (!v) return;
+    const r = D.roleOf(el);
+    const interactive = v === 'show' && D.isInteractive(el);
+    const own = interactive || (v === 'show' && (landmarkRoles.has(r) || r === 'heading'));
+    if (own) {
+      const entry = emit(el, r, depth);
+      if (interactive) controls.push(entry);
     }
+    for (const c of D.flatChildren(el)) if (c.nodeType === 1) walk(c, own ? depth + 1 : depth);
+  }
 
-    function buildFull(el, d) {
-      if (!el || el.nodeType !== 1) return null;
-      if (skipTags.has(el.tagName)) return null;
-      if (budget <= 0) { truncated = true; return null; }
-      const v = vis(el);
-      if (!v) return null;
+  let root = document.body;
+  if (_rootRef) {
+    root = D.registry.get(_rootRef);
+    if (!D.connected(root)) return { success: false, error: `ref ${_rootRef} is gone — take a new snapshot` };
+  } else if (_sel) {
+    const hit = D.resolve(null, _sel, null);
+    if (hit.error === 'INVALID_SELECTOR') return { success: false, error: `Invalid CSS selector: ${_sel}` };
+    root = hit.el;
+  }
+  if (!root) return { success: false, error: 'Root element not found' };
+  walk(root, 0);
 
-      const r = role(el);
-      const ia = v === 'show' && isInteractive(el);
-      const n = v === 'show' ? elName(el, r) : '';
+  // Look-alike controls ("Edit" in every row) get their table row's text.
+  const seen = new Map();
+  for (const c of controls) seen.set(c.key, (seen.get(c.key) || 0) + 1);
+  for (const c of controls) {
+    if (seen.get(c.key) < 2) continue;
+    const context = D.rowContextOf(c.el);
+    if (context) c.line += ` (row: ${short(context, 80)})`;
+  }
+  let text = entries.map((e) => `${'  '.repeat(e.depth)}${e.isNew ? '+' : '-'} ${e.line}`).join('\n');
+  if (text.length > _maxChars) {
+    text = text.slice(0, Math.max(0, text.lastIndexOf('\n', _maxChars)));
+    truncated = true;
+  }
+  return {
+    success: true,
+    url: location.href,
+    title: document.title,
+    snapshot: text,
+    ...(truncated ? { truncated: true } : {}),
+    __fallbacks: fallbacks,
+    __fingerprints: fingerprints,
+  };
+}
 
-      if (v !== 'show' || (r === 'generic' && !n && !ia && d > 1)) {
-        const kids = [];
-        for (const c of childrenOf(el)) {
-          const cn = buildFull(c, d + (v === 'show' ? 1 : 0));
-          if (cn) Array.isArray(cn) ? kids.push(...cn) : kids.push(cn);
-        }
-        return kids.length === 0 ? null : kids.length === 1 ? kids[0] : kids;
-      }
-      if (d > maxDepth) { truncated = true; return null; }
+/**
+ * Snapshot: the page's controls, landmarks and headings as lines with refs
+ * every ref tool accepts. `query` instead returns the few elements that best
+ * match a description (find.js). Recovery descriptors for the refs are kept
+ * per tab, not written into the page's DOM.
+ */
+export async function handleSnapshot(params) {
+  const { tabId, selector, ref: rootRef, query, links = false, maxChars = SNAPSHOT_MAX_CHARS } = params;
+  await resolveTab(tabId);
+  if (query) return snapshotQuery(tabId, query);
+  // The fallback page runtime is injected as a chrome.scripting `func:`: MV3's
+  // extension CSP (no unsafe-eval) rules out rebuilding it from a source string.
+  await safeExec(tabId, PAGE_FALLBACK_INSTALL, []);
+  const prevFingerprints = lastSnapshotFingerprints.get(tabId) || null;
+  const res = await execDom(tabId, pageSnapshot, [selector ?? null, rootRef ?? null, prevFingerprints, nextRefPrefix('s'), maxChars, !!links]);
+  if (res && res.__fallbacks) {
+    // Merged, not replaced: a scoped snapshot must not invalidate the full one's refs.
+    const map = fallbackByTab.get(tabId) || new Map();
+    for (const [ref, fbEntry] of Object.entries(res.__fallbacks)) map.set(ref, fbEntry);
+    while (map.size > 3000) map.delete(map.keys().next().value);
+    fallbackByTab.set(tabId, map);
+    delete res.__fallbacks;
+    persistSessionState();
+  }
+  if (res && res.__fingerprints) {
+    lastSnapshotFingerprints.set(tabId, res.__fingerprints);
+    delete res.__fingerprints;
+  }
+  if (res?.truncated) res.hint = 'Cut at maxChars: scope it with selector or ref, or use query to find one element.';
+  return res;
+}
 
-      const node = emit(el, r, n, r === 'generic' ? { tag: el.tagName.toLowerCase() } : {}, true);
-      const kids = [];
-      for (const c of childrenOf(el)) {
-        const cn = buildFull(c, d + 1);
-        if (cn) Array.isArray(cn) ? kids.push(...cn) : kids.push(cn);
-      }
-      if (kids.length) node.children = kids;
-      return node;
-    }
-
-    let root = document.body;
-    if (_rootRef) {
-      root = D.registry.get(_rootRef);
-      if (!D.connected(root)) return { success: false, error: `ref ${_rootRef} is gone — take a new snapshot` };
-    } else if (_sel) {
-      const hit = D.resolve(null, _sel, null);
-      if (hit.error === 'INVALID_SELECTOR') return { success: false, error: `Invalid CSS selector: ${_sel}` };
-      root = hit.el;
-    }
-    if (!root) return { success: false, error: 'Root element not found' };
-
-    const tree = _compact ? buildCompact(root, 0) : buildFull(root, 0);
-    // The compact tree drops the cell text that tells look-alike controls apart:
-    // controls sharing role+name get their table row's text. Unique ones stay lean.
-    const seen = new Map();
-    for (const c of controls) { const k = `${c.node.role}|${c.node.name || ''}`; seen.set(k, (seen.get(k) || 0) + 1); }
-    for (const c of controls) {
-      if (seen.get(`${c.node.role}|${c.node.name || ''}`) < 2) continue;
-      const context = D.rowContextOf(c.el);
-      if (!context) continue;
-      if (budget < context.length + 13) { truncated = true; break; } // `,"context":""` counts against maxChars too
-      budget -= context.length + 13;
-      c.node.context = context;
-    }
-    return {
-      success: true,
-      url: location.href,
-      title: document.title,
-      compact: _compact,
-      tree,
-      ...(truncated ? {
-        truncated: true,
-        hint: 'Output capped (maxChars/depth). Scope it with selector or ref (a subtree), or raise maxChars.',
-      } : {}),
-      // internal: background stores these per-tab; never sent to the agent.
-      __fallbacks: fallbacks,
-      __fingerprints: fingerprints,
-    };
-  }, [selector ?? null, compact, prevFingerprints, refPrefix, rootRef ?? null, depth ?? null, maxChars]).then((res) => {
-    // Store the fallbacks per-tab so click/type can resolve stale refs, and
-    // persist them across service-worker recycles (MV3 lifetime). Merged, not
-    // replaced: a scoped snapshot must not invalidate refs from the full one.
-    if (res && res.__fallbacks) {
-      const map = fallbackByTab.get(tabId) || new Map();
-      for (const [ref, fbEntry] of Object.entries(res.__fallbacks)) map.set(ref, fbEntry);
-      // Bound the map: keep the most recent entries.
-      while (map.size > 3000) map.delete(map.keys().next().value);
-      fallbackByTab.set(tabId, map);
-      delete res.__fallbacks; // keep it out of the agent-visible payload
-      persistSessionState();
-    }
-    // Store THIS snapshot's fingerprints so the next snapshot can compute isNew.
-    if (res && res.__fingerprints) {
-      lastSnapshotFingerprints.set(tabId, res.__fingerprints);
-      delete res.__fingerprints;
-    }
-    if (nativeUnavailable && res && res.success) res.nativeUnavailable = nativeUnavailable;
-    return res;
-  });
+/** snapshot {query}: the best matches for a description, as snapshot lines. */
+async function snapshotQuery(tabId, query) {
+  const found = await handleFind({ tabId, query, limit: 8 });
+  if (!found?.success) return found;
+  const lines = found.matches.map((m) => `- ${m.role}${m.name ? ` "${m.name.replace(/"/g, "'")}"` : ''} [${m.ref}]${m.context ? ` (row: ${m.context.slice(0, 80)})` : ''}`);
+  return {
+    success: true,
+    query,
+    snapshot: lines.join('\n'),
+    ...(lines.length ? {} : { hint: 'No match: try other words, or a snapshot without query.' }),
+  };
 }
 
 export async function handleGetPageText(params) {
   // Default must match the MCP schema (text.ts: maxLength .default(5000)) —
   // it drifted 10x here once, so direct-WS callers got 50000 while MCP callers
   // got 5000 from the same knob.
-  const { tabId, selector, maxLength = 5000, mode = 'all', offset = 0 } = params;
+  const { tabId, selector, maxLength = 5000, offset = 0 } = params;
   await resolveTab(tabId);
   const max = Math.min(Math.max(1, Number(maxLength) || 5000), 100_000);
   const from = Math.max(0, Number(offset) || 0);
 
-  return execDom(tabId, (_sel, _max, _mode, _from) => {
+  return execDom(tabId, (_sel, _max, _from) => {
     const D = globalThis.__bcDom;
     if (!D) return { __needDom: true };
-    const article = _mode === 'article';
     const budget = _from + _max + 1000;
     let roots = [document.body];
     if (_sel) {
@@ -424,8 +356,6 @@ export async function handleGetPageText(params) {
       }
       // Outermost matches only — a match inside another match would repeat its text.
       roots = hits.filter((el) => !hits.some((o) => o !== el && D.composedContains(o, el)));
-    } else if (article) {
-      roots = [D.articleRoot()];
     }
     if (!roots.length || !roots[0]) return { success: false, error: 'Element not found' };
 
@@ -435,7 +365,7 @@ export async function handleGetPageText(params) {
     let size = 0;
     for (const root of roots) {
       if (size > budget) break;
-      const part = D.pageText(root, { article, max: budget });
+      const part = D.pageText(root, { max: budget });
       if (part) { parts.push(part); size += part.length + 2; }
     }
     let text = parts.join('\n\n');
@@ -449,13 +379,12 @@ export async function handleGetPageText(params) {
       ...(roots.length > 1 ? { matches: roots.length } : {}),
       ...(_from ? { offset: _from } : {}),
       ...(truncated ? { nextOffset: _from + _max } : {}),
-      ...(article ? { mode: 'article' } : {}),
       ...(total && _from >= total ? { note: `offset ${_from} is past the end (${total} chars)` } : {}),
     };
-  }, [selector ?? null, max, mode, from]);
+  }, [selector ?? null, max, from]);
 }
 
-export { handleFind } from './find.js';
+export { handleFind };
 
 /**
  * evaluate (task 1.5): runs in the page's MAIN world via chrome.scripting — no
@@ -548,33 +477,3 @@ export async function handleEvaluate(params, _sessionId, _agentName, signal) {
   return { success: true, result: value };
 }
 
-/**
- * Auto-re-snapshot helper (Facebook/Instagram virtualization recovery).
- *
- * On virtualized sites (FB/IG/Twitter feeds), scrolling can REMOVE a post from
- * the DOM entirely — so a stale `ref` + every in-page fallback all return null.
- * Rather than forcing the agent to do a full round-trip (error → snapshot →
- * retry), we snapshot the tab HERE and embed the fresh refs in the error so the
- * agent can retry in one step using the new refs.
- *
- * Returns a compact summary (refs + names) suitable for an error payload — NOT
- * the full tree (keeps it token-cheap). null if the re-snapshot itself failed.
- */
-export async function autoReSnapshot(tabId) {
-  try {
-    const res = await handleSnapshot({ tabId, compact: true });
-    if (!res || !res.success || !res.tree) return null;
-    // Flatten ref → {role, name} so the agent can pick the right new ref.
-    const refs = [];
-    const walk = (n) => {
-      if (!n) return;
-      if (Array.isArray(n)) { n.forEach(walk); return; }
-      if (n.ref) refs.push({ ref: n.ref, role: n.role || '', name: (n.name || '').slice(0, 60) });
-      if (n.children) walk(n.children);
-    };
-    walk(res.tree);
-    return { refs: refs.slice(0, 40), url: res.url, title: res.title };
-  } catch {
-    return null;
-  }
-}

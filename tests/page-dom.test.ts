@@ -175,9 +175,9 @@ describe('repeated row controls (icon buttons in table rows)', () => {
   it('compact snapshot adds row context only to controls whose role+name repeats', async () => {
     unitsTable(['قطعه', 'درزن']);
     const res = await handleSnapshot({ tabId: 1 });
-    const buttons = JSON.stringify(res.tree).match(/\{[^{}]*"role":"button"[^{}]*\}/g) ?? [];
-    expect(buttons.find((b) => b.includes('اضافة جديد'))).not.toContain('context');
-    expect(buttons.filter((b) => b.includes('"name":"تعديل"')).map((b) => JSON.parse(b).context)).toEqual(['1 قطعه', '2 درزن']);
+    const buttons = res.snapshot.split('\n').filter((l: string) => l.includes('button "'));
+    expect(buttons.find((b: string) => b.includes('اضافة جديد'))).not.toContain('(row:');
+    expect(buttons.filter((b: string) => b.includes('"تعديل"')).map((b: string) => /\(row: (.*)\)$/.exec(b)?.[1])).toEqual(['1 قطعه', '2 درزن']);
   });
 
   it('row context leaves out cells the user cannot see (hidden columns)', async () => {
@@ -187,16 +187,16 @@ describe('repeated row controls (icon buttons in table rows)', () => {
       doc.el('td', {}, doc.el('button', { title: 'تعديل' }))));
     doc.body.append(doc.el('table', {}, doc.el('tbody', {}, ...rows)));
     const res = await handleSnapshot({ tabId: 1 });
-    const contexts = (JSON.stringify(res.tree).match(/"context":"[^"]*"/g) ?? []).map((c) => JSON.parse(`{${c}}`).context);
+    const contexts = res.snapshot.split('\n').map((l: string) => /\(row: (.*)\)$/.exec(l)?.[1]).filter(Boolean);
     expect(contexts).toEqual(['1 قطعه', '2 درزن']);
   });
 
   it('row context stays inside maxChars on a long grid', async () => {
     // The 41 control nodes fit in 3000 chars; their row contexts (~50 chars each) would not.
     unitsTable(Array.from({ length: 20 }, (_, i) => `صنف رقم ${i} وصف طويل للصنف لاختبار حد الحجم`));
-    const res = await handleSnapshot({ tabId: 1, maxChars: 3000 });
+    const res = await handleSnapshot({ tabId: 1, maxChars: 1500 });
     expect(res.truncated).toBe(true);
-    expect(JSON.stringify(res.tree).length).toBeLessThan(3000);
+    expect(res.snapshot.length).toBeLessThanOrEqual(1500);
   });
 });
 
@@ -266,27 +266,34 @@ describe('selector actions skip hidden duplicates', () => {
 describe('snapshot + text', () => {
   beforeEach(() => { doc = installFakePage(); fallbackByTab.clear(); });
 
-  it('snapshot includes shadow-DOM controls, short refs, no isNew on the first snapshot, path-only same-origin hrefs', async () => {
+  it('snapshot lines include shadow-DOM controls, short refs, no "+" on the first snapshot, path-only same-origin links', async () => {
     const host = doc.el('nav-bar');
     host.attachShadow().append(doc.el('a', { href: '/docs' }, 'Docs'));
     const a = doc.el('a', { href: '/x' }, 'X');
     (a as any).href = 'https://example.test/x';
     doc.body.append(host, a);
-    const res = await handleSnapshot({ tabId: 1 });
-    const json = JSON.stringify(res.tree);
-    expect(json).toContain('"name":"Docs"');
-    expect(json).not.toContain('isNew');
-    expect(json).toContain('"href":"/x"');
-    const refs = json.match(/"ref":"([^"]+)"/g) ?? [];
+    const res = await handleSnapshot({ tabId: 1, links: true });
+    const lines: string[] = res.snapshot.split('\n');
+    expect(lines.some((l) => /^- link "Docs" \[[^\]]+\]/.test(l.trim()))).toBe(true);
+    expect(lines.every((l) => l.trim().startsWith('- '))).toBe(true);
+    expect(res.snapshot).toContain('→ /x');
+    expect((await handleSnapshot({ tabId: 1 })).snapshot).not.toContain('→'); // link targets only on request
+    const refs = res.snapshot.match(/\[[a-z0-9]+-\d+\]/g) ?? [];
     expect(refs.length).toBeGreaterThan(1);
     for (const r of refs) expect(r.length).toBeLessThan(20);
+    const again = await handleSnapshot({ tabId: 1 });
+    expect(again.snapshot.includes('+ ')).toBe(false); // nothing new on an unchanged page
+    doc.body.append(doc.el('button', {}, 'Fresh'));
+    const third = await handleSnapshot({ tabId: 1 });
+    expect(third.snapshot.split('\n').find((l: string) => l.includes('"Fresh"'))?.trim().startsWith('+ ')).toBe(true);
   });
 
   it('snapshot maxChars caps output and says so', async () => {
     for (let i = 0; i < 200; i++) doc.body.append(doc.el('button', {}, `Button number ${i}`));
     const res = await handleSnapshot({ tabId: 1, maxChars: 1000 });
     expect(res.truncated).toBe(true);
-    expect(JSON.stringify(res.tree).length).toBeLessThan(1600);
+    expect(res.snapshot.length).toBeLessThanOrEqual(1000);
+    expect(res.hint).toMatch(/maxChars/);
   });
 
   it('text includes shadow content and supports offset paging', async () => {

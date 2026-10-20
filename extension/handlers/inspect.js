@@ -6,9 +6,8 @@
  */
 import { resolveTab, execDom, getFallback, requireTarget } from '../lib/page-exec.js';
 import { withCdp, subscribeCdpEvents } from '../lib/cdp-session.js';
-import { pathOfTarget } from '../lib/ax-native.js';
 import {
-  KEY_STYLES, pageInspect, nodesAtPath, describeNode, shapeMatchedStyles, shapeListeners, listenerTypes,
+  KEY_STYLES, pageInspect, nodesAtPath, describeNode, shapeMatchedStyles, shapeListeners, listenerTypes, pathOfTarget,
 } from '../lib/inspect-element.js';
 
 const OBJECT_GROUP = 'bc-inspect';

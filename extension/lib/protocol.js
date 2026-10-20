@@ -5,7 +5,6 @@ export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   'tool-dispatch',
   'ping-pong',
   'cancellation',
-  'observe-act-v2',
   'tab-locks',
 ]);
 

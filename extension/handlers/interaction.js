@@ -4,25 +4,19 @@
  * drives the page's event system (synthetic events) or CDP when required.
  */
 import { resolveTab, requireTarget, hasPoint, execDom, getFallback } from '../lib/page-exec.js';
-import { autoReSnapshot } from './inspection.js';
 import { trustedSender, locateTarget, locatePointer, releaseShield, cdpClickAt, cdpKeyPress, cdpTypeText, keyDefinition, modifierBits, pointInfo, cursorTo, sleep } from '../lib/trusted-input.js';
 import { lastMousePoint } from '../lib/cdp-session.js';
 
 export { handleDialog, handleDrag, handleFillForm } from './interaction-advanced.js';
 
-/** Shared REF_GONE recovery: re-snapshot and hand fresh refs back (no auto-retry). */
-async function refGone(tabId, res, ref, selector) {
+/** A ref or selector that no longer finds its element: say which, and how to recover. */
+function refGone(tabId, res, ref, selector) {
   // A selector that matches nothing is usually the wrong page (navigation,
-  // postback), not a virtualized feed — say which locator failed.
+  // postback), not a re-rendered list — say which locator failed.
   if (!(res._ref || ref) && selector) {
     return { success: false, error: `No element matches selector ${selector} on the current page (${res.url || 'navigated?'}).` };
   }
-  const fresh = await autoReSnapshot(tabId);
-  return {
-    success: false,
-    error: `Element ${res._ref || ref} is gone from the DOM (feed scrolled/virtualized). Fresh refs captured — retry with a new ref.`,
-    freshRefs: fresh,
-  };
+  return { success: false, error: `REF_GONE: ${res._ref || ref} is no longer on the page. Take a new browser_snapshot (or use query) and retry with a fresh ref.` };
 }
 
 const BUTTONS = new Set(['left', 'right', 'middle']);

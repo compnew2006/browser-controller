@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import type { ToolDefinition } from './types.js';
-import { optionalTabId, forwardHandler } from './types.js';
+import type { ToolDefinition, ToolResult } from './types.js';
+import { optionalTabId, textResult, jsonError, payloadOf } from './types.js';
 
 export const navigateTool: ToolDefinition = {
   name: 'browser_navigate',
@@ -19,5 +19,19 @@ export const navigateTool: ToolDefinition = {
       .describe('Inline snapshot of the new page (default true)'),
   }),
   timeoutMs: 60_000,
-  handler: forwardHandler('browser_navigate'),
+  async handler(host, params): Promise<ToolResult> {
+    let r: Record<string, unknown>;
+    try {
+      r = await host.callTool('browser_navigate', params) as Record<string, unknown>;
+    } catch (err) {
+      const payload = payloadOf(err);
+      if (payload !== undefined) return jsonError(payload);
+      throw err;
+    }
+    if (r?.success === false) return jsonError(r);
+    // The page's lines go as plain text after the status (JSON would escape every quote).
+    const { snapshot, hint, ...status } = r;
+    return textResult(typeof snapshot === 'string' ? [JSON.stringify(status), snapshot, ...(hint ? [`[${hint}]`] : [])].join('\n') : JSON.stringify(r));
+  },
 };
+(navigateTool.handler as { toolName?: string }).toolName = 'browser_navigate';

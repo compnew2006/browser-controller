@@ -115,7 +115,7 @@ export async function handleUploadFile(params) {
     if (!result || !result.objectId) throw new Error(`File input not found: ${what}`);
     await send('DOM.setFileInputFiles', { files: filePaths, objectId: result.objectId });
   } finally {
-    // Remove the one-shot marker (and the Observation V2 handoff marker).
+    // Remove the one-shot marker.
     // DOM.setFileInputFiles already fires input + change, as a user's pick does:
     // firing them again ran React/Vue onChange twice.
     try {
@@ -125,7 +125,6 @@ export async function handleUploadFile(params) {
         const el = (D.queryAll(`[data-bc-upload="${_token}"]`, true) || [])[0];
         if (!el) return null;
         el.removeAttribute('data-bc-upload');
-        el.removeAttribute('data-bc-v2-upload');
         return null;
       }, [token]);
     } catch { /* page changed — CDP outcome still determines the tool result */ }

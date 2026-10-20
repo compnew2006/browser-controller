@@ -51,6 +51,7 @@ export async function handleFind(params) {
       try { els = root.querySelectorAll('*'); } catch {}
       for (const el of els) {
         if (SKIP.has(el.tagName)) continue;
+        if ((typeof el.id === 'string' && el.id.startsWith('__bc')) || (typeof el.className === 'string' && el.className.startsWith('__bc'))) continue; // the extension's own frame, label and cursor
         const r = D.roleOf(el);
         if (r === 'none') continue;
         if (wantRole && r !== wantRole) continue;
@@ -110,7 +111,11 @@ export async function handleFind(params) {
       || (o.interactive && !c.interactive && o.score >= c.score && o.name === c.name && D.composedContains(o.el, c.el)))));
 
     const matches = [];
+    // Look-alikes (an "Edit" in every row) always say which row they are in.
+    const twins = new Map();
+    for (const c of kept.slice(0, _lim)) twins.set(`${c.r}|${D.nameOf(c.el)}`, (twins.get(`${c.r}|${D.nameOf(c.el)}`) || 0) + 1);
     kept.slice(0, _lim).forEach((c, i) => {
+      if (!c.context && twins.get(`${c.r}|${D.nameOf(c.el)}`) > 1) c.context = D.rowContextOf(c.el) || undefined;
       const ref = `${_refPrefix}${i}`;
       D.registry.set(ref, c.el);
       try { if (genFallback) fallbacks[ref] = genFallback(c.el); } catch {}

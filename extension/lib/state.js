@@ -15,7 +15,6 @@
  *     lifetime for both. See loadSessionState/persistSessionState.
  */
 import { TabMutexMap, TabLockMap, TabControlMap } from './tab-concurrency.js';
-import { SnapshotRegistry } from './snapshot-registry.js';
 
 export const PER_TAB_CAP = 200;
 // Response cap for unbounded result tools (evaluate/run_action). browser_text
@@ -48,15 +47,11 @@ export const fallbackByTab = new Map();
 export const wedgedTabs = new Map();
 /**
  * isNew feature: Map<tabId, string[]> of "fingerprints" (role|name) from the
- * PREVIOUS snapshot. The next snapshot marks any ref whose fingerprint isn't
- * in this set as `isNew: true`, so the agent can focus on what changed.
+ * PREVIOUS snapshot. The next snapshot marks any element whose fingerprint
+ * isn't in this set with "+ ", so the agent can focus on what changed.
  * @type {Map<number, string[]>}
  */
 export const lastSnapshotFingerprints = new Map();
-/** Same, for `browser_snapshot source:"native"` (its roles/names differ from the DOM walker's). */
-export const lastNativeFingerprints = new Map();
-/** Bounded Observation V2 ownership metadata; page-side refs never live here. */
-export const observationSnapshots = new SnapshotRegistry();
 
 // --- Per-tab mutex (task 2.1) + per-agent tab locks (task 2.2) ------------
 // Pure, unit-tested primitives in lib/tab-concurrency.js.
@@ -123,7 +118,6 @@ export function persistSessionState() {
         locks: tabLocks.snapshot(),
         daemonInstance: lockDaemonInstance,
         fallbacks,
-        observations: observationSnapshots.serialize(),
       },
     }).catch(() => {});
   } catch { /* storage unavailable — in-memory behavior */ }
@@ -157,7 +151,6 @@ export async function loadSessionState() {
         }
       }
     }
-    observationSnapshots.restore(state.observations);
   } catch { /* storage unavailable — start empty, as before */ }
 }
 
@@ -166,8 +159,6 @@ export function dropDocumentState(tabId) {
   wedgedTabs.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
-  lastNativeFingerprints.delete(tabId);
-  observationSnapshots.invalidateTab(tabId);
 }
 
 /** Drop one tab's durable state (tab closed). */
@@ -178,8 +169,6 @@ export function dropTabState(tabId) {
   bodyCaptureByTab.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
-  lastNativeFingerprints.delete(tabId);
-  observationSnapshots.dropTab(tabId);
   tabLocks.release(tabId);
   tabControl.release(tabId);
 }
