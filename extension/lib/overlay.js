@@ -1,11 +1,10 @@
 /**
  * Page overlays (extracted from background.js). The lock shield is a
- * translucent full-viewport input-capture layer with a blue inner frame. It
- * serves both lifetimes:
- *   - per-action: while an agent is actively controlling a tab (with the
- *     running tool's name shown inside the frame — replaced the old corner
- *     badge, per user request), and
- *   - per-lock: for a tab lock's whole lifetime (plain frame, no label).
+ * translucent full-viewport input-capture layer with a blue inner frame. The
+ * router shows it only while one agent tool call runs on a tab (the agent's
+ * name is shown inside the frame — it replaced the old corner badge, per user
+ * request) and removes it when that call ends, on locked and unlocked tabs
+ * alike. A tab lock draws no frame of its own.
  * The agent cursor (drawn by the shared page runtime, lib/page-dom.js) is opt-in
  * (popup setting, see agentCursorEnabled) and only needs hiding from screenshots.
  */
@@ -27,7 +26,7 @@ export async function agentCursorEnabled() {
 }
 
 // Lock-shield: a full-viewport translucent frame with a blue inner glow, shown
-// while an agent controls a tab (and for a tab lock's lifetime). The frame is
+// only while an agent tool call runs on a tab. The frame is
 // visual only: pointer-events:none keeps it out of hit-testing, so the page
 // keeps its own hover state (JS menus stay open while the agent works) and the
 // agent's trusted CDP input lands on the page elements directly.
@@ -37,8 +36,8 @@ export async function agentCursorEnabled() {
 // inside the window lib/trusted-input.js opens with __bcAgentInputUntil) pass
 // through. Focus events are not intercepted: swallowing them broke the page's
 // focus handlers. See specs/tab-control-lock/.
-// `label` (optional) renders the running tool's name as a badge INSIDE the
-// frame. Returns whether the injection succeeded — on protected pages
+// `label` (optional) renders a status badge INSIDE the frame (the router passes
+// the agent's name). Returns whether the injection succeeded — on protected pages
 // (chrome:// …) it silently never appears, and callers must be able to say so
 // instead of reporting a protected lock (audit HIGH #4).
 export async function showLockShield(tabId, label) {
@@ -93,7 +92,7 @@ export async function showLockShield(tabId, label) {
         }
         // Status label inside the frame (the old corner badge, folded into the
         // shield so agent control shows ONE element: the blue frame). Passing
-        // no label clears it — the per-lock lifetime shows a plain frame.
+        // no label clears it, leaving the bare frame.
         let badge = el.querySelector('.__bc-shield-label');
         if (lbl) {
           if (!badge) {
@@ -110,7 +109,7 @@ export async function showLockShield(tabId, label) {
           // runs the hide step and this badge would stick forever on a tab the
           // agent is no longer touching (seen live in production use). The
           // page self-heals — a label not refreshed within 60s removes
-          // itself. The FRAME's lifetime stays governed by lock state.
+          // itself. The FRAME's lifetime is the call's (router).
           clearTimeout(window.__bcShieldBadgeTimer);
           window.__bcShieldBadgeTimer = setTimeout(() => badge.remove(), 60000);
         } else if (badge) {

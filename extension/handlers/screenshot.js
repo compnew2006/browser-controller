@@ -11,8 +11,8 @@
  */
 import { resolveTab, safeExec, execDom, getFallback, assertResponsive, wedgedError, PAGE_EXEC_TIMEOUT_MS } from '../lib/page-exec.js';
 import { refErrorMessage } from '../lib/ref-errors.js';
-import { tabLocks, wedgedTabs, windowCaptureMutex } from '../lib/state.js';
-import { showLockShield, hideLockShield, setAgentCursorHidden, agentCursorEnabled } from '../lib/overlay.js';
+import { wedgedTabs, windowCaptureMutex } from '../lib/state.js';
+import { hideLockShield, setAgentCursorHidden, agentCursorEnabled } from '../lib/overlay.js';
 import { withCdp, ensureViewport } from '../lib/cdp-session.js';
 import { locateTarget, releaseShield } from '../lib/trusted-input.js';
 import { parseTarget } from '../lib/target.js';
@@ -373,9 +373,8 @@ async function captureScreenshot(params) {
   const parsed = checkRequest(params);
   const tab = await resolveTab(tabId);
   const protectedPage = /^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '');
-  // The shield is shown during EVERY agent action (router), not only while locked —
-  // always take it out of the picture; the router restores it.
-  const wasLocked = !!tabLocks.owner(tabId);
+  // The router shows the shield for this call: take it out of the picture for the
+  // capture. The router removes it when the call ends.
   if (!protectedPage) {
     // A frozen page answers no script: fail fast here, before any step waits on it.
     await assertResponsive(tabId);
@@ -403,7 +402,5 @@ async function captureScreenshot(params) {
   } finally {
     // The input window the locate opened (pageLocate, lib/trusted-input.js) closes with the call.
     if (target != null) await releaseShield(tabId);
-    // The picture is already taken: a page that misses this step is marked wedged and the router restores its shield later.
-    if (!protectedPage && wasLocked) await shieldStep(tabId, () => showLockShield(tabId)).catch(() => {});
   }
 }

@@ -9,7 +9,7 @@
  *   - lib/connection.js     daemon WS lifecycle, badge, status broadcast
  *   - lib/router.js         tool dispatch through the per-tab mutex + locks
  *   - lib/page-exec.js      resolveTab / safeExec / locator guard
- *   - lib/overlay.js        action badge overlay + tab-lock shield
+ *   - lib/overlay.js        lock shield (shown only during a tool call) + agent cursor
  *   - handlers/*.js         the 24 tool implementations, grouped by concern
  *   - events.js             chrome.* event listeners (console capture, popup,
  *                           webRequest, tab lifecycle)

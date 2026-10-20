@@ -5,7 +5,7 @@ import { tabIdParam, forwardHandler } from './types.js';
 export const typeTool: ToolDefinition = {
   name: 'browser_type',
   summary: 'Type text or press a key in a field',
-  description: 'Trusted typing into target, or the focused element. key sends one key or combo (Enter, Control+a). clear first; submit presses Enter after.',
+  description: 'Trusted typing into target, or the focused element. key sends one key or combo (Enter, Control+a), or several in order ("ArrowDown ArrowDown Enter"). clear first; submit presses Enter after.',
   inputSchema: z.object({
     tabId: tabIdParam,
     target: z.string().optional(),

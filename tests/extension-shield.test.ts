@@ -1,16 +1,20 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeAll, beforeEach } from 'vitest';
 
 /**
  * Agent-control shield (user request): while an agent is ACTIVELY controlling
  * a tab, the page shows the blue inner frame + input blocking (the lock
  * shield) with the running tool's name INSIDE the frame — replacing the old
- * small corner badge. The frame goes away when the action finishes, unless
- * the tab is locked (lock lifetime keeps a plain frame).
+ * small corner badge. The frame goes away when the action finishes, locked or
+ * not: a tab lock holds ownership and draws no frame of its own.
  */
 
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const injections = vi.hoisted(() => [] as Array<{ target: number; func: string; args: unknown[] }>);
 const faults = vi.hoisted(() => ({ activeBadgeThrows: false }));
+const listeners = vi.hoisted(() => ({
+  message: [] as Array<(...args: unknown[]) => unknown>,
+  updated: [] as Array<(...args: unknown[]) => unknown>,
+}));
 
 vi.mock('../extension/lib/connection.js', () => ({
   sendJson: (obj: Record<string, unknown>) => { sent.push(obj); },
@@ -20,6 +24,11 @@ vi.mock('../extension/lib/connection.js', () => ({
   broadcastStatus: async () => {},
   isWsConnected: () => true,
   setCurrentActivity: () => {},
+  getOpenTabs: async () => [],
+  buildStatusPayload: () => ({}),
+  applyPort: () => ({}),
+  applyToken: () => ({}),
+  applyEnrollment: async () => {},
 }));
 
 const tabStore = new Map<number, { id: number; windowId: number; url: string; title: string; active: boolean }>();
@@ -35,6 +44,8 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
     remove: async () => ({}),
     create: async () => ({}),
     captureVisibleTab: async () => 'data:image/png;base64,QUJD',
+    onRemoved: { addListener: () => {} },
+    onUpdated: { addListener: (fn: (...args: unknown[]) => unknown) => { listeners.updated.push(fn); } },
   },
   scripting: {
     executeScript: async (opts: { target: { tabId: number }; func: () => void; args?: unknown[] }) => {
@@ -47,9 +58,17 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
     session: { get: async () => ({}), set: async () => {} },
     local: { get: async () => ({}), set: async () => {} },
   },
-  runtime: { sendMessage: async () => {}, onMessage: { addListener: () => {} } },
+  runtime: {
+    sendMessage: async () => {},
+    onMessage: { addListener: (fn: (...args: unknown[]) => unknown) => { listeners.message.push(fn); } },
+  },
   alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
-  webRequest: { onCompleted: { addListener: () => {} } },
+  webRequest: {
+    onBeforeRequest: { addListener: () => {} },
+    onSendHeaders: { addListener: () => {} },
+    onCompleted: { addListener: () => {} },
+    onErrorOccurred: { addListener: () => {} },
+  },
   debugger: { attach: async () => {}, detach: async () => {}, sendCommand: async () => ({}) },
 };
 
@@ -64,6 +83,8 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
 const { handleMessage } = await import('../extension/lib/router.js');
 const { handleScreenshot } = await import('../extension/handlers/screenshot.js');
 const { tabLocks, tabControl } = await import('../extension/lib/state.js');
+const { lockTabUi } = await import('../extension/lib/lock-ops.js');
+const { registerEventListeners } = await import('../extension/events.js');
 
 const shieldInjections = () => injections.filter((i) => i.func.includes('__bc-lock-shield'));
 const overlayInjections = () => injections.filter((i) => i.func.includes('__bc-overlay'));
@@ -106,16 +127,15 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     expect(last.func).toMatch(/remove|__bcShieldDocListeners/);
   });
 
-  it('keeps a plain frame (no label) after the action when the tab is LOCKED', async () => {
+  it('removes the frame when the action ends on a LOCKED tab too (no plain frame between calls)', async () => {
     tabLocks.lock(3, 's1');
     await handleMessage({ id: 'a3', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1', agentName: 'Vitest' });
     await flush();
 
     const shields = shieldInjections();
-    expect(shields.length).toBeGreaterThanOrEqual(2); // show-with-label, then re-show plain
-    const last = shields.at(-1)!;
-    expect(last.args).not.toContain('agent Vitest controlling the tab'); // label gone, frame persists
-    expect(last.func.includes('__bc-lock-shield')).toBe(true);
+    expect(shields[0]!.args).toContain('agent Vitest controlling the tab'); // shown for the call
+    expect(shields, 'one show, then one removal: nothing re-shown').toHaveLength(2);
+    expect(shields.at(-1)!.args).toEqual([]); // the removal takes no label argument
   });
 
   it('screenshot on a LOCKED tab does not crash (regression: showLockShield import)', async () => {
@@ -123,8 +143,54 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     // Previously rejected with ReferenceError: showLockShield is not defined
     // (the dedup edit dropped its import from handlers/tabs.js).
     await expect(handleScreenshot({ tabId: 3 }, 's1')).resolves.toMatchObject({ success: true });
-    // and it must restore the shield afterwards
+    // It takes the frame out for the capture and shows none again (the router removes it when the call ends).
     expect(shieldInjections().length).toBeGreaterThanOrEqual(1);
+    expect(shieldInjections().every((i) => i.args.length === 0)).toBe(true);
+  });
+});
+
+describe('pinning a tab draws no frame (the frame is shown only during a tool call)', () => {
+  beforeAll(() => {
+    registerEventListeners(); // captures the events.js message and onUpdated listeners
+  });
+  beforeEach(() => {
+    sent.length = 0;
+    injections.length = 0;
+    tabStore.clear();
+    tabLocks.unlockAll();
+    tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
+  });
+
+  it('lockTabUi takes the lock and injects no frame', () => {
+    lockTabUi(3, 's1', 'Tab 3 pinned to s1');
+    expect(tabLocks.owner(3)).toBe('s1');
+    expect(shieldInjections()).toEqual([]);
+  });
+
+  it('the lockTab message replies success with no shield flag, and injects no frame', async () => {
+    const replies: Array<Record<string, unknown>> = [];
+    listeners.message.at(-1)!({ type: 'lockTab', tabId: 3, sessionId: 's1' }, {}, (r: Record<string, unknown>) => replies.push(r));
+    await flush();
+    expect(replies).toEqual([{ success: true }]);
+    expect(tabLocks.owner(3)).toBe('s1');
+    expect(shieldInjections()).toEqual([]);
+  });
+
+  it('a refused pin (tab held by another session) replies with the refusal and injects no frame', async () => {
+    tabLocks.lock(3, 'other');
+    const replies: Array<Record<string, unknown>> = [];
+    listeners.message.at(-1)!({ type: 'lockTab', tabId: 3, sessionId: 's1' }, {}, (r: Record<string, unknown>) => replies.push(r));
+    await flush();
+    expect(replies[0]).toMatchObject({ success: false });
+    expect(tabLocks.owner(3)).toBe('other');
+    expect(shieldInjections()).toEqual([]);
+  });
+
+  it('a navigation that completes on a locked tab does not re-inject the frame', async () => {
+    tabLocks.lock(3, 's1');
+    listeners.updated.at(-1)!(3, { status: 'complete' }, {});
+    await flush();
+    expect(shieldInjections()).toEqual([]);
   });
 });
 

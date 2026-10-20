@@ -52,13 +52,21 @@ export function parseKeyCombo(key, modifiers = []) {
   return { key: last, mods };
 }
 
-/** A key or combo ("Enter", "Control+a") as { key, mods }; a name that is no key is UNKNOWN_KEY. */
-function keyComboOf(key) {
-  const combo = parseKeyCombo(String(key));
-  try { keyDefinition(combo.key); } catch {
-    throw new Error(`UNKNOWN_KEY: "${key}" is not a key name (e.g. Enter, Tab, Escape, ArrowDown, a, ctrl+a). To type text, pass text.`);
-  }
-  return combo;
+/**
+ * A `key` value as its key presses, in order: one key or combo ("Enter", "Control+a"), or
+ * several separated by spaces ("ArrowDown ArrowDown Enter"). A value of only whitespace is
+ * the Space key. Every token is checked before anything is sent: a name that is no key is UNKNOWN_KEY.
+ */
+function keyCombosOf(key) {
+  const text = String(key);
+  const tokens = /\S/.test(text) ? text.split(/\s+/).filter(Boolean) : [text];
+  return tokens.map((token) => {
+    const combo = parseKeyCombo(token);
+    try { keyDefinition(combo.key); } catch {
+      throw new Error(`UNKNOWN_KEY: "${token}" is not a key name (e.g. Enter, Tab, Escape, ArrowDown, a, ctrl+a). To type text, pass text.`);
+    }
+    return combo;
+  });
 }
 
 /** The tab's URL, or null when the tab is gone. */
@@ -235,15 +243,15 @@ export async function handleClick(params, _sessionId, _agentName, signal) {
 /**
  * browser_type: `target` is focused by a trusted click when it is not focused yet;
  * without one, the focused field takes the input (NO_FOCUS when none is a field).
- * `clear` selects all, `text` goes in with one insertText, `key` is one key or combo,
- * `submit` presses Enter last. A step the page never reached (a dialog opened first)
- * is not reported as done.
+ * `clear` selects all, `text` goes in with one insertText, `key` is one key, a combo, or
+ * several in order (keyCombosOf), `submit` presses Enter last. A step the page never reached
+ * (a dialog opened first) is not reported as done.
  */
 export async function handleType(params, _sessionId, _agentName, signal) {
   const { tabId, target, text, key, clear = false, submit = false } = params;
   if (target !== undefined) parseTarget(target);
   if (!text && key == null && !clear && !submit) throw new Error('INVALID_ARGUMENT: browser_type needs text, key, clear or submit');
-  const combo = key == null ? null : keyComboOf(key);
+  const combos = key == null ? null : keyCombosOf(key);
   await resolveTab(tabId);
   assertInputReady(tabId, signal);
   const input = inputSession(tabId, await requireSender(tabId), signal);
@@ -268,12 +276,21 @@ export async function handleType(params, _sessionId, _agentName, signal) {
       if (clear && !input.blocked) await selectFocused(tabId);
       if (clear && !text && !input.blocked) { await cdpKeyPress(input.send, 'Backspace'); lines.push(`cleared ${where}`); }
       if (text && !input.blocked) { await input.send('Input.insertText', { text: String(text) }); typed = chars; lines.push(`typed ${chars} chars into ${where}`); }
-      if (combo && !input.blocked) { await cdpKeyPress(input.send, combo.key, combo.mods); lines.push(`pressed ${key}`); }
+      if (combos && !input.blocked) {
+        // Each press waits for the one before; a dialog that a press opens ends the sequence.
+        let sent = 0;
+        for (const combo of combos) {
+          if (input.blocked) break;
+          await cdpKeyPress(input.send, combo.key, combo.mods);
+          sent += 1;
+        }
+        lines.push(sent === combos.length ? `pressed ${key}` : `pressed ${sent} of ${combos.length} keys`);
+      }
       if (submit && !input.blocked) { await cdpKeyPress(input.send, 'Enter'); lines.push('submitted with Enter'); }
     } finally {
       if (!input.blocked) after = await releaseShield(tabId);
     }
-    const settled = combo || submit || input.blocked ? await settle(tabId, urlBefore) : null;
+    const settled = combos || submit || input.blocked ? await settle(tabId, urlBefore) : null;
 
     const value = after?.value ?? null;
     if (value != null) lines.push(after.secret ? 'value: ••••' : `value: "${value}"`);

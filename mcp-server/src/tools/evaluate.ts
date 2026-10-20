@@ -9,7 +9,7 @@ export const evaluateTool: ToolDefinition = {
   inputSchema: z.object({
     tabId: tabIdParam,
     expression: z.string(),
-    // The handler floors the budget at 1000 ms (extension/handlers/inspection.js), so 1000 is the smallest honest value.
+    // The handler floors the budget at 1000 ms (extension/handlers/evaluate.js), so 1000 is the smallest honest value.
     timeout: z.number().int().min(1000).max(30_000).optional(),
   }).strict(),
   // Arbitrary page code: never retried.

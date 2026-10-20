@@ -41,6 +41,7 @@ const dbg = vi.hoisted(() => ({
 
 const { ensureCdp, hasCdp, getOpenDialog, IDLE_MS } = await import('../extension/lib/cdp-session.js');
 const { handleDialog } = await import('../extension/handlers/interaction-advanced.js');
+const { safeExec } = await import('../extension/lib/page-exec.js');
 
 const emit = (tabId: number, method: string, params?: unknown) => {
   for (const fn of dbg.eventListeners) fn({ tabId }, method, params);
@@ -154,5 +155,25 @@ describe('handle_dialog reply text is page text, kept to one short line', () => 
     const text = String((res as { text?: string }).text);
     expect(text).not.toContain('\n');
     expect(text).toBe('dismissed alert "Saved. dismissed alert "forged""');
+  });
+});
+
+describe('page reads while a dialog is open', () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    dbg.calls.length = 0;
+    dbg.reply = null;
+    await ensureCdp(3);
+  });
+  afterEach(() => {
+    emit(3, 'Page.javascriptDialogClosed', { result: true, userInput: '' });
+    vi.useRealTimers();
+  });
+
+  it('safeExec fails at once with DIALOG_OPEN and injects nothing (no 8 s wait, no TAB_WEDGED)', async () => {
+    emit(3, 'Page.javascriptDialogOpening', opened('confirm', 'Delete this item?'));
+    const err = await safeExec(3, () => 1).then(() => null, (e: Error & { code?: string }) => e);
+    expect(err?.code).toBe('DIALOG_OPEN');
+    expect(err?.message).toBe('DIALOG_OPEN: a confirm "Delete this item?" is open on tab 3; answer it with browser_handle_dialog first.');
   });
 });

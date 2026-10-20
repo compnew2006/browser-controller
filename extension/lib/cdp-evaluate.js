@@ -3,11 +3,13 @@
  *
  *  - cdpEvaluateSource: browser_evaluate (contract 3.0). The source is one expression,
  *    or statements that `return` their value; a returned promise is awaited; a throw is
- *    SCRIPT_ERROR, an overrun is TIMEOUT.
+ *    SCRIPT_ERROR, an overrun is TIMEOUT. With a tabId, a JavaScript dialog that is open
+ *    refuses the call (DIALOG_OPEN), and one the script opens ends it at once (paused).
  *
  * Non-JSON values (DOM nodes, cycles, functions) come back as readable descriptions instead of {}.
  */
 import { MAX_RESULT_CHARS } from './state.js';
+import { getOpenDialog, subscribeCdpEvents, dialogLabel, dialogOpenError } from './cdp-session.js';
 
 /** browser_evaluate's timeout: its default and its largest value (contract 3.0). */
 export const BROWSER_EVALUATE_DEFAULT_MS = 5_000;
@@ -53,10 +55,11 @@ function capped(value) {
 }
 
 /**
- * Every CDP call that can wait on the page is raced against the budget and the abort.
- * `guarded(p)` resolves to p's answer, { timedOut: true } or { aborted: true }.
+ * Every CDP call that can wait on the page is raced against the budget, the abort and, when a tab
+ * is given, the JavaScript dialog the script opens (Runtime.evaluate waits for the dialog to close).
+ * `guarded(p)` resolves to p's answer, { timedOut: true }, { aborted: true } or { dialog }.
  */
-function racer(budget, signal) {
+function racer(budget, signal, tabId) {
   let timer;
   const timeout = new Promise((resolve) => {
     timer = setTimeout(() => resolve({ timedOut: true }), budget);
@@ -67,11 +70,30 @@ function racer(budget, signal) {
         else signal.addEventListener('abort', () => resolve({ aborted: true }), { once: true });
       })
     : null;
+  let off = () => {};
+  const opened = new Promise((resolve) => {
+    if (tabId == null) return;
+    off = subscribeCdpEvents(tabId, (method, params) => {
+      if (method === 'Page.javascriptDialogOpening') resolve({ dialog: { type: params?.type, message: params?.message ?? '' } });
+    });
+  });
   return {
-    guarded: (p) => Promise.race([p, timeout, ...(aborted ? [aborted] : [])]),
-    stop: () => clearTimeout(timer),
+    guarded: (p) => Promise.race([p, timeout, opened, ...(aborted ? [aborted] : [])]),
+    stop: () => { clearTimeout(timer); off(); },
   };
 }
+
+/**
+ * The script opened a JavaScript dialog: its Runtime.evaluate waits for the dialog, so the call
+ * answers now as a success that names the dialog (an input that opened one answers the same way).
+ */
+const pausedReply = (dialog) => ({
+  success: true,
+  paused: true,
+  dialog,
+  result: null,
+  text: `dialog: ${dialogLabel(dialog)}\nthe script is paused until browser_handle_dialog answers it`,
+});
 
 /** The remote value of an evaluate reply as a result object (both entry points). */
 async function resultOf(send, ro) {
@@ -136,15 +158,25 @@ const refusedReply = () => ({
 /** The caller (the bridge) gave up on the call: nothing more runs, the failure says so. */
 const cancelledReply = () => ({ success: false, error: 'TIMEOUT: evaluate cancelled by the caller' });
 
+/** DIALOG_OPEN for a call on a tab whose JavaScript dialog is open (nothing is sent), else null. */
+function dialogRefusal(tabId) {
+  const open = tabId == null ? null : getOpenDialog(tabId);
+  return open ? { success: false, error: dialogOpenError(tabId, open).message } : null;
+}
+
 /**
  * browser_evaluate (contract 3.0): `source` is one expression, or statements that
  * `return` a value. It is compiled first (nothing runs when it does not parse), then
  * run once, awaited, and read back by value. Failures: SCRIPT_ERROR, or TIMEOUT.
+ * `tabId` (optional) watches the tab's JavaScript dialogs: DIALOG_OPEN while one is open,
+ * and a paused success when the script opens one.
  */
-export async function cdpEvaluateSource(send, source, { timeoutMs = BROWSER_EVALUATE_DEFAULT_MS, signal } = {}) {
+export async function cdpEvaluateSource(send, source, { timeoutMs = BROWSER_EVALUATE_DEFAULT_MS, signal, tabId } = {}) {
   const budget = Math.min(Math.max(1000, timeoutMs), BROWSER_EVALUATE_MAX_MS);
+  const refused = dialogRefusal(tabId);
+  if (refused) return refused;
   const group = `bc-eval-${Date.now()}`;
-  const { guarded, stop } = racer(budget, signal);
+  const { guarded, stop } = racer(budget, signal, tabId);
   const timedOut = {
     success: false,
     error: `TIMEOUT: evaluate did not finish within ${budget}ms. The page may still be running it; the call returned so the tab is free.`,
@@ -167,6 +199,9 @@ export async function cdpEvaluateSource(send, source, { timeoutMs = BROWSER_EVAL
     }
     if (check.aborted) return cancelledReply();
     if (check.timedOut) return timedOut;
+    // A dialog that opened while the source was checked: a run sent now would queue behind it and execute after it closes.
+    const late = dialogRefusal(tabId);
+    if (late) return late;
     const run = await guarded(send('Runtime.evaluate', {
       expression: `${fn}()`,
       awaitPromise: true,
@@ -176,6 +211,7 @@ export async function cdpEvaluateSource(send, source, { timeoutMs = BROWSER_EVAL
       timeout: budget,
     }));
     if (run.aborted) return cancelledReply();
+    if (run.dialog) return pausedReply(run.dialog);
     if (run.timedOut) return timedOut;
     if (run.exceptionDetails) return { success: false, error: `SCRIPT_ERROR: ${messageOf(run.exceptionDetails)}` };
     return await resultOf(send, run.result || {});

@@ -13,7 +13,7 @@ import {
   dropTabState,
   dropDocumentState,
 } from "./lib/state.js";
-import { showLockShield, hideLockShield } from "./lib/overlay.js";
+import { hideLockShield } from "./lib/overlay.js";
 import { createNetworkCapture, pushNetworkEntry } from "./lib/network-capture.js";
 import { lockTabUi, releaseTabUi } from "./lib/lock-ops.js";
 import {
@@ -79,14 +79,13 @@ export function registerEventListeners() {
         respond({ success: false, error: "tabId and sessionId required" });
         return false;
       }
-      // lockTabUi is async (it awaits the shield injection) — keep Chrome's
-      // respond() channel open for the async reply.
-      lockTabUi(msg.tabId, owner, `Tab ${msg.tabId} pinned to ${owner}`)
-        .then((shielded) => respond({ success: true, shielded }))
-        .catch((err) =>
-          respond({ success: false, error: err?.message || String(err) }),
-        );
-      return true;
+      try {
+        lockTabUi(msg.tabId, owner, `Tab ${msg.tabId} pinned to ${owner}`);
+        respond({ success: true });
+      } catch (err) {
+        respond({ success: false, error: err?.message || String(err) });
+      }
+      return false;
     }
     if (msg.type === "unlockTab") {
       // { tabId } — release one tab's lock (vs unlockAll which clears all).
@@ -123,23 +122,13 @@ export function registerEventListeners() {
     persistSessionState();
   });
 
-  // Re-inject the lock shield after a FULL navigation on a locked tab. A full
-  // navigation destroys the injected DOM (new document), so without this the
-  // page would be user-controllable again even though tabLocks still holds the
-  // lock. A hash-only / SPA navigation does NOT reload the document, so the
-  // shield survives and onUpdated does not fire a new 'complete' for it (see
-  // isHashOnlyChange in utils/navigation.js + handleNavigate). showLockShield is
-  // idempotent (the __bc-lock-shield guard), so re-injecting on a tab whose
-  // shield is still present is a no-op. This module-level listener is SEPARATE
-  // from the short-lived per-call listener inside handleNavigate — they share no
-  // state and Chrome supports multiple onUpdated listeners (review NOTE 7c).
+  // A loading tab drops its per-document state. No shield is re-injected after
+  // a navigation: the shield exists only while a tool call runs, and that call
+  // removes it when it ends.
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === "loading") {
       dropDocumentState(tabId);
       persistSessionState();
-    }
-    if (changeInfo.status === "complete" && tabLocks.owner(tabId)) {
-      showLockShield(tabId);
     }
   });
 }

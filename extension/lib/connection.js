@@ -13,7 +13,7 @@ import {
   getAdoptedDaemonInstance,
   setAdoptedDaemonInstance,
 } from './state.js';
-import { showLockShield, hideLockShield } from './overlay.js';
+import { hideLockShield } from './overlay.js';
 import { buildExtensionHelloAck, OLDER_DAEMON_REASON, validateDaemonHello } from './protocol.js';
 
 const DEFAULT_WS_PORT = 7225;
@@ -60,6 +60,8 @@ let handshakeTimeout = null;
 // How long a daemon may take to send its hello after the socket opens. Silence past this
 // is a pre-3.0 daemon: it is refused, not treated as connected.
 const HANDSHAKE_TIMEOUT_MS = 3_000;
+// How long the port probe waits for any HTTP answer before the daemon counts as down.
+const PROBE_TIMEOUT_MS = 2_000;
 
 /** The router's handleMessage — injected by background.js at wiring time. */
 let messageHandler = null;
@@ -203,9 +205,8 @@ export async function initConnection() {
     browserIdentity = { browserId: id, browserLabel: stored.bcBrowserLabel || defaultBrowserLabel(id) };
   } catch {}
 
-  // Restore lock ownership + fallbacks BEFORE connecting: the shield sweep
-  // below must honor persisted owners (architecture: MV3 state persistence),
-  // and lock routing must see the real ownership when the first call arrives.
+  // Restore lock ownership + fallbacks BEFORE connecting: lock routing must see
+  // the real ownership when the first call arrives (architecture: MV3 state persistence).
   await loadSessionState();
 
   chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: KEEPALIVE_INTERVAL_MIN });
@@ -217,25 +218,12 @@ export async function initConnection() {
   await ensurePairing();
   connect();
 
-  // Best-effort sweep of shields left behind (with session persistence the
-  // owner check honors locks that SURVIVED the recycle). LOCKED tabs get a
-  // fresh PLAIN frame — this converts any stale labeled shield ("agent X
-  // controlling the tab" stuck by a service-worker death mid-action) back
-  // into the lock-lifetime frame. Unlocked tabs lose the shield entirely.
-  // Swallow per-tab errors for protected / closed tabs. Even if it races a
-  // fresh lock, the next onUpdated 'complete' re-injects (self-healing,
-  // review NOTE 7d).
+  // Best-effort sweep of shields a service-worker death mid-call left behind.
+  // The frame exists only during a tool call, so every tab gets a removal,
+  // locked or not. hideLockShield swallows per-tab errors (protected / closed tabs).
   try {
     const all = await chrome.tabs.query({});
-    for (const t of all) {
-      if (tabLocks.owner(t.id)) {
-        try { await showLockShield(t.id); } catch {}
-        // A daemon hello may have released this lock while the sweep was awaiting.
-        if (!tabLocks.owner(t.id)) await hideLockShield(t.id);
-      } else {
-        try { await hideLockShield(t.id); } catch {}
-      }
-    }
+    for (const t of all) await hideLockShield(t.id);
   } catch {}
 }
 
@@ -291,8 +279,40 @@ function wsSubprotocols() {
  */
 let lastWasHandshakeClose = false;
 
+/**
+ * Is the daemon listening on its port? A WebSocket to a closed port makes Chrome
+ * log "WebSocket connection … failed" as an error of the extension on every
+ * retry, while a failed fetch is silent. Any HTTP answer means it is up, even the
+ * bridge's 403 for a probe without the enrollment secret. The probe sends no
+ * secret and no token; no answer within PROBE_TIMEOUT_MS means down.
+ */
+async function daemonListening() {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
+  try {
+    await fetch(`http://127.0.0.1:${wsPort}/status`, { cache: 'no-store', signal: abort.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One probe at a time: a second connect() during a probe would open a second socket. */
+let probing = false;
+
 export async function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  if (probing) return;
+  probing = true;
+  let up;
+  try { up = await daemonListening(); } finally { probing = false; }
+  if (!up) {
+    lastError = `Daemon not running on port ${wsPort}`;
+    scheduleReconnect();
+    return;
+  }
 
   // If the last attempt died mid-handshake, the token is likely stale/empty —
   // re-fetch it before reconnecting so we don't loop on a bad token.

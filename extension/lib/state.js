@@ -18,8 +18,8 @@ import { TabMutexMap, TabLockMap, TabControlMap } from './tab-concurrency.js';
 import { unpinCdp } from './cdp-session.js';
 
 export const PER_TAB_CAP = 200;
-// Response cap for unbounded result tools (evaluate/run_action). browser_text
-// caps at maxLength (default 5000), but these two returned arbitrarily large
+// Response cap for unbounded result tools (browser_evaluate). browser_text
+// caps at maxLength (default 5000), but evaluate returned arbitrarily large
 // payloads — JSON.stringify(document.body.innerHTML) came back in full.
 export const MAX_RESULT_CHARS = 100_000;
 

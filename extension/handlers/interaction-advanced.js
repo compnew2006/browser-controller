@@ -67,7 +67,8 @@ export async function handleDialog(params) {
 
 /**
  * Page-side: the kind of field a target is, and its state. Reads only: no scroll,
- * no focus, no input. Kinds: select, checkbox, radio, file, text, or other (refused).
+ * no focus, no input. Kinds: select, checkbox, radio (`aria` for an ARIA widget that is not
+ * a native input), file, picker, text, or other (refused).
  */
 function pageFieldKind(t, fb) {
   const D = globalThis.__bcDom;
@@ -83,9 +84,50 @@ function pageFieldKind(t, fb) {
   if (tag === 'select') return { kind: 'select', multiple: !!el.multiple, ...rebound };
   if (tag === 'input' && (type === 'checkbox' || type === 'radio')) return { kind: type, checked: !!el.checked, ...rebound };
   if (tag === 'input' && type === 'file') return { kind: 'file', multiple: !!el.multiple, ...rebound };
-  const notText = ['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'image', 'range', 'color', 'hidden'];
+  // A picker sets its whole value (no typing path): see pageSetPicker.
+  if (tag === 'input' && ['date', 'time', 'datetime-local', 'month', 'week', 'color', 'range'].includes(type)) return { kind: 'picker', type, ...rebound };
+  const role = tag === 'input' ? '' : D.roleOf(el);
+  if (role === 'checkbox' || role === 'radio' || role === 'switch') {
+    return { kind: role === 'radio' ? 'radio' : 'checkbox', aria: true, checked: el.getAttribute('aria-checked') === 'true', ...rebound };
+  }
+  const notText = ['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'image', 'hidden'];
   if (el.isContentEditable || tag === 'textarea' || (tag === 'input' && !notText.includes(type))) return { kind: 'text', ...rebound };
   return { kind: 'other', tag, type, ...rebound };
+}
+
+/**
+ * Page-side: set a picker input (date, time, datetime-local, month, week, color, range) as
+ * the picker does: the native value setter (a framework's tracked value is bypassed, so its
+ * change handler sees the new value), then input and change. A value the browser sanitizes
+ * (a bad date, an off-step range) reads back different: `same` is false. A disabled or
+ * read-only field is not set.
+ */
+function pageSetPicker(t, fb, value) {
+  const D = globalThis.__bcDom;
+  if (!D || !D.resolveTarget) return { __needDom: true };
+  const r = D.resolveTarget(t, fb);
+  if (r.error) return { error: r.error, ...(r.issued !== undefined ? { issued: r.issued } : {}), ...(r.earlier ? { earlier: true } : {}) };
+  const el = r.el;
+  if (!el) return { error: 'INVALID_ARGUMENT: not a picker field' };
+  if (!el.disabled && !el.readOnly) {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  const kept = String(el.value ?? '');
+  const same = el.type === 'color' ? kept.toLowerCase() === value.toLowerCase()
+    : el.type === 'range' ? Number(kept) === Number(value)
+      : kept === value;
+  return { same, kept };
+}
+
+/** Page-side: the aria-checked state of a target now (ARIA checkbox, radio or switch). */
+function pageAriaChecked(t, fb) {
+  const D = globalThis.__bcDom;
+  if (!D || !D.resolveTarget) return { __needDom: true };
+  const r = D.resolveTarget(t, fb);
+  if (r.error) return { error: r.error, ...(r.issued !== undefined ? { issued: r.issued } : {}), ...(r.earlier ? { earlier: true } : {}) };
+  return { checked: !!r.el && r.el.getAttribute('aria-checked') === 'true' };
 }
 
 /**
@@ -212,9 +254,17 @@ async function fillField(tabId, input, field, rebound) {
     else await input.send('Input.insertText', { text: value });
     if (input.blocked) return null;
     // Read back: a readonly field or a page that rejects input keeps its value, and is not "filled".
+    // The value API reads CRLF back as LF, and the read back covers the first 100 characters.
     const after = await releaseShield(tabId);
-    if (after?.value !== value.slice(0, 100)) return `VALUE_NOT_SET: kept "${after?.secret ? '••••' : after?.value ?? ''}"`;
+    if (after?.value !== value.replace(/\r\n?/g, '\n').slice(0, 100)) return `VALUE_NOT_SET: kept "${after?.secret ? '••••' : after?.value ?? ''}"`;
     return null;
+  }
+
+  if (info.kind === 'picker') {
+    if (typeof value !== 'string') return `INVALID_ARGUMENT: ${target} takes a string`;
+    const res = await execDom(tabId, pageSetPicker, [parsed, fb, value]);
+    if (res?.error) return wordTargetRefMiss(tabId, parsed, res).error;
+    return res?.same === true ? null : `VALUE_NOT_SET: kept "${res?.kept ?? ''}"`;
   }
 
   if (info.kind === 'select') {
@@ -235,7 +285,11 @@ async function fillField(tabId, input, field, rebound) {
     if (input.blocked) return null;
     await sleep(await cursorTo(tabId, loc.x, loc.y, 'click'));
     await cdpClickAt(input.send, loc.x, loc.y);
-    return null;
+    if (!info.aria || input.blocked) return null;
+    // An ARIA widget's state is its aria-checked: a click the page ignored leaves it unchanged.
+    const now = wordTargetRefMiss(tabId, parsed, await execDom(tabId, pageAriaChecked, [parsed, fb]));
+    if (now?.error) return now.error;
+    return now?.checked === value ? null : `VALUE_NOT_SET: kept aria-checked="${now?.checked ? 'true' : 'false'}"`;
   }
 
   // file: the absolute paths (the server checks they exist). A relative path is refused here,

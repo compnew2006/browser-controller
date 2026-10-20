@@ -6,6 +6,7 @@ import { fallbackByTab, wedgedTabs, tabLocks, tabControl, persistSessionState, r
 import { highestRefIn } from './ref-errors.js';
 import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from './page-dom.js';
 import { tabLockedMessage } from './tab-concurrency.js';
+import { getOpenDialog, dialogOpenError } from './cdp-session.js';
 
 /**
  * Resolve a tab by id, throwing a clear, actionable error if it's gone.
@@ -118,6 +119,10 @@ export async function safeExec(tabId, func, args = [], opts = {}) {
   if (/^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '')) {
     throw new Error(`INVALID_ARGUMENT: Cannot access protected page (${tab.url}). Tab ${tabId} is a browser-internal page.`);
   }
+  // A JavaScript dialog blocks the page's main thread: executeScript would wait out its budget and
+  // mark the tab wedged. Fail at once instead (browser_handle_dialog does not come through here).
+  const dialog = getOpenDialog(tabId);
+  if (dialog) throw dialogOpenError(tabId, dialog);
   const sanitized = args.map((a) => (a === undefined ? null : a));
   await assertResponsive(tabId);
   // An in-flight executeScript can't be aborted: without a timer a frozen page

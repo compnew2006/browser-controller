@@ -43,7 +43,7 @@ Every element parameter is one `target` string:
 
 `browser_snapshot { tabId }` returns the accessibility tree, one element per line: `role "name" [e12] value="…"`, indented by depth. Passwords are masked, and cross-origin iframes show as `(not readable)`.
 
-- Large page: scope with `target` (a subtree) or `query` (matches first, with their ancestor lines): `browser_snapshot { tabId, query: "Save" }`
+- Large page: scope with `target` (a subtree) or `query` (elements holding every word, with their ancestor lines): `browser_snapshot { tabId, query: "save button" }`
 - `maxChars` (default 8000, max 50000) cuts the tree; the last line says what was left out. Narrow with `query` or `target` instead of raising it.
 - `browser_text { tabId }` returns the visible text. It is the cheapest read; `target` scopes it, `maxChars` (default 20000) caps it.
 
@@ -57,7 +57,7 @@ browser_type  { tabId, key: "Enter" }           // a key goes to whatever has fo
 
 - `browser_click` also takes `hover: true` (move only), `dragTo` (a second target), `button`, `count` (1-3) and `modifiers`. Within 300 ms after the press the result reports `navigated: <url>` or `dialog: …` when either happened.
 - `browser_type` types like a person. `change` fires when focus leaves the field, so follow typing with `browser_type { tabId, key: "Tab" }` to commit. `submit: true` presses Enter last. The result reports the field's `value`.
-- Keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, combos like `Control+a` or `Shift+Tab`. An unknown name fails `UNKNOWN_KEY`.
+- Keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, combos like `Control+a` or `Shift+Tab`, or several in order: `ArrowDown ArrowDown Enter`. Every name is checked first: an unknown name fails `UNKNOWN_KEY` and nothing is pressed.
 - Clicks hit the element's centre. A hidden, disabled or covered target fails (`ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED`) and nothing is clicked.
 
 ### Forms in one call: `browser_fill`
@@ -66,7 +66,8 @@ browser_type  { tabId, key: "Enter" }           // a key goes to whatever has fo
 browser_fill { tabId, fields: [
   { target: "e5", value: "a@b.c" },           // text
   { target: "e7", value: "Berlin" },          // select: value, else label
-  { target: "e9", value: true },              // checkbox or radio
+  { target: "e8", value: "2024-05-06" },      // date, time, colour or range (number)
+  { target: "e9", value: true },              // checkbox, radio, or role=switch
   { target: "e11", value: ["/abs/path/cv.pdf"] } // file input
 ] }
 ```
@@ -101,7 +102,7 @@ The top-level `tabId` applies to every step that does not set its own. A failure
 
 ## Running JavaScript: `browser_evaluate`
 
-`browser_evaluate { tabId, expression }` runs one expression, or statements that `return` a value. Top-level `await` works. A statement body without `return` gives `null`. It runs over CDP, so page CSP does not block it, and a yellow "being debugged" banner shows meanwhile. Default `timeout` 5 s, max 30 s. Prefer `browser_click` and `browser_type` to dispatching events by hand.
+`browser_evaluate { tabId, expression }` runs one expression, or statements that `return` a value. Top-level `await` works. A statement body without `return` gives `null`. It runs over CDP, so page CSP does not block it, and a yellow "being debugged" banner shows meanwhile. Default `timeout` 5 s, max 30 s. Prefer `browser_click` and `browser_type` to dispatching events by hand. A script that opens a dialog (`confirm(...)`) returns at once with a `dialog:` line; answer it with `browser_handle_dialog`. While a dialog is open, page reads and evaluate fail `DIALOG_OPEN`.
 
 ## Dialogs
 

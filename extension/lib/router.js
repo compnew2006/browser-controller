@@ -11,10 +11,12 @@ import {
 } from './state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from './connection.js';
 import { showLockShield, hideLockShield } from './overlay.js';
+import { getOpenDialog, dialogLabel } from './cdp-session.js';
 import { handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType } from '../handlers/interaction.js';
 import { handleFill, handleDialog } from '../handlers/interaction-advanced.js';
-import { handleWait, handleScroll, handleSnapshot, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
+import { handleWait, handleScroll, handleSnapshot, handleGetPageText } from '../handlers/inspection.js';
+import { handleEvaluate } from '../handlers/evaluate.js';
 import { handleTabs } from '../handlers/tabs.js';
 import { handleScreenshot } from '../handlers/screenshot.js';
 import { handleEmulate, clearEmulation } from '../handlers/emulate.js';
@@ -67,7 +69,19 @@ export const dispatchedTools = Object.freeze(Object.keys(HANDLERS));
 export async function dispatch(tool, params, sessionId, agentName, signal) {
   const handler = HANDLERS[tool];
   if (!handler) throw new Error(`Unknown tool: ${tool}`);
-  return handler(params, sessionId, agentName, signal);
+  return withDialogLine(params?.tabId, await handler(params, sessionId, agentName, signal));
+}
+
+/**
+ * A success on a tab whose JavaScript dialog is open gets the `dialog:` line the input tools
+ * give (a navigate whose page calls alert on load, say), unless its text already names the dialog.
+ */
+function withDialogLine(tabId, result) {
+  const open = tabId == null ? null : getOpenDialog(tabId);
+  const text = typeof result?.text === 'string' ? result.text : '';
+  if (!open || !result || result.success === false || /^dialog: /m.test(text)) return result;
+  const line = `dialog: ${dialogLabel(open)}`;
+  return { ...result, text: text ? `${text}\n${line}` : line, dialog: open };
 }
 
 const OVERLAY_MS = 1_500;
@@ -142,6 +156,13 @@ function noteTabSetting(tool, params, sessionId, result) {
 function extractTabId(_tool, params) {
   return typeof params.tabId === "number" ? params.tabId : null;
 }
+
+/**
+ * Whether a call's tab can take the show step. A frozen page cannot run it, and neither can a
+ * page a JavaScript dialog blocks: the step would wait out its overlay budget for nothing.
+ * The hide step does not use this: see the call's finally.
+ */
+const canDrawShield = (tabId) => !wedgedTabs.has(tabId) && !getOpenDialog(tabId);
 
 export async function handleMessage(msg) {
   // Control messages (non-tool) from the daemon. These carry a `type` and no
@@ -287,12 +308,12 @@ export async function handleMessage(msg) {
       try {
         setCurrentActivity(tool);
         updateBadge('active');
-        // Agent control shows the blue input-blocking spectrum; the label names
-        // the AGENT (user request: "agent {name} controlling the tab"), not the
+        // Agent control shows the blue input-blocking spectrum for this call only;
+        // the label names the AGENT (user request: "agent {name} controlling the tab"), not the
         // running tool. agentName is a top-level WS field (audit M1); fall back
         // to a generic label for anonymous direct-WS callers.
         // Best effort and bounded: the shield is cosmetic, a frozen page must not block the tool.
-        if (!wedgedTabs.has(tabId)) {
+        if (canDrawShield(tabId)) {
           await overlayStep(showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab'));
         }
         try {
@@ -306,10 +327,13 @@ export async function handleMessage(msg) {
         } finally {
           setCurrentActivity(null);
           updateBadge(isWsConnected() ? 'connected' : 'disconnected');
-          // A locked tab keeps a plain frame (no label) for the lock's lifetime;
-          // an unlocked tab loses the frame once this action completes.
+          // The frame lasts for this call only, locked or not. A wedged page cannot run the
+          // removal; its next document drops the frame. A JavaScript dialog open now may be one
+          // this call opened: it blocks the removal until it is answered, so the removal goes out
+          // without an await. The call answers and frees the tab, and chrome.scripting runs the
+          // removal once the dialog closes. Otherwise the removal is awaited within the overlay budget.
           if (!wedgedTabs.has(tabId)) {
-            if (tabLocks.owner(tabId)) await overlayStep(showLockShield(tabId));
+            if (getOpenDialog(tabId)) hideLockShield(tabId).catch(() => {});
             else await overlayStep(hideLockShield(tabId));
           }
         }

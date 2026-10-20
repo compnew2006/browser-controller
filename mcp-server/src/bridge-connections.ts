@@ -41,7 +41,7 @@ export class ExtensionConnections {
   private conns = new Set<ExtensionConnection>();
   /** browserId -> epoch ms this daemon first saw that browser. Kept across reconnects. */
   private firstSeen = new Map<string, number>();
-  /** sessionId -> browserId chosen with browser_select_browser. */
+  /** sessionId -> browserId chosen with browser_tabs {browser}. */
   private sessionBrowser = new Map<string, string>();
   /** sessionId -> browserId an "auto" session was pinned to by its first call. */
   private autoBrowser = new Map<string, string>();
@@ -116,7 +116,7 @@ export class ExtensionConnections {
     return this.all().filter((c) => c !== conn && c.browserId === conn.browserId);
   }
 
-  /** browser_list_browsers: every connected extension, with this session's choice. */
+  /** browser_tabs list: every connected extension, with this session's choice. */
   list(sessionId?: string): Record<string, unknown> {
     const primary = this.primary();
     const selected = sessionId ? (this.sessionBrowser.get(sessionId) ?? this.autoBrowser.get(sessionId)) : undefined;
@@ -134,7 +134,7 @@ export class ExtensionConnections {
     };
   }
 
-  /** browser_select_browser: route this session's calls to one browser ("auto" = default). */
+  /** browser_tabs {browser}: route this session's calls to one browser ("auto" = default). */
   select(sessionId: string | undefined, browserId: unknown): Record<string, unknown> {
     if (!sessionId) throw new Error('INVALID_ARGUMENT: Selecting a browser needs a client session (connect through the Browser Controller MCP server).');
     const id = typeof browserId === 'string' ? browserId.trim() : '';

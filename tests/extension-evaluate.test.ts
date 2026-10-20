@@ -44,7 +44,7 @@ const tabStore = new Map<number, { id: number; url: string }>();
   webRequest: { onCompleted: { addListener: () => {} } },
 };
 
-const { handleEvaluate } = await import('../extension/handlers/inspection.js');
+const { handleEvaluate } = await import('../extension/handlers/evaluate.js');
 
 describe('browser_evaluate value round-trip (crbug 1304272 regression)', () => {
   beforeEach(() => {

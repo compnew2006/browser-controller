@@ -85,9 +85,10 @@ const handler = async (
   const fields = (params.fields as Array<{ target: string; value: unknown }>) ?? [];
   const resolved: Array<Record<string, unknown>> = [];
   for (const field of fields) {
-    const value = field.value;
+    // A number (a range, a typed count) goes to the page as its string.
+    const value = typeof field.value === 'number' ? String(field.value) : field.value;
     if (!Array.isArray(value) || value.length === 0 || !value.every((item) => typeof item === 'string')) {
-      resolved.push({ ...field });
+      resolved.push({ ...field, value });
       continue;
     }
     const items = value as string[];
@@ -116,12 +117,12 @@ const handler = async (
 export const fillTool: ToolDefinition = {
   name: 'browser_fill',
   summary: 'Fill several form fields in one call',
-  description: 'Fill up to 50 fields: text, select (value or label), checkbox or radio (boolean), file input (absolute paths, checked before sending). Submits nothing.',
+  description: 'Fill up to 50 fields: text, date/time/color/range (value), select (value or label), checkbox, radio or switch (boolean), file input (absolute paths, checked before sending). Submits nothing.',
   inputSchema: z.object({
     tabId: tabIdParam,
     fields: z.array(z.object({
       target: z.string(),
-      value: z.union([z.string(), z.boolean(), z.array(z.string())]),
+      value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
     }).strict()).min(1).max(50),
   }).strict(),
   // A file set can take a while; the extension's own cap is shorter.

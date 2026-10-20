@@ -136,6 +136,23 @@ export function getOpenDialog(tabId) {
   return dialog ? { ...dialog } : null;
 }
 
+/**
+ * `confirm "Delete this item?"`: a dialog as a result line names it. The page wrote the message, so
+ * it is one line (line breaks become spaces, as handle_dialog's shortMessage does) and cut at 200 characters.
+ */
+export function dialogLabel(dialog) {
+  const chars = [...String(dialog.message ?? '').replace(/\s+/g, ' ').trim()];
+  const shown = chars.length > 200 ? `${chars.slice(0, 200).join('')}…` : chars.join('');
+  return `${dialog.type ?? 'dialog'} "${shown}"`;
+}
+
+/** The DIALOG_OPEN error a call gets while a JavaScript dialog blocks its tab (the wording of trusted-input's assertInputReady). */
+export function dialogOpenError(tabId, dialog) {
+  const err = new Error(`DIALOG_OPEN: a ${dialogLabel(dialog)} is open on tab ${tabId}; answer it with browser_handle_dialog first.`);
+  err.code = 'DIALOG_OPEN';
+  return err;
+}
+
 /** Forget the recorded dialog: it was answered, or Chrome says none is showing. */
 export function clearOpenDialog(tabId) {
   openDialogs.delete(tabId);

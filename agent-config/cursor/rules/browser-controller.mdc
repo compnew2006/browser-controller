@@ -38,12 +38,12 @@ If `tabId` is missing on a page tool, you get: *"tabId is required"*. Call `brow
 Every page tool takes `tabId` (number, required) except `browser_navigate` (optional: without it the call opens a new background tab the session owns) and `browser_batch` (optional default).
 
 ### Navigation and tabs
-- `browser_navigate` - `url` (scheme optional), or `back` / `forward` / `reload` (these need `tabId`). Waits for the load up to 15 s. `snapshot: true` appends a snapshot.
+- `browser_navigate` - `url` (scheme optional), or `back` / `forward` / `reload` (these need `tabId`). Waits up to 15 s for the DOM to be ready, then for it to go quiet (200 ms without change, 1 s at most). `snapshot: true` appends a snapshot.
 - `browser_tabs` - `action` (`list` default, `close`, `focus`; close and focus need `tabId`), `browser` (`"auto"` or a browser id, when several Chrome profiles are connected).
 - `browser_emulate` - `viewport` (does not resize the window), `network`, `cpuThrottling`, `geolocation`, `colorScheme`, `reducedMotion`, `userAgent`, `reset`.
 
 ### Reading
-- `browser_snapshot` - accessibility tree with refs. `target` (subtree), `query` (matches first, with their ancestor lines), `maxChars` (default 8000).
+- `browser_snapshot` - accessibility tree with refs. `target` (subtree), `query` (elements holding every word, with their ancestor lines), `maxChars` (default 8000).
 - `browser_text` - visible text of the page or of `target`. `maxChars` default 20000.
 - `browser_screenshot` - JPEG of the tab, of `target` (cropped to its box) or of `region` (CSS px). Longest side at most 1568 px.
 - `browser_inspect_element` - `target`; computed styles that differ from defaults; `properties` (`["*"]` = all); `rules: true` (matching CSS rules); `listeners: true` (event listeners). `rules` and `listeners` use the debugger.
@@ -51,13 +51,13 @@ Every page tool takes `tabId` (number, required) except `browser_navigate` (opti
 
 ### Interaction
 - `browser_click` - `target` (or `x,y`). `button`, `count` (1-3), `modifiers`, `hover: true` (move only), `dragTo` (second target). Result adds `navigated:` or `dialog:` lines.
-- `browser_type` - `target` (optional; default the focused element), `text`, `key` (one key or combo, e.g. `Enter`, `Control+a`), `clear`, `submit` (Enter after).
-- `browser_fill` - `fields` (1-50 of `{target, value}`): text, select (value, else label), checkbox or radio (boolean), file input (array of absolute paths). Submits nothing.
+- `browser_type` - `target` (optional; default the focused element), `text`, `key` (one key or combo, e.g. `Enter`, `Control+a`, or several in order: `ArrowDown ArrowDown Enter`), `clear`, `submit` (Enter after).
+- `browser_fill` - `fields` (1-50 of `{target, value}`): text, date/time/colour/range (string; number for range), select (value, else label), checkbox, radio or ARIA switch (boolean), file input (array of absolute paths). Submits nothing.
 - `browser_scroll` - `target` alone brings it into view; `dy` / `dx` wheel-scroll at `target` or the page centre (needs the debugger). Nothing moved fails `NOT_SCROLLABLE`.
 - `browser_wait` - exactly one of `target` (`gone: true` = until hidden), `url` (substring; a glob if it has `*`), `ms`. `timeout` default 10000, max 50000.
 
 ### JavaScript, dialogs and network
-- `browser_evaluate` - `expression`, `timeout` (default 5000, max 30000).
+- `browser_evaluate` - `expression`, `timeout` (default 5000, max 30000). A script that opens a dialog returns at once with a `dialog:` line.
 - `browser_handle_dialog` - `accept` (boolean), `promptText`. No dialog open: `NO_DIALOG`.
 - `browser_mock` - `rules` (`{match, block?, status?, body?, headers?}`) replace the tab's rules; `[]` clears; omitted = list with hit counts.
 

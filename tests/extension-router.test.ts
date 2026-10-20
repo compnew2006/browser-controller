@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 /**
  * First behavior tests for the extension side (architecture item: background
@@ -19,12 +19,24 @@ vi.mock("../extension/lib/connection.js", () => ({
   setCurrentActivity: () => {},
 }));
 
+// The shield steps are spied on, so a test can tell whether the frame was drawn or removed.
+vi.mock("../extension/lib/overlay.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../extension/lib/overlay.js")>();
+  return {
+    ...actual,
+    showLockShield: vi.fn(actual.showLockShield),
+    hideLockShield: vi.fn(actual.hideLockShield),
+  };
+});
+
 // chrome.* mock — must exist before any handler runs (module evaluation of the
 // handler modules never touches chrome; only function bodies do).
 const tabStore = new Map<
   number,
   { id: number; windowId: number; url: string; title: string; active: boolean }
 >();
+/** The debugger session's event listeners (cdp-session.js): a test opens a JS dialog through them. */
+const dialogListeners: Array<(source: { tabId: number }, method: string, params?: unknown) => void> = [];
 (globalThis as unknown as { chrome: unknown }).chrome = {
   tabs: {
     get: async (id: number) =>
@@ -50,12 +62,14 @@ const tabStore = new Map<
     attach: async () => {},
     detach: async () => {},
     sendCommand: async () => ({}),
+    onEvent: { addListener: (fn: (typeof dialogListeners)[number]) => { dialogListeners.push(fn); } },
   },
 };
 
 const { handleMessage, dispatchedTools } = await import('../extension/lib/router.js');
 const { tabLocks, tabControl, wedgedTabs } = await import('../extension/lib/state.js');
 const { allTools } = await import('../mcp-server/src/tools/index.js');
+const overlay = await import('../extension/lib/overlay.js');
 
 function lastFrame(): Record<string, unknown> {
   return sent[sent.length - 1]!;
@@ -224,6 +238,73 @@ describe("extension router (handleMessage)", () => {
     expect(frame).toMatchObject({ success: false });
     expect(String(frame?.error)).toMatch(/^TAB_LOCKED: tab 3 is locked by Claude \(session owner-s\) since /);
     tabLocks.release(3);
+  });
+});
+
+describe('the router and a JavaScript dialog open on the tab', () => {
+  const emitPage = (method: string, params?: unknown) => {
+    for (const fn of dialogListeners) fn({ tabId: 3 }, method, params);
+  };
+  beforeEach(() => {
+    vi.mocked(overlay.showLockShield).mockClear();
+    vi.mocked(overlay.hideLockShield).mockClear();
+  });
+  afterEach(() => {
+    emitPage('Page.javascriptDialogClosed', { result: true, userInput: '' });
+  });
+
+  it('a success on a tab whose dialog is open gets the dialog: line the input tools give', async () => {
+    emitPage('Page.javascriptDialogOpening', { type: 'alert', message: 'Welcome back', url: 'https://example.com/page' });
+    await handleMessage({ id: 'dl1', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+    const frame = sent.find((f) => f.id === 'dl1');
+    expect(frame?.success).toBe(true);
+    const text = String((frame?.result as { text?: string }).text);
+    expect(text.split('\n').at(-1)).toBe('dialog: alert "Welcome back"');
+    expect(text).toMatch(/^ok after \d+ ms\n/);
+  });
+
+  it('the frame is not drawn while a dialog blocks the tab, and is drawn again once it is answered', async () => {
+    const scripts: unknown[] = [];
+    (globalThis as any).chrome.scripting.executeScript = async (o: unknown) => { scripts.push(o); return [{ result: null }]; };
+    emitPage('Page.javascriptDialogOpening', { type: 'confirm', message: 'Sure?', url: 'https://example.com/page' });
+    await handleMessage({ id: 'dl2', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+    expect(overlay.showLockShield).not.toHaveBeenCalled();
+    emitPage('Page.javascriptDialogClosed', { result: true, userInput: '' });
+    await handleMessage({ id: 'dl3', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+    expect(overlay.showLockShield).toHaveBeenCalledTimes(1);
+    expect(sent.find((f) => f.id === 'dl3')).toMatchObject({ success: true });
+  });
+
+  it('removes the frame drawn by a call whose own dialog is open at its end, without waiting for the dialog', async () => {
+    emitPage('Page.javascriptDialogClosed', { result: true, userInput: '' });
+    // A slow wait: the frame is drawn first, then the page opens a dialog while the call runs.
+    await handleMessage({ id: 'dl4', tool: 'browser_wait', params: { tabId: 3, ms: 40 }, sessionId: 's1' });
+    await new Promise((r) => setTimeout(r, 10));
+    emitPage('Page.javascriptDialogOpening', { type: 'alert', message: 'Saved', url: 'https://example.com/page' });
+    // The removal waits on the dialog: its injection settles only once the dialog is answered.
+    vi.mocked(overlay.hideLockShield).mockImplementationOnce(() => new Promise<void>(() => {}));
+    await flush(80);
+    expect(overlay.showLockShield).toHaveBeenCalledTimes(1);
+    expect(overlay.hideLockShield).toHaveBeenCalledWith(3);
+    expect(sent.find((f) => f.id === 'dl4')).toMatchObject({ success: true });
+    // Not awaited: the tab's mutex is free, so the next call on it answers at once.
+    await handleMessage({ id: 'dl5', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+    expect(sent.find((f) => f.id === 'dl5')).toMatchObject({ success: true });
+  });
+
+  it('a wedged tab takes no removal, even while a dialog is open on it', async () => {
+    wedgedTabs.set(3, Date.now());
+    emitPage('Page.javascriptDialogOpening', { type: 'alert', message: 'Stuck', url: 'https://example.com/page' });
+    await handleMessage({ id: 'dl6', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+    expect(sent.find((f) => f.id === 'dl6')).toMatchObject({ success: true });
+    expect(overlay.hideLockShield).not.toHaveBeenCalled();
+    expect(overlay.showLockShield).not.toHaveBeenCalled();
+    wedgedTabs.clear();
   });
 });
 

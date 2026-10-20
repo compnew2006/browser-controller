@@ -144,10 +144,19 @@ describe("browser_fill: file inputs are checked before anything is sent", () => 
     expect(sent[0]!.params.fields).toEqual([{ target: "e6", value: [".net", "go"] }]);
   });
 
-  it("validates the field list: 1 to 50 fields, string / boolean / string[] values", () => {
+  it("validates the field list: 1 to 50 fields, string / number / boolean / string[] values", () => {
     expect(fillTool.inputSchema.safeParse({ tabId: 1, fields: [] }).success).toBe(false);
     expect(fillTool.inputSchema.safeParse({ tabId: 1, fields: Array(51).fill({ target: "e1", value: "x" }) }).success).toBe(false);
-    expect(fillTool.inputSchema.safeParse({ tabId: 1, fields: [{ target: "e1", value: 3 }] }).success).toBe(false);
+    expect(fillTool.inputSchema.safeParse({ tabId: 1, fields: [{ target: "e1", value: null }] }).success).toBe(false);
+    expect(fillTool.inputSchema.safeParse({ tabId: 1, fields: [{ target: "e1", value: Number.NaN }] }).success).toBe(false);
+    expect(fillTool.inputSchema.safeParse({ tabId: 1, fields: [{ target: "e1", value: 3 }] }).success).toBe(true);
     expect(fillTool.inputSchema.safeParse({ tabId: 1, fields: [{ target: "e1", value: "x" }] }).success).toBe(true);
+  });
+
+  it("a number value (a range, a count) reaches the extension as its string", async () => {
+    const { host, sent } = recordingHost();
+    const res = await fillTool.handler(host, { tabId: 3, fields: [{ target: "#vol", value: 42 }, { target: "#step", value: 2.5 }, { target: "#n", value: 0 }] });
+    expect(res.isError).toBeUndefined();
+    expect(sent[0]!.params.fields).toEqual([{ target: "#vol", value: "42" }, { target: "#step", value: "2.5" }, { target: "#n", value: "0" }]);
   });
 });

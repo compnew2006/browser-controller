@@ -1,38 +1,33 @@
 /**
  * Ownership operations shared by the navigate handler (a tab a session opens),
  * the tabs handler (close) and the popup event wiring (pin / unpin): the
- * lock → persist → shield → broadcast quartet lives here once.
+ * lock → persist → broadcast and release → persist → broadcast sequences live
+ * here once. The input shield is not drawn here: it is shown only while a tool
+ * call runs on the tab (lib/router.js).
  * Note the asymmetry these helpers encode: lockTabUi throws on a foreign
  * owner (TabLockMap.lock refuses to steal); releaseTabUi releases
  * unconditionally (used when the caller has already established the right to
  * release).
  */
 import { tabLocks, tabControl, persistSessionState } from './state.js';
-import { showLockShield, hideLockShield } from './overlay.js';
+import { hideLockShield } from './overlay.js';
 import { broadcastStatus } from './connection.js';
 
 /**
- * Lock a tab for `owner`, persist the lock, raise the shield, broadcast.
- * Throws when another session already owns the tab (TabLockMap.lock refuses
- * to steal). Returns whether the input-blocking shield was actually injected —
- * on a protected page (chrome:// …) it silently never appears, and the lock
- * must not pretend the user is blocked when they aren't (audit HIGH #4).
+ * Lock a tab for `owner`, persist the lock, broadcast. Throws when another
+ * session already owns the tab (TabLockMap.lock refuses to steal). Draws no
+ * frame: between calls a lock leaves the page's input alone.
  */
-export async function lockTabUi(tabId, owner, message) {
+export function lockTabUi(tabId, owner, message) {
   tabLocks.lock(tabId, owner);
   persistSessionState();
-  const shielded = await showLockShield(tabId); // plain frame, no label
   if (message) broadcastStatus(message);
-  if (!shielded) {
-    broadcastStatus(`Warning: input shield could not be injected on tab ${tabId} (protected page?) — lock is tracked, but user input is NOT blocked.`);
-  }
-  return shielded;
 }
 
 /**
- * Release a tab's lock unconditionally, persist, drop the shield, broadcast.
- * The tab is handed back, so it shows free at once (no control linger).
- * Returns the previous owner (for previousSession-style payloads).
+ * Release a tab's lock unconditionally, persist, drop any shield still on the
+ * tab, broadcast. The tab is handed back, so it shows free at once (no control
+ * linger). Returns the previous owner (for previousSession-style payloads).
  */
 export function releaseTabUi(tabId, message) {
   const was = tabLocks.owner(tabId);

@@ -75,7 +75,7 @@ flowchart LR
         E["connection.js<br/>pairing · reconnect backoff"]
         F["router.js<br/>tool dispatch"]
         G["tab-concurrency.js<br/>per-tab mutex · ownership · shield"]
-        H["handlers/*<br/>interaction · inspection · navigation · tabs<br/>logs · mock · emulate · cdp"]
+        H["handlers/*<br/>interaction · inspection · evaluate · navigation · tabs<br/>logs · mock · emulate · cdp"]
         I["page-exec.js safeExec<br/>chrome.scripting func: — CSP-safe"]
         E --> F --> G --> H --> I
     end
@@ -288,7 +288,7 @@ Failure codes:
 | `REF_NOT_FOUND` | The ref was never issued in this tab. | Take a new `browser_snapshot`, and check the ref. |
 | `ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED` | The target cannot take the action. Nothing was done. | Wait, scroll, or pick another target. |
 | `NO_FOCUS` | `text` or `clear` has no focused field to act on. | Pass a `target`, or focus the field first. |
-| `DIALOG_OPEN` | A JavaScript dialog is open on the tab, so input is refused. | Answer it with `browser_handle_dialog`, then retry. |
+| `DIALOG_OPEN` | A JavaScript dialog is open on the tab, so input, page reads and `browser_evaluate` are refused before anything is sent. | Answer it with `browser_handle_dialog`, then retry. |
 | `NO_DIALOG` | `browser_handle_dialog` finds no dialog, or the dialog opened before the debugger attached. | Look at the page again. A dialog that opened before the debugger attached cannot be answered. |
 | `TAB_LOCKED` | Another session owns the tab. | Use a tab you own, or open a new one with `browser_navigate`. |
 | `TAB_WEDGED` | The tab does not answer: an input stalls for 5 s, or a screenshot for 8 s. | Navigate the tab (it is replaced), reload it, or close it. |
@@ -315,7 +315,7 @@ Failure codes:
 
 - Clicks, typing, keys, wheel and drags are real input through the debugger. Chrome shows a yellow "being debugged" banner while it is attached; it detaches after about 30 s without use.
 - While a tool runs on a tab, the user sees the blue shield and their input on that tab is blocked, so the agent's steps are not disturbed. Keep manual input out of a tab an agent is working in.
-- Each input must reach the page within 5 s, or the call fails `TAB_WEDGED`. A click, key or text that opens a JavaScript dialog returns at once and reports it in a `dialog:` line. Input on a tab with an open dialog fails `DIALOG_OPEN` before anything is sent.
+- Each input must reach the page within 5 s, or the call fails `TAB_WEDGED`. A click, key or text that opens a JavaScript dialog returns at once and reports it in a `dialog:` line. Input, page reads (snapshot, text, wait, scroll, screenshot, inspect_element) and `browser_evaluate` on a tab with an open dialog fail `DIALOG_OPEN` at once, before anything is sent. Any other result on such a tab gets a `dialog:` line (for example a `browser_navigate` whose page calls `alert` on load).
 
 ### Tab ownership and several agents
 
@@ -390,8 +390,8 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 | [`browser_inspect_element`](#browser_inspect_element) | Why an element looks or behaves as it does: computed styles, matching CSS rules, event listeners |
 | [`browser_logs`](#browser_logs) | A tab's console messages (with uncaught errors and stacks) and network requests; one request in full; response bodies on request |
 | [`browser_click`](#browser_click) | Trusted click on a target or at `x,y`; `hover`, `dragTo`, `button`, `count`, `modifiers` |
-| [`browser_type`](#browser_type) | Type text into a target or the focused field; one key or combo; `clear`, `submit` |
-| [`browser_fill`](#browser_fill) | Up to 50 form fields in one call: text, select, checkbox, radio, file input (absolute paths) |
+| [`browser_type`](#browser_type) | Type text into a target or the focused field; one key, a combo or several keys in order; `clear`, `submit` |
+| [`browser_fill`](#browser_fill) | Up to 50 form fields in one call: text, date/time/colour/range, select, checkbox, radio, switch, file input (absolute paths) |
 | [`browser_scroll`](#browser_scroll) | Wheel-scroll at a point or the page, or bring a target into view |
 | [`browser_wait`](#browser_wait) | Wait for a target to appear (or disappear), a URL, or a delay |
 | [`browser_evaluate`](#browser_evaluate) | Run JavaScript like the DevTools console: top-level `await`, `return` in statement bodies, over CDP |
@@ -414,7 +414,7 @@ Each entry lists the parameters (required ones first; defaults in parentheses) a
 - `tabId`: without it the call opens a new background tab in the user's last focused window, owned by the session. `back`, `forward` and `reload` need `tabId`.
 - `snapshot` (false): append a compact snapshot of the new page (up to 2,000 characters).
 
-The call waits for the load up to 15 s. A 204 or a download ends the wait at once. The result has `tabId: <id>`, `url: <final address>`, `status: <code>` and `title: …`, and `loading: true` if the page is still loading at 15 s. A network failure fails `NAVIGATION_FAILED`; with nothing to go back or forward to, `NO_HISTORY_ENTRY`. A frozen tab is replaced: the result has a `note:` line with the new `tabId`, and a failure after the replacement names the new tab too. A cancelled call fails `TIMEOUT`.
+The call waits up to 15 s for the new page's DOM to be ready (it does not wait for images and other subresources), then until the DOM has had no change for 200 ms (1 s at most). A 204 or a download ends the wait at once. The result has `tabId: <id>`, `url: <final address>`, `status: <code>` and `title: …`, and `loading: true` if the page is still loading at 15 s. A network failure fails `NAVIGATION_FAILED`; with nothing to go back or forward to, `NO_HISTORY_ENTRY`. A frozen tab is replaced: the result has a `note:` line with the new `tabId`, and a failure after the replacement names the new tab too. A cancelled call fails `TIMEOUT`.
 
 ### `browser_tabs`
 
@@ -428,7 +428,7 @@ The call waits for the load up to 15 s. A 204 or a download ends the wait at onc
 
 - `tabId` (required).
 - `target`: the subtree root to read.
-- `query`: keeps the matching elements (whole-word matches first, else substring matches) with their ancestor lines.
+- `query`: keeps the elements that hold every word of the query in their role, name or value (whole-word matches first, else substring matches), with their ancestor lines. `save button` finds `button "Save draft"`.
 - `maxChars` (8000; 200–50000): the cut. The last line says how much was left out. Refs past the cut are not issued.
 
 One element per line, indented by depth: `role "name" [e12]`, then state such as `value="…"`, `checked`, `disabled`, `expanded`, `selected`, `level=2`, `required`. Passwords are masked, cross-origin iframes show as `iframe "cross-origin https://…" (not readable)`, and open shadow roots and same-origin iframes are read. Refs (`e<n>`) are stable per element while its page lives.
@@ -466,17 +466,18 @@ The target is checked first: hidden, disabled or covered elements fail (`ELEMENT
 
 - `tabId` (required); `target`; `text`; `key`; `clear` (false); `submit` (false). Give at least one of `text`, `key`, `clear` or `submit`.
 
-With `target`, the element is focused by a trusted click first if it is not focused yet. Without it, `text` and `clear` go to the focused field (`NO_FOCUS` if none is a field); a `key` alone goes to whatever has focus. `clear` selects all and deletes. `text` is inserted in one step. `key` is one key or a combo (`Enter`, `Tab`, `Escape`, `ArrowDown`, `Control+a`, `Shift+Tab`); an unknown name fails `UNKNOWN_KEY`. `Control+a` and `Meta+a` select all in the focused field on every OS. `submit` presses Enter last. A dialog that the input opens is reported in a `dialog:` line, and the call returns at once. The result gives `typed N chars into <target>` and `value: "…"` (the first 100 characters; password fields show `••••`).
+With `target`, the element is focused by a trusted click first if it is not focused yet. Without it, `text` and `clear` go to the focused field (`NO_FOCUS` if none is a field); a `key` alone goes to whatever has focus. `clear` selects all and deletes. `text` is inserted in one step. `key` is one key or a combo (`Enter`, `Tab`, `Escape`, `ArrowDown`, `Control+a`, `Shift+Tab`), or several separated by spaces, pressed in order (`ArrowDown ArrowDown Enter`). Every name is checked before anything is sent: an unknown name fails `UNKNOWN_KEY`. A dialog that a key opens ends the sequence, and the result reads `pressed N of M keys`. `Control+a` and `Meta+a` select all in the focused field on every OS. `submit` presses Enter last. A dialog that the input opens is reported in a `dialog:` line, and the call returns at once. The result gives `typed N chars into <target>` and `value: "…"` (the first 100 characters; password fields show `••••`).
 
 ### `browser_fill`
 
-- `tabId` (required); `fields` (1–50 entries of `{target, value}`; `value` is a string, a boolean or an array of strings).
+- `tabId` (required); `fields` (1–50 entries of `{target, value}`; `value` is a string, a number, a boolean or an array of strings).
 
 Each field is handled by its kind:
 
 - text inputs, text areas and editable regions: a string is typed in (an empty string clears);
 - `select`: a string, or an array for a multiple select. Each value matches an option's value exactly, else its label case-insensitively; a miss fails `OPTION_NOT_FOUND` with up to five labels;
-- checkbox or radio: a boolean (a radio takes `true` only). The box is clicked only when its state differs;
+- date, time, datetime-local, month, week, colour and range inputs: the whole value as a string (a number for range), set as the picker sets it. A value the browser rejects (a bad date, an off-step range) fails `VALUE_NOT_SET`;
+- checkbox or radio, or an element with role `checkbox`, `radio` or `switch`: a boolean (a radio takes `true` only). The element is clicked only when its state differs. An ARIA widget whose `aria-checked` does not change fails `VALUE_NOT_SET`;
 - file input: an array of absolute paths (`~/` is expanded). In a file input, a relative path fails `INVALID_ARGUMENT`. Before anything is sent, the server refuses hidden and credential files: the whole call fails `FILE_NOT_ALLOWED`. The check runs on any field value whose item contains a path separator or starts with `~/`, so a select value such as `/en` is looked at too, but a bare word is not. A symlink is resolved before the check. In a file input, a path that is missing or unreadable fails `FILE_NOT_FOUND`, and nothing is filled.
 
 `browser_fill` never submits. Fields are filled in order, and one failing field does not stop the rest. If any field fails, the result is `FILL_FAILED: n of m fields failed`, with one line per failed field: `target: CODE: message`. Success reads `filled N fields`. A text field whose value does not read back (a readonly field, or a page that rejects input) fails `VALUE_NOT_SET`, shown as `kept "…"`. A dialog that a field's input opens stops the fill: the fields after it fail `DIALOG_OPEN`.
@@ -501,7 +502,7 @@ Not met in time fails `TIMEOUT`.
 
 - `tabId`, `expression` (required); `timeout` (5000; 1000–30000).
 
-The source is one expression, or statements that `return` a value; top-level `await` works. Statements without `return` give `null`. The value comes back as JSON; DOM nodes, functions and cycles come back as readable descriptions, and long results are cut. It runs over CDP, so the page's CSP does not block it. If the debugger cannot attach, it runs in the page's main world through `chrome.scripting` instead, marked `via: scripting`, which a strict CSP can reject. A throw fails `SCRIPT_ERROR`. A source that closes its wrapper early (for example `1)); f(); ((0`) is refused before it runs, with `SCRIPT_ERROR: … nothing was run`. A run past `timeout` fails `TIMEOUT`: the page may still be running it, but the call returns so the tab is free.
+The source is one expression, or statements that `return` a value; top-level `await` works. Statements without `return` give `null`. The value comes back as JSON; DOM nodes, functions and cycles come back as readable descriptions, and long results are cut. It runs over CDP, so the page's CSP does not block it. If the debugger cannot attach, it runs in the page's main world through `chrome.scripting` instead, marked `via: scripting`, which a strict CSP can reject. A throw fails `SCRIPT_ERROR`. A source that closes its wrapper early (for example `1)); f(); ((0`) is refused before it runs, with `SCRIPT_ERROR: … nothing was run`. A run past `timeout` fails `TIMEOUT`: the page may still be running it, but the call returns so the tab is free. A script that opens a JavaScript dialog returns at once with a `dialog:` line: the script stays paused until `browser_handle_dialog` answers the dialog. With a dialog already open, the call fails `DIALOG_OPEN` and nothing runs.
 
 ### `browser_handle_dialog`
 
@@ -692,7 +693,7 @@ browser-controller/
 │   │                        page-dom (refs and target resolution), trusted-input (CDP input),
 │   │                        cdp-session, overlay, tab-concurrency (pure, unit-tested)
 │   ├── handlers/            One module per tool family: navigation, interaction, interaction-advanced,
-│   │                        inspection, inspect, screenshot, tabs, emulate, logs, mock, cdp
+│   │                        inspection, evaluate, inspect, screenshot, tabs, emulate, logs, mock, cdp
 │   ├── utils/               navigation helpers
 │   ├── events.js            chrome.* listeners (popup, webRequest, lifecycle)
 │   └── popup/               Tabbed shell (Tabs · Agents · Settings) + collapsible activity bar

@@ -61,7 +61,8 @@ const cdpState = {
 };
 
 const { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } = await import('../extension/lib/page-dom.js');
-const { handleSnapshot, handleGetPageText, handleWait, handleScroll, handleEvaluate } = await import('../extension/handlers/inspection.js');
+const { handleSnapshot, handleGetPageText, handleWait, handleScroll } = await import('../extension/handlers/inspection.js');
+const { handleEvaluate } = await import('../extension/handlers/evaluate.js');
 const { fallbackByTab } = await import('../extension/lib/state.js');
 const { detachCdp } = await import('../extension/lib/cdp-session.js');
 
@@ -233,6 +234,36 @@ describe('snapshot query, target and maxChars', () => {
   it('a query with no match says so in one line', async () => {
     doc.body.append(doc.el('button', {}, 'Save'));
     expect((await handleSnapshot({ tabId: 1, query: 'zzz' })).text).toMatch(/\n\(no element matches "zzz"\)$/);
+  });
+
+  it('a query of several words keeps an element only when every word is in its role, name or value', async () => {
+    doc.body.append(doc.el('button', {}, 'Save'), doc.el('button', {}, 'Cancel'));
+    const text: string = (await handleSnapshot({ tabId: 1, query: 'save button' })).text;
+    expect(text).toMatch(/^button "Save" \[e\d+\]$/m);
+    expect(text).not.toContain('Cancel');
+    doc.body.append(doc.el('a', { href: '/pdf' }, 'Save as PDF'));
+    const links: string = (await handleSnapshot({ tabId: 1, query: 'save link' })).text;
+    expect(links).toMatch(/^link "Save as PDF" \[e\d+\]$/m);
+    expect(links).not.toContain('button "Save"');
+  });
+
+  it('a word can match the value of a control: "ana textbox" finds the text box that holds Ana', async () => {
+    doc.body.append(doc.el('input', { type: 'text', value: 'Ana' }), doc.el('button', {}, 'Send'));
+    const text: string = (await handleSnapshot({ tabId: 1, query: 'ana textbox' })).text;
+    expect(text).toMatch(/^textbox \[e\d+\] value="Ana"$/m);
+    expect(text).not.toContain('Send');
+  });
+
+  it('a query whose words no element holds together says no element matches', async () => {
+    doc.body.append(doc.el('button', {}, 'Save'));
+    expect((await handleSnapshot({ tabId: 1, query: 'save zebra' })).text).toMatch(/\n\(no element matches "save zebra"\)$/);
+  });
+
+  it('when no element holds every word whole, the substring matches of every word are kept', async () => {
+    doc.body.append(doc.el('p', {}, 'Other text'), doc.el('button', {}, 'Buy pricing plan'));
+    const text: string = (await handleSnapshot({ tabId: 1, query: 'prici plan' })).text;
+    expect(text).toMatch(/^button "Buy pricing plan" \[e\d+\]$/m);
+    expect(text).not.toContain('Other text');
   });
 
   it('maxChars cuts in page order, says how much is left, and registers no ref past the cut', async () => {

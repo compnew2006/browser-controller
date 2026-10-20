@@ -7,6 +7,7 @@
 - Element parameters (`ref`, `selector`, `x`/`y`) are one `target` string: `e12` (a ref from `browser_snapshot`), `text=Sign in`, `x,y` (viewport CSS px) or a CSS selector.
 - Failures are `isError` results whose text is `CODE: message`. Reads return plain text lines, not JSON.
 - Tab ownership is implicit: a tab that `browser_navigate` opens without `tabId` belongs to that session. Another session's call on it fails with `TAB_LOCKED`. There are no lock or unlock calls.
+- The blue shield shows only while a tool call runs on a tab. A tab a session owns no longer keeps the frame between calls, so the user's input on it is not blocked then.
 - Input is always trusted CDP input. If the debugger cannot attach, input fails with `DEBUGGER_UNAVAILABLE`; there is no synthetic-event fallback.
 - Progressive mode (`BROWSER_CONTROLLER_PROGRESSIVE`) is removed; every tool is listed.
 - Update the MCP clients, the daemon and the extension together. Every peer must send an explicit `protocolVersion` and the `tools-v3` capability before any tool call is routed. There is no legacy window: a pre-3.0 peer is refused. After you pull 3.0, stop the old daemon, restart your MCP clients so the 3.0 daemon starts, and reload the extension. The refusal texts are:
@@ -40,12 +41,14 @@
 
 ### Added
 - `browser_fill`: up to 50 fields in one call. Text, select (by value, else label), checkbox and radio (boolean), and file inputs (absolute paths, checked before anything is sent: `FILE_NOT_FOUND`).
+- `browser_fill` also sets date, time, datetime-local, month, week, colour and range inputs (the whole value, as the picker sets it; a rejected value fails `VALUE_NOT_SET`), and elements with role `checkbox`, `radio` or `switch` (boolean; an unchanged `aria-checked` fails `VALUE_NOT_SET`). A value may be a number.
+- `browser_type` `key` takes several keys in order, separated by spaces (`ArrowDown ArrowDown Enter`). Every name is checked before anything is sent.
 - `browser_logs`: console (with uncaught errors and stacks) and network in one tool. `requestId` reads one request; `bodies` adds response bodies.
 - `browser_mock`: per-tab response rules (`block`, or `status`, `body`, `headers`). `rules` replaces the set; listing shows hit counts.
 - `browser_navigate`: `url` may be `back`, `forward` or `reload` (these need `tabId`); `snapshot: true` appends a snapshot.
 - `browser_tabs` `browser` parameter: picks the Chrome profile for the session. With several profiles connected, `list` shows them first.
 - `browser_emulate` `viewport`: sets the page viewport without resizing the window.
-- `browser_snapshot` `query`: whole-word matches first (else substring), with their ancestor lines.
+- `browser_snapshot` `query`: the elements that hold every word of the query in their role, name or value (whole-word matches first, else substring), with their ancestor lines. `save button` finds `button "Save draft"`.
 - `browser_fill` refuses hidden and credential file paths before anything is sent (`FILE_NOT_ALLOWED`). A field that keeps its old value fails `VALUE_NOT_SET`, and input on a tab with an open dialog fails `DIALOG_OPEN`.
 - Named failure codes `RATE_LIMITED`, `NOT_CONNECTED`, `INSPECT_FAILED`, `NOT_FOUND` and `INTERNAL_ERROR`. A failure with no code of its own reads `INTERNAL_ERROR`. The README lists the codes.
 
@@ -59,7 +62,11 @@
 - `browser_screenshot`: JPEG, longest side at most 1568 px. Background tabs are captured over CDP without activating them.
 - `browser_batch`: up to 50 steps, any tool except `browser_batch`. Its `tabId` fills steps that omit it. A failure reports `step i/n <tool>: CODE: message; k skipped`.
 - Refs are `e<n>`, stable per element for the life of the page. A re-rendered element is found again by its snapshot description, and the result adds a `note:` line. `REF_GONE` means take a new `browser_snapshot`.
-- Tool definitions are shorter. The 17 `tools/list` definitions are about 10,900 characters of JSON (about 2,700 tokens, estimated), down from about 7,100 tokens for 35 tools.
+- Tool definitions are shorter. The 17 `tools/list` definitions are 11,050 characters of JSON: 2,630 tokens, plus 260 for the server instructions (2,890 in all, o200k), down from 7,406 in 2.8.0.
+- `browser_navigate` waits for the new page's DOM to be ready, then until the DOM has had no change for 200 ms (1 s at most). It no longer waits for images and other subresources, and the fixed 500 ms pause is gone. In a real Chrome, a plain local page went from 520 ms to 220 ms (median of 5), and a page with a 2 s image from 2,526 ms to 309 ms. The landed URL, `status`, `NAVIGATION_FAILED` and the 204 and download results are unchanged.
+- A JavaScript dialog no longer stalls page reads: snapshot, text, wait, scroll, screenshot, inspect_element and evaluate fail `DIALOG_OPEN` at once on a tab with an open dialog (before, they waited about 8 s and failed `TAB_WEDGED`). Any other result on such a tab gets a `dialog:` line.
+- `browser_evaluate` with a script that opens a dialog returns at once with a `dialog:` line; the script stays paused until `browser_handle_dialog` answers it (before, it waited for the whole timeout).
+- While the daemon is down, the extension checks its `/status` address before it opens the WebSocket, so `chrome://extensions` no longer fills with `ERR_CONNECTION_REFUSED` errors. The check sends no token or secret.
 - Shared conventions (targets, errors, input, page data) are sent once in the server instructions.
 - `browser_tabs list`: tabs of other sessions are not listed. They are counted in one line, `+N tabs used by other agents`.
 - Mock rules, emulation overrides and response-body capture end with the session that set them: they are cleared when that session disconnects, and a closed tab forgets them. A disconnect never clears another session's settings.

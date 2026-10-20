@@ -3,13 +3,7 @@
 // never does. All background message types are preserved from the v1 column
 // layout (getStatus / setPort / setToken / setEnrollment / lockTab / unlockTab
 // / unlockAll + daemon /pair /status /kill).
-import {
-  escapeHtml,
-  agentLabelFor,
-  controlBadgeParts,
-  openTabsSignature,
-  renderOpenTabRows,
-} from './open-tabs-view.js';
+import { escapeHtml, agentLabelFor, controlBadgeParts, openTabsSignature, renderOpenTabRows } from './open-tabs-view.js';
 
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -482,7 +476,7 @@ document.addEventListener('click', (e) => {
     }
     chrome.runtime.sendMessage({ type: 'lockTab', tabId, sessionId }, (resp) => {
       if (resp?.success) {
-        addLog(`Pinned tab ${tabId} to ${agentLabelFor(lastAgents, sessionId)}${resp.shielded === false ? ' (shield failed — protected page)' : ''}`, resp.shielded === false ? 'warn' : 'ok');
+        addLog(`Pinned tab ${tabId} to ${agentLabelFor(lastAgents, sessionId)}`, 'ok');
         refreshStatus();
       } else {
         addLog(`Pin failed: ${resp?.error || 'unknown'}`, 'err');

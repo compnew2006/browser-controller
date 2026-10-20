@@ -7,12 +7,19 @@
 import { resolveTab, safeExec, replaceFrozenTab } from '../lib/page-exec.js';
 import { sessionAgentNames } from '../lib/state.js';
 import { lockTabUi } from '../lib/lock-ops.js';
-import { showLockShield } from '../lib/overlay.js';
 import { isHashOnlyChange, normalizeNavigationUrl, classifyMainResponse } from '../utils/navigation.js';
 import { handleSnapshot } from './inspection.js';
 
 /** How long a load may take before the call reports the page as it is then. */
 const NAVIGATE_TIMEOUT_MS = 15_000;
+/** How often the new document's readyState is sampled while a load runs. */
+const READY_POLL_MS = 100;
+/** The budget for one in-page probe: past it the probe reads as no answer, and the tab is not marked wedged. */
+const PROBE_MS = 1_000;
+/** The DOM counts as settled after this long with no mutation. */
+const QUIET_MS = 200;
+/** The quiet wait ends at this total, even on a page that keeps changing. */
+const QUIET_CAP_MS = 1_000;
 /** A history step that fires no load (same document, or a bfcache restore) is settled after this. */
 const HISTORY_IDLE_MS = 1_500;
 /** The snapshot appended when snapshot:true, in characters. */
@@ -120,11 +127,76 @@ function cancellationOf(signal) {
 }
 
 /**
- * Start a load in the tab (`startLoad`) and wait for the outcome. Resolves when
- * the tab completes, the network reports a failure, a 204/download ends the load,
- * or the timeout passes. Returns the watched facts and whether it timed out.
+ * Runs in the page. The document's identity and readiness: `origin`
+ * (performance.timeOrigin) is fixed for one document, so it tells the new
+ * document from the one the load replaces.
  */
-async function navigateAndWait(tab, startLoad, { waitUntil, cancelRace }) {
+function documentState() {
+  return { readyState: document.readyState, origin: performance.timeOrigin, href: location.href };
+}
+
+/**
+ * Runs in the page. Resolves once no DOM mutation has landed for `quietMs`, or
+ * at `capMs` at the latest, so a page that keeps changing (a clock, an animation)
+ * costs only the cap. Arguments are passed in: a page function cannot read this module.
+ */
+function waitForQuietDom(quietMs, capMs) {
+  return new Promise((resolve) => {
+    let quietTimer = 0;
+    let capTimer = 0;
+    const finish = () => {
+      observer.disconnect();
+      clearTimeout(quietTimer);
+      clearTimeout(capTimer);
+      resolve();
+    };
+    const observer = new MutationObserver(() => {
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(finish, quietMs);
+    });
+    observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    capTimer = setTimeout(finish, capMs);
+    quietTimer = setTimeout(finish, quietMs);
+  });
+}
+
+/**
+ * Runs `func` in the tab's page for a load's own probes. Unlike safeExec it never
+ * marks the tab wedged and never throws: a page that cannot run it, refuses it, or
+ * does not answer within `ms` gives null, and the load goes on. injectImmediately
+ * runs it now rather than at document_idle, so a probe samples a loading page as it is.
+ */
+async function pageRun(tabId, func, args, ms) {
+  const run = Promise.resolve()
+    .then(() => chrome.scripting.executeScript({ target: { tabId }, func, args, injectImmediately: true }))
+    .then((results) => results?.[0]?.result ?? null, () => null);
+  let timer = null;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); });
+  try {
+    return await Promise.race([run, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Is `doc` (a documentState sample) a document other than `old`, the one the
+ * load replaces? Without a sample of `old` (a blank tab) only a non-blank page counts.
+ */
+function isNewDocument(doc, old) {
+  if (!doc) return false;
+  return old ? doc.origin !== old.origin : doc.href !== 'about:blank';
+}
+
+/**
+ * Start a load in the tab (`startLoad`) and wait for the outcome. Resolves when
+ * the NEW document is interactive or complete, the tab reports complete, the
+ * network reports a failure, a 204/download ends the load, or the timeout
+ * passes. Returns the watched facts and whether it timed out.
+ */
+async function navigateAndWait(tab, startLoad, { cancelRace }) {
+  // Sampled before the load starts, so the probe below can tell the old document from the new one.
+  const oldDoc = await pageRun(tab.id, documentState, [], PROBE_MS);
   let endWait = () => {};
   let timedOut = false;
   const watch = watchMainFrame(tab.id, () => endWait());
@@ -133,6 +205,7 @@ async function navigateAndWait(tab, startLoad, { waitUntil, cancelRace }) {
       let settled = false;
       let pollTimer = null;
       let capTimer = null;
+      let probing = false;
       // `navigated` gates the readyState probe so we never sample the OLD
       // document (which is already 'complete' and would resolve instantly
       // before the new page even commits).
@@ -146,19 +219,15 @@ async function navigateAndWait(tab, startLoad, { waitUntil, cancelRace }) {
         resolve();
       };
       endWait = finish;
-      // domcontentloaded resolves as soon as the HTML is parsed (readyState
-      // reaches 'interactive') — strictly earlier than 'complete'. Chrome's
-      // tabs.onUpdated only reports 'loading' and 'complete', never
-      // 'interactive', so for that mode we poll readyState in the page via
-      // the already-granted scripting permission (no new permission needed).
-      // 'load' (default) keeps waiting for status === 'complete'.
-      const wantDcl = waitUntil === 'domcontentloaded';
+      // DOM-ready: Chrome's tabs.onUpdated reports only 'loading' and 'complete', never
+      // 'interactive', so the new document's readyState is polled in the page
+      // (the scripting permission already granted covers it). Samples do not stack up.
       const probeReady = async () => {
-        if (!navigated) return; // don't probe the pre-navigation document
-        try {
-          const rs = await safeExec(tab.id, () => document.readyState, []);
-          if (rs === 'interactive' || rs === 'complete') finish();
-        } catch { /* new document not commit-able yet */ }
+        if (!navigated || probing) return; // don't probe the pre-navigation document
+        probing = true;
+        const doc = await pageRun(tab.id, documentState, [], PROBE_MS);
+        probing = false;
+        if (isNewDocument(doc, oldDoc) && (doc.readyState === 'interactive' || doc.readyState === 'complete')) finish();
       };
       const listener = (tId, changeInfo) => {
         if (tId !== tab.id) return;
@@ -166,7 +235,7 @@ async function navigateAndWait(tab, startLoad, { waitUntil, cancelRace }) {
         if (changeInfo.status === 'complete') finish();
       };
       chrome.tabs.onUpdated.addListener(listener);
-      if (wantDcl) pollTimer = setInterval(probeReady, 150);
+      pollTimer = setInterval(probeReady, READY_POLL_MS);
       Promise.resolve().then(startLoad).catch((err) => {
         chrome.tabs.onUpdated.removeListener(listener);
         if (pollTimer) clearInterval(pollTimer);
@@ -182,6 +251,16 @@ async function navigateAndWait(tab, startLoad, { waitUntil, cancelRace }) {
     watch.stop();
   }
   return { facts: watch.facts, timedOut };
+}
+
+/**
+ * The quiet-DOM wait that follows every load. A page that cannot run script
+ * (protected, gone) skips it at once, and one that does not answer within the
+ * budget is left as it is: the navigation itself has already succeeded, so this
+ * never fails it, and never marks the tab wedged.
+ */
+async function settleDom(tabId) {
+  await pageRun(tabId, waitForQuietDom, [QUIET_MS, QUIET_CAP_MS], QUIET_CAP_MS + 500);
 }
 
 /**
@@ -269,8 +348,9 @@ function replacementFailure(err, { from, to }) {
 /**
  * browser_navigate. `url` is an address (the scheme is optional), or "back",
  * "forward" or "reload". Without tabId the call opens a new background tab that
- * this session owns. Waits for the load up to 15 s; a 204 or a download ends the
- * wait at once. A network failure fails with NAVIGATION_FAILED.
+ * this session owns. Waits for the new page's DOM to be ready (up to 15 s), then
+ * for it to go quiet; a 204 or a download ends the wait at once. A network failure
+ * fails with NAVIGATION_FAILED.
  */
 export async function handleNavigate(params, sessionId, _agentName, signal) {
   // Set once a frozen tab is replaced, so a failure after that can name the replacement.
@@ -285,7 +365,6 @@ export async function handleNavigate(params, sessionId, _agentName, signal) {
 
 async function navigateTab(params, sessionId, signal, state) {
   const { tabId, snapshot: wantSnapshot = false } = params;
-  const { waitUntil = 'load' } = params;
   const step = params.url === 'back' || params.url === 'forward' ? params.url : null;
   const reload = params.url === 'reload';
   const url = step || reload ? null : normalizeNavigationUrl(params.url);
@@ -298,8 +377,6 @@ async function navigateTab(params, sessionId, signal, state) {
   const opened = tabId == null;
   let tab = opened ? await openSessionTab(sessionId) : await resolveTab(tabId);
   const before = tab.url;
-  // A navigation clears the lock shield a session's own new tab wears: put it back once the page is in.
-  const reshield = async () => { if (opened && sessionId) await showLockShield(tab.id); };
 
   // A frozen page (TAB_WEDGED) would hold the navigation hostage: replace the tab.
   // History steps leave a frozen page alone: its replacement would have no history.
@@ -337,11 +414,10 @@ async function navigateTab(params, sessionId, signal, state) {
     const startLoad = reloadInPlace
       ? () => chrome.tabs.reload(tab.id)
       : () => chrome.tabs.update(tab.id, { url: target });
-    const nav = await navigateAndWait(tab, startLoad, { waitUntil, cancelRace: cancellationOf(signal) });
+    const nav = await navigateAndWait(tab, startLoad, { cancelRace: cancellationOf(signal) });
     facts = nav.facts;
     timedOut = nav.timedOut;
     if (facts.error && facts.error !== 'net::ERR_ABORTED' && !facts.noContent && !facts.download) {
-      await reshield();
       // The error text is all the agent reads: name the replacement here too, as the success text does.
       const replaced = replacedTabId != null ? ` ${replacedClause(replacedTabId, tab.id)}` : '';
       return { success: false, error: `NAVIGATION_FAILED: ${facts.error} while loading ${target}${replaced}`, url: target, tabId: tab.id, ...replacedData };
@@ -362,10 +438,7 @@ async function navigateTab(params, sessionId, signal, state) {
     }
   }
 
-  // SPA settle window. 500ms is a cheap, robust default that covers most
-  // client-rendered apps without making navigation feel slow for static pages.
-  await new Promise((r) => setTimeout(r, 500));
-  await reshield();
+  await settleDom(tab.id);
 
   // Report where the tab really landed (after redirects), not the address asked for.
   const landed = await chrome.tabs.get(tab.id).catch(() => null);
