@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.6.0-blue?style=flat-square" alt="v2.6.0" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.7.0-blue?style=flat-square" alt="v2.7.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -507,7 +507,7 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 
 | Tool | What it does |
 |------|-------------|
-| [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit`; `browser: true` adds Chrome-reported messages and DevTools Issues |
+| [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors with stacks) since it loaded, read through the debugger, up to 200 entries; `pattern` / `level` / `limit`; `browser: true` adds Chrome-reported messages and DevTools Issues |
 | [`browser_inspect_element`](#browser_inspect_element) | Why an element looks/behaves as it does: computed styles, matching CSS rules with file:line and what was overridden, inherited and `::before`/`::after` rules, event listeners (own + delegated to ancestors) |
 | [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules), mock responses per tab (the page gets the mock); captures + HAR export. `log` rules are ledger-only |
 | [`browser_network`](#browser_network) | Requests with status codes, durations and failures — per-tab; `urlPattern`, regex `filter`, `type`, `failed`, `limit`; `requestId` for one request's (redacted) headers; `captureBodies` for response bodies |
@@ -830,11 +830,11 @@ Routes all of this session's tool calls to one connected browser, by `browserId`
 
 #### `browser_console`
 
-What the page logged in a tab: `log`, `info`, `warn`, `error`, `debug` and uncaught errors. The buffer is per tab and holds 200 entries.
+What the page logged in a tab since it loaded: `log`, `info`, `warn`, `error`, `debug`, and uncaught errors and promise rejections with their stack. Chrome keeps these for the current page and hands them over through the debugger (yellow banner) when the tool reads them; the extension injects nothing into the pages you browse, so their errors are never reported as the extension's own. The latest 200 matching the `level` filter are returned. Console output of cross-origin iframes is not included.
 
 - `tabId`, `pattern` (case-insensitive regex, e.g. `"error|fail"`), `level` (one level or a list), `limit` (1–200, the most recent N matches)
 - `browser` (default `false`): also return `browser.messages` — what Chrome itself reported for the page and the page's console never sees: failed resource loads (`Failed to load resource … 404`), deprecations, interventions, violations, security warnings — and `browser.issues`, the DevTools Issues (CORS, CSP, mixed content, cookies, form fields…) as `{ code, type, url, count }`. Both cover the current document from its load, read through the debugger (yellow banner); `pattern` / `level` / `limit` apply to them too.
-- `clear` (default `false`): empty the tab's buffer after reading (with `browser`, Chrome's log too). Because it can mutate, the tool is never retried on timeout.
+- `clear` (default `false`): discard the page's messages after reading (with `browser`, Chrome's log too). Because it can mutate, the tool is never retried on timeout.
 
 #### `browser_network`
 
@@ -1103,8 +1103,7 @@ browser-controller/
 │   ├── handlers/            Tool implementations: navigation, interaction, inspection, find, tabs, cdp,
 │   │                        agent-api (observe/act), ax-snapshot, intercept, gif
 │   ├── utils/               navigation + smart-selector fallback resolution
-│   ├── events.js            chrome.* listeners (console capture, popup, webRequest, lifecycle)
-│   ├── content.js           Console capture
+│   ├── events.js            chrome.* listeners (popup, webRequest, lifecycle)
 │   └── popup/               Fixed tabbed shell (Tabs · Agents · Settings) + collapsible activity bar
 ├── agent-config/        Pre-built configs for Cursor + Claude Code
 │   ├── cursor/              Rules and commands

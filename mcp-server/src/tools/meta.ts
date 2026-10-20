@@ -105,7 +105,7 @@ const TOOL_GUIDANCE: Record<string, string> = {
   browser_wait:
     'Use to wait for an element to appear/disappear, text to appear/disappear, a URL change, or a fixed delay. Avoids fragile sleep loops.',
   browser_console:
-    "Use to read console messages (log/warn/error) from a tab. Useful for debugging.",
+    "Use to read console messages (log/warn/error) and uncaught errors with stacks from a tab. Uses the debugger (yellow banner).",
   browser_network:
     "Use to read network requests the page made (filter by URL). Useful for seeing API calls. captureBodies:true, then repeat the request, to read what an API actually returned (requestId → responseBody).",
   browser_inspect_element:

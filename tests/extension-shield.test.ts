@@ -71,7 +71,7 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
   });
 
   it('shows the lock-shield frame WITH the agent-name label during an agent action (no corner badge)', async () => {
-    await handleMessage({ id: 'a1', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await handleMessage({ id: 'a1', tool: 'browser_network', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
     await flush();
 
     const shields = shieldInjections();
@@ -83,13 +83,13 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
   });
 
   it('falls back to a generic label when the message carries no agentName', async () => {
-    await handleMessage({ id: 'a4', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1' });
+    await handleMessage({ id: 'a4', tool: 'browser_network', params: { tabId: 3 }, sessionId: 's1' });
     await flush();
     expect(shieldInjections()[0]!.args).toContain('agent controlling the tab');
   });
 
   it('removes the frame when the action ends on an UNLOCKED tab', async () => {
-    await handleMessage({ id: 'a2', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1' });
+    await handleMessage({ id: 'a2', tool: 'browser_network', params: { tabId: 3 }, sessionId: 's1' });
     await flush();
 
     // Last shield-related injection must be the REMOVAL (hideLockShield's
@@ -100,7 +100,7 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
 
   it('keeps a plain frame (no label) after the action when the tab is LOCKED', async () => {
     tabLocks.lock(3, 's1');
-    await handleMessage({ id: 'a3', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await handleMessage({ id: 'a3', tool: 'browser_network', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
     await flush();
 
     const shields = shieldInjections();
@@ -130,7 +130,7 @@ describe('tab control tracking (popup Open Tabs must not say "free")', () => {
   });
 
   it('records the agent driving an UNLOCKED tab (queued path)', async () => {
-    await handleMessage({ id: 'c1', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await handleMessage({ id: 'c1', tool: 'browser_network', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
     await flush();
     expect(tabLocks.owner(3)).toBeUndefined(); // still no lock…
     // …but the tab is reported as controlled (lingering after the call).
@@ -148,7 +148,7 @@ describe('tab control tracking (popup Open Tabs must not say "free")', () => {
   });
 
   it('clears control when the agent session is released (disconnect)', async () => {
-    await handleMessage({ id: 'c4', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await handleMessage({ id: 'c4', tool: 'browser_network', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
     await flush();
     await handleMessage({ type: 'releaseSession', sessionId: 's1' });
     expect(tabControl.controller(3)).toBeUndefined();
@@ -175,7 +175,7 @@ describe('tab control tracking (popup Open Tabs must not say "free")', () => {
   it('ends control even when the task throws before the dispatch try (no stuck "running")', async () => {
     faults.activeBadgeThrows = true;
     try {
-      await handleMessage({ id: 'c8', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+      await handleMessage({ id: 'c8', tool: 'browser_network', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
       await flush();
     } finally {
       faults.activeBadgeThrows = false;
@@ -185,7 +185,7 @@ describe('tab control tracking (popup Open Tabs must not say "free")', () => {
   });
 
   it('browser_tabs list shows controlledBy to OTHER agents only', async () => {
-    await handleMessage({ id: 'c9', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
+    await handleMessage({ id: 'c9', tool: 'browser_network', params: { tabId: 3 }, sessionId: 's1', agentName: 'Vitest' });
     await flush();
     await handleMessage({ id: 'c10', tool: 'browser_tabs', params: { action: 'list' }, sessionId: 's2' });
     await handleMessage({ id: 'c11', tool: 'browser_tabs', params: { action: 'list' }, sessionId: 's1' });

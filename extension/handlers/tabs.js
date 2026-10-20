@@ -9,7 +9,6 @@ import {
   tabControl,
   wedgedTabs,
   windowCaptureMutex,
-  consoleByTab,
   networkByTab,
   bodyCaptureByTab,
   getTabBuffer,
@@ -19,7 +18,7 @@ import { showLockShield, hideLockShield, setAgentCursorHidden, agentCursorEnable
 import { broadcastStatus } from "../lib/connection.js";
 import { lockTabUi, releaseTabUi } from "../lib/lock-ops.js";
 import { withCdp, ensureViewport, subscribeCdpEvents, pinCdp, unpinCdp, isCdpPinned } from '../lib/cdp-session.js';
-import { collectBrowserLog } from '../lib/browser-log.js';
+import { collectBrowserLog, collectPageConsole } from '../lib/browser-log.js';
 import { listView, typeMatcher } from '../lib/network-capture.js';
 import { createBodyCapture, MAX_BODIES } from '../lib/response-bodies.js';
 
@@ -277,20 +276,20 @@ export async function handleConsole(params) {
     if (Number.isInteger(limit) && limit > 0 && out.length > limit) out = out.slice(-limit);
     return out;
   };
-  const buf = getTabBuffer(consoleByTab, tabId);
-  const msgs = pick([...buf]);
-  const total = buf.length;
-  // browser:true — what Chrome itself reported (failed loads, deprecations,
-  // violations…) and DevTools Issues. Needs the debugger, so only on request.
-  let chromeLog = null;
-  if (browser) {
-    const read = await withCdp(tabId, (send) => collectBrowserLog(send, (fn) => subscribeCdpEvents(tabId, fn), { clear }));
-    chromeLog = {
-      messages: pick(read.messages),
-      issues: re ? read.issues.filter((i) => re.test(`${i.code} ${i.type || ''} ${i.url || ''}`)) : read.issues,
-    };
-  }
-  if (clear) consoleByTab.set(tabId, []);
+  // Chrome keeps the current document's console calls and uncaught exceptions
+  // and replays them to the debugger; browser:true adds what Chrome itself
+  // reported (failed loads, deprecations, violations…) and DevTools Issues.
+  const read = await withCdp(tabId, async (send) => {
+    const subscribe = (fn) => subscribeCdpEvents(tabId, fn);
+    const page = await collectPageConsole(send, subscribe, { clear, levels: want });
+    return { page, chrome: browser ? await collectBrowserLog(send, subscribe, { clear }) : null };
+  });
+  const msgs = pick(read.page);
+  const total = read.page.length;
+  const chromeLog = read.chrome && {
+    messages: pick(read.chrome.messages),
+    issues: re ? read.chrome.issues.filter((i) => re.test(`${i.code} ${i.type || ''} ${i.url || ''}`)) : read.chrome.issues,
+  };
   return { success: true, messages: msgs, ...(msgs.length !== total ? { total } : {}), ...(chromeLog ? { browser: chromeLog } : {}) };
 }
 
