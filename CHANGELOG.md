@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.1
+
+### Fixed
+- `browser_evaluate` whose script opened a dialog (`confirm()` …) hung until its timeout. It now returns at once with `dialog: { type, message }`, and script calls made while a dialog is open fail with `DIALOG_OPEN` instead of running after it closes.
+
 ## 2.8.0
 
 ### Fixed

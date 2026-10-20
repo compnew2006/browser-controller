@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.8.0-blue?style=flat-square" alt="v2.8.0" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.8.1-blue?style=flat-square" alt="v2.8.1" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -929,7 +929,7 @@ browser_evaluate { tabId: 15, expression: "const r = await fetch('/api/items'); 
 Accepts or dismisses the native `alert` / `confirm` / `prompt` open in a tab. A dialog freezes the page's JavaScript thread, so this tool goes straight to CDP and skips the per-tab queue — it works on a frozen page, and unblocks every other tool on that tab.
 
 - `tabId`, `action` (`"accept"` | `"dismiss"`), `promptText` (the text to enter for a `prompt()`)
-- The tab's debugger session notices a dialog as it opens. The click, key press or other action that opened it returns at once with `dialog: { type, message }`; while it is open, tools that need the page fail fast with `DIALOG_OPEN` and name it.
+- The tab's debugger session notices a dialog as it opens. The click, key press or script (`browser_evaluate`) that opened it returns at once with `dialog: { type, message }`; while it is open, tools that need the page or its JavaScript fail fast with `DIALOG_OPEN` and name it.
 - With no dialog open the answer is `NO_DIALOG`, and nothing is prepared in the page: a later `confirm()` is never answered on its own. A dialog that opened before the agent first acted on the tab (no debugger session yet) cannot be answered; reload the tab with `browser_navigate`.
 
 #### `browser_run_action`

@@ -47,6 +47,13 @@ export function openDialog(tabId) {
   return openDialogs.get(tabId) || null;
 }
 
+/** The error a call gets while a dialog blocks the tab's page. */
+export function dialogOpenError(tabId, dialog) {
+  const err = new Error(`DIALOG_OPEN: a ${dialog.type} dialog is open in tab ${tabId} ("${dialog.message}"). Answer it with browser_handle_dialog.`);
+  err.code = 'DIALOG_OPEN';
+  return err;
+}
+
 /** Forget the tab's dialog once it was answered (the close event may lag). */
 export function clearDialog(tabId) {
   if (openDialogs.delete(tabId)) armIdle(tabId);
@@ -157,13 +164,16 @@ export async function ensureCdp(tabId) {
   armIdle(tabId);
   return (method, params = {}) => {
     if (method === 'Input.dispatchMouseEvent' && Number.isFinite(params.x)) lastMouse.set(tabId, { x: params.x, y: params.y });
+    // Page JavaScript cannot run while a dialog is open: say so instead of queuing it.
+    const dialog = openDialogs.get(tabId);
+    if (dialog && method.startsWith('Runtime.')) return Promise.reject(dialogOpenError(tabId, dialog));
     const sent = chrome.debugger.sendCommand({ tabId }, method, params);
-    return method.startsWith('Input.') ? untilDialog(tabId, sent) : sent;
+    return method.startsWith('Input.') || method.startsWith('Runtime.') ? untilDialog(tabId, sent) : sent;
   };
 }
 
 /**
- * An input event that opens a dialog is only acknowledged once the dialog
+ * Input or script that opens a dialog is only answered once the dialog
  * closes: resolve it as soon as a dialog is open instead of hanging the tool.
  */
 function untilDialog(tabId, sent) {

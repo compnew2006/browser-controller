@@ -4,7 +4,7 @@
  */
 import { fallbackByTab, wedgedTabs, tabLocks, tabControl, persistSessionState, gifRecordings, replacedTabs } from './state.js';
 import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from './page-dom.js';
-import { openDialog } from './cdp-session.js';
+import { openDialog, dialogOpenError } from './cdp-session.js';
 
 /**
  * Resolve a tab by id, throwing a clear, actionable error if it's gone.
@@ -147,11 +147,7 @@ export async function safeExec(tabId, func, args = [], opts = {}) {
   // A dialog blocks the page's main thread: say so at once, don't wait it out
   // and mark the tab frozen.
   const dialog = openDialog(tabId);
-  if (dialog) {
-    const err = new Error(`DIALOG_OPEN: a ${dialog.type} dialog is open in tab ${tabId} ("${dialog.message}"). Answer it with browser_handle_dialog.`);
-    err.code = 'DIALOG_OPEN';
-    throw err;
-  }
+  if (dialog) throw dialogOpenError(tabId, dialog);
   const sanitized = args.map((a) => (a === undefined ? null : a));
   await assertResponsive(tabId);
   // An in-flight executeScript can't be aborted: without a timer a frozen page
