@@ -280,7 +280,34 @@ function wsSubprotocols() {
  */
 let lastWasHandshakeClose = false;
 
+/**
+ * Is anything listening on the daemon port? A WebSocket to a closed port makes
+ * Chrome log "WebSocket connection … failed" as an error of the extension on
+ * every retry (chrome://extensions → Errors fills up while no agent runs); a
+ * failed fetch is silent. Any HTTP answer, even 401/403, means it is up.
+ */
+async function daemonListening() {
+  try {
+    await fetch(`http://127.0.0.1:${wsPort}/status`, { cache: 'no-store' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let probing = false;
+
 export async function connect() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  if (probing) return;
+  probing = true;
+  let up;
+  try { up = await daemonListening(); } finally { probing = false; }
+  if (!up) {
+    lastError = `Daemon not running on port ${wsPort}`;
+    scheduleReconnect();
+    return;
+  }
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
   // If the last attempt died mid-handshake, the token is likely stale/empty —

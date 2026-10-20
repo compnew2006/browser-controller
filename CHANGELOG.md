@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0 (in progress)
+
+### Removed
+- `browser_tools` and progressive mode (`BROWSER_CONTROLLER_PROGRESSIVE`): every tool is listed directly; Claude Code already loads MCP tool schemas on demand.
+- `browser_gif`, `browser_webmcp_list`, `browser_webmcp_call`, `browser_shortcuts`, `browser_run_action` (use `browser_evaluate`).
+
+### Fixed
+- While no daemon was running, the extension retried every ~30 s and each try added "WebSocket connection to 'ws://127.0.0.1:7225/' failed … ERR_CONNECTION_REFUSED" to chrome://extensions → Errors (6 in the first 45 s, then one every 30 s). It now checks with a silent request first and only opens the WebSocket when the daemon answers.
+
 ## 2.8.1
 
 ### Fixed

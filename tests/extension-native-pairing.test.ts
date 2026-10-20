@@ -55,6 +55,8 @@ beforeEach(() => {
   };
   (globalThis as any).WebSocket = FakeWebSocket;
   (globalThis as any).fetch = async (url: string, init?: { headers?: Record<string, string> }) => {
+    // connect() first checks that the daemon listens (any HTTP answer will do).
+    if (url.endsWith('/status')) return { ok: false, status: 403, json: async () => ({}) };
     const enrollment = init?.headers?.['X-BC-Enrollment'];
     pairCalls.push({ url, enrollment });
     const r = daemon(enrollment);
