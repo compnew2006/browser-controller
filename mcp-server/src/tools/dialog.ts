@@ -6,16 +6,15 @@ export const dialogTool: ToolDefinition = {
   name: "browser_handle_dialog",
   summary: "Handle or dismiss browser dialogs (alert/confirm/prompt)",
   description:
-    "Handle JavaScript dialogs (alert, confirm, prompt). Dialogs block page interaction until handled. Answers the dialog that is open on the tab; NO_DIALOG when none is. A dialog that opened before the tab had a debugger session cannot be reached, so keep a session on the tab by using browser_* tools on it.",
+    "Accept or dismiss a JavaScript dialog (alert, confirm, prompt), even while it freezes the page. Needs a debugger session on the tab: a dialog that opened before one existed cannot be reached, so use any browser_* tool on the tab first to keep a session. NO_DIALOG when none is open.",
   inputSchema: z.object({
     tabId: requireTabId(),
     action: z
-      .enum(["accept", "dismiss"])
-      .describe("Accept or dismiss the dialog"),
+      .enum(["accept", "dismiss"]),
     promptText: z
       .string()
       .optional()
-      .describe("Text to enter for prompt() dialogs"),
+      .describe("Text for prompt()"),
   }),
   timeoutMs: 5_000,
   handler: forwardHandler("browser_handle_dialog"),

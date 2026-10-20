@@ -17,7 +17,7 @@ let tabUrl = 'https://example.test/';
 
 const { emulationPlan, NETWORK_PRESETS } = await import('../extension/lib/emulation.js');
 const { handleEmulate } = await import('../extension/handlers/emulate.js');
-const { detachCdp, hasCdp, IDLE_MS } = await import('../extension/lib/cdp-session.js');
+const { detachCdp, hasCdp, pinCdp, IDLE_MS } = await import('../extension/lib/cdp-session.js');
 
 const emulationCalls = () => sent.filter(([m]) => /^(Network\.emulate|Emulation\.set(CPU|Geo|EmulatedMedia|UserAgent)|Emulation\.clearGeo)/.test(m));
 
@@ -83,6 +83,19 @@ describe('browser_emulate', () => {
     expect(res).toMatchObject({ success: true, active: {} });
     expect(hasCdp(4)).toBe(false);
     expect(sent.some(([m]) => m === 'detach')).toBe(true);
+  });
+
+  it('reset keeps a session a body capture or mock is using: each override is cleared instead', async () => {
+    await handleEmulate({ tabId: 4, cpuThrottling: 4, colorScheme: 'dark' });
+    pinCdp(4, 'network-bodies');
+    sent.length = 0;
+    expect(await handleEmulate({ tabId: 4, reset: true })).toEqual({ success: true, active: {} });
+    expect(hasCdp(4)).toBe(true);
+    expect(sent.some(([m]) => m === 'detach')).toBe(false);
+    expect(emulationCalls()).toEqual([
+      ['Emulation.setCPUThrottlingRate', { rate: 1 }],
+      ['Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: '' }, { name: 'prefers-reduced-motion', value: '' }] }],
+    ]);
   });
 
   it('once nothing is active the session goes back to the normal idle detach', async () => {

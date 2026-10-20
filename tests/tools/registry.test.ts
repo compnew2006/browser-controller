@@ -21,7 +21,7 @@ describe("Tool Registry", () => {
     'browser_drag', 'browser_fill_form', 'browser_intercept',
     'browser_observe', 'browser_act', 'browser_batch', 'browser_resize_window', 'browser_emulate', 'browser_gif',
     'browser_list_browsers', 'browser_select_browser', 'browser_shortcuts',
-    'browser_webmcp_list', 'browser_webmcp_call',
+    'browser_webmcp_list', 'browser_webmcp_call', 'browser_inspect_element',
   ];
   // Tools that run entirely in the MCP process (they call other tools' handlers)
   // and therefore never send a wire name of their own.
@@ -113,6 +113,15 @@ describe("Tool Registry", () => {
         ).toBe(tool.name);
       });
     }
+  });
+
+  // Tool definitions are re-sent every turn: no ±2^53 bounds from unbounded
+  // .int() (tabId alone cost ~850 tokens across 34 tools), validation kept.
+  it('tabId stays integer-only without publishing safe-integer bounds', () => {
+    const click = toolMap.get('browser_click')!;
+    expect(click.inputSchema.safeParse({ tabId: 1.5, selector: 'a' }).success).toBe(false);
+    expect(click.inputSchema.safeParse({ tabId: 15, selector: 'a' }).success).toBe(true);
+    expect(JSON.stringify(toolManifest.map((t) => t.inputSchema))).not.toContain('9007199254740991');
   });
 
   // --- Idempotency classification (audit M2) --------------------------------

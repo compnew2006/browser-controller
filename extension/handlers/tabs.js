@@ -8,17 +8,18 @@ import {
   tabLocks,
   tabControl,
   wedgedTabs,
-  consoleByTab,
   networkByTab,
+  bodyCaptureByTab,
   getTabBuffer,
   persistSessionState,
 } from "../lib/state.js";
 import { hideLockShield } from "../lib/overlay.js";
 import { broadcastStatus } from "../lib/connection.js";
 import { lockTabUi, releaseTabUi } from "../lib/lock-ops.js";
-import { withCdp, subscribeCdpEvents } from '../lib/cdp-session.js';
-import { collectBrowserLog } from '../lib/browser-log.js';
+import { withCdp, subscribeCdpEvents, pinCdp, unpinCdp, isCdpPinned } from '../lib/cdp-session.js';
+import { collectBrowserLog, collectPageConsole } from '../lib/browser-log.js';
 import { listView, typeMatcher } from '../lib/network-capture.js';
+import { createBodyCapture, MAX_BODIES } from '../lib/response-bodies.js';
 import { tabLockedMessage } from '../lib/tab-concurrency.js';
 
 export { handleScreenshot, imageSize, planScale, fitToBudget, MAX_IMAGE_EDGE, SCREENSHOT_MAX_BASE64_CHARS, FULL_PAGE_MAX_HEIGHT } from './screenshot.js';
@@ -40,33 +41,95 @@ export async function handleConsole(params) {
     if (Number.isInteger(limit) && limit > 0 && out.length > limit) out = out.slice(-limit);
     return out;
   };
-  const buf = getTabBuffer(consoleByTab, tabId);
-  const msgs = pick([...buf]);
-  const total = buf.length;
-  // browser:true — what Chrome itself reported (failed loads, deprecations,
-  // violations…) and DevTools Issues. Needs the debugger, so only on request.
-  let chromeLog = null;
-  if (browser) {
-    const read = await withCdp(tabId, (send) => collectBrowserLog(send, (fn) => subscribeCdpEvents(tabId, fn), { clear }));
-    chromeLog = {
-      messages: pick(read.messages),
-      issues: re ? read.issues.filter((i) => re.test(`${i.code} ${i.type || ''} ${i.url || ''}`)) : read.issues,
-    };
-  }
-  if (clear) consoleByTab.set(tabId, []);
+  // Chrome keeps the current document's console calls and uncaught exceptions
+  // and replays them to the debugger; browser:true adds what Chrome itself
+  // reported (failed loads, deprecations, violations…) and DevTools Issues.
+  const read = await withCdp(tabId, async (send) => {
+    const subscribe = (fn) => subscribeCdpEvents(tabId, fn);
+    const page = await collectPageConsole(send, subscribe, { clear, levels: want });
+    return { page, chrome: browser ? await collectBrowserLog(send, subscribe, { clear }) : null };
+  });
+  const msgs = pick(read.page);
+  const total = read.page.length;
+  const chromeLog = read.chrome && {
+    messages: pick(read.chrome.messages),
+    issues: re ? read.chrome.issues.filter((i) => re.test(`${i.code} ${i.type || ''} ${i.url || ''}`)) : read.chrome.issues,
+  };
   return { success: true, messages: msgs, ...(msgs.length !== total ? { total } : {}), ...(chromeLog ? { browser: chromeLog } : {}) };
 }
 
+const BODY_PIN = 'network-bodies';
+
+/** Is the tab's body capture still running? Its session detaching (banner closed) ends it. */
+function bodyCaptureActive(tabId) {
+  const cap = bodyCaptureByTab.get(tabId);
+  if (!cap?.unsubscribe) return false;
+  if (isCdpPinned(tabId, BODY_PIN)) return true;
+  cap.unsubscribe();
+  cap.unsubscribe = null;
+  return false;
+}
+
+/**
+ * Network domain on the tab's debugger session, bodies read as responses
+ * finish, session pinned so it is not idle-detached. Network.disable is never
+ * sent on stop: browser_emulate's throttling shares the domain.
+ */
+async function startBodyCapture(tabId) {
+  if (bodyCaptureActive(tabId)) return;
+  await withCdp(tabId, async (send) => {
+    let cap = bodyCaptureByTab.get(tabId);
+    if (!cap) {
+      cap = { bodies: createBodyCapture({ getBody: (requestId) => send('Network.getResponseBody', { requestId }) }), unsubscribe: null };
+      bodyCaptureByTab.set(tabId, cap);
+    }
+    cap.unsubscribe = subscribeCdpEvents(tabId, (method, p) => {
+      if (method.startsWith('Network.')) cap.bodies.onEvent(method, p);
+    });
+    try {
+      await send('Network.enable', {});
+    } catch (err) {
+      cap.unsubscribe();
+      cap.unsubscribe = null;
+      throw err;
+    }
+    pinCdp(tabId, BODY_PIN);
+  });
+}
+
+function stopBodyCapture(tabId) {
+  const cap = bodyCaptureByTab.get(tabId);
+  if (cap?.unsubscribe) {
+    cap.unsubscribe();
+    cap.unsubscribe = null;
+  }
+  unpinCdp(tabId, BODY_PIN);
+}
+
+function responseBodyOf(tabId, entry) {
+  const cap = bodyCaptureByTab.get(tabId);
+  const body = cap?.bodies.find(entry);
+  if (body) return body;
+  if (!cap) return { unavailable: 'Body capture is off: call browser_network { tabId, captureBodies: true }, then make the request again.' };
+  return { unavailable: `Not captured: only document, xhr and fetch responses that start while capture is on are kept (the newest ${MAX_BODIES}).` };
+}
+
 export async function handleNetwork(params) {
-  const { tabId, clear = false, limit, filter, urlPattern, failed, type, requestId, fullUrls = false } = params;
+  const { tabId, clear = false, limit, filter, urlPattern, failed, type, requestId, fullUrls = false, captureBodies } = params;
   await resolveTab(tabId); // same as handleConsole — no empty fake successes
+  if (captureBodies === true) await startBodyCapture(tabId);
+  else if (captureBodies === false) stopBodyCapture(tabId);
+  const cap = bodyCaptureByTab.get(tabId);
+  const capture = cap || captureBodies !== undefined
+    ? { bodyCapture: { active: bodyCaptureActive(tabId), bodies: cap?.bodies.size ?? 0 } }
+    : {};
   if (requestId != null) {
-    // One request in full: complete URL, duration, redacted request/response headers.
+    // One request in full: complete URL, duration, redacted request/response headers (+ body when captured).
     const hit = [...getTabBuffer(networkByTab, tabId)].reverse().find((r) => r.id === String(requestId));
     if (!hit) {
       return { success: false, error: `No captured request "${requestId}" in tab ${tabId} — list requests first (only the latest ones are kept).` };
     }
-    return { success: true, request: { ...hit } };
+    return { success: true, request: { ...hit, ...(hit.error ? {} : { responseBody: responseBodyOf(tabId, hit) }) }, ...capture };
   }
   const ofType = typeMatcher(type); // validates before anything is read
   let reqs = [...getTabBuffer(networkByTab, tabId)];
@@ -89,8 +152,13 @@ export async function handleNetwork(params) {
   if (limit && Number.isInteger(limit) && limit > 0) {
     reqs = reqs.slice(-limit); // most recent N
   }
-  if (clear) networkByTab.set(tabId, []);
-  return { success: true, requests: reqs.map((r) => listView(r, { fullUrls })) };
+  const hasBody = cap?.bodies.size ? (r) => cap.bodies.find(r)?.text !== undefined : () => false;
+  const requests = reqs.map((r) => ({ ...listView(r, { fullUrls }), ...(hasBody(r) ? { hasBody: true } : {}) }));
+  if (clear) {
+    networkByTab.set(tabId, []);
+    cap?.bodies.clear();
+  }
+  return { success: true, requests, ...capture };
 }
 
 /**

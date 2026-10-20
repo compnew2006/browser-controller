@@ -4,18 +4,21 @@
  * Rules belong to a scope: the tab a set-rules call targets (`tabs:<id>`), a
  * rule set whose every rule names its own tabIds (`rules:<ids>`), or every tab
  * of the browser when the caller passes global:true. A rule Chrome can express
- * is enforced with a declarativeNetRequest SESSION rule; a rule it cannot
- * express (mock, log) is recorded in the capture ledger and reported under
- * `unsupported`. Without DNR (tests, denied permission) everything reports
- * enforcement:'capture-only'.
+ * is enforced with a declarativeNetRequest SESSION rule. DNR cannot fake a
+ * response, so mock rules are answered through the tab's debugger instead
+ * (Fetch domain), on the tabs they target only. log rules are recorded in the
+ * capture ledger and reported under `unsupported`. A rule nothing applies
+ * (no DNR in tests, denied permission, no debugger) is reported the same way.
  *
  * Stored rules are mirrored to chrome.storage.session, so a service-worker
  * restart restores them and re-syncs the DNR rules Chrome kept: memory and
- * Chrome never disagree.
+ * Chrome never disagree. Mocks are not re-attached on restart (that would open
+ * the debugger banner unasked): they report enforced:false until the next set-rules.
  */
 import { resolveTab } from "../lib/page-exec.js";
 import { getTabBuffer, networkByTab, PER_TAB_CAP } from "../lib/state.js";
-import { validateRuleSet, matchRule, scopeKey } from "../lib/intercept.js";
+import { validateRuleSet, matchRule, scopeKey, mockFulfillParams, cdpResourceTypes } from "../lib/intercept.js";
+import { withCdp, subscribeCdpEvents, pinCdp, unpinCdp, isCdpPinned } from "../lib/cdp-session.js";
 import { resolveTypes } from "../lib/resource-types.js";
 
 /** scopeKey -> rules[] */
@@ -31,7 +34,6 @@ const STORAGE_KEY = "bcInterceptRules";
 const ENFORCEABLE = new Set(["block", "redirect", "header"]);
 const RECORDED_ONLY = {
   log: "recorded only: log rules capture matches and change no traffic",
-  mock: "recorded only: Chrome cannot fake a response body, so mock rules never answer a request",
 };
 
 /** Resolves once stored rules are restored and synced with Chrome (initIntercept). */
@@ -47,7 +49,7 @@ const DNR_ID_MAX = 5999;
  * Result of the last sync: which stored rules Chrome actually enforces.
  * installed: Map<"scope|ruleId", dnrId>; unsupported: [{id, scope, action, reason}].
  */
-let lastSync = { enforcement: "capture-only", installed: new Map(), unsupported: [], reason: "not synced" };
+let lastSync = { installed: new Map(), unsupported: [], reason: "not synced" };
 
 /** Tab ids a stored scope owns (null = not tied to one tab). */
 function scopeTabs(scope) {
@@ -73,10 +75,24 @@ function scopedRulesForTab(tabId) {
   return out;
 }
 
-/** What Chrome enforces right now (capture-only without DNR). */
+/**
+ * What Chrome applies right now, counted rule by rule: DNR rules while
+ * installed, mock rules while their tabs' Fetch interception is live (a closed
+ * banner stops it). log rules change no traffic, so they never count as applied.
+ */
 function currentEnforcement() {
-  if (!dnrAvailable()) return "capture-only";
-  return rulesByScope.size === 0 ? "full" : lastSync.enforcement;
+  let total = 0;
+  let enforced = 0;
+  for (const [scope, rules] of rulesByScope) {
+    for (const rule of rules) {
+      if (rule.enabled === false) continue;
+      total++;
+      if (isEnforced(scope, rule)) enforced++;
+    }
+  }
+  if (total === 0) return dnrAvailable() ? "full" : "capture-only";
+  if (enforced === total) return "full";
+  return enforced === 0 ? "capture-only" : "partial";
 }
 
 function dnrAvailable() {
@@ -123,7 +139,7 @@ function planDnr() {
   let next = DNR_ID_BASE;
   for (const [scope, rules] of rulesByScope) {
     for (const r of rules) {
-      if (r.enabled === false) continue;
+      if (r.enabled === false || r.action === "mock") continue; // mocks: syncMocks
       if (!ENFORCEABLE.has(r.action)) {
         unsupported.push({ id: r.id, scope, action: r.action, reason: RECORDED_ONLY[r.action] });
         continue;
@@ -154,7 +170,7 @@ function planDnr() {
 async function syncDnr() {
   const { installed, unsupported, addRules } = planDnr();
   if (!dnrAvailable()) {
-    lastSync = { enforcement: "capture-only", installed: new Map(), unsupported, reason: "no-dnr" };
+    lastSync = { installed: new Map(), unsupported, reason: "no-dnr" };
     return lastSync;
   }
   const dnr = globalThis.chrome.declarativeNetRequest;
@@ -166,12 +182,102 @@ async function syncDnr() {
     throw new Error(`DNR_REJECTED: Chrome refused the rules (${err?.message || err}); nothing was changed.`, { cause: err });
   }
   lastSync = {
-    enforcement: unsupported.length ? "partial" : "full",
     installed,
     unsupported,
     reason: unsupported.length ? "some rules are recorded only (see unsupported)" : undefined,
   };
   return lastSync;
+}
+
+const MOCK_PIN = "intercept-mock";
+/** tabId -> { off, send }: tabs whose requests pause on the debugger's Fetch domain for mock rules. */
+const mockTabs = new Map();
+
+function mockActive(tabId) {
+  return mockTabs.has(tabId) && isCdpPinned(tabId, MOCK_PIN);
+}
+
+/** Fulfill a paused request from the first matching mock rule; let anything else through. */
+async function answerPaused(tabId, send, paused) {
+  const { url } = paused.request;
+  const types = cdpResourceTypes(paused.resourceType);
+  // A global mock is reported unsupported, so it never answers (not even on a tab another mock attached).
+  const hit = scopedRulesForTab(tabId).find(({ scope, rule }) =>
+    rule.action === "mock" && ruleTabs(scope, rule)?.includes(tabId) && types.some((type) => matchRule(rule, { url, type, tabId })));
+  if (hit) {
+    try {
+      await send("Fetch.fulfillRequest", { requestId: paused.requestId, ...mockFulfillParams(hit.rule, paused.request) });
+      return;
+    } catch { /* the real request goes ahead instead */ }
+  }
+  await send("Fetch.continueRequest", { requestId: paused.requestId }).catch(() => {});
+}
+
+async function startMocks(tabId) {
+  await resolveTab(tabId);
+  await withCdp(tabId, async (send) => {
+    const off = subscribeCdpEvents(tabId, (method, params) => {
+      if (method !== "Fetch.requestPaused") return false;
+      answerPaused(tabId, send, params);
+      return true;
+    });
+    try {
+      // Every request pauses: Chrome cannot filter a CORS preflight by type
+      // (no 'Preflight' in Fetch patterns), and a typed mock must answer it too.
+      await send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+    } catch (err) {
+      off();
+      throw err;
+    }
+    mockTabs.set(tabId, { off, send });
+    pinCdp(tabId, MOCK_PIN);
+  });
+}
+
+function stopMocks(tabId) {
+  const m = mockTabs.get(tabId);
+  if (!m) return;
+  mockTabs.delete(tabId);
+  m.off();
+  if (isCdpPinned(tabId, MOCK_PIN)) m.send("Fetch.disable").catch(() => {});
+  unpinCdp(tabId, MOCK_PIN);
+}
+
+/**
+ * Pause requests on exactly the tabs enabled mock rules target. `touched`
+ * tabs (the scope just set) are (re)started; a tab whose session the user
+ * closed is not re-attached behind their back by another tab's change.
+ * Returns the mock rules that cannot be served, with the reason.
+ */
+async function syncMocks(touched = new Set()) {
+  const wanted = new Map(); // tabId -> [{ scope, rule }]
+  const unsupported = [];
+  for (const [scope, rules] of rulesByScope) {
+    for (const rule of rules) {
+      if (rule.action !== "mock" || rule.enabled === false) continue;
+      const tabs = ruleTabs(scope, rule);
+      if (!tabs) {
+        unsupported.push({ id: rule.id, scope, action: "mock", reason: "mock rules need a tabId: they are answered through that tab's debugger" });
+        continue;
+      }
+      for (const t of tabs) {
+        if (!wanted.has(t)) wanted.set(t, []);
+        wanted.get(t).push({ scope, rule });
+      }
+    }
+  }
+  for (const tabId of [...mockTabs.keys()]) if (!wanted.has(tabId)) stopMocks(tabId);
+  for (const [tabId, owners] of wanted) {
+    if (mockActive(tabId) || !touched.has(tabId)) continue;
+    stopMocks(tabId); // drop a stale (detached) entry before attaching again
+    try {
+      await startMocks(tabId);
+    } catch (err) {
+      const reason = `debugger unavailable on tab ${tabId}: ${String(err?.message || err).slice(0, 160)}`;
+      for (const { scope, rule } of owners) unsupported.push({ id: rule.id, scope, action: "mock", reason });
+    }
+  }
+  return unsupported;
 }
 
 /**
@@ -196,22 +302,29 @@ async function rejectedRegexes(rules) {
 }
 
 /**
- * Swap in a new rule set, sync Chrome and persist it. If Chrome refuses the
- * set, the previous set is put back and the error rethrown.
+ * Swap in a new rule set, sync Chrome and persist it, then (re)start the mocks
+ * of the `touched` tabs. If Chrome refuses the DNR set, the previous set is put
+ * back and the error rethrown.
  */
-async function commitRules(next) {
+async function commitRules(next, touched) {
   const previous = new Map(rulesByScope);
   rulesByScope.clear();
   for (const [scope, rules] of next) rulesByScope.set(scope, rules);
+  let sync;
   try {
-    const sync = await syncDnr();
-    persistRules();
-    return sync;
+    sync = await syncDnr();
   } catch (err) {
     rulesByScope.clear();
     for (const [scope, rules] of previous) rulesByScope.set(scope, rules);
     throw err;
   }
+  persistRules();
+  const mockUnsupported = await syncMocks(touched);
+  if (mockUnsupported.length) {
+    sync.unsupported.push(...mockUnsupported);
+    sync.reason ??= "some rules are recorded only (see unsupported)";
+  }
+  return sync;
 }
 
 function persistRules() {
@@ -263,9 +376,14 @@ function serialized(fn) {
   return run;
 }
 
-/** Is this stored rule actually installed in Chrome? */
-function isEnforced(scope, ruleId) {
-  return lastSync.installed.has(`${scope}|${ruleId}`);
+/** Is this stored rule actually applied by Chrome right now? */
+function isEnforced(scope, rule) {
+  if (rule.enabled === false) return false;
+  if (rule.action === "mock") {
+    const tabs = ruleTabs(scope, rule);
+    return !!tabs && tabs.every(mockActive);
+  }
+  return lastSync.installed.has(`${scope}|${rule.id}`);
 }
 
 /**
@@ -285,7 +403,7 @@ export function enrichCapture(tabId, entry) {
         applied: matches.map((m) => ({
           ruleId: m.rule.id,
           // "enforced" only when Chrome really has the rule installed.
-          outcome: isEnforced(m.scope, m.rule.id) ? "enforced" : "ledger-only",
+          outcome: isEnforced(m.scope, m.rule) ? "enforced" : "ledger-only",
         })),
       },
     };
@@ -416,15 +534,16 @@ async function setRules({ tabId, rules, global }) {
   const next = new Map(rulesByScope);
   if (incoming.length) next.set(scope, incoming);
   else next.delete(scope);
-  const sync = await commitRules(next);
+  const touched = new Set(incoming.flatMap((r) => (r.action === "mock" ? ruleTabs(scope, r) ?? [] : [])));
+  const sync = await commitRules(next, touched);
   const unsupported = sync.unsupported.filter((u) => u.scope === scope);
   return {
     success: true,
-    enforcement: sync.enforcement,
+    enforcement: currentEnforcement(),
     ...(sync.reason ? { reason: sync.reason } : {}),
     scope,
     ruleCount: incoming.length,
-    enforced: incoming.filter((r) => isEnforced(scope, r.id)).length,
+    enforced: incoming.filter((r) => isEnforced(scope, r)).length,
     ...(unsupported.length ? { unsupported } : {}),
   };
 }
@@ -462,7 +581,7 @@ export async function handleIntercept(params) {
       return {
         success: true,
         enforcement: currentEnforcement(),
-        rules: scoped.map(({ scope, rule }) => ({ ...rule, scope, enforced: isEnforced(scope, rule.id) })),
+        rules: scoped.map(({ scope, rule }) => ({ ...rule, scope, enforced: isEnforced(scope, rule) })),
       };
     }
     case "clear-rules":

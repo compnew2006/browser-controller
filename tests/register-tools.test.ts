@@ -142,7 +142,7 @@ describe('registerTools — progressive mode', () => {
     expect(host.calls).toHaveLength(0);
   });
 
-  it('browser_tools list returns a task→tool preamble, per-tool guidance and activation state', async () => {
+  it('browser_tools list is a task→tool preamble + summaries and activation state; guidance comes with search/details', async () => {
     const { client } = await setup(false);
     await client.callTool({ name: 'browser_tools', arguments: { action: 'details', tool: 'browser_hover' } });
     const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'list' } });
@@ -150,14 +150,17 @@ describe('registerTools — progressive mode', () => {
     // preamble is the first-read orientation string for a first-time agent
     expect(typeof data.preamble).toBe('string');
     expect(data.preamble.length).toBeGreaterThan(200);
-    // every tool entry carries a non-empty guidance sentence
-    expect(data.tools.every((t: { guidance?: string }) => typeof t.guidance === 'string' && t.guidance.length > 0)).toBe(true);
+    // the list stays in the agent's context: no per-tool guidance there
+    expect(data.tools.every((t: { guidance?: string }) => t.guidance === undefined)).toBe(true);
     // activation state follows the details call
     expect(data.tools.find((t: { name: string }) => t.name === 'browser_hover').active).toBe(true);
     expect(data.tools.find((t: { name: string }) => t.name === 'browser_click').active).toBe(false);
-    // the high-value evaluate↔run_action distinction is surfaced
-    const evalG = data.tools.find((t: { name: string }) => t.name === 'browser_evaluate');
-    const runG = data.tools.find((t: { name: string }) => t.name === 'browser_run_action');
+    // the high-value evaluate↔run_action distinction is surfaced once the agent looks for them
+    const found = await client.callTool({ name: 'browser_tools', arguments: { action: 'search', query: 'evaluate run_action' } });
+    const { matches } = JSON.parse((found.content as Array<{ text: string }>)[0].text);
+    expect(matches.every((t: { guidance?: string }) => typeof t.guidance === 'string' && t.guidance.length > 0)).toBe(true);
+    const evalG = matches.find((t: { name: string }) => t.name === 'browser_evaluate');
+    const runG = matches.find((t: { name: string }) => t.name === 'browser_run_action');
     expect(/CSP|null/i.test(evalG.guidance)).toBe(true);
     expect(/bypasses CSP|CSP/i.test(runG.guidance)).toBe(true);
     // browser_evaluate runs over CDP by default (mcp-server/src/tools/evaluate.ts):

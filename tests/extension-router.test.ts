@@ -259,7 +259,7 @@ describe("extension router (handleMessage)", () => {
   it("routes a successful tool through the mutex and replies success", async () => {
     await handleMessage({
       id: "k1",
-      tool: "browser_console",
+      tool: "browser_network",
       params: { tabId: 3 },
       sessionId: "s1",
     });
@@ -267,14 +267,14 @@ describe("extension router (handleMessage)", () => {
     const frame = lastFrame();
     expect(frame.id).toBe("k1");
     expect(frame.success).toBe(true);
-    expect((frame.result as { messages: unknown[] }).messages).toEqual([]);
+    expect((frame.result as { requests: unknown[] }).requests).toEqual([]);
   });
 
   it("honors tab-lock ownership: a non-owner call is refused at once with TAB_LOCKED (end-to-end)", async () => {
     tabLocks.lock(3, "ownerA");
     await handleMessage({
       id: "k2",
-      tool: "browser_console",
+      tool: "browser_network",
       params: { tabId: 3 },
       sessionId: "sessionB",
     });
@@ -285,7 +285,7 @@ describe("extension router (handleMessage)", () => {
     // The refused call never ran, so this session never became the tab's controller.
     expect(tabControl.controller(3)?.sessionId).not.toBe("sessionB");
     tabLocks.unlock(3, "ownerA");
-    await handleMessage({ id: "k3", tool: "browser_console", params: { tabId: 3 }, sessionId: "sessionB" });
+    await handleMessage({ id: "k3", tool: "browser_network", params: { tabId: 3 }, sessionId: "sessionB" });
     await flush();
     expect(sent.find((f) => f.id === "k3")).toMatchObject({ success: true });
   });

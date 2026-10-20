@@ -4,9 +4,10 @@
  * modules; this one owns ALL mutable cross-handler state so every other
  * module stays stateless-in-itself).
  *
- *   - console/network buffers are per-tab (capped PER_TAB_CAP). These remain
- *     in-memory debug aids: Chrome can recycle the worker at any moment, and
- *     the agent can always re-read after the page emits new messages.
+ *   - network buffers are per-tab (capped PER_TAB_CAP). They remain in-memory
+ *     debug aids: Chrome can recycle the worker at any moment, and the agent
+ *     can always re-read after the page makes new requests. (Console messages
+ *     are not buffered here: Chrome keeps them, see lib/browser-log.js.)
  *   - tabLocks + fallbackByTab ARE durably persisted to chrome.storage.session
  *     (MV3 lifetime): a recycle used to silently drop lock ownership (an
  *     agent's exclusivity guarantee) and smart-selector fallbacks. session
@@ -22,10 +23,14 @@ export const PER_TAB_CAP = 200;
 // payloads — JSON.stringify(document.body.innerHTML) came back in full.
 export const MAX_RESULT_CHARS = 100_000;
 
-/** @type {Map<number, Array<{level:string,text:number,timestamp:number,url:string}>>} */
-export const consoleByTab = new Map();
 /** @type {Map<number, Array<object>>} */
 export const networkByTab = new Map();
+/**
+ * browser_network captureBodies: tabId -> { bodies (lib/response-bodies.js),
+ * unsubscribe (CDP events; null once stopped) }. In memory, like the buffers.
+ * @type {Map<number, {bodies: object, unsubscribe: (() => void) | null}>}
+ */
+export const bodyCaptureByTab = new Map();
 /**
  * Smart-selector fallbacks (plan tasks 2–4). Map<tabId, Map<ref, fallback>>.
  * Populated at snapshot time; consumed by click/type when a ref no longer
@@ -165,8 +170,9 @@ export function dropDocumentState(tabId) {
 /** Drop one tab's durable state (tab closed). */
 export function dropTabState(tabId) {
   wedgedTabs.delete(tabId);
-  consoleByTab.delete(tabId);
   networkByTab.delete(tabId);
+  bodyCaptureByTab.get(tabId)?.unsubscribe?.();
+  bodyCaptureByTab.delete(tabId);
   fallbackByTab.delete(tabId);
   lastSnapshotFingerprints.delete(tabId);
   lastNativeFingerprints.delete(tabId);

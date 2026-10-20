@@ -191,21 +191,22 @@ describe("resource types and mock honesty", () => {
     expect(rulesByScope.size).toBe(0);
   });
 
-  it("a mock rule with xhr type is recorded only, never reported as enforced", async () => {
+  it("a mock rule with xhr type is never reported as enforced while no debugger serves it", async () => {
     const res = await handleIntercept({
       action: "set-rules", tabId: 15,
       rules: [{ id: "m", match: "https://api\\.x\\.test/", action: "mock", types: ["xhr"], mockStatus: 200, mockBody: "{}" }],
     });
-    expect(res).toMatchObject({ success: true, enforcement: "partial", enforced: 0 });
-    expect(res.unsupported).toEqual([expect.objectContaining({ id: "m", action: "mock", reason: expect.stringMatching(/recorded only/) })]);
+    expect(res).toMatchObject({ success: true, enforcement: "capture-only", enforced: 0 });
+    expect(res.unsupported).toEqual([expect.objectContaining({ id: "m", action: "mock", reason: expect.stringMatching(/debugger unavailable/) })]);
     expect(sessionRules.size).toBe(0);
     const listed = await handleIntercept({ action: "list-rules", tabId: 15 });
-    expect(listed.enforcement).toBe("partial");
+    expect(listed.enforcement).toBe("capture-only");
   });
 
-  it("log rules are recorded only and make the enforcement partial", async () => {
+  it("log rules are recorded only and never count as enforced", async () => {
     const res = await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ id: "l", match: "https://a\\.test/", action: "log" }] });
-    expect(res).toMatchObject({ enforcement: "partial", enforced: 0 });
+    expect(res).toMatchObject({ enforcement: "capture-only", enforced: 0 });
+    expect(res.unsupported).toEqual([expect.objectContaining({ id: "l", reason: expect.stringMatching(/recorded only/) })]);
   });
 
   it("URL matching is case-sensitive, in the ledger as in Chrome", async () => {

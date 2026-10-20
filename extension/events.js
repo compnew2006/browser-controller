@@ -1,16 +1,14 @@
 /**
- * Browser-event wiring (extracted from background.js): content-script console
- * capture, popup messages, webRequest capture, and tab lifecycle listeners.
+ * Browser-event wiring (extracted from background.js): popup messages,
+ * webRequest capture, and tab lifecycle listeners.
  * Registration is a function (not module top-level) so tests can import the
  * handler modules without a `chrome` global.
  */
 import {
-  consoleByTab,
   networkByTab,
   tabLocks,
   tabControl,
   getTabBuffer,
-  pushCapped,
   persistSessionState,
   dropTabState,
   dropDocumentState,
@@ -37,26 +35,6 @@ export function registerEventListeners() {
     // before that, Chrome logs "message channel closed before a response was
     // received". Every branch below responds synchronously (or is fire-and-forget),
     // so we return false (or nothing) — Chrome handles it without the warning.
-    if (msg.type === "console" && sender.tab?.id != null) {
-      const buf = getTabBuffer(consoleByTab, sender.tab.id);
-      const entry = {
-        level: msg.level,
-        text: msg.text,
-        timestamp: Date.now(),
-        url: sender.tab.url,
-      };
-      // Uncaught errors and rejections: kind says which; stack is the top frames (MAIN-world capture).
-      if (msg.kind) entry.kind = String(msg.kind);
-      if (msg.stack) entry.stack = String(msg.stack);
-      pushCapped(buf, entry);
-      return false; // fire-and-forget; no response expected
-    }
-    if (msg.type === "console-reset" && sender.tab?.id != null && sender.frameId === 0) {
-      // content.js in a new top-level document: the old page's console is gone.
-      // Network history stays (it is per request).
-      consoleByTab.delete(sender.tab.id);
-      return false;
-    }
     if (msg.type === "getStatus") {
       // Async: fetch tabs before responding so the popup gets a full snapshot
       // (connection + locks + open tabs) in one message. Returning true signals

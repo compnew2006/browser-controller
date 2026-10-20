@@ -60,7 +60,33 @@ function armIdle(tabId) {
   if (s.busy > 0) return; // a long withCdp() call is still using the session
   if (s.emulation && Object.keys(s.emulation).length) return; // detaching would drop the overrides
   if (openDialogs.has(tabId)) return; // only this session can answer the open dialog
+  if (s.pins?.size) return; // a capture (response bodies…) is running on it
   s.timer = setTimeout(() => { detachCdp(tabId); }, IDLE_MS);
+}
+
+/**
+ * Keep the tab's live session attached for `reason` until unpinned. The pin
+ * lives on the session, so it is gone once the session detaches (banner
+ * closed, tab closed): isCdpPinned() then tells the caller its capture stopped.
+ */
+export function pinCdp(tabId, reason) {
+  const s = sessions.get(tabId);
+  if (!s) return false;
+  (s.pins ||= new Set()).add(reason);
+  clearTimeout(s.timer);
+  return true;
+}
+
+export function unpinCdp(tabId, reason) {
+  const s = sessions.get(tabId);
+  if (!s?.pins?.delete(reason)) return;
+  armIdle(tabId);
+}
+
+/** Pinned for `reason`, or for anything when no reason is given. */
+export function isCdpPinned(tabId, reason) {
+  const pins = sessions.get(tabId)?.pins;
+  return reason === undefined ? !!pins?.size : !!pins?.has(reason);
 }
 
 /** Overrides browser_emulate set on the tab's live session ({} when none or detached). */
@@ -218,7 +244,10 @@ export function hasCdp(tabId) {
 /** tabId -> Set<(method, params) => void> */
 const eventSubscribers = new Map();
 
-/** Receive the tab's CDP events (method, params) until the returned function is called. */
+/**
+ * Receive the tab's CDP events (method, params) until the returned function is
+ * called. A subscriber that answers a Fetch.requestPaused returns true.
+ */
 export function subscribeCdpEvents(tabId, fn) {
   let subs = eventSubscribers.get(tabId);
   if (!subs) { subs = new Set(); eventSubscribers.set(tabId, subs); }
@@ -244,7 +273,16 @@ if (typeof chrome !== 'undefined' && chrome.debugger?.onEvent) {
       armIdle(source.tabId);
     }
     const subs = eventSubscribers.get(source.tabId);
-    if (subs) for (const fn of [...subs]) { try { fn(method, params); } catch { /* one bad subscriber must not starve the rest */ } }
+    let answered = false;
+    if (subs) for (const fn of [...subs]) { try { if (fn(method, params) === true) answered = true; } catch { /* one bad subscriber must not starve the rest */ } }
+    // A paused request nobody answers would hang the page for good (the worker
+    // restarted and lost its mock rules, the rules were just cleared): let it
+    // through and stop pausing.
+    if (method === 'Fetch.requestPaused' && !answered) {
+      const target = { tabId: source.tabId };
+      chrome.debugger.sendCommand(target, 'Fetch.continueRequest', { requestId: params.requestId }).catch(() => {});
+      chrome.debugger.sendCommand(target, 'Fetch.disable').catch(() => {});
+    }
   });
 }
 

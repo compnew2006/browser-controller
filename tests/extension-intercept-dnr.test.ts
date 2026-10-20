@@ -82,7 +82,7 @@ describe("browser_intercept enforcement (stateful DNR)", () => {
     });
   });
 
-  it("mock rules are not claimed as enforced", async () => {
+  it("mock rules are not claimed as enforced when the debugger is unavailable", async () => {
     const res = await handleIntercept({
       action: "set-rules", tabId: 15,
       rules: [

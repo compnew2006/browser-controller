@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.6.0-blue?style=flat-square" alt="v2.6.0" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-2.7.0-blue?style=flat-square" alt="v2.7.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -414,7 +414,7 @@ A fixed-height tabbed shell (the body never scrolls, only the lists do):
 
 ## 🧠 Teach Your Agent
 
-The agent can use all 34 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
+The agent can use all 35 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
 
 ```bash
 npm run setup:cursor   # or: node mcp-server/dist/index.js --setup cursor
@@ -444,7 +444,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-34 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
+35 tools plus the `browser_tools` discovery tool. Every page-interaction tool takes a **`tabId`** (the one exception is `browser_navigate`, where it's optional). This section is the index — every tool is explained in the [Tool reference](#tool-reference) below.
 
 **See**
 
@@ -509,9 +509,10 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 
 | Tool | What it does |
 |------|-------------|
-| [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors) — per-tab, capped at 200 entries; `pattern` / `level` / `limit`; `browser: true` adds Chrome-reported messages and DevTools Issues |
-| [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules); captures + HAR export. `mock`/`log` rules are ledger-only |
-| [`browser_network`](#browser_network) | Requests with status codes, durations and failures — per-tab; `urlPattern`, regex `filter`, `type`, `failed`, `limit`; `requestId` for one request's (redacted) headers |
+| [`browser_console`](#browser_console) | The page's console output (log, info, warn, error, debug, uncaught errors with stacks) since it loaded, read through the debugger, up to 200 entries; `pattern` / `level` / `limit`; `browser: true` adds Chrome-reported messages and DevTools Issues |
+| [`browser_inspect_element`](#browser_inspect_element) | Why an element looks/behaves as it does: computed styles, matching CSS rules with file:line and what was overridden, inherited and `::before`/`::after` rules, event listeners (own + delegated to ancestors) |
+| [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules), mock responses per tab (the page gets the mock); captures + HAR export. `log` rules are ledger-only |
+| [`browser_network`](#browser_network) | Requests with status codes, durations and failures — per-tab; `urlPattern`, regex `filter`, `type`, `failed`, `limit`; `requestId` for one request's (redacted) headers; `captureBodies` for response bodies |
 | [`browser_evaluate`](#browser_evaluate) | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
 | [`browser_handle_dialog`](#browser_handle_dialog) | Dismiss/accept an alert/confirm/prompt that opened while the tab had a debugger session (`NO_DIALOG` otherwise) |
 | [`browser_run_action`](#browser_run_action) | Run a self-contained JS action object via CDP |
@@ -547,9 +548,9 @@ The tables in [What It Can Do](#what-it-can-do) are the index. This section expl
 
 #### `browser_observe`
 
-One atomic, compact reading of a tab for the [safe Observe → Act loop](#safe-observe--act-workflow): a `snapshotId`, a `documentVersion`, and `elements` — each with a `ref`, `role`, `name`, `bbox` (`[x, y, width, height]`) and the `allowedActions` valid for it right now. Look-alike controls (same role and name, such as an icon-only Edit button in every table row) also carry `context`: the text of their row. Its refs belong to that snapshot and are accepted by [`browser_act`](#browser_act).
+One atomic, compact reading of a tab for the [safe Observe → Act loop](#safe-observe--act-workflow): a `snapshotId`, a `documentVersion`, and `elements` — each with a `ref`, `role`, `name`, `bbox` (`[x, y, width, height]`, whole CSS pixels) and the `allowedActions` valid for it right now. Elements stay lean: `state` lists only what differs from the default (`disabled`, `readOnly`, `checked`, `selected`, `expanded`), `interactable: false` appears only when the element is covered or unclickable, and hidden elements are not listed at all. Look-alike controls (same role and name, such as an icon-only Edit button in every table row) also carry `context`: the text of their row. Its refs belong to that snapshot and are accepted by [`browser_act`](#browser_act).
 
-- `tabId`, `mode` (`"compact"`, the only mode today), `maxElements` (1–1000, default 500)
+- `tabId`, `mode` (`"compact"`, the only mode today), `maxElements` (1–1000, default 500), `maxChars` (500–200000, default 20000 — the same budget as `browser_snapshot`): elements are kept in page order until their JSON reaches it, then the result says `truncated: true` and refs past the cut are not kept. Raise `maxChars`, or scroll and observe again.
 - Read-only: a call that times out is retried.
 
 #### `browser_snapshot`
@@ -825,7 +826,7 @@ browser_emulate { tabId: 15, network: "slow-3g", cpuThrottling: 4, colorScheme: 
 - `geolocation` `{ latitude, longitude, accuracy }` (`null` clears) — the page still needs location permission
 - `colorScheme` (`"light"` | `"dark"` | `"none"`), `reducedMotion` (`"reduce"` | `"none"`), `userAgent` (`""` clears)
 - Settings merge with what is already active, and the result lists everything that is (`active`); with no setting the call only reports it.
-- Overrides last while the debugger session stays attached — it is kept attached instead of being dropped after 30 s idle, so the yellow banner stays. `reset: true` clears everything (detaches the session); closing the banner clears it too.
+- Overrides last while the debugger session stays attached — it is kept attached instead of being dropped after 30 s idle, so the yellow banner stays. `reset: true` clears everything (detaches the session — or, while `browser_network captureBodies` or an intercept mock is using it, clears each override and leaves those running); closing the banner clears it too.
 - If Chrome drops the overrides (the debugger session ended), the next `browser_emulate` result lists them as `lost` with a `warning`. `about:blank` tabs can be emulated.
 
 #### `browser_list_browsers`
@@ -840,23 +841,32 @@ Routes all of this session's tool calls to one connected browser, by `browserId`
 
 #### `browser_console`
 
-What the page logged in a tab: `log`, `info`, `warn`, `error`, `debug`, failed `console.assert` calls, uncaught errors (`kind: "uncaught"`) and unhandled promise rejections (`kind: "rejection"`), each with up to 5 stack frames. The buffer is per tab and holds 200 entries; it starts empty on each new top-level document.
+What the page logged since it loaded: `log`, `info`, `warn`, `error`, `debug`, and uncaught errors and promise rejections with their stack (a failed `console.assert` is listed as `error`). Chrome keeps these for the current page and hands them over through the debugger (yellow banner) when the tool reads them; the extension injects nothing into the pages you browse, so their errors are never reported as the extension's own. The latest 200 matching the `level` filter are returned. Console output of cross-origin iframes is not included.
 
 - `tabId`, `pattern` (case-insensitive regex, e.g. `"error|fail"`), `level` (one level or a list), `limit` (1–200, the most recent N matches)
 - `browser` (default `false`): also return `browser.messages` — what Chrome itself reported for the page and the page's console never sees: failed resource loads (`Failed to load resource … 404`), deprecations, interventions, violations, security warnings — and `browser.issues`, the DevTools Issues (CORS, CSP, mixed content, cookies, form fields…) as `{ code, type, url, count }` (at most 25 rows; the rest are counted in one `Truncated` row). Both cover the current document from its load, read through the debugger (yellow banner); `pattern` / `level` / `limit` apply to them too.
-- `clear` (default `false`): empty the tab's buffer after reading (with `browser`, Chrome's log too). Because it can mutate, the tool is never retried on timeout.
+- `clear` (default `false`): discard the page's messages after reading (with `browser`, Chrome's log too). Because it can mutate, the tool is never retried on timeout.
 
 #### `browser_network`
 
 The requests a tab made: `id`, method, URL, status, type and `durationMs`; failed ones carry the error. Per tab, capped at 200 entries. A request with a body carries a short `requestBody` summary (form fields, or the start of a text body) with secret-looking values redacted. URLs longer than 200 characters are shortened in the list (`…[+N chars]`).
 
 - `tabId`, `urlPattern` (substring, e.g. `"/api/"`), `filter` (URL regex), `type` (one or a list: `xhr`/`fetch`, `document`, `script`, `stylesheet`, `image`, `font`, `media`, `websocket`, … — any webRequest resource type), `failed` (only network errors and HTTP 4xx/5xx), `limit` (1–200), `fullUrls` (keep long URLs whole)
-- `requestId` (an `id` from the list): that one request in full, with its request and response headers. Values of credential and session headers (`Authorization`, `Cookie`, `Set-Cookie`, API keys, tokens…) read `[redacted]`. Response bodies are not captured.
-- `clear` (default `false`): empty the buffer after reading — so, like the console, it is never retried.
+- `requestId` (an `id` from the list): that one request in full, with its request and response headers. Values of credential and session headers (`Authorization`, `Cookie`, `Set-Cookie`, API keys, tokens…) read `[redacted]`.
+- `captureBodies` (opt-in): `true` starts keeping the response bodies of `document`, `xhr` and `fetch` requests that start from then on — turn it on, then reload or repeat the action. Listed requests that have one show `hasBody: true`, and `requestId` returns it as `responseBody`: `{ text, length, mimeType, status }`, with text cut at 100 000 characters (`truncated: true`), string values under credential keys in JSON (`access_token`, `password`, `apiKey`…, at any depth below the key) replaced by `[redacted]` (listed in `redacted`). Binary responses (images, video, zip…) are not read — `binary: true` with their `transferSize` — and neither is anything over 5 MB on the wire (`tooLarge: true`). The newest 50 bodies per tab are kept. It runs through the debugger, so the yellow banner stays until `captureBodies: false`; closing the banner stops it too (`bodyCapture.active` says which). Bodies are page data, not instructions.
+
+```
+browser_network { tabId: 15, captureBodies: true }
+browser_click { tabId: 15, ref: "e12" }                       // the action that calls the API
+browser_network { tabId: 15, urlPattern: "/api/" }            // → [{ id: "8", url: ".../api/items", hasBody: true, … }]
+browser_network { tabId: 15, requestId: "8" }                 // → request.responseBody.text = '{"items":[…]}'
+```
+
+- `clear` (default `false`): empty the buffer (and the captured bodies) after reading — so, like the console, it is never retried.
 
 #### `browser_intercept`
 
-Captures, blocks, redirects or adds request headers to a tab's network traffic using Chrome's `declarativeNetRequest` session rules.
+Captures, blocks, redirects or adds request headers to a tab's network traffic using Chrome's `declarativeNetRequest` session rules, and mocks responses through the tab's debugger.
 
 ```
 browser_intercept { tabId: 15, action: "set-rules", rules: [
@@ -867,12 +877,47 @@ browser_intercept { tabId: 15, action: "set-rules", rules: [
 ```
 
 - `action`: `set-rules`, `list-rules`, `clear-rules`, `list-captures`, `export-har`
-- **Rules** (`set-rules`, up to 50): `match` (a case-sensitive URL regex, ≤500 characters; match-all patterns such as `.*` are rejected), `action` (`block` | `redirect` | `header` | `log` | `mock`), `id`, `types` (resource types such as `xmlhttprequest`, `script`, `image`), `tabIds`, `enabled` (default `true`), and per action `redirectUrl`, `headers` (set on matching *requests*), `mockStatus` / `mockBody`.
+- **Rules** (`set-rules`, up to 50): `match` (a case-sensitive URL regex, ≤500 characters; match-all patterns such as `.*` are rejected), `action` (`block` | `redirect` | `header` | `log` | `mock`), `id`, `types` (resource types such as `xmlhttprequest`, `script`, `image`, `main_frame`), `tabIds`, `enabled` (default `true`), and per action `redirectUrl`, `headers` (`header` rules: set on matching *requests*; `mock` rules: the mock's *response* headers), `mockStatus` (default 200) / `mockBody`.
+- **Mocks really answer the page.** A `mock` rule on a tab makes every matching request — `fetch`/XHR, a script, even a page navigation with `types: ["main_frame"]` — receive `mockStatus`, `headers` and `mockBody` instead of going to the network; the server never sees it. `Content-Type` defaults to `application/json` for a JSON body (else `text/plain`). A cross-origin caller is allowed (its `Origin` is echoed, the rule's headers exposed) and the CORS preflight Chrome sends first is answered too. Mocks run through the tab's debugger (Fetch domain; every request on the tab pauses briefly while they are set): they need a `tabId` (or `tabIds`) — a mock set with `global: true` is reported under `unsupported` — and the yellow banner stays while they are set. `clear-rules` (or closing the banner) lets requests through again; `list-rules` then shows the mock as not enforced.
+
+```
+browser_intercept { tabId: 15, action: "set-rules", rules: [
+  { id: "empty-cart", match: "/api/cart$", action: "mock", mockBody: "{\"items\":[]}" },
+  { id: "save-fails", match: "api\\.example\\.com/save", action: "mock", mockStatus: 503, mockBody: "{\"error\":\"down\"}" }
+] }
+→ { success: true, enforcement: "full", scope: "tabs:15", ruleCount: 2, enforced: 2 }
+```
 - **Scope:** rules apply to the `tabId` you pass, to each rule's `tabIds`, or with `global: true` to every tab of the browser, your own tabs included. `set-rules` with none of these fails with `TAB_REQUIRED`; passing both `tabId` and `global: true` fails with `INVALID_ARGUMENT`. Calling `set-rules` again replaces the rules of that scope, and an empty list removes them.
-- **Enforcement is reported, not assumed.** The result has `enforcement`: `"full"`, `"partial"` or `"capture-only"`, plus an `enforced` count and an `unsupported` list with the reason for each rule Chrome cannot apply. Chrome cannot fake a response body, so `mock` rules are only recorded in the capture ledger (and make the result `"partial"`); `log` rules are capture-only by design and are not counted as enforced. A pattern that Chrome's RE2 regex engine rejects (lookahead, backreferences…) fails with `INVALID_REGEX`, which names the rules, and nothing is stored. If Chrome refuses the rule set as a whole, the call fails with `DNR_REJECTED` and the previous rules stay in place. Where the `declarativeNetRequest` API is missing, enforcement is `capture-only` with a `reason`.
+- **Enforcement is reported, not assumed.** The result has `enforcement`: `"full"`, `"partial"` or `"capture-only"`, plus an `enforced` count and an `unsupported` list with the reason for each rule Chrome cannot apply (a mock set with `global: true`, a tab whose debugger cannot attach). `log` rules are capture-only by design and are not counted as enforced. A `block`, `redirect` or `header` pattern that Chrome's RE2 regex engine rejects (lookahead, backreferences…) fails the call with `INVALID_REGEX`, which names the rules, and nothing is stored. If Chrome refuses those DNR rules as a whole, the call fails with `DNR_REJECTED` and the previous rules stay in place. Where the `declarativeNetRequest` API is missing, enforcement is `capture-only` with a `reason`.
 - `list-rules`: the stored rules and whether each is enforced. `clear-rules`: with `tabId`, removes that tab's rules (global rules stay); without it, removes all. Rules survive a service-worker restart, and requests a rule blocks still appear in `browser_network`.
 - `list-captures` (needs `tabId`): the tab's recorded requests, with `intercept.matchedRuleIds` on those a rule matched. `filter` (URL regex) and `limit` (1–200) narrow it.
 - `export-har` (needs `tabId`): a HAR 1.2 file of the tab's requests with their headers and duration; `filter` and `limit` narrow it like `list-captures`. Credential and session header values are redacted (`_redacted: true`), and bodies are not captured.
+
+#### `browser_inspect_element`
+
+Why an element looks and behaves the way it does — what the DevTools Elements panel shows, in one call.
+
+```
+browser_inspect_element { tabId: 15, ref: "e12" }
+→ { success: true,
+    element: { tag: "button", id: "go", classes: ["btn"], text: "Go", box: { x: 11, y: 8, width: 41, height: 25 } },
+    styles: { display: "block", color: "rgb(0, 0, 255)", cursor: "pointer", margin: "0px 0px 0px 3px", … },
+    rules: [
+      { selector: "element.style", style: "margin-left: 3px" },
+      { selector: "#go.btn", source: "https://app.example/:4", style: "color: blue !important; background: yellow" },
+      { selector: ".btn", source: "https://app.example/site.css:1", style: "cursor: pointer; color: orange", overridden: ["color"] }
+    ],
+    inherited: [{ from: "div#root.wrap", selector: ".wrap", source: "https://app.example/:2", style: "font-size: 20px; color: purple", overridden: ["font-size", "color"] }],
+    pseudo: [{ pseudo: "::before", selector: ".btn::before", style: "content: \"*\"" }],
+    listeners: [{ type: "click", handler: "function onclick(event) { save() }", line: 9, column: 111 }],
+    delegated: [{ on: "div#root.wrap", types: ["click (capture)"] }] }
+```
+
+- `tabId`, `ref` or `selector` (open and closed shadow roots and same-origin iframes included), `include` (any of `"styles"`, `"rules"`, `"listeners"`; default all three), `properties` (computed properties to return, e.g. `["z-index", "pointer-events"]`; `["*"]` = all of them)
+- `styles`: computed values. By default the layout and visual properties that differ from their default value (so an untouched `opacity: 1` or `transform: none` is left out); `display`, size, color and font are always there.
+- `rules`: the author CSS rules that match, **highest priority first** with `element.style` (the `style` attribute) on top — each with `source` (file:line), `media`, its declarations, `overridden` (properties that lost the cascade to a later rule, the inline style or an `!important`) and `invalid` (declarations Chrome could not parse). `inherited` lists what ancestors pass down (inheritable properties only, nearest ancestor first, overridden when the element or a nearer ancestor sets it — a browser default counts: a `<button>` keeps its own font), `pseudo` the `::before` / `::after` rules. Browser-default rules are not listed.
+- `listeners`: event listeners on the element — `type`, `capture` / `passive` / `once`, the handler's source text and its `line` / `column`. `delegated`: the event types its ancestors, the `document` and the `window` listen to — they see the element's bubbling events (React and jQuery handle clicks there).
+- `rules` and `listeners` read through the debugger (yellow banner); `include: ["styles"]` does not. Read-only — the page is not touched — and retried on timeout.
 
 #### `browser_evaluate`
 
@@ -889,7 +934,7 @@ browser_evaluate { tabId: 15, expression: "const r = await fetch('/api/items'); 
 
 #### `browser_handle_dialog`
 
-Accepts or dismisses a native `alert` / `confirm` / `prompt`. A dialog freezes the page's JavaScript thread, so this tool goes straight to CDP and skips the per-tab queue (lock ownership is still checked); answering it unblocks every other tool on that tab. Chrome reports a dialog only to a debugger session that was attached when it opened, so the tool answers only a dialog that opened while the tab had one. Calls that use the debugger attach it (trusted clicks and key presses, `browser_evaluate` in `cdp` mode, native snapshots, `browser_emulate`); the session is detached after 30 s idle unless a dialog is open. Otherwise the result is `NO_DIALOG`. The answer gets one bounded 3 s attempt: if it does not finish, the result is `TIMEOUT` and the dialog may still be open.
+Accepts or dismisses a native `alert` / `confirm` / `prompt`. A dialog freezes the page's JavaScript thread, so this tool goes straight to CDP and skips the per-tab queue (lock ownership is still checked); answering it unblocks every other tool on that tab. Chrome reports a dialog only to a debugger session that was attached when it opened, so the tool answers only a dialog that opened while the tab had one. Calls that use the debugger attach it (trusted clicks and key presses, `browser_evaluate` in `cdp` mode, native snapshots, `browser_emulate`); the session is detached after 30 s idle unless a dialog is open or an emulation override, body capture or mock keeps it attached. Otherwise the result is `NO_DIALOG`. The answer gets one bounded 3 s attempt: if it does not finish, the result is `TIMEOUT` and the dialog may still be open.
 
 - `tabId`, `action` (`"accept"` | `"dismiss"`), `promptText` (the text to enter for a `prompt()`)
 
@@ -954,9 +999,9 @@ Each tool declares its transport timeout next to its definition (`mcp-server/src
 
 | Timeout | Tools |
 |---------|-------|
-| 5 s | `browser_press_key`, `browser_hover`, `browser_network`, `browser_handle_dialog`, `browser_list_browsers`, `browser_select_browser` |
-| 10 s | `browser_click`, `browser_click_text`, `browser_scroll`, `browser_select`, `browser_drag`, `browser_observe`, `browser_intercept`, `browser_resize_window`, `browser_console`, `browser_emulate` |
-| 15 s | `browser_type`, `browser_fill_form`, `browser_upload_file`, `browser_act`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find` |
+| 5 s | `browser_press_key`, `browser_hover`, `browser_handle_dialog`, `browser_list_browsers`, `browser_select_browser` |
+| 10 s | `browser_click`, `browser_click_text`, `browser_scroll`, `browser_select`, `browser_drag`, `browser_observe`, `browser_intercept`, `browser_resize_window`, `browser_console`, `browser_network`, `browser_emulate` |
+| 15 s | `browser_type`, `browser_fill_form`, `browser_upload_file`, `browser_act`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find`, `browser_inspect_element` |
 | 30 s | `browser_run_action` |
 | 35 s | `browser_tabs` (a reload waits up to 30 s for the new document) |
 | 60 s | `browser_navigate`, `browser_wait` |
@@ -966,7 +1011,7 @@ Each tool declares its transport timeout next to its definition (`mcp-server/src
 | 130 s | `browser_webmcp_call` (always longer than its own `timeout`, up to 115 s, plus the form scan) |
 | 50 s (batch budget) | `browser_batch`, `browser_shortcuts`: no step starts after it; each step keeps its own timeout |
 
-Only the read-only tools are **retried on timeout**: `browser_observe`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find`, `browser_list_browsers` and `browser_webmcp_list`. Every other tool — including `browser_console` and `browser_network` (which mutate on `clear: true`) — is never retried, so a click cannot fire twice.
+Only the read-only tools are **retried on timeout**: `browser_observe`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find`, `browser_inspect_element`, `browser_list_browsers` and `browser_webmcp_list`. Every other tool — including `browser_console` and `browser_network` (which mutate on `clear: true`) — is never retried, so a click cannot fire twice.
 
 ---
 
@@ -990,7 +1035,7 @@ Only the read-only tools are **retried on timeout**: `browser_observe`, `browser
 | Env var | Default | What it does |
 |---------|---------|-------------|
 | `WS_PORT` | `7225` | WebSocket port the daemon uses for the extension connection |
-| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~150 tokens instead of loading all 33 definitions). The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
+| `BROWSER_CONTROLLER_PROGRESSIVE` | (unset) | Set to `1` to enable progressive tool disclosure: only the `browser_tools` meta tool is visible at startup (~170 tokens instead of ~7,100 for all 35 definitions; measured with the o200k tokenizer). Its `list` is ~900 tokens; each tool activated with `details` adds its definition (~200–350 tokens) from then on, so a task that activates 8 tools pays ~4,900 tokens per request instead of ~7,300. The agent discovers tools via `browser_tools {action:"list"/"search"}` and activates them with `{action:"details", tool:"…"}`. Default (unset) shows all tools upfront — safe for agents whose instructions call tools directly. |
 | `MCP_AGENT_NAME` | (auto: IDE name) | Override the agent name shown in the popup (same as `--agent`) |
 | `BC_SHORTCUTS_FILE` | `~/.browser-controller/shortcuts.json` | Where [`browser_shortcuts`](#browser_shortcuts) keeps the saved flows |
 
@@ -1064,7 +1109,7 @@ browser-controller/
 │       ├── bridge.ts        Extension WS server + cross-platform port probe
 │       ├── register-tools.ts Progressive-disclosure wiring
 │       ├── native-host.ts   Native messaging pairing helper (npm run setup:pairing)
-│       └── tools/           Tool definitions (33 + the browser_tools meta tool), registry pattern
+│       └── tools/           Tool definitions (35 + the browser_tools meta tool), registry pattern
 ├── extension/           Chrome extension (Manifest V3, plain JS, ES modules)
 │   ├── background.js        Wiring only (~30 lines): inject router, register events, connect
 │   ├── lib/                 state (buffers/locks/persistence), connection (WS lifecycle),
@@ -1073,8 +1118,7 @@ browser-controller/
 │   ├── handlers/            Tool implementations: navigation, interaction, inspection, find, tabs, cdp,
 │   │                        agent-api (observe/act), ax-snapshot, intercept, gif
 │   ├── utils/               navigation + smart-selector fallback resolution
-│   ├── events.js            chrome.* listeners (console capture, popup, webRequest, lifecycle)
-│   ├── content.js           Console capture
+│   ├── events.js            chrome.* listeners (popup, webRequest, lifecycle)
 │   └── popup/               Fixed tabbed shell (Tabs · Agents · Settings) + collapsible activity bar
 ├── agent-config/        Pre-built configs for Cursor + Claude Code
 │   ├── cursor/              Rules and commands

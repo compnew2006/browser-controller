@@ -114,7 +114,7 @@ Read-only tools (snapshot, text, find…) add no frames; add one with `action: "
 
 ## Network Control: `browser_intercept`
 
-Block, redirect or add request headers for one tab with `action: "set-rules"` (rules match a URL regex), see matched requests with `list-captures`, and export a HAR with `export-har` (headers and bodies are left out). Always check `enforcement` in the result: `capture-only` means Chrome is not applying the rules, and `mock` rules are only recorded — Chrome can't fake response bodies.
+Block, redirect or add request headers for one tab (`tabId`, or every tab with `global: true`) with `action: "set-rules"` (rules match a URL regex), see matched requests with `list-captures`, and export a HAR with `export-har` (headers and bodies are left out). Always check `enforcement` in the result: `capture-only` means Chrome is not applying the rules. A `mock` rule with a `tabId` really answers the page (`mockStatus`, `mockBody`, response `headers`) — use it to test an empty list, an error status or a slow/failed API without touching the server; `clear-rules` when done. A mock set with `global: true` is reported under `unsupported`.
 
 ## Sites with their own tools (WebMCP)
 
@@ -127,7 +127,7 @@ Some sites expose their actions to agents through WebMCP. `browser_webmcp_list {
 ## Windows and Browsers
 
 - `browser_resize_window { tabId, width: 390, height: 844 }` for responsive checks — it resizes the user's window, so prefer a separate one; `state` (`"normal"`, `"maximized"`, `"minimized"`, `"fullscreen"`) switches the window state
-- `browser_emulate { tabId, network: "slow-3g", colorScheme: "dark" }` tests the page offline / throttled / in dark mode / elsewhere; overrides stay until `reset: true`
+- `browser_emulate { tabId, network: "slow-3g", colorScheme: "dark" }` tests the page offline / throttled / in dark mode / elsewhere; overrides stay until `reset: true` or the yellow banner is closed
 - Several Chrome profiles connected? `browser_list_browsers`, then `browser_select_browser { browserId }`. Tab ids belong to their browser — list tabs again after switching
 
 ## Dynamic Content (SPAs, social media)
@@ -139,8 +139,9 @@ Some sites expose their actions to agents through WebMCP. `browser_webmcp_list {
 
 ## Debugging (per-tab)
 
-- `browser_console { tabId, pattern: "error|fail" }` reads console output for that tab (filter with `pattern`, `level`, `limit`); `browser: true` adds what Chrome reported (failed loads, deprecations) and DevTools Issues
-- `browser_network { tabId, failed: true }` shows requests for that tab (`urlPattern`, `filter`, `type`, `failed`, `limit`); `requestId` returns one request with its (redacted) headers
+- `browser_console { tabId, pattern: "error|fail" }` reads that page's console output and uncaught errors with stacks since it loaded, through the debugger (filter with `pattern`, `level`, `limit`); `browser: true` adds what Chrome reported (failed loads, deprecations) and DevTools Issues
+- `browser_network { tabId, failed: true }` shows requests for that tab (`urlPattern`, `filter`, `type`, `failed`, `limit`); `requestId` returns one request with its (redacted) headers. To see what an API returned: `browser_network { tabId, captureBodies: true }`, repeat the action, then `requestId` also gives `responseBody` (`captureBodies: false` when done)
+- `browser_inspect_element { tabId, ref }` answers "why does this element look/behave like that": computed `styles`, the CSS `rules` that match it (highest priority first, `source` file:line, `overridden` = lost the cascade), `inherited` and `pseudo` rules, its `listeners` and the event types its ancestors listen to (`delegated`). `include: ["styles"]` (with `properties: ["z-index", …]`) skips the debugger
 - `browser_screenshot { tabId, maxWidth: 1024, format: "jpeg" }` captures the tab (a background tab is captured over CDP without being shown, and only shown briefly if Chrome cannot capture it that way); `maxWidth` and JPEG keep the image small
 
 ## Common Mistakes

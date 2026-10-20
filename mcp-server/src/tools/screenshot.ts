@@ -5,19 +5,19 @@ import { requireTabId, imageResult, jsonError, payloadOf } from './types.js';
 export const screenshotTool: ToolDefinition = {
   name: 'browser_screenshot',
   summary: 'Capture a screenshot of a tab',
-  description: 'Capture a screenshot of a tab. The active tab\'s viewport is read from the screen with no debugger and no tab switch. fullPage and zoom (scale above 1 for a region) use the debugger. A background tab is captured over CDP without switching to it; if Chrome cannot capture it that way, it is shown briefly and the user\'s tab is switched straight back. Use maxWidth / scale and format:"jpeg" to shrink the image (fewer tokens); ref or selector captures just that element (scrolled into view). The longest side is capped at 1568 px and the image stays under the 1 MB message limit: when that changes the picture, the result says so in note. The result says how image pixels map to the x/y that click/hover/scroll take. The agent\'s blue control frame is never in the picture.',
+  description: 'Screenshot a tab. The active tab is read from the screen (no debugger, no tab switch); a background tab is captured over CDP without switching to it, and shown briefly only if CDP cannot capture it. fullPage and zoomed regions use the debugger. maxWidth / scale and format:"jpeg" cut tokens; region (a viewport rectangle) or ref/selector (one element, scrolled into view). The longest side is capped at 1568 px and the image stays under 1 MB (note says when that changed the picture). The result maps image pixels to click/hover/scroll x/y. The agent\'s blue control frame is never in the picture.',
   inputSchema: z.object({
     tabId: requireTabId(),
     format: z.enum(['png', 'jpeg']).optional().default('png'),
-    quality: z.number().min(0).max(100).optional().default(80).describe('JPEG quality (ignored for PNG)'),
-    scale: z.number().min(0.05).max(4).optional().describe('Downscale factor, e.g. 0.5 = half size (max 1 for the viewport/page; up to 4 to zoom into a region, default 2 there)'),
+    quality: z.number().min(0).max(100).optional().default(80).describe('JPEG only'),
+    scale: z.number().min(0.05).max(4).optional().describe('Up to 1 (a region: up to 4, default 2)'),
     region: z.object({
       x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive(),
-    }).optional().describe('Capture only this viewport rectangle (CSS px, the same coordinates click/hover/scroll x/y use) — zoom in on small UI'),
-    maxWidth: z.number().int().min(100).max(4000).optional().describe('Cap the image width in pixels (keeps aspect ratio), e.g. 1024'),
-    fullPage: z.boolean().optional().default(false).describe('Capture the whole scrollable page, not just the viewport'),
-    ref: z.string().optional().describe('Capture just this element (ref from snapshot/find); scale defaults to 1'),
-    selector: z.string().optional().describe('Capture just the first visible element matching this CSS selector'),
+    }).optional(),
+    maxWidth: z.number().int().min(100).max(4000).optional().describe('Max image width (px)'),
+    fullPage: z.boolean().optional().default(false),
+    ref: z.string().optional(),
+    selector: z.string().optional(),
   }),
   // Read-only: safe to retry.
   idempotent: true,

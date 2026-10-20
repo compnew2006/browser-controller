@@ -5,16 +5,16 @@ import { requireTabId, forwardHandler } from './types.js';
 export const scrollTool: ToolDefinition = {
   name: 'browser_scroll',
   summary: 'Scroll a tab up/down/left/right',  description:
-    'Scroll the page or an element. Supports pixel offsets, scrolling to elements, and named positions (top/bottom). Works with virtual scroll containers used by social media sites, and with app shells where an inner container scrolls instead of the page (the nearest scrollable container is used). The result has moved and the real position; when nothing could move it is an error (NOT_SCROLLABLE). With x/y it sends a real mouse-wheel event at that point, scrolling whatever is under it (inner panels, maps, virtual lists).',
+    'Scroll the page, a container (selector) or an element into view (toElement); position top/bottom. Works with virtual scroll containers and app shells whose inner container scrolls (the nearest scrollable one is used). With x/y: a real wheel event at that point (inner panels, maps, virtual lists). The result has the real position; nothing moved fails with NOT_SCROLLABLE.',
   inputSchema: z.object({
     tabId: requireTabId(),
     direction: z.enum(['up', 'down', 'left', 'right']).optional().default('down'),
-    amount: z.number().optional().default(500).describe('Pixels to scroll'),
-    selector: z.string().optional().describe('CSS selector of scroll container (for virtual scroll)'),
-    toElement: z.string().optional().describe('Ref or CSS selector to scroll into view'),
-    position: z.enum(['top', 'bottom']).optional().describe('Scroll to top or bottom of page'),
-    x: z.number().optional().describe('Viewport x in CSS px: wheel-scroll at this point (with y)'),
-    y: z.number().optional().describe('Viewport y in CSS px'),
+    amount: z.number().optional().default(500).describe('Pixels'),
+    selector: z.string().optional().describe('Scroll container (virtual lists)'),
+    toElement: z.string().optional().describe('Ref or selector to scroll into view'),
+    position: z.enum(['top', 'bottom']).optional(),
+    x: z.number().optional().describe('Wheel at this viewport point, with y'),
+    y: z.number().optional(),
   }),
   timeoutMs: 10_000,
   handler: forwardHandler('browser_scroll'),

@@ -32,6 +32,7 @@ import { gifTool } from './gif.js';
 import { listBrowsersTool, selectBrowserTool } from './browsers.js';
 import { shortcutsTool } from './shortcuts.js';
 import { webmcpListTool, webmcpCallTool } from './webmcp.js';
+import { inspectElementTool } from './inspect-element.js';
 
 export const allTools: ToolDefinition[] = [
   navigateTool,
@@ -68,6 +69,7 @@ export const allTools: ToolDefinition[] = [
   shortcutsTool,
   webmcpListTool,
   webmcpCallTool,
+  inspectElementTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

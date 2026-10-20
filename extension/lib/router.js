@@ -15,6 +15,7 @@ import { handleTabs, handleConsole, handleNetwork, handleScreenshot, handleResiz
 import { handleRunAction, handleUploadFile } from '../handlers/cdp.js';
 import { handleIntercept } from '../handlers/intercept.js';
 import { handleEmulate } from '../handlers/emulate.js';
+import { handleInspectElement } from '../handlers/inspect.js';
 import { handleObserve, handleAct } from '../handlers/agent-api.js';
 import { handleWebMcpList, handleWebMcpCall } from '../handlers/webmcp.js';
 import { handleGif, isRecording, recordFrame, GIF_FRAME_TOOLS, currentTabId } from '../handlers/gif.js';
@@ -71,6 +72,7 @@ const HANDLERS = {
   browser_resize_window: handleResizeWindow,
   browser_emulate: handleEmulate,
   browser_gif: handleGif,
+  browser_inspect_element: handleInspectElement,
 };
 
 /** All tool names the router can dispatch (exported for the drift-guard test). */

@@ -61,13 +61,13 @@ export const batchTool: ToolDefinition = {
   name: 'browser_batch',
   summary: 'Run several browser actions in one call (stops at first error)',
   description:
-    `Run a sequence of browser tool calls (up to ${BATCH_MAX_STEPS}) in ONE call, in order, and get their results back (output:"last"/"errors" to keep long batches cheap). Use it to cut round-trips when you already know the next steps, e.g. click a field → type → press Tab → wait → read text. Stops at the first failing step (remaining steps are skipped) unless continueOnError is true. No new step starts after ${BATCH_BUDGET_MS / 1000} s. A top-level tabId is applied to every step that does not set its own, except browser_tabs. A delay step sleeps at most ${BATCH_MAX_DELAY_MS / 1000} s. Steps cannot be nested batches.`,
+    `Run up to ${BATCH_MAX_STEPS} tool calls in order in ONE call, and get their results back (output:"last"/"errors" keeps long batches cheap). Stops at the first failing step (remaining steps are skipped) unless continueOnError. No new step starts after ${BATCH_BUDGET_MS / 1000} s. A delay step sleeps at most ${BATCH_MAX_DELAY_MS / 1000} s. Steps cannot be nested batches.`,
   inputSchema: z.object({
     tabId: optionalTabId().describe('Default tab id for every step that does not set its own tabId (never applied to browser_tabs)'),
     actions: z
       .array(z.object({
-        tool: z.string().describe('Tool name, e.g. "browser_click"'),
-        params: z.record(z.string(), z.unknown()).optional().describe('That tool\'s arguments'),
+        tool: z.string().describe('e.g. "browser_click"'),
+        params: z.record(z.string(), z.unknown()).optional(),
       }))
       .min(1)
       .max(BATCH_MAX_STEPS)
@@ -76,8 +76,7 @@ export const batchTool: ToolDefinition = {
     output: z
       .enum(['all', 'last', 'errors'])
       .optional()
-      .default('all')
-      .describe('all = the result of every step; last = only the last step result (+ any failure); errors = only failures. Use last/errors for long batches to save tokens.'),
+      .default('all'),
   }),
   // The batch's time budget (BATCH_BUDGET_MS). Each step keeps its own transport timeout.
   timeoutMs: BATCH_BUDGET_MS,

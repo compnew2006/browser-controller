@@ -156,7 +156,7 @@ export const shortcutsTool: ToolDefinition = {
   name: 'browser_shortcuts',
   summary: 'Save and replay named action sequences (with {{variables}})',
   description:
-    'Saved, replayable browser workflows. save stores a named list of steps (same format as browser_batch actions; put {{variable}} placeholders in any string param; steps are checked on save), run replays it in ONE call with vars filled in (it runs as a browser_batch: stops at the first failing step unless continueOnError), list/show/delete manage them. Stored locally in ~/.browser-controller/shortcuts.json.',
+    'Saved workflows: save a named list of steps (browser_batch format, {{variable}} placeholders; steps are checked on save), run it in ONE call with vars (it runs as a browser_batch: stops at the first failing step unless continueOnError), list / show / delete. Stored locally in ~/.browser-controller/shortcuts.json.',
   inputSchema: z.object({
     action: z.enum(['list', 'show', 'save', 'run', 'delete']).describe('Shortcut action'),
     name: z.string().optional().describe('Shortcut name (letters, digits, _ . -; starts with a letter, digit or _)'),
@@ -167,8 +167,8 @@ export const shortcutsTool: ToolDefinition = {
     })).max(BATCH_MAX_STEPS).optional().describe('save: the steps, like browser_batch actions'),
     vars: z.record(z.string(), z.unknown()).optional().describe('run: values for the {{variables}}'),
     tabId: optionalTabId().describe('run: default tab for every step without its own tabId'),
-    continueOnError: z.boolean().optional().describe('run: keep going after a failing step'),
-    output: z.enum(['all', 'last', 'errors']).optional().describe('run: like browser_batch output (default last)'),
+    continueOnError: z.boolean().optional(),
+    output: z.enum(['all', 'last', 'errors']).optional(),
   }),
   // A run is a browser_batch, so it has the same step limit and time budget.
   timeoutMs: BATCH_BUDGET_MS,

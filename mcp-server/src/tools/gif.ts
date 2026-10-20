@@ -17,7 +17,7 @@ export const gifTool: ToolDefinition = {
   name: 'browser_gif',
   summary: 'Record the agent\'s actions in a tab as an animated GIF',
   description:
-    'Record what happens in a tab as an animated GIF (to show the user what was done). start begins recording: a frame is captured after every page-changing action (navigate, click, type, keys, scroll, hover, select, drag, forms…), clicks are marked with a red ring. frame adds one now, stop pauses, status/clear, export writes the .gif file (default ~/Downloads) and returns its path — the image itself is not returned. Frames are taken while the tab is visible; a background tab\'s frames are skipped (counted in skipped, with a note) unless activate:true, which shows that tab briefly for each frame and switches the user\'s view back.',
+    'Record a tab as an animated GIF to show the user: start, then a frame after every page-changing action (clicks ringed). frame adds one now, stop pauses, status / clear. export writes the .gif and returns its path (the image itself is not returned). Background-tab frames are skipped (counted in skipped) unless activate:true, which shows that tab briefly for each frame and switches the user\'s view back.',
   inputSchema: z.object({
     tabId: requireTabId(),
     action: z.enum(['start', 'frame', 'stop', 'status', 'export', 'clear']).describe('Recording action'),

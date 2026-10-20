@@ -52,7 +52,7 @@ Calling a tool that is not active yet activates it first, so it runs at once.
 - `browser_navigate` - Go to a URL (or `"back"` / `"forward"`); returns an inline snapshot unless `snapshot: false`. Params: `url`, `tabId` (optional, defaults to active — pass it anyway), `waitUntil`, `snapshot`
 - `browser_tabs` - Params: `action` (list|create|close|focus|reload|lock|unlock), `tabId`, `url`, `active` (create: `false` = background), `window`, `bypassCache`, `fullUrls`
 - `browser_resize_window` - Resize/maximize the window holding a tab (responsive checks; it resizes the user's window). Params: `tabId`, `width`, `height`, `state`
-- `browser_emulate` - Offline / slow-3g / fast-3g network, CPU throttling, geolocation, colorScheme, reducedMotion, userAgent for one tab (kept until `reset: true`). Params: `tabId`, `network`, `cpuThrottling`, `geolocation`, `colorScheme`, `reducedMotion`, `userAgent`, `reset`
+- `browser_emulate` - Offline / slow-3g / fast-3g network, CPU throttling, geolocation, colorScheme, reducedMotion, userAgent for one tab (kept until `reset: true` or the yellow banner is closed). Params: `tabId`, `network`, `cpuThrottling`, `geolocation`, `colorScheme`, `reducedMotion`, `userAgent`, `reset`
 - `browser_list_browsers` / `browser_select_browser` - Only when several Chrome profiles are connected. Params: `browserId` (select; `"auto"` = default). List tabs again after switching.
 
 ### Interaction (all require `tabId`)
@@ -92,10 +92,11 @@ Calling a tool that is not active yet activates it first, so it runs at once.
 ### Waiting (requires `tabId`)
 - `browser_wait` - Wait for an element, text, a URL change or a delay. Params: `tabId`, `selector`, `state`, `text`, `urlIncludes`, `timeout`, `delay`
 
-### Debug (per-tab buffers, capped at 200 entries)
-- `browser_console` - Console messages for a tab. Params: `tabId`, `pattern`, `level`, `limit`, `clear`, `browser` (Chrome-reported messages + DevTools Issues)
-- `browser_network` - Network requests for a tab. Params: `tabId`, `urlPattern`, `filter`, `type`, `failed`, `limit`, `clear`, `fullUrls`, `requestId` (one request with redacted headers)
-- `browser_intercept` - Block / redirect / add request headers per tab, captures, HAR export. Params: `action` (set-rules|list-rules|clear-rules|list-captures|export-har), `tabId`, `global` (set-rules without `tabId`: every tab of the browser), `rules`, `filter`, `limit`. Check `enforcement` in the result: `capture-only` = rules are not applied.
+### Debug (per-tab, up to 200 entries each)
+- `browser_inspect_element` - Why an element looks/behaves as it does. Params: `tabId`, `ref` or `selector`, `include` (styles|rules|listeners, default all), `properties` (computed style names, `["*"]` = all). Returns computed `styles`, CSS `rules` (highest priority first, `source` file:line, `overridden`), `inherited`, `pseudo`, `listeners`, `delegated`.
+- `browser_console` - Console messages and uncaught errors (with stacks) of a tab's current page, via the debugger. Params: `tabId`, `pattern`, `level`, `limit`, `clear`, `browser` (Chrome-reported messages + DevTools Issues)
+- `browser_network` - Network requests for a tab. Params: `tabId`, `urlPattern`, `filter`, `type`, `failed`, `limit`, `clear`, `fullUrls`, `requestId` (one request with redacted headers, plus `responseBody` when captured), `captureBodies` (`true` keeps document/xhr/fetch response bodies from then on, `false` stops)
+- `browser_intercept` - Block / redirect / add request headers per tab, mock responses (`action: "mock"` with `mockStatus`, `mockBody`, response `headers`; needs `tabId` or `tabIds`), captures, HAR export. Params: `action` (set-rules|list-rules|clear-rules|list-captures|export-har), `tabId`, `global` (set-rules without `tabId`: every tab of the browser), `rules`, `filter`, `limit`. Check `enforcement` in the result: `capture-only` = rules are not applied.
 
 ## Safe observe → act
 

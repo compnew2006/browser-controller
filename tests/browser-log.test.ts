@@ -11,12 +11,13 @@ let replay: Array<[string, any]> = [];
   debugger: {
     attach: async () => {},
     detach: async () => {},
-    sendCommand: async ({ tabId }: { tabId: number }, method: string) => {
+    sendCommand: async ({ tabId }: { tabId: number }, method: string, params: any) => {
       sent.push(method);
-      if (method === 'Log.enable' || method === 'Audits.enable') {
+      if (method === 'Log.enable' || method === 'Audits.enable' || method === 'Runtime.enable') {
         const domain = method.split('.')[0];
         for (const [m, p] of replay) if (m.startsWith(domain)) cdpListeners.forEach((fn) => fn({ tabId }, m, p));
       }
+      if (method === 'Runtime.callFunctionOn') return { result: { value: params.arguments.map((a: any) => `json:${a.objectId}`) } };
       return { result: { value: 1 } };
     },
     onEvent: { addListener: (fn: any) => cdpListeners.push(fn) },
@@ -24,10 +25,9 @@ let replay: Array<[string, any]> = [];
   },
 };
 
-const { logEntryView, summarizeIssue, aggregateIssues, collectBrowserLog } = await import('../extension/lib/browser-log.js');
+const { logEntryView, summarizeIssue, aggregateIssues, collectBrowserLog, collectPageConsole } = await import('../extension/lib/browser-log.js');
 const { handleConsole } = await import('../extension/handlers/tabs.js');
 const { detachCdp } = await import('../extension/lib/cdp-session.js');
-const { consoleByTab } = await import('../extension/lib/state.js');
 
 const formIssue = (errorType: string) => ({ code: 'GenericIssue', details: { genericIssueDetails: { errorType, frameId: 'f' } } });
 const syncXhr = { code: 'DeprecationIssue', details: { deprecationIssueDetails: { type: 'XHRSyncMainThread', sourceCodeLocation: { url: 'https://example.test/', lineNumber: 3 } } } };
@@ -75,12 +75,62 @@ describe('browser log (Chrome-reported messages and Issues)', () => {
   });
 });
 
+describe('page console (Runtime replay)', () => {
+  const str = (value: string) => ({ type: 'string', value });
+
+  it('formats console calls and uncaught exceptions, JSON only for plain objects and arrays', async () => {
+    const calls: string[] = [];
+    let listener: ((m: string, p: any) => void) | null = null;
+    const send = async (m: string, p: any = {}) => {
+      calls.push(m);
+      if (m === 'Runtime.enable') {
+        listener?.('Runtime.consoleAPICalled', { type: 'log', timestamp: 10.4, args: [str('early'), { type: 'number', value: 42 }, { type: 'object', objectId: 'o1', description: 'Object' }] });
+        listener?.('Runtime.consoleAPICalled', { type: 'error', timestamp: 11, args: [str('Error reading query stream:'), { type: 'object', subtype: 'error', objectId: 'e1', description: "TypeError: x\n    at f (https://a.test/app.js:4:1)" }] });
+        listener?.('Runtime.consoleAPICalled', { type: 'warning', timestamp: 12, args: [{ type: 'undefined' }, { type: 'object', subtype: 'null', value: null }] });
+        listener?.('Runtime.consoleAPICalled', { type: 'endGroup', timestamp: 13, args: [] });
+        listener?.('Runtime.exceptionThrown', { timestamp: 14, exceptionDetails: { text: 'Uncaught', url: 'https://a.test/', lineNumber: 4, exception: { type: 'object', subtype: 'error', description: 'Error: boom\n    at https://a.test/:5:30' } } });
+        listener?.('Runtime.exceptionThrown', { timestamp: 15, exceptionDetails: { text: 'Uncaught (in promise)', url: 'https://a.test/', lineNumber: 9, exception: { type: 'string', value: 'nope' } } });
+      }
+      if (m === 'Runtime.callFunctionOn') return { result: { value: p.arguments.map((a: any) => `{"id":"${a.objectId}"}`) } };
+      return {};
+    };
+    const subscribe = (fn: any) => { listener = fn; return () => { listener = null; }; };
+    const out = await collectPageConsole(send, subscribe, { clear: true, settleMs: 0 });
+    expect(out).toEqual([
+      { level: 'log', text: 'early 42 {"id":"o1"}', timestamp: 10 },
+      { level: 'error', text: 'Error reading query stream: TypeError: x\n    at f (https://a.test/app.js:4:1)', timestamp: 11 },
+      { level: 'warn', text: 'undefined null', timestamp: 12 },
+      { level: 'error', text: 'Uncaught Error: boom\n    at https://a.test/:5:30', timestamp: 14 },
+      { level: 'error', text: 'Uncaught (in promise) nope (https://a.test/:10)', timestamp: 15 },
+    ]);
+    // Runtime only replays from a disabled state; it is switched off again.
+    expect(calls).toEqual(['Runtime.disable', 'Runtime.enable', 'Runtime.callFunctionOn', 'Runtime.discardConsoleEntries', 'Runtime.disable']);
+    expect(listener).toBeNull();
+  });
+
+  it('filters levels before formatting and keeps only the latest entries', async () => {
+    let listener: ((m: string, p: any) => void) | null = null;
+    const formatted: string[] = [];
+    const send = async (m: string, p: any = {}) => {
+      if (m === 'Runtime.enable') {
+        for (let i = 0; i < 5; i++) listener?.('Runtime.consoleAPICalled', { type: i % 2 ? 'error' : 'log', args: [{ type: 'object', objectId: `o${i}` }] });
+      }
+      if (m === 'Runtime.callFunctionOn') { formatted.push(p.objectId); return { result: { value: ['x'] } }; }
+      return {};
+    };
+    const subscribe = (fn: any) => { listener = fn; return () => { listener = null; }; };
+    const out = await collectPageConsole(send, subscribe, { levels: new Set(['error']), max: 1, settleMs: 0 });
+    expect(out).toEqual([{ level: 'error', text: 'x' }]);
+    expect(formatted).toEqual(['o3']);
+  });
+});
+
 describe('browser_console browser:true', () => {
   beforeEach(async () => {
     await detachCdp(3);
     sent.length = 0;
-    consoleByTab.set(3, [{ level: 'warn', text: 'page warn', timestamp: 1, url: 'https://example.test/' }]);
     replay = [
+      ['Runtime.consoleAPICalled', { type: 'warning', timestamp: 1, args: [{ type: 'string', value: 'page warn' }] }],
       ['Log.entryAdded', { entry: notFound }],
       ['Log.entryAdded', { entry: { source: 'violation', level: 'verbose', text: 'Forced reflow while executing JavaScript took 40ms' } }],
       ['Audits.issueAdded', { issue: syncXhr }],
@@ -90,7 +140,7 @@ describe('browser_console browser:true', () => {
 
   it('adds what Chrome reported for the page next to the console messages', async () => {
     const res = await handleConsole({ tabId: 3, browser: true }) as any;
-    expect(res.messages).toEqual([{ level: 'warn', text: 'page warn', timestamp: 1, url: 'https://example.test/' }]);
+    expect(res.messages).toEqual([{ level: 'warn', text: 'page warn', timestamp: 1 }]);
     expect(res.browser.messages.map((m: any) => `${m.level}:${m.source}`)).toEqual(['error:network', 'debug:violation']);
     expect(res.browser.issues.map((i: any) => i.type)).toEqual(['XHRSyncMainThread', 'FormLabelForNameError']);
   });
@@ -102,9 +152,11 @@ describe('browser_console browser:true', () => {
     expect(res.browser.issues.map((i: any) => i.type)).toEqual(['XHRSyncMainThread']);
   });
 
-  it('never touches the debugger unless asked', async () => {
+  it('reads the page console through Runtime only, unless asked for more', async () => {
     const res = await handleConsole({ tabId: 3 }) as any;
+    expect(res.messages).toEqual([{ level: 'warn', text: 'page warn', timestamp: 1 }]);
     expect(res.browser).toBeUndefined();
-    expect(sent).toEqual([]);
+    expect(sent.filter((m) => /^Runtime\.(en|dis)able/.test(m))).toEqual(['Runtime.disable', 'Runtime.enable', 'Runtime.disable']);
+    expect(sent.some((m) => m.startsWith('Log.') || m.startsWith('Audits.'))).toBe(false);
   });
 });

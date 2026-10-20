@@ -6,19 +6,16 @@ export const runActionTool: ToolDefinition = {
   name: 'browser_run_action',
   summary: 'Run arbitrary JS via CDP (bypasses CSP)',
   description:
-    'Run a self-contained JavaScript action object in the page context via CDP. code is an expression that evaluates to an object with an execute(params) method (called with actionParams), or a plain expression whose value is returned; multi-statement code is accepted too (its value is returned only through an explicit return). A thrown error fails with SCRIPT_ERROR and a run longer than 25 s fails with TIMEOUT. Always runs over the debugger, so page CSP does not apply and it never falls back to chrome.scripting; shows a yellow "is being debugged" banner. For plain one-off JS, browser_evaluate (also CDP by default, console-style) is simpler. Prefer the dedicated tools (browser_click/browser_type/browser_snapshot) over hand-written JS for those specific tasks.',
+    'Run code over CDP: an expression that evaluates to { execute(params) } (called with actionParams), or a plain expression whose value is returned; multi-statement code returns a value only through an explicit return. Always via the debugger (yellow banner): page CSP does not apply and it never falls back to chrome.scripting. A throw fails with SCRIPT_ERROR; a run over 25 s fails with TIMEOUT. For plain JS browser_evaluate is simpler.',
   inputSchema: z.object({
     tabId: requireTabId(),
     code: z
-      .string()
-      .describe(
-        'JavaScript expression that evaluates to an action object with an execute(params) function, or a plain expression such as document.title. E.g. ({ name: "my-action", execute: function(p) { return { content: [{ type: "text", text: document.title }] }; } })',
-      ),
+      .string(),
     actionParams: z
       .record(z.string(), z.unknown())
       .optional()
       .default({})
-      .describe('Parameters to pass to the action execute() function'),
+      .describe('Passed to execute()'),
   }),
   timeoutMs: 30_000,
   handler: forwardHandler('browser_run_action'),
