@@ -18,7 +18,6 @@ describe('maintenance quality gates', () => {
     const files = [
       'mcp-server/src/bridge.ts',
       'extension/handlers/interaction.js',
-      'extension/lib/observation-v2.js',
     ];
     const oversized = Object.fromEntries(
       files

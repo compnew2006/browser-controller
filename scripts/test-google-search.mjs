@@ -39,10 +39,16 @@ sock.on('data', (chunk) => {
     }
   }
 });
+// 3.0 IPC hello. Source of truth: mcp-server/src/protocol.ts (PROTOCOL_VERSION, IPC_PROTOCOL_CAPABILITIES,
+// which include tools-v3). The daemon refuses a hello without them. Keep in sync with protocol.ts.
+const IPC_HELLO_V3 = {
+  protocolVersion: 1,
+  capabilities: ['heartbeat', 'tool-routing', 'session-locks', 'cancellation', 'result-envelope', 'tools-v3'],
+};
 // Daemon protocol: client must send `hello` FIRST; only then does the daemon
 // reply `welcome`. (Waiting for welcome before hello deadlocks — see daemon.ts.)
 sock.on('connect', () => {
-  sock.write(JSON.stringify({ kind: 'hello', token: TOKEN, agentName: 'TokenProbe' }) + '\n');
+  sock.write(JSON.stringify({ kind: 'hello', token: TOKEN, agentName: 'TokenProbe', ...IPC_HELLO_V3 }) + '\n');
 });
 sock.on('error', (e) => { log('SOCK ERR', e.message); process.exit(1); });
 
@@ -62,7 +68,8 @@ async function step(name, tool, params) {
   const r = await call(tool, params);
   const ms = Date.now() - t0;
   if (!r.success) { log('▶ ' + name + ' ... FAIL (' + ms + 'ms): ' + r.error); throw new Error(r.error); }
-  const payload = JSON.stringify(r.result ?? '');
+  // The agent reads the extension's `text`; that is what the token estimate measures.
+  const payload = typeof r.result?.text === 'string' ? r.result.text : JSON.stringify(r.result ?? '');
   const e = est(payload);
   totals.mid += e.mid; totals.chars += e.chars;
   steps.push({ name, ms, e });
@@ -75,9 +82,11 @@ await sleep(200);
 log('Connected as ' + sid);
 
 try {
-  const cr = await call('browser_tabs', { action: 'create', url: 'about:blank' });
-  const tabId = cr.result?.tabId ?? cr.result?.tabs?.[0]?.id;
-  if (typeof tabId !== 'number') throw new Error('could not extract tabId from create: ' + JSON.stringify(cr.result));
+  // No tabId: browser_navigate opens a new background tab owned by this session.
+  const cr = await call('browser_navigate', { url: 'about:blank' });
+  if (!cr.success) throw new Error(cr.error);
+  const tabId = cr.result?.tabId;
+  if (typeof tabId !== 'number') throw new Error('could not extract tabId from navigate: ' + JSON.stringify(cr.result));
   log('(created tab ' + tabId + ')');
 
   await step('navigate google.com', 'browser_navigate', { tabId, url: 'https://www.google.com' });
@@ -86,23 +95,21 @@ try {
   await step('navigate search?q=mcp', 'browser_navigate', { tabId, url: 'https://www.google.com/search?q=mcp' });
   await sleep(2500);
 
-  const snapRaw = await step('snapshot results', 'browser_snapshot', { tabId, compact: true });
-  const snapStr = typeof snapRaw === 'string' ? snapRaw : JSON.stringify(snapRaw);
+  const snapRaw = await step('snapshot results', 'browser_snapshot', { tabId });
+  const snapStr = typeof snapRaw?.text === 'string' ? snapRaw.text : JSON.stringify(snapRaw);
 
-  let snapObj = null; try { snapObj = JSON.parse(snapStr); } catch {}
+  // 3.0 snapshot lines: `  role "name" [e12]`; the topic filter reads the names.
   const topics = [];
-  if (snapObj && snapObj.tree) {
-    const walk = (n) => {
-      if (!n || topics.length >= 10) return;
-      const txt = n.name || n.text;
-      if (typeof txt === 'string' && txt.length > 12 && txt.length < 200 &&
-          n.role !== 'link' && n.role !== 'navigation' && /[a-zA-Z]{4}/.test(txt) &&
-          !/^(search|images|maps|news|shopping|gmail|sign in|accounts|filter|tools|settings|privacy|terms)/i.test(txt)) {
-        topics.push(txt);
-      }
-      if (n.children) n.children.forEach(walk);
-    };
-    walk({ children: snapObj.tree });
+  for (const line of snapStr.split('\n')) {
+    if (topics.length >= 10) break;
+    const m = /^\s*(\S+) "([^"]+)" \[e\d+\]/.exec(line);
+    if (!m) continue;
+    const [, role, txt] = m;
+    if (txt.length > 12 && txt.length < 200 &&
+        role !== 'link' && role !== 'navigation' && /[a-zA-Z]{4}/.test(txt) &&
+        !/^(search|images|maps|news|shopping|gmail|sign in|accounts|filter|tools|settings|privacy|terms)/i.test(txt)) {
+      topics.push(txt);
+    }
   }
 
   log('');

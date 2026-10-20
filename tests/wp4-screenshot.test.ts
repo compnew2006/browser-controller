@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 
 /**
- * Screenshot size rules (audit #2): the longest side is capped, and an image is
- * fitted under the frame budget before it leaves the extension. Pure functions;
- * the capture paths themselves are in tests/screenshot-cdp.test.ts.
+ * Screenshot size rules (audit #2): the longest side is capped, and a JPEG is fitted
+ * under the frame budget before it leaves the extension. Pure functions; the capture
+ * paths themselves are in tests/v3-shot.test.ts.
  */
 (globalThis as unknown as { chrome: unknown }).chrome = {
   tabs: { onRemoved: { addListener: () => {} }, onUpdated: { addListener: () => {}, removeListener: () => {} } },
@@ -16,12 +16,11 @@ import { describe, it, expect, vi } from 'vitest';
   scripting: { executeScript: async () => [{ result: null }] },
 };
 
-const { planScale, fitToBudget, MAX_IMAGE_EDGE, SCREENSHOT_MAX_BASE64_CHARS } = await import('../extension/handlers/tabs.js');
+const { planScale, fitToBudget, MAX_IMAGE_EDGE, SCREENSHOT_MAX_BASE64_CHARS } = await import('../extension/handlers/screenshot.js');
 
 describe('planScale', () => {
   it('keeps a request that fits the 1568 px longest side', () => {
     expect(planScale({ cssW: 1000, cssH: 600, dpr: 1, scale: 1 })).toEqual({ scale: 1, edgeClamped: false });
-    // a small region zoomed 4x is still well inside the limit
     expect(planScale({ cssW: 300, cssH: 200, dpr: 1, scale: 4 })).toEqual({ scale: 4, edgeClamped: false });
   });
 
@@ -35,39 +34,34 @@ describe('planScale', () => {
     expect(retina.edgeClamped).toBe(true);
     expect(Math.round(1000 * 2 * retina.scale)).toBe(MAX_IMAGE_EDGE);
   });
-
-  it('applies maxWidth on top, and does not call it an edge clamp', () => {
-    expect(planScale({ cssW: 1000, cssH: 600, dpr: 1, scale: 1, maxWidth: 500 })).toEqual({ scale: 0.5, edgeClamped: false });
-    // DPR 2: maxWidth caps the device-pixel width (800 px = 1000 CSS × 0.4 × 2)
-    expect(planScale({ cssW: 1000, cssH: 600, dpr: 2, scale: 1, maxWidth: 800 }).scale).toBeCloseTo(0.4, 10);
-  });
 });
 
 describe('fitToBudget', () => {
-  const shot = (format: string, quality: number, scale: number, size: number) => ({
-    data: 'x'.repeat(size), format, quality, scale, width: Math.round(1000 * scale), height: Math.round(600 * scale),
+  const shot = (quality: number, scale: number, size: number) => ({
+    data: 'x'.repeat(size), quality, scale, width: Math.round(1000 * scale), height: Math.round(600 * scale),
   });
 
   it('returns an image under the budget unchanged, without another capture', async () => {
-    const first = shot('png', 80, 1, 1000);
+    const first = shot(80, 1, 1000);
     const redo = vi.fn();
     expect(await fitToBudget(first, redo, 5000)).toBe(first);
     expect(redo).not.toHaveBeenCalled();
   });
 
-  it('turns an oversized PNG into a JPEG at the same scale first', async () => {
-    const first = shot('png', 80, 1, 6000);
-    const redo = vi.fn(async (next: { format: string; quality: number; scale: number }) => shot(next.format, next.quality, next.scale, 1000));
+  it('lowers the JPEG quality by 15 and shrinks the scale by the size ratio on the first try', async () => {
+    const first = shot(80, 1, 6000);
+    const redo = vi.fn(async (next: { quality: number; scale: number }) => shot(next.quality, next.scale, 1000));
     const out = await fitToBudget(first, redo, 5000);
     expect(redo).toHaveBeenCalledTimes(1);
-    expect(redo).toHaveBeenCalledWith({ format: 'jpeg', quality: 80, scale: 1 });
-    expect(out).toMatchObject({ format: 'jpeg', scale: 1 });
+    expect(redo.mock.calls[0][0].quality).toBe(65);
+    expect(redo.mock.calls[0][0].scale).toBeCloseTo(0.9 * Math.sqrt(5000 / 6000), 10);
+    expect(out.data.length).toBeLessThanOrEqual(5000);
   });
 
-  it('shrinks the scale and lowers the JPEG quality until it fits', async () => {
-    const first = shot('jpeg', 80, 1, 20_000);
-    const redo = vi.fn(async (next: { format: string; quality: number; scale: number }) =>
-      shot(next.format, next.quality, next.scale, Math.round(20_000 * next.scale * next.scale)));
+  it('shrinks the scale and lowers the quality until it fits', async () => {
+    const first = shot(80, 1, 20_000);
+    const redo = vi.fn(async (next: { quality: number; scale: number }) =>
+      shot(next.quality, next.scale, Math.round(20_000 * next.scale * next.scale)));
     const out = await fitToBudget(first, redo, 5000);
     expect(out.data.length).toBeLessThanOrEqual(5000);
     expect(out.scale).toBeLessThan(1);
@@ -76,8 +70,8 @@ describe('fitToBudget', () => {
   });
 
   it('fails SCREENSHOT_TOO_LARGE when no try fits, after a bounded number of tries', async () => {
-    const first = shot('png', 80, 1, 90_000);
-    const redo = vi.fn(async (next: { format: string; quality: number; scale: number }) => shot(next.format, next.quality, next.scale, 90_000));
+    const first = shot(80, 1, 90_000);
+    const redo = vi.fn(async (next: { quality: number; scale: number }) => shot(next.quality, next.scale, 90_000));
     await expect(fitToBudget(first, redo, 5000)).rejects.toMatchObject({ code: 'SCREENSHOT_TOO_LARGE' });
     expect(redo.mock.calls.length).toBeLessThanOrEqual(3);
   });

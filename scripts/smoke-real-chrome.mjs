@@ -31,21 +31,17 @@ if (!userSystemdEnv.DBUS_SESSION_BUS_ADDRESS) {
 const log = (...args) => console.log('[smoke]', ...args);
 let server, daemon, tabId, client, startedByTest = false;
 
+// 3.0 results: the extension's `text` is the agent-facing text (plain lines, not JSON).
 function textOf(result) {
-  if (result?.content) return result.content.map(x => x.text || '').join('\n');
+  if (typeof result?.text === 'string') return result.text;
   return typeof result === 'string' ? result : JSON.stringify(result);
 }
-function parseText(result) { try { return JSON.parse(textOf(result)); } catch { return null; } }
+// Refs of the snapshot lines with this role, e.g. `button "Click me" [e3]`.
 function refsIn(result, role) {
-  const refs = [];
-  const walk = node => {
-    if (!node || typeof node !== 'object') return;
-    if (node.role === role && node.ref) refs.push(node.ref);
-    for (const child of node.children || []) walk(child);
-    if (node.tree) walk(node.tree);
-  };
-  walk(parseText(result));
-  return refs;
+  return textOf(result).split('\n').flatMap(line => {
+    const match = line.match(/^\s*(\S+)(?: "[^"]*")? \[(e\d+)\]/);
+    return match && match[1] === role ? [match[2]] : [];
+  });
 }
 function assert(value, message) { if (!value) throw new Error(message); }
 function daemonAlive() {
@@ -99,6 +95,13 @@ async function startManagedDaemon() {
 }
 
 
+// 3.0 IPC hello. Source of truth: mcp-server/src/protocol.ts (PROTOCOL_VERSION, IPC_PROTOCOL_CAPABILITIES,
+// which include tools-v3). The daemon refuses a hello without them. Keep in sync with protocol.ts.
+const IPC_HELLO_V3 = {
+  protocolVersion: 1,
+  capabilities: ['heartbeat', 'tool-routing', 'session-locks', 'cancellation', 'result-envelope', 'tools-v3'],
+};
+
 async function connect() {
   const socket = net.createConnection(SOCKET);
   socket.setEncoding('utf8');
@@ -106,7 +109,7 @@ async function connect() {
   const pending = new Map();
   let readyResolve, readyReject;
   const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
-  socket.on('connect', () => socket.write(JSON.stringify({ kind: 'hello', token: TOKEN, agentName: 'RealChromeSmoke' }) + '\n'));
+  socket.on('connect', () => socket.write(JSON.stringify({ kind: 'hello', token: TOKEN, agentName: 'RealChromeSmoke', ...IPC_HELLO_V3 }) + '\n'));
   socket.on('data', chunk => {
     buffer += chunk;
     let end;
@@ -169,32 +172,33 @@ async function main() {
     await waitForDaemon();
   }
   client = await connect();
-  assert(Array.isArray((await call('browser_tabs', { action: 'list' }))?.tabs), 'tab list failed after daemon restart');
+  assert(textOf(await call('browser_tabs', { action: 'list' })).length > 0, 'tab list failed after daemon restart');
   log('daemon restart/reconnect verified');
 
-  const created = await call('browser_tabs', { action: 'create', url: page });
-  tabId = created.tabId ?? created.tabs?.[0]?.id;
-  assert(Number.isInteger(tabId), `could not determine created tabId: ${JSON.stringify(created)}`);
-  assert(Array.isArray((await call('browser_tabs', { action: 'list' }))?.tabs), 'tab list failed');
-  const snapshot = await call('browser_snapshot', { tabId, compact: false });
+  // No tabId: navigate opens a new background tab owned by this session.
+  const created = await call('browser_navigate', { url: page });
+  tabId = created.tabId;
+  assert(Number.isInteger(tabId), `could not determine navigated tabId: ${JSON.stringify(created)}`);
+  assert(textOf(await call('browser_tabs', { action: 'list' })).includes(`${tabId} [own]`), 'tab list does not show the session tab');
+  const snapshot = await call('browser_snapshot', { tabId });
   assert(textOf(snapshot).includes('Smoke page'), 'snapshot did not contain smoke page');
   const buttonRef = refsIn(snapshot, 'button')[0];
   const inputRef = refsIn(snapshot, 'textbox')[0];
   assert(buttonRef && inputRef, 'snapshot did not provide button/textbox refs');
   log(`snapshot ok (tab ${tabId})`);
-  await call('browser_click', { tabId, ref: buttonRef });
+  await call('browser_click', { tabId, target: buttonRef });
   const clicked = await call('browser_evaluate', { tabId, expression: 'document.querySelector("#result").textContent' });
   assert(textOf(clicked).includes('clicked'), `click verification failed: ${textOf(clicked)}`);
-  await call('browser_type', { tabId, ref: inputRef, text: 'typed by smoke', clear: true });
+  await call('browser_type', { tabId, target: inputRef, text: 'typed by smoke', clear: true });
   const value = await call('browser_evaluate', { tabId, expression: 'document.querySelector("#text").value' });
   assert(textOf(value).includes('typed by smoke'), `type verification failed: ${textOf(value)}`);
   log('click and type ok');
-  const consoleResult = await call('browser_console', { tabId });
+  const consoleResult = await call('browser_logs', { tabId, kind: 'console' });
   assert(textOf(consoleResult).includes('SMOKE_CONSOLE_MARKER'), 'console marker was not captured');
-  const networkResult = await call('browser_network', { tabId, filter: '/api' });
+  const networkResult = await call('browser_logs', { tabId, kind: 'network', filter: '/api' });
   assert(textOf(networkResult).includes('/api'), 'network request was not captured');
   log('console and network ok');
-  await call('browser_upload_file', { tabId, selector: '#file', filePath: UPLOAD });
+  await call('browser_fill', { tabId, fields: [{ target: '#file', value: [UPLOAD] }] });
   const files = await call('browser_evaluate', { tabId, expression: 'document.querySelector("#file").files[0]?.name' });
   assert(textOf(files).includes('smoke-upload.txt'), `upload verification failed: ${textOf(files)}`);
   log('upload ok');

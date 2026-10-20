@@ -5,8 +5,8 @@ import { APP_VERSION } from './daemon-config.js';
 import {
   DAEMON_INSTANCE_ID,
   buildExtensionHello,
-  validateCapabilities,
-  validateProtocolVersion,
+  OLDER_EXTENSION_REASON,
+  validateExtensionHelloAck,
 } from './protocol.js';
 import {
   AUTH_PROTOCOL_PREFIX,
@@ -23,9 +23,9 @@ import {
   type ExtensionConnection,
 } from './bridge-connections.js';
 import { MAX_WS_MESSAGE_BYTES, WS_HARD_MAX_PAYLOAD_BYTES, rejectOversizedFrame } from './bridge-frames.js';
+import { tabsAcrossBrowsers } from './bridge-tabs.js';
 
 export { isDaemonResponsiveOnPort } from './bridge-security.js';
-export { BRIDGE_TOOLS } from './bridge-connections.js';
 export { MAX_WS_MESSAGE_BYTES } from './bridge-frames.js';
 
 /** Handler for daemon-owned HTTP endpoints served on the bridge port. */
@@ -51,7 +51,7 @@ interface PendingRequest {
 interface BridgeOptions {
   port: number;
   host?: string;
-  /** Auth token the extension must present via ?token= (task 3.1). Empty = open. */
+  /** Auth token the extension must present in the bc-auth subprotocol (task 3.1). Empty = open. */
   token?: string;
   /**
    * Enrollment secret the extension popup must present via the X-BC-Enrollment
@@ -64,6 +64,7 @@ interface BridgeOptions {
   pingIntervalMs?: number;
   defaultTimeoutMs?: number;
   maxWsPayloadBytes?: number;
+  /** How long a peer may take to answer our hello with its helloAck before it is refused. */
   handshakeGraceMs?: number;
 }
 
@@ -108,13 +109,13 @@ export class ExtensionBridge {
     this.pingIntervalMs = options.pingIntervalMs ?? 10_000;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
     this.maxWsPayloadBytes = options.maxWsPayloadBytes ?? MAX_WS_MESSAGE_BYTES;
-    this.handshakeGraceMs = options.handshakeGraceMs ?? 25;
+    this.handshakeGraceMs = options.handshakeGraceMs ?? 3_000;
   }
 
-  private markExtensionReady(conn: ExtensionConnection, state: 'ready' | 'legacy', info?: { browserId?: unknown; browserLabel?: unknown }): void {
+  private markExtensionReady(conn: ExtensionConnection, info?: { browserId?: unknown; browserLabel?: unknown }): void {
     if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
     conn.handshakeTimer = null;
-    conn.state = state;
+    conn.state = 'ready';
     conn.missedPongs = 0;
     const { browserId, label } = identityOf(info);
     conn.label = label;
@@ -128,7 +129,7 @@ export class ExtensionBridge {
     this.startPingLoop();
     this.connectionWaiters.forEach((waiter) => waiter.resolve());
     this.connectionWaiters = [];
-    console.error(`[Bridge] Extension connected (${state} protocol, browser ${conn.label})`);
+    console.error(`[Bridge] Extension connected (browser ${conn.label})`);
   }
 
   private rejectExtensionHandshake(conn: ExtensionConnection, reason: string): void {
@@ -136,6 +137,7 @@ export class ExtensionBridge {
     conn.handshakeTimer = null;
     conn.state = 'incompatible';
     this.handshakeError = reason;
+    try { conn.ws.close(1002, 'incompatible protocol'); } catch { /* already closing */ }
     if (this.conns.live().length === 0) {
       const error = new Error(reason);
       this.connectionWaiters.forEach((waiter) => waiter.reject(error));
@@ -289,10 +291,8 @@ export class ExtensionBridge {
           return;
         }
         if (this.token) {
-          const url = new URL(req.url || '/', `http://${this.host}`);
-          // Token may arrive via Sec-WebSocket-Protocol (preferred — not logged)
-          // or the legacy ?token= query (fallback for old extensions).
-          const presented = extractToken(req, url);
+          // Only the Sec-WebSocket-Protocol subprotocol carries the token (never logged, never in the URL).
+          const presented = extractToken(req);
           if (!tokensMatch(presented, this.token)) {
             console.error('[Bridge] Extension rejected: missing/invalid token');
             socket.destroy();
@@ -314,26 +314,21 @@ export class ExtensionBridge {
         this.conns.add(conn);
 
         ws.on('message', (data: Buffer) => {
-          if (rejectOversizedFrame(data, this.maxWsPayloadBytes, this.pendingRequests, conn, (f) => this.handleResponse(f))) return;
+          if (rejectOversizedFrame(data, this.maxWsPayloadBytes, this.pendingRequests, conn, (f) => this.handleResponse(f, conn))) return;
           try {
             const msg = JSON.parse(data.toString());
             if (msg.type === 'helloAck') {
-              const version = validateProtocolVersion(msg.protocolVersion);
-              const capabilities = validateCapabilities(msg.capabilities, ['tool-dispatch', 'ping-pong']);
-              if (!version.ok || !capabilities.ok) {
-                const reason = version.reason || capabilities.reason || 'Extension protocol handshake failed.';
-                this.rejectExtensionHandshake(conn, reason);
-                ws.close(1002, 'incompatible protocol');
-                return;
-              }
-              this.markExtensionReady(conn, version.legacy || capabilities.legacy ? 'legacy' : 'ready', msg);
+              // No legacy acceptance: an explicit protocolVersion and the 3.0 capabilities, or refuse.
+              const check = validateExtensionHelloAck(msg);
+              if (check.ok) this.markExtensionReady(conn, msg);
+              else this.rejectExtensionHandshake(conn, check.reason ?? 'Extension protocol handshake failed.');
               return;
             }
             if (msg.type === 'pong') {
               conn.missedPongs = 0;
               return;
             }
-            this.handleResponse(msg);
+            this.handleResponse(msg, conn);
           } catch (err) {
             console.error('[Bridge] Parse error:', err);
           }
@@ -349,15 +344,13 @@ export class ExtensionBridge {
           console.error('[Bridge] Socket error:', err.message);
         });
 
-        // Modern extensions acknowledge immediately. The short fallback keeps
-        // pre-handshake extension builds usable during a rolling local upgrade.
+        // The extension must answer the hello with its 3.0 helloAck in time. A silent peer
+        // (a pre-3.0 build) is refused: it never gets tool calls.
         setTimeout(() => {
           if (!this.conns.has(conn) || ws.readyState !== WebSocket.OPEN) return;
           ws.send(JSON.stringify(buildExtensionHello(APP_VERSION, DAEMON_INSTANCE_ID)));
           conn.handshakeTimer = setTimeout(() => {
-            if (this.conns.has(conn) && conn.state === 'pending') {
-              this.markExtensionReady(conn, 'legacy');
-            }
+            if (this.conns.has(conn) && conn.state === 'pending') this.rejectExtensionHandshake(conn, OLDER_EXTENSION_REASON);
           }, this.handshakeGraceMs);
         }, 0);
       });
@@ -398,9 +391,10 @@ export class ExtensionBridge {
     }
   }
 
-  private handleResponse(msg: { id: string; success: boolean; result?: unknown; error?: string }): void {
+  private handleResponse(msg: { id: string; success: boolean; result?: unknown; error?: string }, conn: ExtensionConnection): void {
     const pending = this.pendingRequests.get(msg.id);
-    if (!pending) return;
+    // Only the browser this call was sent to may settle it.
+    if (!pending || pending.conn !== conn) return;
 
     clearTimeout(pending.timeout);
     // Detach the abort listener — the call settled normally (audit C2).
@@ -442,14 +436,15 @@ export class ExtensionBridge {
 
   waitForConnection(timeoutMs = 10_000): Promise<void> {
     if (this.isConnected()) return Promise.resolve();
-    if (this.handshakeError) return Promise.reject(new Error(this.handshakeError));
+    // A stale failure must not fail a call while a new browser is still negotiating.
+    if (this.handshakeError && !this.conns.all().some((c) => c.state === 'pending')) return Promise.reject(new Error(this.handshakeError));
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.connectionWaiters = this.connectionWaiters.filter(
           w => w.resolve !== resolve,
         );
-        reject(new Error('Timed out waiting for extension connection'));
+        reject(new Error(`NOT_CONNECTED: no Browser Controller extension connected within ${timeoutMs / 1000} s; check that it is installed and enabled`));
       }, timeoutMs);
 
       this.connectionWaiters.push({
@@ -465,18 +460,19 @@ export class ExtensionBridge {
     });
   }
 
-  async callTool(tool: string, params: Record<string, unknown>, sessionId?: string, signal?: AbortSignal, agentName?: string): Promise<unknown> {
-    // Browser selection is answered here, not by an extension.
-    if (tool === 'browser_list_browsers') return this.conns.list(sessionId);
-    if (tool === 'browser_select_browser') return this.conns.select(sessionId, params.browserId);
+  async callTool(tool: string, params: Record<string, unknown>, sessionId?: string, signal?: AbortSignal, agentName?: string, skipTabs = false): Promise<unknown> {
+    if (tool === 'browser_tabs' && !skipTabs) return tabsAcrossBrowsers(this.conns, params, sessionId, (p) => this.callTool(tool, p, sessionId, signal, agentName, true));
     if (!this.isConnected()) {
       try {
         await this.waitForConnection(5_000);
       } catch (error) {
-        if (this.handshakeError) throw new Error(this.handshakeError, { cause: error });
-        throw new Error(error instanceof Error && /protocol|capabilit/i.test(error.message)
-          ? error.message
-          : 'Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.', { cause: error });
+        // Every "no extension" failure reads with the NOT_CONNECTED code the agent acts on.
+        const wait = error instanceof Error ? error.message : String(error);
+        if (this.handshakeError) throw new Error(`NOT_CONNECTED: ${this.handshakeError}`, { cause: error });
+        if (wait.startsWith('NOT_CONNECTED: ')) throw error;
+        throw new Error(/protocol|capabilit/i.test(wait)
+          ? `NOT_CONNECTED: ${wait}`
+          : 'NOT_CONNECTED: Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.', { cause: error });
       }
     }
 
@@ -520,9 +516,9 @@ export class ExtensionBridge {
           console.error(`[Bridge] Timeout on ${tool}, retry ${retryCount + 1}/${this.maxRetries}`);
           this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName).then(resolve, reject);
         } else if (!canRetry) {
-          reject(new Error(`Tool call timed out (no retry: non-idempotent): ${tool}`));
+          reject(new Error(`TIMEOUT: ${tool} did not answer in ${timeoutMs} ms; it may still have run — check the page (browser_snapshot) before repeating it`));
         } else {
-          reject(new Error(`Tool call timed out after ${retryCount + 1} attempts: ${tool}`));
+          reject(new Error(`TIMEOUT: ${tool} did not answer in ${timeoutMs} ms (${retryCount + 1} attempts)`));
         }
       }, timeoutMs);
 
@@ -568,13 +564,14 @@ export class ExtensionBridge {
     });
   }
 
-  /** Fail waiting calls: all of them, or only those sent to one browser. */
+  /** Fail waiting calls: all of them, or only those sent to one browser. They read NOT_CONNECTED. */
   private rejectAllPending(reason: string, onlyConn?: ExtensionConnection): void {
     for (const [id, pending] of this.pendingRequests) {
       if (onlyConn && pending.conn !== onlyConn) continue;
       clearTimeout(pending.timeout);
       if (pending.onAbort && pending.signal) pending.signal.removeEventListener('abort', pending.onAbort);
-      pending.reject(new Error(reason));
+      // The call was already sent: it may have run in the page before the browser went away.
+      pending.reject(new Error(`NOT_CONNECTED: ${reason}; the call may still have run, so check the page before repeating it`));
       this.pendingRequests.delete(id);
     }
   }

@@ -1,19 +1,20 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, forwardHandler } from './types.js';
+import { tabIdParam, forwardHandler } from './types.js';
 
 export const evaluateTool: ToolDefinition = {
   name: 'browser_evaluate',
-  summary: 'Run JavaScript in the page (top-level await, last value returned)',
-  description:
-    'Run JavaScript in a tab like the DevTools console: top-level await, the last expression\'s value is returned (no return needed), DOM nodes come back as readable descriptions, a returned promise is awaited. Over CDP, so page CSP does not block it; mode:"scripting" = no debugger, CSP-bound, no top-level await. The result\'s via says which path ran; a page that runs past timeout returns TIMEOUT. Prefer browser_click/browser_type for input.',
+  summary: 'Run JavaScript in the page (top-level await)',
+  description: 'Run JavaScript in the tab (top-level await; the last expression is the result). Over CDP; via: scripting if the debugger cannot attach. Prefer click and type.',
   inputSchema: z.object({
-    tabId: requireTabId(),
+    tabId: tabIdParam,
     expression: z.string(),
-    timeout: z.number().int().min(1000).max(120_000).optional().default(30_000).describe('ms (default 30000)'),
-    mode: z.enum(['cdp', 'scripting']).optional().default('cdp'),
-  }),
+    // The handler floors the budget at 1000 ms (extension/handlers/inspection.js), so 1000 is the smallest honest value.
+    timeout: z.number().int().min(1000).max(30_000).optional(),
+  }).strict(),
+  // Arbitrary page code: never retried.
+  idempotent: false,
   // Must exceed the largest `timeout` so the page-side budget decides.
-  timeoutMs: 125_000,
+  timeoutMs: 35_000,
   handler: forwardHandler('browser_evaluate'),
 };

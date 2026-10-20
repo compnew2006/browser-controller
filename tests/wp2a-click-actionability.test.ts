@@ -1,16 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installFakePage, type FakeDocument, type FakeElement } from './helpers/fake-dom.js';
 
-// Synthetic-path mock (no debugger): executeScript runs the page function in-process.
+// Trusted-path mock: executeScript runs the page function in-process against the fake
+// page, and the debugger records every CDP command (the clicks that were really sent).
+const cdp: Array<{ method: string; params: Record<string, any> }> = [];
+const inputs = () => cdp.filter((c) => c.method.startsWith('Input.'));
 (globalThis as any).chrome = {
   tabs: { get: async (id: number) => ({ id, url: 'https://example.test/page', windowId: 1 }), query: async () => [], onRemoved: { addListener: () => {} } },
   scripting: { executeScript: async (o: { func: (...a: any[]) => unknown; args?: unknown[] }) => [{ result: await o.func(...(o.args ?? [])) }] },
   storage: { session: { get: async () => ({}), set: async () => {} }, local: { get: async () => ({}), set: async () => {} } },
-  debugger: { attach: async () => { throw new Error('no debugger in tests'); }, detach: async () => {}, sendCommand: async () => ({}), onDetach: { addListener: () => {} } },
+  debugger: {
+    attach: async () => {},
+    detach: async () => {},
+    sendCommand: async (_t: unknown, method: string, params: Record<string, any> = {}) => { cdp.push({ method, params }); return {}; },
+    onDetach: { addListener: () => {} },
+  },
 };
 
 const { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } = await import('../extension/lib/page-dom.js');
-const { handleClick, handleClickByText } = await import('../extension/handlers/interaction.js');
+const { handleClick } = await import('../extension/handlers/interaction.js');
 const { fallbackByTab } = await import('../extension/lib/state.js');
 
 let doc: FakeDocument;
@@ -98,8 +106,9 @@ function FakeElementMatches(el: FakeElement, sel: string): boolean {
   return (Object.getPrototypeOf(el) as { matches: (s: string) => boolean }).matches.call(el, sel);
 }
 
-describe('browser_click refuses a target it cannot click (synthetic path)', () => {
+describe('browser_click refuses a target it cannot click (trusted path)', () => {
   beforeEach(() => {
+    cdp.length = 0;
     doc = installFakePage();
     fallbackByTab.clear();
     PAGE_DOM_INSTALL(PAGE_DOM_VERSION);
@@ -111,8 +120,9 @@ describe('browser_click refuses a target it cannot click (synthetic path)', () =
     const cover = doc.el('div', { id: 'promo' });
     doc.body.append(btn, cover);
     stackAt(cover, btn);
-    const res = await handleClick({ tabId: 1, selector: '#buy' });
+    const res = await handleClick({ tabId: 1, target: '#buy' });
     expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_COVERED: /) });
+    expect(inputs()).toEqual([]);
     expect(btn.events).not.toContain('click');
   });
 
@@ -120,8 +130,9 @@ describe('browser_click refuses a target it cannot click (synthetic path)', () =
     const btn = doc.el('button', { id: 'hid' }, 'Hidden');
     btn.hidden = true;
     doc.body.append(btn);
-    const res = await handleClick({ tabId: 1, selector: '#hid' });
+    const res = await handleClick({ tabId: 1, target: '#hid' });
     expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_HIDDEN: /) });
+    expect(inputs()).toEqual([]);
     expect(btn.events).not.toContain('click');
   });
 
@@ -129,8 +140,9 @@ describe('browser_click refuses a target it cannot click (synthetic path)', () =
     const btn = doc.el('button', { id: 'off', 'aria-disabled': 'true' }, 'Off');
     doc.body.append(btn);
     stackAt(btn);
-    const res = await handleClick({ tabId: 1, selector: '#off' });
+    const res = await handleClick({ tabId: 1, target: '#off' });
     expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_DISABLED: /) });
+    expect(inputs()).toEqual([]);
     expect(btn.events).not.toContain('click');
   });
 
@@ -138,47 +150,9 @@ describe('browser_click refuses a target it cannot click (synthetic path)', () =
     const btn = doc.el('button', { id: 'ok' }, 'OK');
     doc.body.append(btn);
     stackAt(btn);
-    const res = await handleClick({ tabId: 1, selector: '#ok' });
-    expect(res).toMatchObject({ success: true, at: { x: 60, y: 20 } });
+    const res = await handleClick({ tabId: 1, target: '#ok' });
+    expect(res).toMatchObject({ success: true, at: { x: 60, y: 20 }, text: 'clicked #ok' });
     expect(res).not.toHaveProperty('warning');
-    expect(btn.events).toContain('click');
-  });
-
-  it('browser_click_text applies the same check to the control it matched', async () => {
-    const btn = doc.el('button', {}, 'Accept all');
-    const cover = doc.el('div', { class: 'modal' });
-    doc.body.append(btn, cover);
-    stackAt(cover, btn);
-    const res = await handleClickByText({ tabId: 1, text: 'accept all' });
-    expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_COVERED: /) });
-    expect(btn.events).not.toContain('click');
-  });
-});
-
-describe('browser_click_text: linear innermost-control selection', () => {
-  beforeEach(() => {
-    doc = installFakePage();
-    fallbackByTab.clear();
-    PAGE_DOM_INSTALL(PAGE_DOM_VERSION);
-  });
-
-  it('a wrapper row around a button is dropped in favour of the button', async () => {
-    const btn = doc.el('button', {}, 'Open report');
-    doc.body.append(doc.el('div', { class: 'row' }, doc.el('div', {}, btn)));
-    const res = await handleClickByText({ tabId: 1, text: 'open report' });
-    expect(res).toMatchObject({ success: true, matchCount: 1, clicked: 'Open report', role: 'button' });
-  });
-
-  it('2,000+ matches resolve in one pass (was quadratic: 8 s, TAB_WEDGED)', async () => {
-    const rows: FakeElement[] = [];
-    for (let i = 0; i < 2500; i++) {
-      rows.push(doc.el('div', { class: 'row' }, doc.el('div', {}, doc.el('button', {}, `Item ${i}`))));
-    }
-    doc.body.append(...rows);
-    const t0 = Date.now();
-    const res = await handleClickByText({ tabId: 1, text: 'item', index: 2499 });
-    const ms = Date.now() - t0;
-    expect(res).toMatchObject({ success: true, matchCount: 2500, clicked: 'Item 2499' });
-    expect(ms).toBeLessThan(3000);
+    expect(inputs().filter((c) => c.params.type === 'mousePressed')).toHaveLength(1);
   });
 });

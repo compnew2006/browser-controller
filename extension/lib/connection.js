@@ -14,7 +14,7 @@ import {
   setAdoptedDaemonInstance,
 } from './state.js';
 import { showLockShield, hideLockShield } from './overlay.js';
-import { buildExtensionHelloAck, validateDaemonHello } from './protocol.js';
+import { buildExtensionHelloAck, OLDER_DAEMON_REASON, validateDaemonHello } from './protocol.js';
 
 const DEFAULT_WS_PORT = 7225;
 const RECONNECT_BASE_MS = 1000;
@@ -28,7 +28,7 @@ const KEEPALIVE_ALARM = 'keepalive';
 const KEEPALIVE_INTERVAL_MIN = 0.4; // ~24s, under Chrome's 30s limit
 
 let wsPort = DEFAULT_WS_PORT;
-let wsToken = ''; // auth token (3.1); appended as ?token=
+let wsToken = ''; // auth token (3.1); offered only in the WS subprotocol, never in the URL
 // Enrollment secret the daemon gates /pair behind. The popup owns the
 // user-facing entry of it; the background re-reads it from storage on every
 // service-worker recycle (MV3 kills the worker ~30s idle, so this re-load is
@@ -57,7 +57,9 @@ let connectedSince = null;
 let lastError = null;
 let currentActivity = null; // tool currently running (single overlay label source)
 let handshakeTimeout = null;
-const HANDSHAKE_GRACE_MS = 250;
+// How long a daemon may take to send its hello after the socket opens. Silence past this
+// is a pre-3.0 daemon: it is refused, not treated as connected.
+const HANDSHAKE_TIMEOUT_MS = 3_000;
 
 /** The router's handleMessage — injected by background.js at wiring time. */
 let messageHandler = null;
@@ -265,13 +267,9 @@ export function adoptDaemonInstance(instanceId) {
 function wsUrl() {
   // 127.0.0.1 (not 'localhost') so it matches the daemon's IPv4 bind.
   // On macOS 'localhost' can resolve to IPv6 ::1 and refuse.
-  const base = `ws://127.0.0.1:${wsPort}`;
-  // ?token= stays for backward-compat with a daemon that has not yet picked up
-  // the subprotocol auth. The token is ALSO sent via Sec-WebSocket-Protocol
-  // (see connect()), which is the preferred path because query strings leak
-  // into access logs / browser history. Once all shipped daemons accept the
-  // subprotocol, the query param below can be dropped.
-  return wsToken ? `${base}?token=${encodeURIComponent(wsToken)}` : base;
+  // No token here: query strings leak into access logs and history, so the
+  // token travels only in the subprotocol (see wsSubprotocols).
+  return `ws://127.0.0.1:${wsPort}`;
 }
 
 /**
@@ -305,8 +303,6 @@ export async function connect() {
 
   let opened = false;
   try {
-    // Pass the auth token via subprotocol (preferred) so it stays out of the
-    // URL query. wsUrl() still appends ?token= for compat with older daemons.
     const subs = wsSubprotocols();
     const socket = subs.length ? new WebSocket(wsUrl(), subs) : new WebSocket(wsUrl());
     ws = socket;
@@ -319,15 +315,10 @@ export async function connect() {
       updateBadge('disconnected');
       broadcastStatus('Connected transport; negotiating protocol');
       clearTimeout(handshakeTimeout);
-      // Compatibility window for a daemon from before the versioned hello.
       handshakeTimeout = setTimeout(() => {
         if (ws !== socket || socket.readyState !== WebSocket.OPEN || connected) return;
-        connected = true;
-        reconnectAttempts = 0;
-        connectedSince = Date.now();
-        updateBadge('connected');
-        broadcastStatus('Connected (legacy protocol; restart daemon after upgrading)');
-      }, HANDSHAKE_GRACE_MS);
+        refuseDaemon(socket, OLDER_DAEMON_REASON);
+      }, HANDSHAKE_TIMEOUT_MS);
     };
 
     socket.onclose = () => {
@@ -372,12 +363,7 @@ export async function connect() {
         if (msg.type === 'hello') {
           const compatibility = validateDaemonHello(msg);
           if (!compatibility.ok) {
-            clearTimeout(handshakeTimeout);
-            lastError = compatibility.reason || 'Incompatible daemon protocol';
-            connected = false;
-            updateBadge('error');
-            broadcastStatus(lastError);
-            socket.close(1002, 'incompatible protocol');
+            refuseDaemon(socket, compatibility.reason || 'Incompatible daemon protocol');
             return;
           }
           // Before the ack and before any tool call: stale locks of a previous daemon go now.
@@ -390,7 +376,7 @@ export async function connect() {
           connectedSince = Date.now();
           lastError = null;
           updateBadge('connected');
-          broadcastStatus(compatibility.legacy ? 'Connected (legacy protocol)' : 'Connected');
+          broadcastStatus('Connected');
           return;
         }
         if (msg.type === 'ping') {
@@ -413,6 +399,21 @@ export async function connect() {
   } catch {
     scheduleReconnect();
   }
+}
+
+/**
+ * Refuse the daemon on this socket: its reason becomes the status, and the
+ * socket closes. The reconnect loop retries later, since a restarted daemon
+ * may be 3.0.
+ */
+function refuseDaemon(socket, reason) {
+  clearTimeout(handshakeTimeout);
+  handshakeTimeout = null;
+  connected = false;
+  lastError = reason;
+  updateBadge('error');
+  broadcastStatus(reason);
+  socket.close(1002, 'incompatible protocol');
 }
 
 function scheduleReconnect() {

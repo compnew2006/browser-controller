@@ -1,54 +1,9 @@
 /**
- * What a page logged, read through the debugger: the page's own console calls
- * and uncaught exceptions (Runtime), and what Chrome itself reports outside
- * the console API: Log-domain entries (failed resource loads, deprecations,
- * interventions, violations, security) and DevTools Issues (Audits: CORS, CSP,
- * mixed content, cookies, forms…). Each domain replays what it collected for
- * the current document when enabled, so a read attaches on demand instead of
- * listening all the time. Pure: `send` / `subscribe` come from lib/cdp-session.js.
+ * What the page logged, read through the debugger: the page's own console calls
+ * and uncaught exceptions (Runtime). Runtime replays what it collected for the current
+ * document when enabled, so a read attaches on demand instead of listening all the time.
+ * Pure: `send` / `subscribe` come from lib/cdp-session.js.
  */
-
-const LEVELS = { warning: 'warn', verbose: 'debug' };
-
-/** A Log.LogEntry in the shape browser_console uses for page messages. */
-export function logEntryView(entry = {}) {
-  const view = { level: LEVELS[entry.level] || entry.level || 'info', source: entry.source || 'other', text: String(entry.text || '') };
-  if (entry.url) view.url = entry.url;
-  if (typeof entry.timestamp === 'number') view.timestamp = Math.round(entry.timestamp);
-  return view;
-}
-
-// Where each issue type names its specific problem and the URL it concerns.
-const KIND_FIELDS = ['errorType', 'type', 'violationType', 'contentSecurityPolicyViolationType', 'violatedDirective', 'resolutionStatus', 'reason', 'blockedReason'];
-const URL_FIELDS = ['url', 'blockedURL', 'insecureURL', 'cookieUrl', 'sourceURL'];
-
-/** { code, type?, url? } for an Audits.InspectorIssue. */
-export function summarizeIssue(issue = {}) {
-  const details = Object.values(issue.details || {}).find((d) => d && typeof d === 'object') || {};
-  const kind = KIND_FIELDS.map((f) => details[f]).find((v) => typeof v === 'string' && v)
-    || details.corsErrorStatus?.corsError
-    || details.cookieWarningReasons?.[0]
-    || details.cookieExclusionReasons?.[0]
-    || '';
-  const url = URL_FIELDS.map((f) => details[f]).find((v) => typeof v === 'string' && v)
-    || details.sourceCodeLocation?.url
-    || details.request?.url
-    || '';
-  return { code: issue.code || 'Issue', ...(kind ? { type: kind } : {}), ...(url ? { url } : {}) };
-}
-
-/** One row per code+type with a count, as the DevTools Issues panel groups them. */
-export function aggregateIssues(issues) {
-  const byKey = new Map();
-  for (const issue of issues) {
-    const summary = summarizeIssue(issue);
-    const key = `${summary.code}|${summary.type || ''}`;
-    const seen = byKey.get(key);
-    if (seen) seen.count++;
-    else byKey.set(key, { ...summary, count: 1 });
-  }
-  return [...byKey.values()];
-}
 
 // The page's own console: Runtime replays the current document's console API
 // calls and uncaught exceptions (with stacks) when enabled, so nothing has to
@@ -95,15 +50,23 @@ async function consoleText(send, args = []) {
   return texts.join(' ');
 }
 
+/** The message of an uncaught exception. Where it happened is `source`, kept apart so a line shows it once. */
 function exceptionText(details = {}) {
   const ex = details.exception;
   const what = ex?.description ?? (ex && 'value' in ex ? String(ex.value) : '');
-  const where = details.url ? ` (${details.url}:${(details.lineNumber ?? 0) + 1})` : '';
-  if (!what) return `${details.text || 'Uncaught'}${where}`;
-  return `${details.text || 'Uncaught'} ${what}${what.includes('\n    at ') ? '' : where}`;
+  return what ? `${details.text || 'Uncaught'} ${what}` : (details.text || 'Uncaught');
 }
 
 const capText = (text) => (text.length > MAX_ENTRY_CHARS ? `${text.slice(0, MAX_ENTRY_CHARS)}…[truncated]` : text);
+
+// Where a call or exception came from: `url:line` of the first frame with a URL, and up to MAX_STACK_FRAMES frames.
+const MAX_STACK_FRAMES = 10;
+const frameText = (f = {}) => `at ${f.functionName || '<anonymous>'} (${f.url || '<anonymous>'}:${(f.lineNumber ?? 0) + 1}:${(f.columnNumber ?? 0) + 1})`;
+const framesOf = (frames) => frames.slice(0, MAX_STACK_FRAMES).map(frameText);
+function sourceOf(frames) {
+  const top = frames.find((f) => f.url);
+  return top ? `${top.url}:${(top.lineNumber ?? 0) + 1}` : undefined;
+}
 
 /**
  * Enable Runtime, gather the replayed console calls and uncaught exceptions of
@@ -114,9 +77,13 @@ export async function collectPageConsole(send, subscribe, { clear = false, level
   const raw = [];
   const unsubscribe = subscribe((method, params) => {
     if (method === 'Runtime.consoleAPICalled' && !SKIPPED_TYPES.has(params?.type)) {
-      raw.push({ level: CONSOLE_LEVELS[params.type] || 'log', args: params.args, timestamp: params.timestamp });
+      const frames = params.stackTrace?.callFrames || [];
+      raw.push({ level: CONSOLE_LEVELS[params.type] || 'log', args: params.args, timestamp: params.timestamp, source: sourceOf(frames), stack: framesOf(frames) });
     } else if (method === 'Runtime.exceptionThrown' && params?.exceptionDetails) {
-      raw.push({ level: 'error', text: exceptionText(params.exceptionDetails), timestamp: params.timestamp });
+      const d = params.exceptionDetails;
+      const frames = d.stackTrace?.callFrames || [];
+      const source = d.url ? `${d.url}:${(d.lineNumber ?? 0) + 1}` : sourceOf(frames);
+      raw.push({ level: 'error', text: exceptionText(d), timestamp: params.timestamp, source, stack: framesOf(frames) });
     }
   });
   const messages = [];
@@ -128,7 +95,13 @@ export async function collectPageConsole(send, subscribe, { clear = false, level
     for (const m of picked) {
       const text = m.text ?? await consoleText(send, m.args);
       if (!text) continue;
-      messages.push({ level: m.level, text: capText(text), ...(typeof m.timestamp === 'number' ? { timestamp: Math.round(m.timestamp) } : {}) });
+      messages.push({
+        level: m.level,
+        text: capText(text),
+        ...(typeof m.timestamp === 'number' ? { timestamp: Math.round(m.timestamp) } : {}),
+        ...(m.source ? { source: m.source } : {}),
+        ...(m.level === 'error' && m.stack.length ? { stack: m.stack } : {}),
+      });
     }
     if (clear) await send('Runtime.discardConsoleEntries').catch(() => {});
   } finally {
@@ -136,43 +109,4 @@ export async function collectPageConsole(send, subscribe, { clear = false, level
     await send('Runtime.disable').catch(() => {});
   }
   return messages;
-}
-
-/**
- * Most Issue rows one read returns. Audits is enabled on this tab's own session,
- * so the issues come from this tab; the noise is volume (many kinds on a busy
- * page), so rows are sorted by count and the rest is summarised in one row.
- */
-export const MAX_ISSUE_ROWS = 25;
-
-/**
- * Enable Log + Audits, gather the replayed entries, switch both off again.
- * `clear` empties Chrome's log afterwards (Issues have no clear).
- */
-export async function collectBrowserLog(send, subscribe, { clear = false, settleMs = 100 } = {}) {
-  const messages = [];
-  const issues = [];
-  const unsubscribe = subscribe((method, params) => {
-    if (method === 'Log.entryAdded' && params?.entry) messages.push(logEntryView(params.entry));
-    else if (method === 'Audits.issueAdded' && params?.issue) issues.push(params.issue);
-  });
-  try {
-    await send('Log.enable');
-    await send('Audits.enable').catch(() => {}); // not every target exposes Audits
-    if (settleMs > 0) await new Promise((resolve) => setTimeout(resolve, settleMs));
-    if (clear) await send('Log.clear').catch(() => {});
-  } finally {
-    unsubscribe();
-    await send('Log.disable').catch(() => {});
-    await send('Audits.disable').catch(() => {});
-  }
-  return { messages, issues: capIssueRows(aggregateIssues(issues)) };
-}
-
-/** Most frequent rows first, at most MAX_ISSUE_ROWS, then one row counting what was left out. */
-export function capIssueRows(rows) {
-  const sorted = [...rows].sort((a, b) => b.count - a.count);
-  if (sorted.length <= MAX_ISSUE_ROWS) return sorted;
-  const omitted = sorted.length - MAX_ISSUE_ROWS;
-  return [...sorted.slice(0, MAX_ISSUE_ROWS), { code: 'Truncated', type: `${omitted} more issue kinds not listed (row cap ${MAX_ISSUE_ROWS})` }];
 }

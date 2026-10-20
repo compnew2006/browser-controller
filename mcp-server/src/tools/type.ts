@@ -1,18 +1,24 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, forwardHandler } from './types.js';
+import { tabIdParam, forwardHandler } from './types.js';
 
 export const typeTool: ToolDefinition = {
   name: 'browser_type',
-  summary: 'Type text into an input element',
-  description: 'Type text into an input (ref/selector, or the focused element) with real key presses over CDP (keydown, keypress, input, keyup per character). change/blur fire only when focus leaves: follow with browser_press_key Tab to commit. Returns the typed character count (typed) and the field value (first 100 characters). Falls back to synthetic events if the debugger cannot attach.',
+  summary: 'Type text or press a key in a field',
+  description: 'Trusted typing into target, or the focused element. key sends one key or combo (Enter, Control+a). clear first; submit presses Enter after.',
   inputSchema: z.object({
-    tabId: requireTabId(),
-    ref: z.string().optional(),
-    selector: z.string().optional().describe('Omit ref and selector to type into the focused field'),
-    text: z.string(),
-    clear: z.boolean().optional().default(false).describe('Clear the field first'),
-    trusted: z.boolean().optional(),
+    tabId: tabIdParam,
+    target: z.string().optional(),
+    text: z.string().optional(),
+    key: z.string().optional(),
+    clear: z.boolean().optional(),
+    submit: z.boolean().optional(),
+  }).strict().superRefine((params, ctx) => {
+    // Mirrors the handler: with nothing to type, press, clear or submit, the call does nothing.
+    const acts = Boolean(params.text) || params.key !== undefined || params.clear === true || params.submit === true;
+    if (!acts) {
+      ctx.addIssue({ code: 'custom', message: 'give one of text, key, clear or submit' });
+    }
   }),
   timeoutMs: 15_000,
   handler: forwardHandler('browser_type'),

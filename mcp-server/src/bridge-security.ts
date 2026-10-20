@@ -40,8 +40,11 @@ export function isAllowedOrigin(
 /** Prefix used to transport the auth token without putting it in the URL. */
 export const AUTH_PROTOCOL_PREFIX = 'bc-auth.';
 
-/** Prefer the WebSocket subprotocol token, with the query token as legacy fallback. */
-export function extractToken(req: http.IncomingMessage, url: URL): string {
+/**
+ * The auth token comes only from the `bc-auth.<token>` WebSocket subprotocol. A
+ * ?token= query is never read: query strings reach access logs and history.
+ */
+export function extractToken(req: http.IncomingMessage): string {
   const header = req.headers['sec-websocket-protocol'];
   if (header) {
     const offers = Array.isArray(header) ? header : String(header).split(',');
@@ -52,7 +55,7 @@ export function extractToken(req: http.IncomingMessage, url: URL): string {
       }
     }
   }
-  return url.searchParams.get('token') ?? '';
+  return '';
 }
 
 /** Compare credentials in constant time while preserving exact string equality. */

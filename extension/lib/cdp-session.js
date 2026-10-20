@@ -89,6 +89,16 @@ export function isCdpPinned(tabId, reason) {
   return reason === undefined ? !!pins?.size : !!pins?.has(reason);
 }
 
+/**
+ * Whether something other than the idle timer needs the tab's session now: a CDP call in flight, a
+ * capture or mock pin, or a JavaScript dialog Chrome reported open (only this session can answer it).
+ */
+export function isCdpInUse(tabId) {
+  if (openDialogs.has(tabId)) return true;
+  const s = sessions.get(tabId);
+  return !!s && (s.busy > 0 || !!s.pins?.size);
+}
+
 /** Overrides browser_emulate set on the tab's live session ({} when none or detached). */
 export function getCdpEmulation(tabId) {
   return { ...(sessions.get(tabId)?.emulation || {}) };
@@ -191,8 +201,16 @@ export async function ensureCdp(tabId) {
     await s.ready;
   }
   armIdle(tabId);
-  return (method, params = {}) => chrome.debugger.sendCommand({ tabId }, method, params);
+  return (method, params = {}) => chrome.debugger.sendCommand({ tabId }, method, params).catch((err) => {
+    // The debugger went away without its onDetach event (a detach this extension made, a
+    // Chrome-side drop): forget the stale session, so the next call attaches again.
+    if (DEBUGGER_GONE.test(String(err?.message || err))) endSession(tabId, 'detached');
+    throw err;
+  });
 }
+
+/** A CDP error that says the debugger is no longer attached to the target. */
+const DEBUGGER_GONE = /not attached|Detached while|No target with given id/i;
 
 /**
  * Send on the tab's existing debugger attachment, without attaching one. Rejects

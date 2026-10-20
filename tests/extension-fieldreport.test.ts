@@ -62,7 +62,7 @@ const tabStore = new Map<number, { id: number; url: string }>();
 };
 
 const { handleMessage } = await import('../extension/lib/router.js');
-const { handleDialog } = await import('../extension/handlers/interaction.js');
+const { handleDialog } = await import('../extension/handlers/interaction-advanced.js');
 const { tabMutex } = await import('../extension/lib/state.js');
 
 const flush = (ms = 60) => new Promise((r) => setTimeout(r, ms));
@@ -109,7 +109,7 @@ describe('frozen-tab escape hatch (mutex bypass for close/focus/dialog)', () => 
 
   it('a PAGE tool on the pinned tab still queues (mutex semantics preserved)', async () => {
     tabMutex.run(3, () => new Promise(() => {}));
-    await handleMessage({ id: 'x3', tool: 'browser_console', params: { tabId: 3 }, sessionId: 's1' });
+    await handleMessage({ id: 'x3', tool: 'browser_logs', params: { tabId: 3 }, sessionId: 's1' });
     await flush(80);
     expect(sent.find((f) => f.id === 'x3')).toBeUndefined(); // still queued — by design
   });

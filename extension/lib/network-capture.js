@@ -1,12 +1,10 @@
 /**
  * webRequest → per-tab network buffer: request ids, durations, redacted headers
- * and a bounded, redacted request-body preview, plus the lean list view and the
- * resource-type filter browser_network uses. Pure (no chrome global) so tests
+ * and a bounded, redacted request-body preview, plus the lean list view. Pure (no chrome global) so tests
  * can drive it; events.js wires the listeners. Response bodies are out of reach
  * here: webRequest never sees them (that needs the debugger's Network domain).
  */
 import { PER_TAB_CAP } from './state.js';
-import { resolveTypes } from './resource-types.js';
 
 export const REDACTED = '[redacted]';
 
@@ -54,12 +52,41 @@ function redactDeep(value) {
   return value;
 }
 
-/** Text-level pass for bodies that cannot be parsed whole: secret-looking key/value pairs only. */
-function redactText(text) {
-  return text.replace(PAIR, (match, quote, key, sep, value) => {
+/**
+ * Text-level pass for bodies that cannot be parsed whole: secret-looking key/value pairs only.
+ * Returns the text and the names of the keys redacted.
+ */
+export function redactTextKeys(text) {
+  const keys = new Set();
+  const out = text.replace(PAIR, (match, quote, key, sep, value) => {
     if (!SECRET_KEY.test(key)) return match;
+    keys.add(key);
     return `${quote}${key}${quote}${sep}${value.startsWith('"') ? `"${REDACTED}"` : REDACTED}`;
   });
+  return { text: out, redacted: [...keys] };
+}
+
+function redactText(text) {
+  return redactTextKeys(text).text;
+}
+
+/**
+ * The URL with the values of secret-looking query keys replaced by `***` (the keys stay, so
+ * the request is still readable). Only the query string is touched (L3).
+ */
+export function redactUrl(url) {
+  const start = url.indexOf('?');
+  if (start === -1) return url;
+  const hash = url.indexOf('#', start);
+  const end = hash === -1 ? url.length : hash;
+  const query = url.slice(start + 1, end).split('&').map((pair) => {
+    const eq = pair.indexOf('=');
+    if (eq === -1) return pair;
+    let key;
+    try { key = decodeURIComponent(pair.slice(0, eq)); } catch { key = pair.slice(0, eq); }
+    return SECRET_KEY.test(key) ? `${pair.slice(0, eq)}=***` : pair;
+  }).join('&');
+  return `${url.slice(0, start + 1)}${query}${url.slice(end)}`;
 }
 
 /** Control characters (other than tab, newline, carriage return) or several replacement characters mean binary data; one replacement is a multi-byte character cut by the head. */
@@ -88,7 +115,7 @@ function headBytes(parts, size, max) {
 }
 
 /**
- * What browser_network shows for a request body (webRequest requestBody), or
+ * What browser_logs shows for a request body (webRequest requestBody), or
  * undefined when there is none:
  *   { kind: 'form', fields }            form data: values of secret-looking keys redacted
  *   { kind: 'raw', size, preview }      text body: first BODY_PREVIEW_MAX chars, secrets redacted
@@ -139,7 +166,7 @@ export function createNetworkCapture({ store }) {
     const started = pending.get(d.requestId);
     pending.delete(d.requestId);
     if (d.tabId == null || d.tabId < 0) return; // service workers, extension pages
-    const entry = { id: String(d.requestId), method: d.method, url: d.url, ...outcome, type: d.type, timestamp: d.timeStamp };
+    const entry = { id: String(d.requestId), method: d.method, url: redactUrl(d.url), ...outcome, type: d.type, timestamp: d.timeStamp };
     if (started && typeof started.start === 'number') entry.durationMs = Math.max(0, Math.round(d.timeStamp - started.start));
     if (started && started.requestHeaders) entry.requestHeaders = started.requestHeaders;
     if (started && started.requestBody) entry.requestBody = started.requestBody;
@@ -176,7 +203,7 @@ export function pushNetworkEntry(buf, entry, cap = PER_TAB_CAP) {
   }
 }
 
-/** One entry as browser_network lists it: network fields only, long URLs cut unless fullUrls. */
+/** One entry as a list row carries it: network fields only, long URLs cut unless fullUrls. */
 export function listView(entry, { fullUrls = false } = {}) {
   const lean = {};
   for (const key of LIST_FIELDS) if (entry[key] !== undefined) lean[key] = entry[key];
@@ -186,9 +213,3 @@ export function listView(entry, { fullUrls = false } = {}) {
   return lean;
 }
 
-/** Predicate for a resource-type filter (string or list, webRequest names or aliases); null = no filter. */
-export function typeMatcher(type) {
-  if (type == null || (Array.isArray(type) && type.length === 0)) return null;
-  const wanted = new Set(resolveTypes(type)); // throws on an unknown name, before anything is read
-  return (entry) => wanted.has(entry.type);
-}

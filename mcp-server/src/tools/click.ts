@@ -1,28 +1,20 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, forwardHandler } from './types.js';
+import { tabIdParam, forwardHandler } from './types.js';
 
 export const clickTool: ToolDefinition = {
   name: 'browser_click',
-  summary: 'Click an element by ref or CSS selector',
-  description: 'Click an element (ref or selector) or a viewport point (x/y, e.g. read off a screenshot) with a real mouse click. clickCount 2/3 = double/triple click; modifiers hold keys (ctrl+click opens a link in a new tab). A hidden, disabled or covered element fails with ELEMENT_HIDDEN / ELEMENT_DISABLED / ELEMENT_COVERED and nothing is clicked. A checkbox or radio drawn under its own label is clicked on that label (result via: "label"). Falls back to synthetic DOM events if the debugger cannot attach.',
+  summary: 'Click an element or a point with a trusted mouse',
+  description: 'Trusted click on target, or at x,y. hover:true only moves; dragTo releases on another target. Hidden, disabled or covered: fails, nothing clicked.',
   inputSchema: z.object({
-    tabId: requireTabId(),
-    ref: z.string().optional(),
-    selector: z.string().optional(),
-    button: z.enum(['left', 'right', 'middle']).optional().default('left'),
-    doubleClick: z.boolean().optional().default(false),
-    clickCount: z.number().int().min(1).max(3).optional().describe('2 = double, 3 = triple (overrides doubleClick)'),
-    modifiers: z.array(z.enum(['ctrl', 'alt', 'shift', 'meta'])).optional(),
-    x: z.number().optional().describe('Viewport x in CSS px, with y'),
-    y: z.number().optional(),
-    trusted: z.boolean().optional(),
-  }).superRefine((params, ctx) => {
-    const point = Number.isFinite(params.x) && Number.isFinite(params.y);
-    if (!params.ref && !params.selector && !point) {
-      ctx.addIssue({ code: 'custom', message: 'ref or selector (or x and y) is required', path: ['ref'] });
-    }
-  }),
+    tabId: tabIdParam,
+    target: z.string(),
+    button: z.enum(['left', 'right', 'middle']).optional(),
+    count: z.number().int().min(1).max(3).optional(),
+    modifiers: z.array(z.enum(['Alt', 'Control', 'Meta', 'Shift'])).optional(),
+    hover: z.boolean().optional(),
+    dragTo: z.string().optional(),
+  }).strict(),
   timeoutMs: 10_000,
   handler: forwardHandler('browser_click'),
 };

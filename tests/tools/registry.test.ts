@@ -8,27 +8,19 @@ import {
 } from "../../mcp-server/src/tools/index.js";
 
 describe("Tool Registry", () => {
-  // Single source of truth for the expected tool set. Both the count test and
-  // the per-tool presence loop below derive from this list, so adding a tool
-  // only requires appending its name here (no fragile hard-coded count).
+  // Browser Controller 3.0: exactly these 17 tools, in tools/list order.
   const expectedTools = [
-    'browser_navigate', 'browser_click', 'browser_type', 'browser_scroll',
-    'browser_press_key', 'browser_wait', 'browser_snapshot', 'browser_screenshot',
-    'browser_console', 'browser_network', 'browser_tabs', 'browser_find',
-    'browser_text', 'browser_hover', 'browser_select', 'browser_evaluate',
-    'browser_click_text', 'browser_handle_dialog',
-    'browser_upload_file', 'browser_run_action',
-    'browser_drag', 'browser_fill_form', 'browser_intercept',
-    'browser_observe', 'browser_act', 'browser_batch', 'browser_resize_window', 'browser_emulate', 'browser_gif',
-    'browser_list_browsers', 'browser_select_browser', 'browser_shortcuts',
-    'browser_webmcp_list', 'browser_webmcp_call', 'browser_inspect_element',
+    'browser_navigate', 'browser_tabs', 'browser_snapshot', 'browser_text',
+    'browser_screenshot', 'browser_click', 'browser_type', 'browser_fill',
+    'browser_scroll', 'browser_wait', 'browser_evaluate', 'browser_handle_dialog',
+    'browser_batch', 'browser_emulate', 'browser_logs', 'browser_mock',
+    'browser_inspect_element',
   ];
-  // Tools that run entirely in the MCP process (they call other tools' handlers)
-  // and therefore never send a wire name of their own.
-  const localTools = new Set(['browser_batch', 'browser_shortcuts']);
+  // Runs entirely in the MCP process (it calls other tools' handlers): no wire name.
+  const localTools = new Set(['browser_batch']);
 
-  it(`registers every expected tool (${expectedTools.length})`, () => {
-    expect(allTools.length).toBe(expectedTools.length);
+  it("registers exactly the 17 tools, in contract order", () => {
+    expect(allTools.map((t) => t.name)).toEqual(expectedTools);
   });
 
   it("all tools have unique names", () => {
@@ -36,148 +28,107 @@ describe("Tool Registry", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("all tools have description and inputSchema", () => {
+  it("all tools have description, inputSchema and a handler", () => {
     for (const tool of allTools) {
-      expect(tool.name).toBeTruthy();
-      expect(tool.description).toBeTruthy();
-      expect(tool.inputSchema).toBeTruthy();
+      expect(tool.description, tool.name).toBeTruthy();
+      expect(tool.inputSchema, tool.name).toBeTruthy();
       expect(typeof tool.handler).toBe("function");
     }
   });
 
-  // Progressive disclosure: every tool must have a concise `summary` for the
-  // browser_tools meta tool. Without it, search/list would return empty.
-  it("all tools have a summary (progressive disclosure)", () => {
+  it("every tool has a one-line summary of 10 to 79 characters", () => {
     for (const tool of allTools) {
-      expect(tool.summary, `${tool.name} must have a summary`).toBeTruthy();
-      expect(typeof tool.summary).toBe("string");
-      expect(
-        tool.summary.length,
-        `${tool.name} summary should be <80 chars`,
-      ).toBeLessThan(80);
-      expect(
-        tool.summary.length,
-        `${tool.name} summary should be >10 chars`,
-      ).toBeGreaterThan(10);
+      expect(tool.summary.length, `${tool.name} summary`).toBeGreaterThan(10);
+      expect(tool.summary.length, `${tool.name} summary`).toBeLessThan(80);
     }
   });
 
-  it("toolMap contains all tools", () => {
+  it("toolMap and the manifest cover every tool", () => {
     expect(toolMap.size).toBe(allTools.length);
-    for (const tool of allTools) {
-      expect(toolMap.get(tool.name)).toBe(tool);
-    }
-  });
-
-  it('exports a unified manifest with schema and transport policy', () => {
-    expect(toolManifest).toHaveLength(allTools.length);
+    expect(toolManifest.map((t) => t.name)).toEqual(expectedTools);
     for (const entry of toolManifest) {
       const tool = toolMap.get(entry.name);
       expect(tool, `${entry.name} must exist in toolMap`).toBeTruthy();
-      expect(entry.inputSchema).toMatchObject({ type: 'object' });
+      expect(entry.inputSchema).toMatchObject({ type: "object" });
       expect(entry.timeoutMs).toBe(tool?.timeoutMs);
       expect(entry.idempotent).toBe(tool?.idempotent === true);
-      expect(['read', 'write', 'mixed']).toContain(entry.capability);
+      expect(["read", "write", "mixed"]).toContain(entry.capability);
     }
   });
 
-  // --- Wire-name drift guard (audit C1) -------------------------------------
+  // --- Wire-name drift guard ------------------------------------------------
   // The tool's .name MUST equal the wire name it sends to bridge.callTool(),
-  // otherwise idempotency-retry lookup silently fails and the extension's
-  // dispatch needs aliases to paper over the mismatch. This previously broke
-  // browser_find/browser_text. Passthrough tools use the forwardHandler
-  // factory, which tags the closure with its wire name; custom handlers
-  // (screenshot) still carry a literal callTool('...') in source.
+  // otherwise the idempotency-retry lookup silently fails. forwardHandler and
+  // the custom fill handler tag their closures with the wire name.
   describe("wire name == .name (no drift)", () => {
     for (const tool of allTools) {
       it(`${tool.name} sends its own wire name`, () => {
         if (localTools.has(tool.name)) return;
         const tagged = (tool.handler as { toolName?: string }).toolName;
-        if (tagged !== undefined) {
-          expect(
-            tagged,
-            `${tool.name} factory wire name must equal .name`,
-          ).toBe(tool.name);
-          return;
-        }
-        const src = tool.handler.toString();
-        const calls = [...src.matchAll(/callTool\(\s*['"]([^'"]+)['"]/g)];
-        expect(
-          calls.length,
-          `${tool.name} should call bridge.callTool exactly once`,
-        ).toBe(1);
-        const wireName = calls[0]![1];
-        expect(
-          wireName,
-          `${tool.name} sends wire name "${wireName}" — must equal .name`,
-        ).toBe(tool.name);
+        expect(tagged, `${tool.name} must be tagged with its wire name`).toBe(tool.name);
       });
     }
   });
 
+  // --- Target grammar: one string param for every element --------------------
+  it("every element parameter is a string target", () => {
+    for (const tool of allTools) {
+      const shape = tool.inputSchema.shape as Record<string, { safeParse: (v: unknown) => { success: boolean } }>;
+      if (!("target" in shape)) continue;
+      expect(shape.target!.safeParse("e12").success, `${tool.name} accepts a string target`).toBe(true);
+      expect(shape.target!.safeParse(12).success, `${tool.name} rejects a number target`).toBe(false);
+    }
+    // click, type, scroll, wait, text, snapshot, screenshot, inspect and fill all name elements by target.
+    for (const name of ["browser_click", "browser_type", "browser_scroll", "browser_wait", "browser_text",
+      "browser_snapshot", "browser_screenshot", "browser_inspect_element"]) {
+      expect(toolMap.get(name)!.inputSchema.shape, name).toHaveProperty("target");
+    }
+    const fieldSchema = (toolMap.get("browser_fill")!.inputSchema.shape.fields as unknown as { element: { shape: Record<string, { safeParse: (v: unknown) => { success: boolean } }> } }).element;
+    expect(fieldSchema.shape.target!.safeParse("text=Sign in").success).toBe(true);
+    expect(fieldSchema.shape.target!.safeParse(3).success).toBe(false);
+  });
+
   // Tool definitions are re-sent every turn: no ±2^53 bounds from unbounded
-  // .int() (tabId alone cost ~850 tokens across 34 tools), validation kept.
+  // .int() (tabId alone cost ~850 tokens across tools), validation kept.
   it('tabId stays integer-only without publishing safe-integer bounds', () => {
     const click = toolMap.get('browser_click')!;
-    expect(click.inputSchema.safeParse({ tabId: 1.5, selector: 'a' }).success).toBe(false);
-    expect(click.inputSchema.safeParse({ tabId: 15, selector: 'a' }).success).toBe(true);
+    expect(click.inputSchema.safeParse({ tabId: 1.5, target: 'a' }).success).toBe(false);
+    expect(click.inputSchema.safeParse({ tabId: 15, target: 'a' }).success).toBe(true);
     expect(JSON.stringify(toolManifest.map((t) => t.inputSchema))).not.toContain('9007199254740991');
   });
 
-  // --- Idempotency classification (audit M2) --------------------------------
-  // Reads are retry-safe; mutating tools must NOT be. browser_console/network
-  // mutate when clear:true, so they are explicitly non-idempotent.
+  // --- Idempotency classification -------------------------------------------
   describe('idempotency classification', () => {
-    it('marks read-only tools as idempotent', () => {
-      expect(isIdempotent('browser_snapshot')).toBe(true);
-      expect(isIdempotent('browser_screenshot')).toBe(true);
-      expect(isIdempotent('browser_text')).toBe(true);
-      expect(isIdempotent('browser_find')).toBe(true);
-      expect(isIdempotent('browser_observe')).toBe(true);
-    });
-    it("marks clear-able capture tools as NON-idempotent (clear mutates)", () => {
-      expect(isIdempotent("browser_console")).toBe(false);
-      expect(isIdempotent("browser_network")).toBe(false);
-    });
-    it("marks mutating tools as NON-idempotent", () => {
-      for (const t of [
-        "browser_click",
-        "browser_type",
-        "browser_navigate",
-        "browser_evaluate",
-        "browser_tabs",
-        "browser_scroll",
-      ]) {
-        expect(isIdempotent(t), `${t} must not be retried`).toBe(false);
+    it('marks the read tools as idempotent', () => {
+      for (const name of ['browser_snapshot', 'browser_text', 'browser_screenshot', 'browser_inspect_element']) {
+        expect(isIdempotent(name), name).toBe(true);
       }
-      expect(isIdempotent('browser_act')).toBe(false);
+    });
+    it('marks actions, navigation, scripts and log reads that can clear as NON-idempotent', () => {
+      for (const name of [
+        'browser_navigate', 'browser_tabs', 'browser_click', 'browser_type', 'browser_fill', 'browser_scroll',
+        'browser_wait', 'browser_evaluate', 'browser_handle_dialog', 'browser_emulate', 'browser_logs',
+        'browser_mock', 'browser_batch',
+      ]) {
+        expect(isIdempotent(name), `${name} must not be retried`).toBe(false);
+      }
     });
   });
 
-  // --- timeoutMs registry guard (audit M3) ----------------------------------
-  // Every tool MUST declare a numeric `timeoutMs`. This is the guard that keeps
-  // the registry the single source of transport-timeout truth: without it, a
-  // tool that forgets `timeoutMs` silently falls back to the bridge default
-  // (30s) and nobody notices until a too-short/long timeout misbehaves in
-  // production. The lookup helper is total-safe, but that's no substitute for
-  // every tool being explicit.
+  // --- timeoutMs guard --------------------------------------------------------
+  // Every tool MUST declare a positive numeric timeoutMs; the lookup helper must agree.
   it("every tool declares a positive numeric timeoutMs", () => {
     for (const tool of allTools) {
-      expect(typeof tool.timeoutMs, `${tool.name} must declare timeoutMs`).toBe(
-        "number",
-      );
-      expect(
-        tool.timeoutMs!,
-        `${tool.name} timeoutMs must be > 0`,
-      ).toBeGreaterThan(0);
-      // and the lookup helper must agree with the declared value
+      expect(typeof tool.timeoutMs, `${tool.name} must declare timeoutMs`).toBe("number");
+      expect(tool.timeoutMs!, `${tool.name} timeoutMs must be > 0`).toBeGreaterThan(0);
       expect(toolTimeoutMs(tool.name)).toBe(tool.timeoutMs);
     }
   });
 
-  for (const name of expectedTools) {
-    it(`includes ${name}`, () => {
-      expect(toolMap.has(name)).toBe(true);
-    });
-  }
+  it("each timeout covers its handler's own cap", () => {
+    expect(toolTimeoutMs("browser_wait")).toBeGreaterThanOrEqual(55_000); // wait: up to 50 s
+    expect(toolTimeoutMs("browser_evaluate")).toBeGreaterThanOrEqual(35_000); // evaluate: up to 30 s
+    expect(toolTimeoutMs("browser_navigate")).toBeGreaterThanOrEqual(20_000); // navigate: 15 s load wait
+    expect(toolTimeoutMs("browser_batch")).toBe(50_000); // batch = its budget
+  });
 });

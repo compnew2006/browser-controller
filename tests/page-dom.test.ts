@@ -11,9 +11,9 @@ import { installFakePage, installFakeFrame, type FakeDocument } from './helpers/
 };
 
 const { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } = await import('../extension/lib/page-dom.js');
-const { handleFind, handleSnapshot, handleGetPageText, handleWait } = await import('../extension/handlers/inspection.js');
-const { handleClick, handleClickByText, handleType } = await import('../extension/handlers/interaction.js');
-const { fallbackByTab, lastSnapshotFingerprints } = await import('../extension/lib/state.js');
+const { handleSnapshot, handleGetPageText, handleWait } = await import('../extension/handlers/inspection.js');
+const { parseTarget } = await import('../extension/lib/target.js');
+const { fallbackByTab } = await import('../extension/lib/state.js');
 
 let doc: FakeDocument;
 const D = () => (globalThis as any).__bcDom;
@@ -34,8 +34,8 @@ describe('shared page DOM runtime (resolver)', () => {
   it('resolves refs from the registry — no data-mcp-ref attribute needed', () => {
     const btn = doc.el('button', {}, 'Save');
     doc.body.append(btn);
-    D().registry.set('s1-0', btn);
-    expect(D().resolve('s1-0', null, null)).toMatchObject({ el: btn, via: 'ref' });
+    D().registry.set('e1', btn);
+    expect(D().resolveTarget(parseTarget('e1'))).toMatchObject({ el: btn, via: 'ref' });
   });
 
   it('a selector prefers the first VISIBLE match over a hidden duplicate', () => {
@@ -43,7 +43,7 @@ describe('shared page DOM runtime (resolver)', () => {
     hidden.hidden = true;
     const shown = doc.el('input', { class: 'q' });
     doc.body.append(hidden, shown);
-    expect(D().resolve(null, 'input.q', null).el).toBe(shown);
+    expect(D().resolveTarget(parseTarget('input.q')).el).toBe(shown);
   });
 
   it('a selector reaches into shadow roots when the light DOM has no match', () => {
@@ -51,7 +51,7 @@ describe('shared page DOM runtime (resolver)', () => {
     const inner = doc.el('button', { id: 'deep' }, 'Deep');
     host.attachShadow().append(inner);
     doc.body.append(host);
-    expect(D().resolve(null, '#deep', null).el).toBe(inner);
+    expect(D().resolveTarget(parseTarget('#deep')).el).toBe(inner);
   });
 
   it('an ambiguous stale fallback is reported gone instead of guessing the first match', () => {
@@ -61,7 +61,7 @@ describe('shared page DOM runtime (resolver)', () => {
     // Descriptor of a third button that no longer exists: its robust selector
     // matches both survivors, its text matches neither.
     const fb = { robustSelector: 'button.MuiButton-root', text: 'Delete', role: 'button', tag: 'BUTTON', nth: 0 };
-    expect(D().resolve('gone-ref', null, fb)).toMatchObject({ error: 'REF_GONE' });
+    expect(D().resolveTarget(parseTarget('e9'), fb)).toMatchObject({ error: 'REF_GONE' });
   });
 
   it('a stale fallback re-resolves when text + selector identify one element, and uses nth among twins', () => {
@@ -70,10 +70,47 @@ describe('shared page DOM runtime (resolver)', () => {
     const other = doc.el('button', { class: 'like' }, 'Liked');
     doc.body.append(like1, other, like2);
     const fb = { robustSelector: 'button.like', text: 'Like', role: 'button', tag: 'BUTTON', nth: 1 };
-    const res = D().resolve('old', null, fb);
+    const res = D().resolveTarget(parseTarget('e1'), fb);
     expect(res).toMatchObject({ el: like2, via: 'fallback' });
     // Re-bound: the next lookup is a direct registry hit.
-    expect(D().resolve('old', null, null)).toMatchObject({ el: like2, via: 'ref' });
+    expect(D().resolveTarget(parseTarget('e1'))).toMatchObject({ el: like2, via: 'ref' });
+  });
+
+  it('a stale fallback with nth 1 is not the first look-alike left: the second row was removed, so the ref is gone', () => {
+    // Ref e2 was the second "Delete" row; the second row is removed. The lone survivor is the first row.
+    const first = doc.el('button', { class: 'del' }, 'Delete');
+    doc.body.append(first);
+    const robust = { robustSelector: 'button.del', text: 'Delete', role: 'button', tag: 'BUTTON', nth: 1 };
+    const textOnly = { text: 'Delete', role: 'button', tag: 'BUTTON', nth: 1 };
+    expect(D().resolveTarget(parseTarget('e2'), robust)).toMatchObject({ error: 'REF_GONE', ref: 'e2' });
+    expect(D().resolveTarget(parseTarget('e2'), textOnly)).toMatchObject({ error: 'REF_GONE', ref: 'e2' });
+    // Positive control: with the second row still there, nth 1 is that row.
+    const second = doc.el('button', { class: 'del' }, 'Delete');
+    doc.body.append(second);
+    expect(D().resolveTarget(parseTarget('e2'), robust)).toMatchObject({ el: second, via: 'fallback' });
+  });
+
+  it('a snapshot of a target re-found by its descriptor says so on its last line', async () => {
+    const like1 = doc.el('button', { class: 'like' }, 'Like');
+    const like2 = doc.el('button', { class: 'like' }, 'Like');
+    doc.body.append(like1, like2);
+    fallbackByTab.set(1, new Map([['e7', { robustSelector: 'button.like', text: 'Like', role: 'button', tag: 'BUTTON', nth: 1 }]]));
+    const res = await handleSnapshot({ tabId: 1, target: 'e7' });
+    expect(res.success).toBe(true);
+    expect(res.text.split('\n').at(-1)).toBe('note: e7 was re-found after the page changed');
+    expect(res.rebound).toBeUndefined();
+  });
+
+  it('a ref issued by an earlier document is REF_GONE, never re-found by its descriptor', () => {
+    // The tab's earlier documents showed refs up to e5: this document's counter starts there.
+    doc = installFakePage();
+    const like = doc.el('button', { class: 'like' }, 'Like');
+    doc.body.append(like);
+    PAGE_DOM_INSTALL(PAGE_DOM_VERSION, 5);
+    const fb = { robustSelector: 'button.like', text: 'Like', role: 'button', tag: 'BUTTON', nth: 0 };
+    expect(D().resolveTarget(parseTarget('e3'), fb)).toMatchObject({ error: 'REF_GONE', ref: 'e3', issued: true });
+    expect(D().refIsEarlier('e3')).toBe(true);
+    expect(D().refIsEarlier('e6')).toBe(false);
   });
 
   it('an element inside an invisible iframe is not visible (and wait(visible) does not pass)', async () => {
@@ -85,7 +122,7 @@ describe('shared page DOM runtime (resolver)', () => {
     expect(D().isVisible(btn)).toBe(true);
     frame.hidden = true; // e.g. opacity:0 / display:none on the <iframe>
     expect(D().isVisible(btn)).toBe(false);
-    const res = await handleWait({ tabId: 1, selector: '#in-frame', timeout: 300 });
+    const res = await handleWait({ tabId: 1, target: '#in-frame', timeout: 300 });
     expect(res.success).toBe(false);
   });
 
@@ -100,52 +137,9 @@ describe('shared page DOM runtime (resolver)', () => {
   });
 });
 
-describe('browser_find (tokenized, role-aware, wrapper-suppressing)', () => {
-  beforeEach(() => { doc = installFakePage(); fallbackByTab.clear(); });
-
-  it('multi-word query finds the search input by role word + attributes', async () => {
-    doc.body.append(
-      doc.el('div', { class: 'header' }, doc.el('a', { href: '/' }, 'Home')),
-      doc.el('input', { type: 'search', placeholder: 'Search docs', name: 'q' }),
-    );
-    const res = await handleFind({ tabId: 1, query: 'search input', limit: 3 });
-    expect(res.success).toBe(true);
-    expect(res.matches[0]).toMatchObject({ role: 'searchbox', tag: 'input' });
-  });
-
-  it('prefers the button over the wrappers whose text contains the same words', async () => {
-    const btn = doc.el('button', {}, 'Open alert dialog');
-    doc.body.append(doc.el('div', { class: 'demo' }, doc.el('div', {}, btn)));
-    const res = await handleFind({ tabId: 1, query: 'Open alert dialog button', limit: 5 });
-    expect(res.matches[0]).toMatchObject({ role: 'button', name: 'Open alert dialog' });
-    expect(res.matches.every((m: any) => m.tag !== 'div')).toBe(true);
-    // The ref works in the action tools (registry-backed).
-    const click = await handleClick({ tabId: 1, ref: res.matches[0].ref });
-    expect(click.success).toBe(true);
-    expect(btn.events).toContain('click');
-  });
-
-  it('finds controls inside shadow DOM and honours the role filter', async () => {
-    const host = doc.el('site-search');
-    host.attachShadow().append(doc.el('button', { 'aria-label': 'Search' }), doc.el('a', { href: '/s' }, 'Search help'));
-    doc.body.append(host);
-    const res = await handleFind({ tabId: 1, query: 'search', role: 'button' });
-    expect(res.matches).toHaveLength(1);
-    expect(res.matches[0]).toMatchObject({ role: 'button', name: 'Search' });
-  });
-
-  it('returns a hint instead of silence when nothing matches', async () => {
-    doc.body.append(doc.el('p', {}, 'nothing here'));
-    const res = await handleFind({ tabId: 1, query: 'checkout button' });
-    expect(res.matches).toHaveLength(0);
-    expect(res.hint).toMatch(/snapshot|text/);
-  });
-});
-
 describe('repeated row controls (icon buttons in table rows)', () => {
   beforeEach(() => { doc = installFakePage(); fallbackByTab.clear(); PAGE_DOM_INSTALL(PAGE_DOM_VERSION); });
   // A snapshot here must not make later tests' first snapshot report isNew.
-  afterEach(() => { lastSnapshotFingerprints.clear(); });
 
   // Smacc-style grid: code + name cells, then icon-only buttons named by title.
   function unitsTable(names: string[]) {
@@ -163,21 +157,11 @@ describe('repeated row controls (icon buttons in table rows)', () => {
     expect(D().nameOf(doc.el('a', { href: '/l' }, 'Lo', doc.el('b', {}, 'g'), 'in'))).toBe('Login');
   });
 
-  it('find ranks the button in the row the query names first, and says which row', async () => {
-    const rows = unitsTable(['قطعه', 'درزن', 'بكت', 'كرتون', 'ربطة']);
-    const res = await handleFind({ tabId: 1, query: 'تعديل كرتون', limit: 3 });
-    expect(res.matches[0]).toMatchObject({ role: 'button', name: 'تعديل', context: '4 كرتون' });
-    const click = await handleClick({ tabId: 1, ref: res.matches[0].ref });
-    expect(click.success).toBe(true);
-    expect(rows[3].children[2].children[0].events).toContain('click');
-  });
-
-  it('compact snapshot adds row context only to controls whose role+name repeats', async () => {
+  it('snapshot adds row context only to controls whose role+name repeats', async () => {
     unitsTable(['قطعه', 'درزن']);
-    const res = await handleSnapshot({ tabId: 1 });
-    const buttons = JSON.stringify(res.tree).match(/\{[^{}]*"role":"button"[^{}]*\}/g) ?? [];
-    expect(buttons.find((b) => b.includes('اضافة جديد'))).not.toContain('context');
-    expect(buttons.filter((b) => b.includes('"name":"تعديل"')).map((b) => JSON.parse(b).context)).toEqual(['1 قطعه', '2 درزن']);
+    const lines: string[] = (await handleSnapshot({ tabId: 1 })).text.split('\n');
+    expect(lines.find((l) => l.includes('اضافة جديد'))).not.toContain('context=');
+    expect(lines.filter((l) => l.includes('"تعديل"')).map((l) => l.match(/context="([^"]*)"/)?.[1])).toEqual(['1 قطعه', '2 درزن']);
   });
 
   it('row context leaves out cells the user cannot see (hidden columns)', async () => {
@@ -186,146 +170,111 @@ describe('repeated row controls (icon buttons in table rows)', () => {
       doc.el('td', {}, String(i + 1)), doc.el('td', {}, n), doc.el('td', { style: 'display:none' }, 'غير الأبعاد'),
       doc.el('td', {}, doc.el('button', { title: 'تعديل' }))));
     doc.body.append(doc.el('table', {}, doc.el('tbody', {}, ...rows)));
-    const res = await handleSnapshot({ tabId: 1 });
-    const contexts = (JSON.stringify(res.tree).match(/"context":"[^"]*"/g) ?? []).map((c) => JSON.parse(`{${c}}`).context);
+    const text: string = (await handleSnapshot({ tabId: 1 })).text;
+    const contexts = (text.match(/context="[^"]*"/g) ?? []).map((c) => c.slice('context="'.length, -1));
     expect(contexts).toEqual(['1 قطعه', '2 درزن']);
   });
 
   it('row context stays inside maxChars on a long grid', async () => {
-    // The 41 control nodes fit in 3000 chars; their row contexts (~50 chars each) would not.
+    // Each control line carries its row context (~50 chars); the budget must hold them all.
     unitsTable(Array.from({ length: 20 }, (_, i) => `صنف رقم ${i} وصف طويل للصنف لاختبار حد الحجم`));
     const res = await handleSnapshot({ tabId: 1, maxChars: 3000 });
     expect(res.truncated).toBe(true);
-    expect(JSON.stringify(res.tree).length).toBeLessThan(3000);
+    expect(res.text.length).toBeLessThan(3000 + 100);
   });
 });
 
-describe('browser_click_text', () => {
-  beforeEach(() => { doc = installFakePage(); });
+describe('text= and point targets (the resolver, contract principle 2)', () => {
+  beforeEach(() => { doc = installFakePage(); PAGE_DOM_INSTALL(PAGE_DOM_VERSION); });
 
-  it('matches case-insensitively and clicks the control that owns the text', async () => {
+  it('text= matches case-insensitively, and the control that owns the text is the target', () => {
     const span = doc.el('span', {}, 'Open alert dialog');
     const btn = doc.el('button', { class: 'MuiButton-root' }, span);
     doc.body.append(doc.el('div', {}, btn));
-    const res = await handleClickByText({ tabId: 1, text: 'OPEN ALERT DIALOG', exact: true });
-    expect(res).toMatchObject({ success: true, role: 'button', matchCount: 1 });
-    expect(btn.events).toContain('click');
-    expect(span.events).not.toContain('click');
+    expect(D().resolveTarget(parseTarget('text=OPEN ALERT DIALOG'))).toMatchObject({ el: btn, via: 'text' });
   });
 
-  it('synthetic clicks report the top-level point they clicked (browser_gif rings it)', async () => {
-    const btn = doc.el('button', { id: 'go' }, 'Go');
-    doc.body.append(btn);
-    // Fake boxes sit at (10, 10), 100 × 20: centre (60, 20).
-    expect(await handleClick({ tabId: 1, selector: '#go' })).toMatchObject({ success: true, at: { x: 60, y: 20 } });
-    expect(await handleClickByText({ tabId: 1, text: 'go', exact: true })).toMatchObject({ success: true, at: { x: 60, y: 20 } });
-  });
-
-  it('reaches text inside shadow roots', async () => {
+  it('text= reaches text inside shadow roots', () => {
     const host = doc.el('cookie-banner');
     const accept = doc.el('button', {}, 'Accept all');
     host.attachShadow().append(accept);
     doc.body.append(host);
-    const res = await handleClickByText({ tabId: 1, text: 'accept all' });
-    expect(res.success).toBe(true);
-    expect(accept.events).toContain('click');
+    expect(D().resolveTarget(parseTarget('text=accept all')).el).toBe(accept);
+  });
+
+  it('a point target is returned as that point, with the element under it', () => {
+    const btn = doc.el('button', { id: 'go' }, 'Go');
+    doc.body.append(btn);
+    // Fake boxes sit at (10, 10), 100 × 20; the fake hit test finds no element.
+    expect(D().resolveTarget(parseTarget('60,20'))).toMatchObject({ point: { x: 60, y: 20 }, via: 'point' });
   });
 });
 
-describe('selector actions skip hidden duplicates', () => {
-  beforeEach(() => { doc = installFakePage(); });
+describe('selector targets skip hidden duplicates', () => {
+  beforeEach(() => { doc = installFakePage(); PAGE_DOM_INSTALL(PAGE_DOM_VERSION); });
 
-  it('type goes to the visible field, not the hidden one that matches first', async () => {
+  it('a selector resolves to the visible field, not the hidden one that matches first', () => {
     const hidden = doc.el('input', { name: 'q' });
     hidden.hidden = true;
-    hidden.value = '';
     const shown = doc.el('input', { name: 'q' });
-    shown.value = '';
     doc.body.append(hidden, shown);
-    const res = await handleType({ tabId: 1, selector: 'input[name="q"]', text: 'abc' });
-    expect(res.success).toBe(true);
-    expect(shown.value).toBe('abc');
-    expect(hidden.value).toBe('');
+    expect(D().resolveTarget(parseTarget('input[name="q"]')).el).toBe(shown);
   });
 
   it('wait(visible) succeeds when ANY match is visible', async () => {
     const hidden = doc.el('div', { class: 'dlg' });
     hidden.hidden = true;
     doc.body.append(hidden, doc.el('div', { class: 'dlg' }, 'Dialog'));
-    const res = await handleWait({ tabId: 1, selector: '.dlg', timeout: 500 });
+    const res = await handleWait({ tabId: 1, target: '.dlg', timeout: 500 });
     expect(res.success).toBe(true);
   });
 
-  it('wait(text) waits for page text', async () => {
+  it('wait(text=...) waits for visible page text (a text condition is a target)', async () => {
     doc.body.append(doc.el('p', {}, 'Payment received'));
-    expect((await handleWait({ tabId: 1, text: 'payment RECEIVED', timeout: 500 })).success).toBe(true);
-    expect((await handleWait({ tabId: 1, text: 'refund', timeout: 300 })).success).toBe(false);
+    expect((await handleWait({ tabId: 1, target: 'text=payment RECEIVED', timeout: 500 })).success).toBe(true);
+    expect((await handleWait({ tabId: 1, target: 'text=refund', timeout: 300 })).success).toBe(false);
   });
 });
 
 describe('snapshot + text', () => {
   beforeEach(() => { doc = installFakePage(); fallbackByTab.clear(); });
 
-  it('snapshot includes shadow-DOM controls, short refs, no isNew on the first snapshot, path-only same-origin hrefs', async () => {
+  it('snapshot walks shadow DOM, prints no href, and every ref is a short e<n>', async () => {
     const host = doc.el('nav-bar');
     host.attachShadow().append(doc.el('a', { href: '/docs' }, 'Docs'));
     const a = doc.el('a', { href: '/x' }, 'X');
     (a as any).href = 'https://example.test/x';
     doc.body.append(host, a);
     const res = await handleSnapshot({ tabId: 1 });
-    const json = JSON.stringify(res.tree);
-    expect(json).toContain('"name":"Docs"');
-    expect(json).not.toContain('isNew');
-    expect(json).toContain('"href":"/x"');
-    const refs = json.match(/"ref":"([^"]+)"/g) ?? [];
-    expect(refs.length).toBeGreaterThan(1);
-    for (const r of refs) expect(r.length).toBeLessThan(20);
+    expect(res.text).toContain('link "Docs" [e');
+    expect(res.text).toContain('link "X" [e');
+    expect(res.text).not.toContain('href');
+    expect(res.refs.length).toBeGreaterThan(1);
+    for (const r of res.refs) expect(r.ref).toMatch(/^e\d+$/);
   });
 
   it('snapshot maxChars caps output and says so', async () => {
     for (let i = 0; i < 200; i++) doc.body.append(doc.el('button', {}, `Button number ${i}`));
     const res = await handleSnapshot({ tabId: 1, maxChars: 1000 });
     expect(res.truncated).toBe(true);
-    expect(JSON.stringify(res.tree).length).toBeLessThan(1600);
+    expect(res.text).toContain('… truncated (');
+    expect(res.text.length).toBeLessThan(1100);
   });
 
-  it('text includes shadow content and supports offset paging', async () => {
+  it('text includes shadow content and says how much a maxChars cut left out', async () => {
     const host = doc.el('support-table');
     host.attachShadow().append(doc.el('p', {}, 'WebGPU supported'));
     doc.body.append(doc.el('p', {}, 'Intro'), host);
-    const res = await handleGetPageText({ tabId: 1, maxLength: 5 });
-    expect(res.text.startsWith('Intro')).toBe(true);
-    expect(res.nextOffset).toBe(5);
+    const cut = await handleGetPageText({ tabId: 1, maxChars: 5 });
+    expect(cut.text.startsWith('Intro')).toBe(true);
+    expect(cut.text).toMatch(/… truncated \(\d+ more chars\)$/);
     const all = await handleGetPageText({ tabId: 1 });
     expect(all.text).toContain('WebGPU supported');
   });
 
-  it('text with a selector list returns every match, not just the first', async () => {
-    doc.body.append(doc.el('h1', {}, 'Title'), doc.el('p', {}, 'Body'), doc.el('span', { class: 'price' }, '42 SAR'));
-    const res = await handleGetPageText({ tabId: 1, selector: 'h1, .price' });
-    expect(res.text).toContain('Title');
-    expect(res.text).toContain('42 SAR');
-    expect(res.text).not.toContain('Body');
-    expect(res.matches).toBe(2);
-  });
-
-  it('text with a selector skips nested matches and hidden duplicates', async () => {
-    const outer = doc.el('div', { class: 'card' });
-    outer.append(doc.el('div', { class: 'card' }, 'Inner'));
-    const hidden = doc.el('div', { class: 'card' }, 'Hidden');
-    hidden.hidden = true;
-    doc.body.append(outer, hidden);
-    const res = await handleGetPageText({ tabId: 1, selector: '.card' });
-    expect(res.text.match(/Inner/g)).toHaveLength(1);
-    expect(res.text).not.toContain('Hidden');
-    expect(res.matches).toBeUndefined();
-  });
-
-  it('text with one selector match keeps the single-element shape', async () => {
-    doc.body.append(doc.el('p', { id: 'only' }, 'Solo'));
-    const res = await handleGetPageText({ tabId: 1, selector: '#only' });
-    expect(res.text).toBe('Solo');
-    expect(res.matches).toBeUndefined();
-    expect(await handleGetPageText({ tabId: 1, selector: '#missing' })).toMatchObject({ success: false, error: 'Element not found' });
+  it('text with a target: that one element; a missing one is NOT_FOUND', async () => {
+    doc.body.append(doc.el('p', { id: 'only' }, 'Solo'), doc.el('p', {}, 'Other'));
+    expect(await handleGetPageText({ tabId: 1, target: '#only' })).toMatchObject({ success: true, text: 'Solo' });
+    expect(await handleGetPageText({ tabId: 1, target: '#missing' })).toMatchObject({ success: false, error: 'NOT_FOUND: #missing matches nothing' });
   });
 });

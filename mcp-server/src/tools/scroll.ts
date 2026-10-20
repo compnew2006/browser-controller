@@ -1,21 +1,17 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, forwardHandler } from './types.js';
+import { tabIdParam, forwardHandler } from './types.js';
 
 export const scrollTool: ToolDefinition = {
   name: 'browser_scroll',
-  summary: 'Scroll a tab up/down/left/right',  description:
-    'Scroll the page, a container (selector) or an element into view (toElement); position top/bottom. Works with virtual scroll containers and app shells whose inner container scrolls (the nearest scrollable one is used). With x/y: a real wheel event at that point (inner panels, maps, virtual lists). The result has the real position; nothing moved fails with NOT_SCROLLABLE.',
+  summary: 'Scroll the page, a container or to an element',
+  description: 'Wheel scroll by dy / dx px at target or the page centre. With only target: scroll it into view. Nothing moved fails NOT_SCROLLABLE.',
   inputSchema: z.object({
-    tabId: requireTabId(),
-    direction: z.enum(['up', 'down', 'left', 'right']).optional().default('down'),
-    amount: z.number().optional().default(500).describe('Pixels'),
-    selector: z.string().optional().describe('Scroll container (virtual lists)'),
-    toElement: z.string().optional().describe('Ref or selector to scroll into view'),
-    position: z.enum(['top', 'bottom']).optional(),
-    x: z.number().optional().describe('Wheel at this viewport point, with y'),
-    y: z.number().optional(),
-  }),
+    tabId: tabIdParam,
+    target: z.string().optional(),
+    dy: z.number().optional(),
+    dx: z.number().optional(),
+  }).strict(),
   timeoutMs: 10_000,
   handler: forwardHandler('browser_scroll'),
 };

@@ -148,7 +148,7 @@ export interface ExtensionRequest {
 // MOVED to mcp-server/src/tools/index.ts (isIdempotent), derived from each
 // tool's `idempotent` flag. It was previously a hand-maintained string set
 // here that silently drifted from the real registry (audit C1/m5) and wrongly
-// included browser_console/browser_network (which mutate on clear:true — M2).
+// included browser_logs (which mutates on clear:true — M2).
 
 // --- Auth token (task 3.1) -------------------------------------------------
 

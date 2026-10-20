@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
-import { buildSessionId, newDaemonInstanceId } from '../mcp-server/src/protocol.js';
+import { buildIpcHello, buildSessionId, newDaemonInstanceId } from '../mcp-server/src/protocol.js';
 
 /**
  * WP6 item 1a/1b (daemon side): session ids must not repeat across daemon
@@ -70,7 +70,7 @@ function ipcSessionId(token: string): Promise<string> {
       resolve(msg.sessionId);
     });
     socket.on('error', reject);
-    socket.once('connect', () => socket.write(JSON.stringify({ kind: 'hello', token, agentName: 'Restart' }) + '\n'));
+    socket.once('connect', () => socket.write(JSON.stringify(buildIpcHello(token, 'Restart')) + '\n'));
   });
 }
 

@@ -19,39 +19,33 @@ Agent ─stdio─ thin MCP client (index.ts) ─IPC─► daemon (daemon.ts, own
 
 ## The two invariants
 
-1. **`tabId` is mandatory** for every page-interaction tool. `navigate` is the ONE exception (optional, active-tab fallback). `tabs` create/close/focus/list take no target tabId. Enforced via `requireTabId()` in `tools/types.ts`.
-2. **background.js never acts on "the active tab"** implicitly — `resolveTab(tabId)` is the entry point. The active-tab fallback survives ONLY inside `handleNavigate`.
+1. **`tabId` is mandatory** for every page-interaction tool. `navigate` is the ONE exception (optional: without it, it opens a new background tab owned by the session). `tabs` list takes no tabId; close and focus need one. Enforced by the `tabIdParam` schema in `mcp-server/src/tools/types.ts`.
+2. **background.js never acts on "the active tab"** implicitly — `resolveTab(tabId)` is the entry point. The only active-tab lookup left is choosing the window for a new tab (`getActiveTab` in `handleNavigate`).
 
-## Element identification (3 layers + auto-recovery)
+## Element identification (one ref grammar, one locator)
 
-1. `data-mcp-ref="e5"` (fast, breaks on re-render)
-2. robust CSS selector via `smart-selector.js` (climbs ≤3 ancestors, ignores React/generated classes+ids)
-3. text+role+tag scan (survives total class/id churn) — resolves the **correct** sibling via `nth` ordinal when several elements share text+role (e.g. 3 "Like" buttons)
-- `autoReSnapshot`: on ref failure (virtualized feed), snapshot the tab and embed `freshRefs` in the response so the agent retries in one step. Do NOT auto-retry the click (non-idempotent). `browser_scroll` returns `refsMayBeStale: true` as a hint.
-- `isNew`: each snapshot tracks `role|name` fingerprints per tab; elements appearing since the last snapshot are tagged `isNew: true` so the agent can focus on what changed (big token saver after an overlay/dropdown opens). State lives in `lastSnapshotFingerprints` Map, cleared on tab close.
-
-## Native accessibility tree (`browser_snapshot source:"native"`)
-
-`handlers/ax-snapshot.js` + pure `lib/ax-native.js`. CDP `Accessibility.getFullAXTree` per frame (main + same-process child frames, grafted under their `Iframe` node) → same tree shape as the DOM snapshot. Refs are bound into the SAME page registry (`__bcDom.registry`) by structural path: main world `DOM.resolveNode` + `Runtime.callFunctionOn(pathOfTarget)` → isolated world walks the path (`-1` = enter shadow root, `-2` = enter iframe document, else element-child index), verifies the tag, registers, stores the smart-selector fallback. No DOM mutation. Gotchas: batch `callFunctionOn` PER FRAME (Chrome rejects mixed JS contexts); AX ids repeat across frames (namespaced on merge); user-agent shadow nodes (e.g. a date input's sub-fields) are unreachable: no ref, and omitted from the compact tree (`unreachableNodes`); scoping resolves in the page, then finds the node in a `DOM.getDocument({pierce:true})` dump with the same path grammar. CDP failure → DOM snapshot + `nativeUnavailable`. Default `source:"dom"` never touches the debugger.
+- Refs are `e<n>` only. `extension/lib/page-dom.js` issues them (`refFor`): an element keeps its ref for as long as its document lives. Refs live in the page registry; nothing is stamped onto the page DOM.
+- Every `target` goes through `parseTarget` in `extension/lib/target.js` and then `resolveTarget` in `extension/lib/page-dom.js`: `e12` is a ref; `text=Sign in` is a visible element by text; `120,80` is a viewport point; anything else (`#save`, `x-1`) is a CSS selector.
+- A stale ref re-finds its element through the snapshot descriptor kept in `fallbackByTab` (`extension/lib/state.js`). The descriptor holds a robust selector from `extension/utils/smart-selector.js`, the text, the role, and the `nth` ordinal, so one of several equal buttons is still picked correctly. When nothing matches it fails `REF_GONE` or `REF_NOT_FOUND`.
 
 ## Concurrency (extension/lib/tab-concurrency.js — pure, unit-tested)
 
 - `TabMutexMap`: same-tab serializes, cross-tab parallelizes.
-- `TabLockMap`: per-agent tab ownership via `browser_tabs {action:'lock'}`; non-owner calls queue.
-- `isIdempotent` (daemon-config.ts): read tools retry on timeout; **click/type/navigate/evaluate NEVER retry**.
+- `TabLockMap`: implicit per-session tab ownership (a tab `browser_navigate` opens without `tabId`). Another session's call on it fails `TAB_LOCKED`. No explicit lock tool in 3.0.
+- `isIdempotent` (`mcp-server/src/tools/index.ts`, from each definition's `idempotent` flag): read tools retry on timeout; **click/type/navigate/evaluate NEVER retry**.
 
-## Tool inventory (22 tools)
+## Tool inventory (17 tools)
 
-Navigation: browser_navigate (tabId optional), browser_tabs (list/create/close/focus/**lock**/**unlock**)
-Interaction (tabId required): browser_click, browser_click_text, browser_type, browser_press_key, browser_scroll, browser_hover, browser_select, browser_drag, browser_fill_form, browser_upload_file
-Reading (tabId required): browser_snapshot, browser_screenshot, browser_text, browser_find
-JS/Dialogs (tabId required): browser_evaluate (MAIN world, no banner), browser_handle_dialog, browser_run_action
-Waiting: browser_wait
-Debug (tabId required, per-tab buffers capped 200): browser_console, browser_network
+Navigation: browser_navigate (tabId optional: without it, opens a new background tab owned by the session), browser_tabs (list/close/focus; browser picks the Chrome profile), browser_emulate
+Reading: browser_snapshot (refs e<n>; query, target, maxChars), browser_text, browser_screenshot, browser_inspect_element
+Interaction: browser_click (target; hover, dragTo), browser_type, browser_fill, browser_scroll, browser_wait
+Chain: browser_batch (up to 50 steps)
+JS/Dialogs: browser_evaluate (CDP), browser_handle_dialog
+Debug: browser_logs (console + network, per-tab buffers), browser_mock (tab-scoped Fetch rules)
 
-## browser_evaluate (changed in v2)
+## browser_evaluate
 
-Now runs via `chrome.scripting` MAIN world (NOT chrome.debugger) — no "is being debugged" infobar, CSP-safe. `run_action`/`upload_file`/`drag` still use CDP (CDP-only operations: `DOM.setFileInputFiles`, `Input.dispatchMouseEvent`).
+Runs over CDP by default (`Runtime.evaluate`, top-level await): the page CSP does not block it, and the "being debugged" banner shows while attached. It falls back to `chrome.scripting` MAIN world (`via: scripting`) only when the debugger cannot attach. `browser_fill` (file inputs, `DOM.setFileInputFiles`) and `browser_click` (`Input.dispatchMouseEvent`) use CDP too.
 
 ## chrome.scripting serialization gotcha
 
@@ -59,21 +53,17 @@ Now runs via `chrome.scripting` MAIN world (NOT chrome.debugger) — no "is bein
 
 ## Adding a tool
 
-1. `mcp-server/src/tools/<name>.ts` — ToolDefinition with `requireTabId()` in the Zod schema
-2. `mcp-server/src/tools/index.ts` — add to `allTools`
-3. `extension/background.js` — add to `dispatch()` map + handler (use `resolveTab(tabId)` + `safeExec`)
-4. If it has side effects, ensure `isIdempotent()` in `daemon-config.ts` does NOT list it.
+1. `mcp-server/src/tools/<name>.ts`: a `ToolDefinition` with a zod `inputSchema` (`tabIdParam` from `tools/types.ts` for the tab), `handler: forwardHandler('browser_<name>')`, and `idempotent: true` only for read-only tools.
+2. `mcp-server/src/tools/index.ts`: add it to `allTools`. `registerTools` in `mcp-server/src/register-tools.ts` registers every entry there. `isIdempotent` and `toolTimeoutMs` are derived from the definitions.
+3. `extension/handlers/<area>.js`: the handler, `handle<Name>(params, sessionId, agentName, signal)`. It returns `{ success: true, text }` or `{ success: false, error: "CODE: message" }`.
+4. `extension/lib/router.js`: add it to `HANDLERS`. The drift guard in `tests/extension-router.test.ts` fails when a registered tool has no extension handler, or when the two sets differ in size.
 
 ## Build/test
 
 - `npm run build` (tsc), `npm test` (vitest), `npm run typecheck`
 - Extension is plain JS (no build) — `node --check` each file after edits
-- Daemon is built to `mcp-server/dist/`. Reload the extension at `chrome://extensions` after any extension edit; content scripts cache per-page-load so open tabs need a hard refresh.
+- Daemon is built to `mcp-server/dist/`. Reload the extension at `chrome://extensions` after any extension edit. Open tabs keep the old page helper until `PAGE_DOM_VERSION` in `extension/lib/page-dom.js` changes, so bump it when you change page-side code.
 
 ## graphify
 
 This repo is graphify-indexed (457 nodes / 727 edges / 28 communities). Use `graphify query "..."` to trace code paths, `graphify update .` for zero-cost code refresh, `graphify . --backend claude` for image extraction. See memory `mem:graphify-setup` for the Z.ai endpoint config.
-
-## Known benign console noise (already filtered)
-
-`ResizeObserver loop` and `message channel closed` are filtered in `content.js`. Both need extension reload + tab refresh to take effect (content scripts cache per page).

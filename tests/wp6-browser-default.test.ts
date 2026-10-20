@@ -27,6 +27,18 @@ async function startBridge() {
   return { bridge, port };
 }
 
+/** The browser that answered this session's browser_tabs list (a fake's text ends with "tabs of <browserId>"). */
+async function answeredBy(bridge: ExtensionBridge, sessionId: string): Promise<string> {
+  const res = await bridge.callTool('browser_tabs', { action: 'list' }, sessionId) as { text: string };
+  return res.text.split('\n').pop()!.replace(/^tabs of /, '');
+}
+
+/** The browser the session is routed to, as browser_tabs lists it: the one marked "(selected)". */
+async function selectedBrowser(bridge: ExtensionBridge, sessionId: string): Promise<string | undefined> {
+  const res = await bridge.callTool('browser_tabs', { action: 'list' }, sessionId) as { text: string };
+  return res.text.match(/^browser (\S+) "[^"]*" \(selected\)$/m)?.[1];
+}
+
 /** A fake extension: announces its browser identity and answers tool calls with its name. */
 async function fakeBrowser(p: number, browserId: string) {
   const ws = new WebSocket(`ws://localhost:${p}`);
@@ -34,7 +46,9 @@ async function fakeBrowser(p: number, browserId: string) {
   ws.on('message', (data) => {
     const msg = JSON.parse(data.toString());
     if (msg.type === 'hello') ws.send(JSON.stringify({ ...buildExtensionHelloAck('test'), browserId, browserLabel: `Chrome ${browserId}` }));
-    if (msg.tool) ws.send(JSON.stringify({ id: msg.id, success: true, result: { from: browserId } }));
+    // browser_tabs answers with text, as the extension does: the bridge puts the browser lines in front of it.
+    if (msg.tool === 'browser_tabs') ws.send(JSON.stringify({ id: msg.id, success: true, result: { from: browserId, text: `tabs of ${browserId}` } }));
+    else if (msg.tool) ws.send(JSON.stringify({ id: msg.id, success: true, result: { from: browserId } }));
   });
   await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
   await new Promise((r) => setTimeout(r, 60));
@@ -46,9 +60,8 @@ describe('default browser is the earliest-seen live browser', () => {
     const { bridge, port: p } = await startBridge();
     await fakeBrowser(p, 'work');
     await fakeBrowser(p, 'home');
-    const { browsers } = await (bridge.callTool('browser_list_browsers', {}, 's1') as Promise<any>);
-    expect(browsers.find((b: any) => b.default).browserId).toBe('work');
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'work' });
+    expect(await selectedBrowser(bridge, 's1')).toBe('work');
+    expect(await answeredBy(bridge, 's2')).toBe('work');
   });
 
   it('a service-worker recycle of the other browser does not move the default', async () => {
@@ -58,7 +71,7 @@ describe('default browser is the earliest-seen live browser', () => {
     const homeClosed = new Promise<void>((r) => homeFirst.once('close', () => r()));
     await fakeBrowser(p, 'home'); // home's worker came back: a new socket, same browserId
     await homeClosed;
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'work' });
+    expect(await answeredBy(bridge, 's2')).toBe('work');
   });
 
   it('when the default disconnects the next earliest one takes over, and the returning one regains its place', async () => {
@@ -67,8 +80,8 @@ describe('default browser is the earliest-seen live browser', () => {
     await fakeBrowser(p, 'home');
     work.close();
     await new Promise((r) => setTimeout(r, 60));
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'home' });
+    expect(await answeredBy(bridge, 's2')).toBe('home');
     await fakeBrowser(p, 'work');
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's3')).toEqual({ from: 'work' });
+    expect(await answeredBy(bridge, 's3')).toBe('work');
   });
 });

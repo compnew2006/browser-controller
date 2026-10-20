@@ -6,34 +6,31 @@ describe("browser_snapshot schema", () => {
   const parse = (extra: Record<string, unknown>) =>
     snapshotTool.inputSchema.safeParse({ tabId: 1, ...extra });
 
-  it('accepts source "dom" and "native", and leaves it optional (DOM stays the default)', () => {
-    expect(parse({ source: "native" }).success).toBe(true);
-    expect(parse({ source: "dom" }).success).toBe(true);
-    const bare = parse({});
-    expect(bare.success).toBe(true);
-    expect(bare.success && bare.data.source).toBeUndefined();
+  it("accepts target, query and maxChars, and all of them are optional", () => {
+    expect(parse({}).success).toBe(true);
+    expect(parse({ target: "e4", query: "Sign in", maxChars: 2000 }).success).toBe(true);
   });
 
-  it("rejects an unknown source", () => {
-    expect(parse({ source: "axtree" }).success).toBe(false);
+  it("caps maxChars at 50000", () => {
+    expect(parse({ maxChars: 50_000 }).success).toBe(true);
+    expect(parse({ maxChars: 50_001 }).success).toBe(false);
   });
 
-  it("documents the native option for agents", () => {
-    expect(snapshotTool.description).toContain('source:"native"');
+  it("drops the retired knobs (source, compact, filter, depth, selector, ref)", () => {
+    const keys = Object.keys(snapshotTool.inputSchema.shape);
+    expect(keys.sort()).toEqual(["maxChars", "query", "tabId", "target"]);
   });
 
-  it("forwards source to the extension untouched", async () => {
+  it("forwards its params to the extension untouched", async () => {
     const seen: Array<{ tool: string; params: Record<string, unknown> }> = [];
     const host: ToolHost = {
       callTool: async (tool, params) => {
         seen.push({ tool, params });
-        return { success: true, source: "native" };
+        return { success: true, text: "- heading \"Home\" [e1]" };
       },
     };
-    await snapshotTool.handler(host, { tabId: 4, source: "native", compact: false });
-    expect(seen).toEqual([
-      { tool: "browser_snapshot", params: { tabId: 4, source: "native", compact: false } },
-    ]);
+    await snapshotTool.handler(host, { tabId: 4, target: "e2", maxChars: 3000 });
+    expect(seen).toEqual([{ tool: "browser_snapshot", params: { tabId: 4, target: "e2", maxChars: 3000 } }]);
   });
 
   it("stays idempotent (safe to retry on timeout)", () => {

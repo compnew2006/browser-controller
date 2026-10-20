@@ -1,7 +1,7 @@
 /**
  * Shared page-side DOM runtime: one element resolver and one composed-tree
- * walker for every tool, installed once per document (v2 install-once pattern,
- * see observation-v2.js — injected source can't import modules).
+ * walker for every tool, installed once per document (injected source can't import
+ * modules).
  *
  * Why: refs used to be looked up by a `[data-mcp-ref]` attribute nothing
  * writes any more, so every ref action fell through to the smart-selector
@@ -15,9 +15,15 @@
  * ambiguous is reported as gone instead of guessed.
  */
 
-export const PAGE_DOM_VERSION = 6;
+export const PAGE_DOM_VERSION = 11;
 
-export function PAGE_DOM_INSTALL(version) {
+/**
+ * `refBase`: the highest ref number the tab's earlier documents showed (lib/state.js
+ * refHighWaterByTab). This document's counter starts there, so its refs never reuse a
+ * number an earlier document issued: a stale ref from that page is REF_GONE, never a
+ * different element of this one.
+ */
+export function PAGE_DOM_INSTALL(version, refBase = 0) {
   if (globalThis.__bcDom && globalThis.__bcDom.v === version) return false;
   const REGISTRY_KEY = '__browserControllerLegacyRefRegistry';
   const registry = globalThis[REGISTRY_KEY] instanceof Map ? globalThis[REGISTRY_KEY] : new Map();
@@ -58,21 +64,44 @@ export function PAGE_DOM_INSTALL(version) {
   }
 
   /**
-   * Bounded ref registry. Every snapshot, find and native pass registers its refs
-   * under its own prefix ("s4k2-", "f4k2-"). Only the last REF_GENERATIONS passes
-   * keep their refs: the oldest generation is dropped when a new one starts, so the
-   * registry no longer grows with every snapshot of a long session. A dropped ref
-   * resolves to REF_GONE (the smart-selector fallback can still find the element).
+   * Stable refs (contract "Refs"): an element keeps its `e<n>` ref for as long as
+   * the document lives, and every snapshot, find and target resolution issues the
+   * same ref for the same element. The counter and the element→ref map sit beside
+   * the registry and are reset with it (a new registry is a new document here).
    */
-  const REF_GENERATIONS = 10;
-  const refGenerations = [];
-  function beginRefGeneration(prefix) {
-    if (!prefix) return;
-    refGenerations.push(prefix);
-    while (refGenerations.length > REF_GENERATIONS) {
-      const old = refGenerations.shift();
-      for (const ref of Array.from(registry.keys())) if (ref.startsWith(old)) registry.delete(ref);
+  const REF_STATE_KEY = '__browserControllerRefState';
+  const priorRefs = globalThis[REF_STATE_KEY];
+  const base = Number.isInteger(refBase) && refBase > 0 ? refBase : 0;
+  const refState = priorRefs && priorRefs.registry === registry ? priorRefs : { registry, base, seq: base, ids: new WeakMap() };
+  globalThis[REF_STATE_KEY] = refState;
+  /** The ref an element has, or the one it will get: nothing is issued or registered. */
+  function peekRef(el) {
+    return refState.ids.get(el) || `e${refState.seq + 1}`;
+  }
+  /** The element's stable ref, registered in the page registry (the first sight issues it). */
+  function refFor(el) {
+    let ref = refState.ids.get(el);
+    if (!ref) {
+      refState.seq += 1;
+      ref = `e${refState.seq}`;
+      refState.ids.set(el, ref);
     }
+    registry.set(ref, el);
+    return ref;
+  }
+  /** Was this ref issued in this tab (this document or an earlier one)? `e<n>` with n at most the counter. */
+  function refIssued(ref) {
+    const m = /^e(\d+)$/.exec(String(ref || ''));
+    return !!m && Number(m[1]) >= 1 && Number(m[1]) <= refState.seq;
+  }
+  /** Was this ref issued by an earlier document of the tab (its number is at or below this document's start)? */
+  function refIsEarlier(ref) {
+    const m = /^e(\d+)$/.exec(String(ref || ''));
+    return !!m && Number(m[1]) >= 1 && Number(m[1]) <= refState.base;
+  }
+  /** Drop the registry entries whose element has left the document (each snapshot runs this). */
+  function pruneRegistry() {
+    for (const [ref, el] of Array.from(registry.entries())) if (!connected(el)) registry.delete(ref);
   }
 
   /** Open or closed shadow root (closed ones via chrome.dom in the isolated world). */
@@ -161,14 +190,6 @@ export function PAGE_DOM_INSTALL(version) {
     return Array.from(node.childNodes || node.children || []);
   }
 
-  function hasShadowHosts() {
-    for (const root of allRoots(false)) {
-      let els = [];
-      try { els = root.querySelectorAll('*'); } catch {}
-      for (const el of els) if (shadowOf(el)) return true;
-    }
-    return false;
-  }
 
   const INPUT_BUTTONS = ['button', 'submit', 'reset', 'image'];
   function roleOf(el) {
@@ -252,6 +273,13 @@ export function PAGE_DOM_INSTALL(version) {
     return composedText(el, 200);
   }
 
+  /** Text the element holds itself: its direct text nodes, cleaned (descendants excluded). */
+  function ownText(el, max = 80) {
+    let out = '';
+    for (const c of el.childNodes || []) if (c.nodeType === 3) out += c.nodeValue;
+    return clean(out, max);
+  }
+
   const INTERACTIVE_ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'combobox', 'listbox', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'slider', 'spinbutton', 'treeitem']);
   function isInteractive(el) {
     const tag = el.tagName;
@@ -263,7 +291,7 @@ export function PAGE_DOM_INSTALL(version) {
     return typeof el.onclick === 'function';
   }
 
-  /** Exact, or wanted + non-letter suffix ("Login »"). Mirrors isPreciseTextMatch. */
+  /** Exact, or wanted + non-letter suffix ("Login »"). */
   function preciseMatch(candidate, wanted) {
     const c = clean(candidate).toLowerCase();
     const w = clean(wanted).toLowerCase();
@@ -278,15 +306,6 @@ export function PAGE_DOM_INSTALL(version) {
     return null;
   }
 
-  function bySelector(sel) {
-    let all = queryAll(sel, false);
-    if (all === null) return { error: 'INVALID_SELECTOR' };
-    let el = firstVisible(all);
-    if (el) return { el, count: all.length };
-    const deep = queryAll(sel, true) || [];
-    el = firstVisible(deep) || deep[0] || all[0] || null;
-    return el ? { el, count: deep.length || all.length, hidden: !isVisible(el) } : null;
-  }
 
   /** Fallback descriptor → element, only when the match is unambiguous. */
   function byFallback(fb) {
@@ -298,12 +317,13 @@ export function PAGE_DOM_INSTALL(version) {
     const textOk = (el) => !fb.text || preciseMatch(nameOf(el), fb.text)
       || preciseMatch(clean(el.textContent).split('\n')[0], fb.text)
       || preciseMatch(attr(el, 'aria-label') || attr(el, 'alt') || attr(el, 'title') || attr(el, 'placeholder'), fb.text);
-    const same = (el) => (!wantTag || el.tagName === wantTag) && (!wantRole || effRole(el) === wantRole);
+    // A descriptor names its role the generator's way (role attribute or tag name) or the snapshot's (roleOf: link, textbox…).
+    const same = (el) => (!wantTag || el.tagName === wantTag) && (!wantRole || effRole(el) === wantRole || roleOf(el) === wantRole);
 
     if (fb.robustSelector) {
       const cands = (queryAll(fb.robustSelector, true) || []).filter((el) => same(el) && isVisible(el));
       const named = fb.text ? cands.filter(textOk) : cands;
-      if (named.length === 1) return named[0];
+      // The recorded ordinal decides: a lone look-alike is the element only when it is the first one.
       if (named.length > wantNth) return named[wantNth];
       if (named.length > 1) return null; // several look-alikes and the ordinal no longer fits: don't guess
     }
@@ -315,33 +335,103 @@ export function PAGE_DOM_INSTALL(version) {
       if (textOk(el)) matches.push(el);
     }
     if (matches.length > wantNth) return matches[wantNth];
-    if (matches.length === 1) return matches[0];
     return null;
   }
 
+
+  const TEXT_SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'HTML', 'BODY', 'META', 'LINK']);
+  /** The node above `n` in the composed tree: parent, shadow host or frame element. */
+  function composedParent(n) {
+    if (n.parentElement) return n.parentElement;
+    let root = null;
+    try { root = n.getRootNode(); } catch {}
+    if (root && root.host) return root.host;
+    return (root && root.nodeType === 9 && root.defaultView && root.defaultView.frameElement) || null;
+  }
+
   /**
-   * ref → selector → verified fallback. Returns { el, via } or { error, url }.
-   * via: 'ref' | 'selector' | 'fallback'.
+   * `text=<words>` (lib/target.js): the visible elements whose accessible name or
+   * text equals the words (case-insensitive, whitespace collapsed); when none
+   * equals, the ones that contain them. Among those, the innermost interactive
+   * match, else the innermost element. Returns the distinct best matches (empty
+   * when there are none).
    */
-  function resolve(ref, sel, fb) {
-    if (ref) {
-      const el = registry.get(ref);
-      if (connected(el)) return { el, via: 'ref' };
-      if (el) registry.delete(ref);
-    }
-    if (sel) {
-      const hit = bySelector(sel);
-      if (hit && hit.error) return { error: hit.error, url: location.href };
-      if (hit) return { el: hit.el, via: 'selector', ...(hit.hidden ? { hidden: true } : {}) };
-    }
-    if (fb) {
-      const el = byFallback(fb);
-      if (el) {
-        if (ref) registry.set(ref, el); // re-bind so the next call is a direct hit
-        return { el, via: 'fallback' };
+  function byText(text) {
+    const want = clean(text, 500).toLowerCase();
+    if (!want) return [];
+    const equal = [];
+    const contained = [];
+    for (const root of allRoots(true)) {
+      let els = [];
+      try { els = root.querySelectorAll('*'); } catch {}
+      for (const el of els) {
+        if (TEXT_SKIP.has(el.tagName)) continue;
+        const name = clean(nameOf(el), 500).toLowerCase();
+        const own = clean(composedText(el, 200), 500).toLowerCase();
+        const isEqual = name === want || own === want;
+        if (!isEqual && !name.includes(want) && !own.includes(want)) continue;
+        if (!isVisible(el) || isExtensionNode(el)) continue;
+        (isEqual ? equal : contained).push(el);
       }
     }
-    return { error: 'REF_GONE', url: location.href };
+    const pool = equal.length ? equal : contained;
+    const interactive = pool.filter((el) => isInteractive(el));
+    const cands = interactive.length ? interactive : pool;
+    // Innermost: one upward walk per candidate marks each ancestor once (linear).
+    const holdsOne = new Set();
+    for (const c of cands) for (let a = composedParent(c); a && !holdsOne.has(a); a = composedParent(a)) holdsOne.add(a);
+    return cands.filter((c) => !holdsOne.has(c));
+  }
+
+  /**
+   * The one target resolver. `t` is the object lib/target.js parseTarget returns;
+   * `fb` is the snapshot's fallback descriptor for a ref (as resolve() takes it), so
+   * a re-rendered element is still re-found. Returns one of:
+   *   { el, via }                  an element (via: 'text' | 'ref' | 'selector')
+   *   { point, el, via: 'point' }  a viewport point; `el` is the element under it, or null
+   *   { error: 'CODE: message' }   text, selector and ambiguity failures
+   *   { error: 'REF_GONE', ref, issued, earlier }  a ref miss: the bare code. `issued` says whether
+   *                                the ref was issued in this tab (its element is gone)
+   *                                or never was (REF_NOT_FOUND); `earlier` says it was issued by an
+   *                                earlier document of the tab. lib/ref-errors.js words it.
+   */
+  function resolveTarget(t, fb) {
+    if (!t) return { error: 'INVALID_ARGUMENT: target is empty' };
+    if (t.kind === 'point') {
+      let el = null;
+      try { el = elementAt(t.x, t.y); } catch { /* detached mid-hit-test: no element under it */ }
+      return { point: { x: t.x, y: t.y }, el, via: 'point' };
+    }
+    if (t.kind === 'text') {
+      const hits = byText(t.text);
+      if (hits.length === 0) return { error: `NOT_FOUND: no visible element with text "${t.text}"` };
+      if (hits.length === 1) return { el: hits[0], via: 'text' };
+      // Each candidate gets its stable ref, so the agent can retry with one of them.
+      const shown = hits.slice(0, 5).map((el) => `${refFor(el)} "${nameOf(el).slice(0, 60)}"`);
+      return { error: `AMBIGUOUS: text=${t.text} matches ${hits.length} elements: ${shown.join(', ')}${hits.length > 5 ? ', …' : ''}` };
+    }
+    if (t.kind === 'ref') {
+      const hit = registry.get(t.ref);
+      if (connected(hit)) return { el: hit, via: 'ref' };
+      if (hit) registry.delete(t.ref);
+      // A ref from an earlier document is never re-found: its descriptor describes that page.
+      const again = fb && !refIsEarlier(t.ref) ? byFallback(fb) : null;
+      if (again) { registry.set(t.ref, again); return { el: again, via: 'fallback', ref: t.ref }; }
+      return { error: 'REF_GONE', ref: t.ref, issued: refIssued(t.ref), earlier: refIsEarlier(t.ref), url: location.href };
+    }
+    if (t.kind === 'selector') {
+      let all = queryAll(t.selector, false);
+      if (all === null) return { error: `INVALID_SELECTOR: ${t.selector}` };
+      let el = firstVisible(all);
+      if (!el) {
+        all = queryAll(t.selector, true) || [];
+        el = firstVisible(all);
+      }
+      if (el) return { el, via: 'selector' };
+      if (all.length) return { error: `ELEMENT_HIDDEN: ${t.selector} matches only hidden elements` };
+      return { error: `NOT_FOUND: ${t.selector} matches nothing` };
+    }
+    return { error: `INVALID_ARGUMENT: unknown target kind ${t.kind}` };
   }
 
   /** Top-level viewport centre of an element (adds same-origin iframe offsets). */
@@ -595,34 +685,7 @@ export function PAGE_DOM_INSTALL(version) {
       .trim();
   }
 
-  /** Main-content root for article mode: the visible <article>/<main>/[role=main] with the most text. */
-  function articleRoot() {
-    let best = null;
-    let bestLen = 0;
-    for (const root of allRoots(false)) {
-      let els = [];
-      try { els = root.querySelectorAll('article, main, [role="main"], [itemprop="articleBody"]'); } catch {}
-      for (const el of els) {
-        const l = (el.textContent || '').length;
-        if (l > bestLen && isVisible(el)) { best = el; bestLen = l; }
-      }
-    }
-    return best || document.body;
-  }
 
-  /**
-   * Page text: native innerText (fast) only when the page has no shadow hosts and
-   * no same-origin frames. innerText skips both, so those pages take the flat-tree
-   * walker, which includes them.
-   */
-  function pageText(root, { article = false, max = 1e7 } = {}) {
-    const frameInside = allRoots(false).length > 1
-      || !!(root.querySelector && root.querySelector('iframe,frame'));
-    if (!article && root.ownerDocument === document && typeof root.innerText === 'string' && !hasShadowHosts() && !frameInside) {
-      return root.innerText.replace(/\t/g, ' ').replace(/\n\s*\n/g, '\n\n').replace(/ +/g, ' ').trim();
-    }
-    return flatText(root, { article, max });
-  }
 
   /**
    * Agent cursor (user request): a visible pointer that glides to wherever the
@@ -733,10 +796,11 @@ export function PAGE_DOM_INSTALL(version) {
 
   globalThis.__bcDom = Object.freeze({
     v: version,
-    clean, attr, shadowOf, frameDoc, allRoots, queryAll, isVisible, flatChildren, hasShadowHosts,
-    roleOf, nameOf, composedText, isInteractive, preciseMatch, resolve, centerOf, elementAt,
-    composedContains, rowContextOf, describe, registry, flatText, articleRoot, pageText, styleOf, connected, cursor,
-    isExtensionNode, beginRefGeneration, clickBlocker, clickTarget, labelsOf,
+    clean, attr, shadowOf, frameDoc, allRoots, queryAll, isVisible, flatChildren,
+    roleOf, nameOf, composedText, isInteractive, preciseMatch, centerOf, elementAt,
+    composedContains, rowContextOf, describe, registry, flatText, styleOf, connected, cursor,
+    isExtensionNode, clickBlocker, clickTarget, labelsOf, byText, resolveTarget,
+    peekRef, refFor, refIssued, refIsEarlier, pruneRegistry, ownText,
   });
   return true;
 }

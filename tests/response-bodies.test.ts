@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-const { createBodyCapture, redactJsonBody, REDACTED } = await import('../extension/lib/response-bodies.js');
+const { createBodyCapture, redactJsonBody, redactBody, REDACTED } = await import('../extension/lib/response-bodies.js');
+const { redactUrl } = await import('../extension/lib/network-capture.js');
 
 /** CDP Network events for one request: sent → response → finished (or failed). */
 function load(c: any, id: string, url: string, { method = 'GET', type = 'XHR', wallTime = 1000, mimeType = 'application/json', status = 200, failed = false, encodedDataLength = 300 } = {}) {
@@ -119,5 +120,54 @@ describe('redactJsonBody', () => {
     expect(nested.redacted).toEqual(['tokens', 'secret']);
     expect(redactJsonBody('{"a":1}')).toEqual({ text: '{"a":1}', redacted: [] }); // untouched text keeps its formatting
     expect(redactJsonBody('token=abc')).toEqual({ text: 'token=abc', redacted: [] });
+  });
+});
+
+describe('non-JSON bodies are redacted too (L2)', () => {
+  it('an HTML page keeps a secret-looking key/value pair out and says which key', () => {
+    const html = '<script>window.app={"sessionToken":"tok-123","page":2}</script><p>hi</p>';
+    const got = redactBody(html);
+    expect(got.text).not.toContain('tok-123');
+    expect(got.text).toContain('"sessionToken":"[redacted]"');
+    expect(got.text).toContain('"page":2');
+    expect(got.redacted).toEqual(['sessionToken']);
+  });
+
+  it('a form body redacts its password and token fields and keeps the rest', () => {
+    const got = redactBody('user=ann&password=hunter2&token=abc&page=2');
+    expect(got.text).toBe('user=ann&password=[redacted]&token=[redacted]&page=2');
+    expect(got.redacted).toEqual(['password', 'token']);
+  });
+
+  it('JSON cut off before its end is still redacted as text', () => {
+    const got = redactBody('{"password":"hunter2","items":[1,2');
+    expect(got.text).not.toContain('hunter2');
+    expect(got.redacted).toEqual(['password']);
+  });
+
+  it('a text body with nothing secret-looking comes back unchanged and not flagged', () => {
+    expect(redactBody('<h1>Orders</h1><p>3 open</p>')).toEqual({ text: '<h1>Orders</h1><p>3 open</p>', redacted: [] });
+  });
+
+  it('a captured HTML body is stored redacted, and its request is still found by the URL with a secret', async () => {
+    const { c } = capture({ h: { body: '<form>password=hunter2&page=2</form>' } });
+    await load(c, 'h', 'https://x.test/login?token=abc&next=/home', { type: 'Document', mimeType: 'text/html' });
+    const found = c.find({ method: 'GET', url: 'https://x.test/login?token=***&next=/home', timestamp: 1000000, durationMs: 0 });
+    expect(found.text).not.toContain('hunter2');
+    expect(found.text).toContain('page=2');
+    expect(found.redacted).toEqual(['password']);
+  });
+});
+
+describe('secret query values in URLs (L3)', () => {
+  it('replaces the value of a secret-looking key, keeps the key and the other values', () => {
+    expect(redactUrl('https://api.test/items?access_token=abc123&page=2&Password=p%40ss')).toBe(
+      'https://api.test/items?access_token=***&page=2&Password=***',
+    );
+  });
+
+  it('leaves URLs without a query, and queries without secret keys, unchanged', () => {
+    expect(redactUrl('https://api.test/items')).toBe('https://api.test/items');
+    expect(redactUrl('https://api.test/items?page=2&q=cats')).toBe('https://api.test/items?page=2&q=cats');
   });
 });

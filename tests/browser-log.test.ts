@@ -25,55 +25,9 @@ let replay: Array<[string, any]> = [];
   },
 };
 
-const { logEntryView, summarizeIssue, aggregateIssues, collectBrowserLog, collectPageConsole } = await import('../extension/lib/browser-log.js');
-const { handleConsole } = await import('../extension/handlers/tabs.js');
+const { collectPageConsole } = await import('../extension/lib/browser-log.js');
+const { handleLogs } = await import('../extension/handlers/logs.js');
 const { detachCdp } = await import('../extension/lib/cdp-session.js');
-
-const formIssue = (errorType: string) => ({ code: 'GenericIssue', details: { genericIssueDetails: { errorType, frameId: 'f' } } });
-const syncXhr = { code: 'DeprecationIssue', details: { deprecationIssueDetails: { type: 'XHRSyncMainThread', sourceCodeLocation: { url: 'https://example.test/', lineNumber: 3 } } } };
-const notFound = { source: 'network', level: 'error', text: 'Failed to load resource: the server responded with a status of 404 (Not Found)', url: 'https://example.test/missing.png', timestamp: 1000.6 };
-
-describe('browser log (Chrome-reported messages and Issues)', () => {
-  it('maps Log entries to console-style levels', () => {
-    expect(logEntryView(notFound)).toEqual({ level: 'error', source: 'network', text: notFound.text, url: notFound.url, timestamp: 1001 });
-    expect(logEntryView({ level: 'warning', source: 'violation', text: 'x' })).toEqual({ level: 'warn', source: 'violation', text: 'x' });
-    expect(logEntryView({ level: 'verbose', source: 'other', text: 'y' }).level).toBe('debug');
-  });
-
-  it('summarizes an issue by code, the specific problem and where it happened', () => {
-    expect(summarizeIssue(syncXhr)).toEqual({ code: 'DeprecationIssue', type: 'XHRSyncMainThread', url: 'https://example.test/' });
-    expect(summarizeIssue({ code: 'CorsIssue', details: { corsIssueDetails: { corsErrorStatus: { corsError: 'MissingAllowOriginHeader' }, request: { url: 'https://api.example/x' } } } }))
-      .toEqual({ code: 'CorsIssue', type: 'MissingAllowOriginHeader', url: 'https://api.example/x' });
-    expect(summarizeIssue({ code: 'CookieIssue', details: { cookieIssueDetails: { cookieWarningReasons: ['WarnSameSiteUnspecifiedLaxAllowUnsafe'] } } }).type)
-      .toBe('WarnSameSiteUnspecifiedLaxAllowUnsafe');
-    expect(summarizeIssue({})).toEqual({ code: 'Issue' });
-  });
-
-  it('counts repeats of the same issue like the DevTools Issues panel', () => {
-    const f = 'FormEmptyIdAndNameAttributesForInputError';
-    expect(aggregateIssues([formIssue(f), syncXhr, formIssue(f), formIssue(f)])).toEqual([
-      { code: 'GenericIssue', type: f, count: 3 },
-      { code: 'DeprecationIssue', type: 'XHRSyncMainThread', url: 'https://example.test/', count: 1 },
-    ]);
-  });
-
-  it('collects the replay, then switches the domains off again and stops listening', async () => {
-    const calls: string[] = [];
-    let listener: ((m: string, p: any) => void) | null = null;
-    const send = async (m: string) => {
-      calls.push(m);
-      if (m === 'Log.enable') listener?.('Log.entryAdded', { entry: notFound });
-      if (m === 'Audits.enable') listener?.('Audits.issueAdded', { issue: syncXhr });
-      return {};
-    };
-    const subscribe = (fn: any) => { listener = fn; return () => { listener = null; }; };
-    const out = await collectBrowserLog(send, subscribe, { clear: true, settleMs: 0 });
-    expect(out.messages).toHaveLength(1);
-    expect(out.issues).toEqual([{ code: 'DeprecationIssue', type: 'XHRSyncMainThread', url: 'https://example.test/', count: 1 }]);
-    expect(calls).toEqual(['Log.enable', 'Audits.enable', 'Log.clear', 'Log.disable', 'Audits.disable']);
-    expect(listener).toBeNull();
-  });
-});
 
 describe('page console (Runtime replay)', () => {
   const str = (value: string) => ({ type: 'string', value });
@@ -96,16 +50,35 @@ describe('page console (Runtime replay)', () => {
     };
     const subscribe = (fn: any) => { listener = fn; return () => { listener = null; }; };
     const out = await collectPageConsole(send, subscribe, { clear: true, settleMs: 0 });
+    // Where an exception happened is its own `source` (a line prints it once), not part of the text.
     expect(out).toEqual([
       { level: 'log', text: 'early 42 {"id":"o1"}', timestamp: 10 },
       { level: 'error', text: 'Error reading query stream: TypeError: x\n    at f (https://a.test/app.js:4:1)', timestamp: 11 },
       { level: 'warn', text: 'undefined null', timestamp: 12 },
-      { level: 'error', text: 'Uncaught Error: boom\n    at https://a.test/:5:30', timestamp: 14 },
-      { level: 'error', text: 'Uncaught (in promise) nope (https://a.test/:10)', timestamp: 15 },
+      { level: 'error', text: 'Uncaught Error: boom\n    at https://a.test/:5:30', timestamp: 14, source: 'https://a.test/:5' },
+      { level: 'error', text: 'Uncaught (in promise) nope', timestamp: 15, source: 'https://a.test/:10' },
     ]);
     // Runtime only replays from a disabled state; it is switched off again.
     expect(calls).toEqual(['Runtime.disable', 'Runtime.enable', 'Runtime.callFunctionOn', 'Runtime.discardConsoleEntries', 'Runtime.disable']);
     expect(listener).toBeNull();
+  });
+
+  it('gives a console error its call site and the frames below it (callFrames), a plain call no stack', async () => {
+    let listener: ((m: string, p: any) => void) | null = null;
+    const frame = (functionName: string, lineNumber: number) => ({ functionName, url: 'https://a.test/app.js', lineNumber, columnNumber: 2 });
+    const send = async (m: string) => {
+      if (m === 'Runtime.enable') {
+        listener?.('Runtime.consoleAPICalled', { type: 'error', timestamp: 20, args: [str('save failed')], stackTrace: { callFrames: [frame('save', 9), frame('onClick', 19)] } });
+        listener?.('Runtime.consoleAPICalled', { type: 'log', timestamp: 21, args: [str('ok')], stackTrace: { callFrames: [frame('save', 9)] } });
+      }
+      return {};
+    };
+    const subscribe = (fn: any) => { listener = fn; return () => { listener = null; }; };
+    const out = await collectPageConsole(send, subscribe, { settleMs: 0 });
+    expect(out).toEqual([
+      { level: 'error', text: 'save failed', timestamp: 20, source: 'https://a.test/app.js:10', stack: ['at save (https://a.test/app.js:10:3)', 'at onClick (https://a.test/app.js:20:3)'] },
+      { level: 'log', text: 'ok', timestamp: 21, source: 'https://a.test/app.js:10' },
+    ]);
   });
 
   it('filters levels before formatting and keeps only the latest entries', async () => {
@@ -125,38 +98,34 @@ describe('page console (Runtime replay)', () => {
   });
 });
 
-describe('browser_console browser:true', () => {
+describe('browser_logs console block (Runtime replay only)', () => {
+  // Chrome's own Log and Audits events are replayed too, so the test shows they are not read.
+  const notFound = { source: 'network', level: 'error', text: 'Failed to load resource', url: 'https://example.test/missing.png', timestamp: 1000.6 };
+  const syncXhr = { code: 'DeprecationIssue', details: {} };
   beforeEach(async () => {
     await detachCdp(3);
     sent.length = 0;
     replay = [
       ['Runtime.consoleAPICalled', { type: 'warning', timestamp: 1, args: [{ type: 'string', value: 'page warn' }] }],
+      ['Runtime.consoleAPICalled', { type: 'error', timestamp: 2, args: [{ type: 'string', value: 'page broke' }] }],
       ['Log.entryAdded', { entry: notFound }],
-      ['Log.entryAdded', { entry: { source: 'violation', level: 'verbose', text: 'Forced reflow while executing JavaScript took 40ms' } }],
       ['Audits.issueAdded', { issue: syncXhr }],
-      ['Audits.issueAdded', { issue: formIssue('FormLabelForNameError') }],
     ];
   });
 
-  it('adds what Chrome reported for the page next to the console messages', async () => {
-    const res = await handleConsole({ tabId: 3, browser: true }) as any;
-    expect(res.messages).toEqual([{ level: 'warn', text: 'page warn', timestamp: 1 }]);
-    expect(res.browser.messages.map((m: any) => `${m.level}:${m.source}`)).toEqual(['error:network', 'debug:violation']);
-    expect(res.browser.issues.map((i: any) => i.type)).toEqual(['XHRSyncMainThread', 'FormLabelForNameError']);
-  });
-
-  it('applies level and pattern to Chrome messages too, and pattern to issues', async () => {
-    const res = await handleConsole({ tabId: 3, browser: true, level: ['error', 'warn'], pattern: '404|XHR' }) as any;
-    expect(res.messages).toEqual([]);
-    expect(res.browser.messages.map((m: any) => m.source)).toEqual(['network']);
-    expect(res.browser.issues.map((i: any) => i.type)).toEqual(['XHRSyncMainThread']);
-  });
-
-  it('reads the page console through Runtime only, unless asked for more', async () => {
-    const res = await handleConsole({ tabId: 3 }) as any;
-    expect(res.messages).toEqual([{ level: 'warn', text: 'page warn', timestamp: 1 }]);
-    expect(res.browser).toBeUndefined();
+  it('reads the page console through Runtime only: Chrome Log and Issues are not part of the console block', async () => {
+    const res = await handleLogs({ tabId: 3, kind: 'console' }) as any;
+    expect(res.messages).toEqual([
+      { level: 'warn', text: 'page warn', timestamp: 1 },
+      { level: 'error', text: 'page broke', timestamp: 2 },
+    ]);
+    expect(res.text.split('\n')[0]).toBe('console (2):');
     expect(sent.filter((m) => /^Runtime\.(en|dis)able/.test(m))).toEqual(['Runtime.disable', 'Runtime.enable', 'Runtime.disable']);
     expect(sent.some((m) => m.startsWith('Log.') || m.startsWith('Audits.'))).toBe(false);
+  });
+
+  it('errors:true and filter narrow the console block', async () => {
+    expect((await handleLogs({ tabId: 3, kind: 'console', errors: true }) as any).messages).toEqual([{ level: 'error', text: 'page broke', timestamp: 2 }]);
+    expect((await handleLogs({ tabId: 3, kind: 'console', filter: 'WARN' }) as any).messages).toEqual([{ level: 'warn', text: 'page warn', timestamp: 1 }]);
   });
 });

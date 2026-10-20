@@ -68,9 +68,10 @@ describe('browser_emulate after the debugger session is lost', () => {
     expect(res).toMatchObject({ success: true, active: {}, lost: ['network', 'colorScheme'] });
     expect(String(res.warning)).toMatch(/banner was dismissed/);
     expect(String(res.warning)).toMatch(/not re-applied/);
+    expect(String(res.text)).toMatch(/^no overrides\nlost: network, colorScheme\. The debugger banner was dismissed/);
     expect(env.sent).toEqual([]); // a read attaches nothing and re-sends nothing
 
-    expect(await handleEmulate({ tabId: 4 })).toEqual({ success: true, active: {} });
+    expect(await handleEmulate({ tabId: 4 })).toMatchObject({ success: true, active: {}, text: 'no overrides' });
   });
 
   it('reports the loss on the next call that changes settings, and starts from what is really active', async () => {
@@ -84,8 +85,8 @@ describe('browser_emulate after the debugger session is lost', () => {
   it('reset clears a pending loss without reporting it', async () => {
     await handleEmulate({ tabId: 4, cpuThrottling: 4 });
     detachTab(4, 'canceled_by_user');
-    expect(await handleEmulate({ tabId: 4, reset: true })).toEqual({ success: true, active: {} });
-    expect(await handleEmulate({ tabId: 4 })).toEqual({ success: true, active: {} });
+    expect(await handleEmulate({ tabId: 4, reset: true })).toMatchObject({ success: true, active: {}, text: 'no overrides' });
+    expect(await handleEmulate({ tabId: 4 })).toMatchObject({ success: true, active: {}, text: 'no overrides' });
   });
 
   it('keeps overrides attached past the idle timeout (no loss while they are set)', async () => {

@@ -3,20 +3,17 @@ import { WebSocket } from 'ws';
 /**
  * One connected extension = one browser (profile). Several can be connected
  * at once (multi-browser); a reconnect of the same browser replaces its old
- * socket. Legacy extensions that send no browserId all count as "default".
+ * socket. A helloAck that carries no browserId counts as "default".
  */
 export interface ExtensionConnection {
   ws: WebSocket;
   browserId: string;
   label: string;
-  state: 'pending' | 'ready' | 'legacy' | 'incompatible';
+  state: 'pending' | 'ready' | 'incompatible';
   handshakeTimer: ReturnType<typeof setTimeout> | null;
   missedPongs: number;
   connectedAt: number;
 }
-
-/** Tools the bridge answers itself (browser selection), never forwarded to an extension. */
-export const BRIDGE_TOOLS = new Set(['browser_list_browsers', 'browser_select_browser']);
 
 export function newConnection(ws: WebSocket): ExtensionConnection {
   return {
@@ -25,7 +22,7 @@ export function newConnection(ws: WebSocket): ExtensionConnection {
   };
 }
 
-/** Normalised identity from an extension helloAck (absent = legacy "default"). */
+/** Normalised identity from an extension helloAck (absent = "default"). */
 export function identityOf(info?: { browserId?: unknown; browserLabel?: unknown }): { browserId: string; label: string } {
   const browserId = typeof info?.browserId === 'string' && info.browserId.trim() ? info.browserId.trim().slice(0, 64) : 'default';
   const label = typeof info?.browserLabel === 'string' && info.browserLabel.trim() ? info.browserLabel.trim().slice(0, 120) : browserId;
@@ -55,7 +52,7 @@ export class ExtensionConnections {
   all(): ExtensionConnection[] { return [...this.conns]; }
 
   static isLive(conn: ExtensionConnection): boolean {
-    return (conn.state === 'ready' || conn.state === 'legacy') && conn.ws.readyState === WebSocket.OPEN;
+    return conn.state === 'ready' && conn.ws.readyState === WebSocket.OPEN;
   }
 
   live(): ExtensionConnection[] {
@@ -96,7 +93,7 @@ export class ExtensionConnections {
     if (want) {
       const chosen = this.live().find((c) => c.browserId === want);
       if (chosen) return chosen;
-      throw new Error(`Selected browser "${want}" is not connected. browser_list_browsers shows the connected ones (browser_select_browser "auto" = default).`);
+      throw new Error(`NOT_CONNECTED: Selected browser "${want}" is not connected. browser_tabs with browser "auto" selects the default one.`);
     }
     const pinned = sessionId ? this.autoBrowser.get(sessionId) : undefined;
     if (pinned) {
@@ -105,11 +102,11 @@ export class ExtensionConnections {
       // Its browser is gone: moving on to another browser is only safe when
       // no other one could be confused with it — never switch silently.
       if (this.live().length > 0) {
-        throw new Error(`This session's browser "${pinned}" disconnected. Its tab ids are not valid in the other connected browser(s): reconnect it, or call browser_select_browser (then browser_tabs list) to continue in another one.`);
+        throw new Error(`NOT_CONNECTED: This session's browser "${pinned}" disconnected. Its tab ids are not valid in the other connected browser(s): reconnect it, or pick another browser with browser_tabs and its browser parameter to continue there.`);
       }
     }
     const primary = this.primary();
-    if (!primary) throw new Error('Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.');
+    if (!primary) throw new Error('NOT_CONNECTED: Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.');
     if (sessionId) this.autoBrowser.set(sessionId, primary.browserId);
     return primary;
   }
@@ -139,7 +136,7 @@ export class ExtensionConnections {
 
   /** browser_select_browser: route this session's calls to one browser ("auto" = default). */
   select(sessionId: string | undefined, browserId: unknown): Record<string, unknown> {
-    if (!sessionId) throw new Error('Selecting a browser needs a client session (connect through the Browser Controller MCP server).');
+    if (!sessionId) throw new Error('INVALID_ARGUMENT: Selecting a browser needs a client session (connect through the Browser Controller MCP server).');
     const id = typeof browserId === 'string' ? browserId.trim() : '';
     if (!id || id === 'auto') {
       // "auto" again re-pins the session to the current default.
@@ -149,7 +146,7 @@ export class ExtensionConnections {
     }
     const conn = this.live().find((c) => c.browserId === id || c.label === id);
     // A failed selection changes nothing: the session keeps its pin.
-    if (!conn) throw new Error(`No connected browser "${id}". browser_list_browsers shows the connected ones.`);
+    if (!conn) throw new Error(`NOT_CONNECTED: No connected browser "${id}". browser_tabs lists the connected ones.`);
     this.autoBrowser.delete(sessionId);
     this.sessionBrowser.set(sessionId, conn.browserId);
     return { success: true, selected: conn.browserId, label: conn.label };

@@ -1,9 +1,9 @@
-import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { allTools } from './tools/index.js';
-import { createMetaTool } from './tools/meta.js';
-import type { ToolDefinition, ToolHost } from './tools/types.js';
+import { codedMessageOf, unknownParameterHint } from './tools/types.js';
+import type { ToolDefinition, ToolHost, ToolResult } from './tools/types.js';
 
 const MAX_TOOL_ARGUMENT_BYTES = 1_000_000;
 const MAX_TOOL_STRING_CHARS = 200_000;
@@ -64,113 +64,112 @@ const payloadLimitsSchema = z.unknown().superRefine((value, ctx) => {
   checkPayloadLimits(value, ctx);
 });
 
-/**
- * Tool registration, extracted from index.ts's main() so the progressive
- * disclosure wiring (hidden until activated; a call or details activates) is
- * testable without a live daemon (see tests/register-tools.test.ts, which drives
- * a real McpServer over InMemoryTransport).
- *
- * - fullMode=true  → all tools registered and listed (default; safe for agents
- *   whose instructions call tools directly). No browser_tools meta tool.
- * - fullMode=false → BROWSER_CONTROLLER_PROGRESSIVE: every tool stays enabled
- *   but tools/list shows only browser_tools and the tools activated so far. A
- *   call to any tool activates it first (so it runs at once), and
- *   {action:"details"} activates it too. Each activation sends
- *   tools/list_changed.
- */
-export interface ToolRegistration {
-  toolHandles: Map<string, RegisteredTool>;
-  activeTools: Set<string>;
+type ZodIssue = z.ZodError['issues'][number];
+
+/** What a missing required parameter needs beyond "is required" (one small map for the whole server). */
+const REQUIRED_HINTS: Record<string, string> = {
+  tabId: 'Call browser_tabs {action:"list"} first.',
+};
+
+const pathText = (path: PropertyKey[]): string => path.reduce<string>(
+  (text, part, i) => (typeof part === 'number' ? `${text}[${part}]` : i === 0 ? String(part) : `${text}.${String(part)}`),
+  '',
+);
+
+const valueAt = (params: unknown, path: PropertyKey[]): unknown => path.reduce<unknown>(
+  (value, key) => (value && typeof value === 'object' ? (value as Record<PropertyKey, unknown>)[key] : undefined),
+  params,
+);
+
+/** One short line per zod issue, as the agent reads it. */
+function describeIssue(issue: ZodIssue, params: unknown): string[] {
+  if (issue.code === 'unrecognized_keys') {
+    const at = pathText(issue.path);
+    return issue.keys.map((key) => {
+      const hint = unknownParameterHint(key);
+      return `unknown parameter ${key}${at ? ` in ${at}` : ''}${hint ? ` (${hint})` : ''}`;
+    });
+  }
+  const field = pathText(issue.path) || 'arguments';
+  if (issue.code === 'invalid_type' && valueAt(params, issue.path) === undefined) {
+    const hint = REQUIRED_HINTS[field];
+    return [`${field} is required${hint ? `. ${hint}` : ''}`];
+  }
+  const reason = issue.message.replace(/^Invalid input: /, '');
+  return [reason.startsWith(`${field} `) ? reason : `${field}: ${reason}`];
 }
 
+/**
+ * Validate a call's arguments against the tool's schema and the payload limits. A failure is one
+ * `INVALID_ARGUMENT: …` error: `field is required`, `field: reason`, or `unknown parameter name`.
+ */
 export function parseToolParams(tool: ToolDefinition, params: Record<string, unknown>): Record<string, unknown> {
   try {
     payloadLimitsSchema.parse(params);
     return tool.inputSchema.parse(params) as Record<string, unknown>;
   } catch (err) {
     if (err instanceof z.ZodError) {
-      const details = z.treeifyError(err);
-      throw new Error(`Invalid tool arguments for ${tool.name}: ${JSON.stringify(details)}`, { cause: err });
+      const problems = err.issues.flatMap((issue) => describeIssue(issue, params));
+      throw new Error(`INVALID_ARGUMENT: ${problems.join('; ')}`, { cause: err });
     }
     throw err;
   }
 }
 
-/** Wrap a tool handler so a throw becomes an isError result, never a protocol error. */
+/** A failure text the agent reads: a text with no code gets INTERNAL_ERROR in front (a batch step's `step i/n <tool>: ` prefix stays in front). */
+function codedText(text: string): string {
+  const step = /^step \d+\/\d+ \S+: /.exec(text)?.[0] ?? '';
+  return step + codedMessageOf(text.slice(step.length));
+}
+
+function failure(text: string): ToolResult {
+  return { content: [{ type: 'text' as const, text: codedText(text) }], isError: true };
+}
+
+/** A tool's own failure result, with its text coded the same way as a thrown one. */
+function codedResult(result: ToolResult): ToolResult {
+  if (!result.isError) return result;
+  const content = result.content.map((item) => (item.type === 'text' ? { ...item, text: codedText(item.text) } : item));
+  return { ...result, content };
+}
+
+/** Run a tool: validate, call its handler, and turn every failure into a `CODE: message` result (never a protocol error). */
 function wrapHandler(tool: ToolDefinition, host: ToolHost) {
-  return async (params: Record<string, unknown>) => {
+  return async (params: Record<string, unknown>): Promise<ToolResult> => {
+    let parsed: Record<string, unknown>;
     try {
-      const parsed = parseToolParams(tool, params);
-      return await tool.handler(host, parsed);
+      parsed = parseToolParams(tool, params);
     } catch (err) {
-      return {
-        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
-        isError: true,
-      };
+      return failure(err instanceof Error ? err.message : String(err));
+    }
+    try {
+      return codedResult(await tool.handler(host, parsed));
+    } catch (err) {
+      return failure(err instanceof Error ? err.message : String(err));
     }
   };
 }
 
-export function registerTools(
-  server: McpServer,
-  host: ToolHost,
-  fullMode: boolean,
-  log: (msg: string) => void = () => {},
-): ToolRegistration {
-  // Tools the client can see and call (progressive mode: the activated ones).
-  const activeTools = new Set<string>();
-  const toolHandles = new Map<string, RegisteredTool>();
-
-  const metaDeps = {
-    onActivate: (toolName: string) => {
-      if (activeTools.has(toolName) || !toolHandles.has(toolName)) return; // already active, or unknown
-      activeTools.add(toolName);
-      server.sendToolListChanged();
-      log(`progressive disclosure: activated "${toolName}"`);
-    },
-    isActive: (toolName: string) => activeTools.has(toolName),
-  };
-
-  // Every tool stays ENABLED in both modes. The SDK rejects a call to a disabled
-  // tool before any handler runs, so a disabled tool could never be activated by
-  // being called. Progressive mode hides the inactive tools from tools/list
-  // instead (below), and a call to any tool activates it before it runs.
+/**
+ * Tool registration, extracted from index.ts's main() so the wiring is testable
+ * without a live daemon (see tests/register-tools.test.ts, which drives a real
+ * McpServer over InMemoryTransport). Every tool in allTools is registered and
+ * listed, in order; a call is validated here before it reaches the host.
+ */
+export function registerTools(server: McpServer, host: ToolHost): void {
+  const runs = new Map<string, (params: Record<string, unknown>) => Promise<ToolResult>>();
   for (const tool of allTools) {
-    const call = wrapHandler(tool, host);
-    const handle = server.tool(
-      tool.name,
-      tool.description,
-      tool.inputSchema.shape,
-      fullMode
-        ? call
-        : async (params: Record<string, unknown>) => {
-          metaDeps.onActivate(tool.name);
-          return call(params);
-        },
-    );
-    toolHandles.set(tool.name, handle);
-    if (fullMode) activeTools.add(tool.name);
+    const run = wrapHandler(tool, host);
+    runs.set(tool.name, run);
+    // The zod object itself (not its shape), so the strict schemas advertise additionalProperties: false.
+    server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputSchema }, run);
   }
-
-  if (!fullMode) {
-    // The meta tool is the discovery entry point, so it is always listed.
-    const metaTool = createMetaTool(metaDeps);
-    server.tool(metaTool.name, metaTool.description, metaTool.inputSchema.shape, wrapHandler(metaTool, host));
-
-    // tools/list shows browser_tools plus the activated tools. The SDK's own list
-    // handler shows every enabled tool, so this one replaces it. Schemas use the
-    // agent's input direction, like the SDK's list does.
-    const listed = [...allTools, metaTool];
-    server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: listed
-        .filter((t) => t.name === metaTool.name || activeTools.has(t.name))
-        .map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: z.toJSONSchema(t.inputSchema, { io: 'input', target: 'draft-7' }) as { type: 'object'; properties?: Record<string, object> },
-        })),
-    }));
-  }
-
-  return { toolHandles, activeTools };
+  // The SDK checks arguments against these same shapes before the handler and answers with its own text
+  // ("MCP error -32602: Input validation error: …"). tools/call is taken over here so every failure is
+  // CODE: message; tools/list still advertises the JSON Schema built from the same shapes.
+  server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const run = runs.get(request.params.name);
+    if (!run) return failure(`INVALID_ARGUMENT: unknown tool ${request.params.name}`);
+    return run(request.params.arguments ?? {});
+  });
 }

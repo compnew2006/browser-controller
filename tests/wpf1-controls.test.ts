@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installFakePage, type FakeDocument, type FakeElement } from './helpers/fake-dom.js';
 
 // chrome mock. executeScript runs the page function in-process against the fake page.
-// The debugger attaches only when `cdpOk` is set, so each test picks the CDP or the synthetic path.
+// The debugger attaches when `cdpOk` is set (the default); a test that clears it sees DEBUGGER_UNAVAILABLE.
 const cdp: Array<{ method: string; params: Record<string, unknown> }> = [];
-let cdpOk = false;
+let cdpOk = true;
 (globalThis as any).chrome = {
   tabs: { get: async (id: number) => ({ id, url: 'https://example.test/page', windowId: 1 }), query: async () => [], onRemoved: { addListener: () => {} } },
   scripting: { executeScript: async (o: { func: (...a: any[]) => unknown; args?: unknown[] }) => [{ result: await o.func(...(o.args ?? [])) }] },
@@ -18,10 +18,8 @@ let cdpOk = false;
 };
 
 const { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } = await import('../extension/lib/page-dom.js');
-const { handleClick } = await import('../extension/handlers/interaction.js');
-const { handleHover, handleSelect } = await import('../extension/handlers/interaction.js');
-const { handlePressKey } = await import('../extension/handlers/interaction-keys.js');
-const { handleFillForm } = await import('../extension/handlers/interaction-advanced.js');
+const { handleClick, handleType } = await import('../extension/handlers/interaction.js');
+const { handleFill } = await import('../extension/handlers/interaction-advanced.js');
 const { handleSnapshot } = await import('../extension/handlers/inspection.js');
 const { detachCdp } = await import('../extension/lib/cdp-session.js');
 const { fallbackByTab } = await import('../extension/lib/state.js');
@@ -48,6 +46,7 @@ function styled(el: FakeElement) {
 }
 
 function install() {
+  cdp.length = 0;
   doc = installFakePage();
   (globalThis as any).NodeFilter = { SHOW_ELEMENT: 1 };
   (doc as any).createTreeWalker = () => {
@@ -83,20 +82,16 @@ describe('custom checkbox: browser_snapshot lists a transparent control whose la
   it('the opacity:0 checkbox is listed with its role, name, checked state and a ref', async () => {
     const { box } = customCheckbox();
     box.checked = true;
-    const res = await handleSnapshot({ tabId: 1, compact: false });
-    const flat: any[] = [];
-    const walk = (n: any) => { if (!n) return; if (Array.isArray(n)) return n.forEach(walk); flat.push(n); walk(n.children); };
-    walk(res.tree);
-    const control = flat.find((n) => n.role === 'checkbox');
-    expect(control).toMatchObject({ role: 'checkbox', name: 'Remember me', checked: true });
-    expect(control.ref).toMatch(/^s/);
+    const res = await handleSnapshot({ tabId: 1 });
+    expect(res.text).toMatch(/^checkbox "Remember me" \[e\d+\] checked$/m);
+    expect(res.refs.find((r: any) => r.role === 'checkbox').ref).toMatch(/^e\d+$/);
   });
 
   it('the same control is omitted when its label is hidden (nothing a person could see)', async () => {
     const { label } = customCheckbox();
     label.hidden = true;
-    const res = await handleSnapshot({ tabId: 1, compact: false });
-    expect(JSON.stringify(res.tree)).not.toContain('"role":"checkbox"');
+    const res = await handleSnapshot({ tabId: 1 });
+    expect(res.text).not.toContain('checkbox');
   });
 
   it('a transparent checkbox inside a <label> that names another control is not listed', async () => {
@@ -106,52 +101,41 @@ describe('custom checkbox: browser_snapshot lists a transparent control whose la
     wrap.append(box);
     doc.body.append(wrap);
     expect(D().labelsOf(box)).toEqual([]);
-    const res = await handleSnapshot({ tabId: 1, compact: false });
-    expect(JSON.stringify(res.tree)).not.toContain('"role":"checkbox"');
+    const res = await handleSnapshot({ tabId: 1 });
+    expect(res.text).not.toContain('checkbox');
   });
 
   it('an opacity:0 button stays omitted: only checkboxes and radios are exempt', async () => {
     doc.body.append(doc.el('button', { style: 'opacity:0' }, 'Fading out'));
     const res = await handleSnapshot({ tabId: 1 });
-    expect(JSON.stringify(res.tree)).not.toContain('Fading out');
+    expect(res.text).not.toContain('Fading out');
   });
 });
 
 describe('custom checkbox: browser_click reaches the control through its visible label', () => {
   beforeEach(install);
 
-  it('synthetic path: the click is dispatched on the label, the checkbox gets none, and the result says via label', async () => {
-    const { box, label } = customCheckbox();
-    stackAt(label, box);
-    const res = await handleClick({ tabId: 1, selector: '#remember' });
-    expect(res).toMatchObject({ success: true, via: 'label', at: { x: 80, y: 20 } });
-    expect(label.events).toContain('click');
-    expect(box.events).not.toContain('click');
-  });
-
-  it('CDP path: the real mouse click lands on the label centre and the result says via label', async () => {
-    cdpOk = true;
+  it('the real mouse click lands on the label centre and the result says via label', async () => {
     await detachCdp(1);
     cdp.length = 0;
     const { box, label } = customCheckbox();
     stackAt(label, box);
-    const res = await handleClick({ tabId: 1, selector: '#remember' });
-    expect(res).toMatchObject({ success: true, input: 'cdp', via: 'label', at: { x: 80, y: 20 } });
+    const res = await handleClick({ tabId: 1, target: '#remember' });
+    expect(res).toMatchObject({ success: true, input: 'cdp', at: { x: 80, y: 20 } });
+    expect(res.text).toBe('clicked #remember via label');
     const pressed = cdp.filter((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mousePressed');
     expect(pressed).toHaveLength(1);
     expect(pressed[0].params).toMatchObject({ x: 80, y: 20 });
     await detachCdp(1);
-    cdpOk = false;
   });
 
   it('a transparent checkbox that is itself on top is clicked directly, not through its label', async () => {
     const { box, label } = customCheckbox();
     stackAt(box, label);
-    const res = await handleClick({ tabId: 1, selector: '#remember' });
+    const res = await handleClick({ tabId: 1, target: '#remember' });
     expect(res).toMatchObject({ success: true, at: { x: 15, y: 15 } });
-    expect(res.via).toBe('selector'); // how the element was resolved, not a label click
-    expect(box.events).toContain('click');
-    expect(label.events).not.toContain('click');
+    expect(res.text).toBe('clicked #remember'); // no label click
+    expect(cdp.filter((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mousePressed')[0].params).toMatchObject({ x: 15, y: 15 });
   });
 
   it('the click check passes a label hit as not covered (clickBlocker)', () => {
@@ -168,9 +152,9 @@ describe('custom checkbox: browser_click reaches the control through its visible
     Object.defineProperty(radio, 'labels', { value: [label], configurable: true });
     doc.body.append(radio, label);
     stackAt(label, radio);
-    const res = await handleClick({ tabId: 1, selector: '#pick-a' });
-    expect(res).toMatchObject({ success: true, via: 'label' });
-    expect(label.events).toContain('click');
+    const res = await handleClick({ tabId: 1, target: '#pick-a' });
+    expect(res).toMatchObject({ success: true, at: { x: 80, y: 20 } });
+    expect(res.text).toBe('clicked #pick-a via label');
   });
 
   it('an unrelated overlay on the checkbox is still ELEMENT_COVERED, and nothing is clicked', async () => {
@@ -178,8 +162,9 @@ describe('custom checkbox: browser_click reaches the control through its visible
     const cover = doc.el('div', { class: 'promo-banner' });
     doc.body.append(cover);
     stackAt(cover, box);
-    const res = await handleClick({ tabId: 1, selector: '#remember' });
+    const res = await handleClick({ tabId: 1, target: '#remember' });
     expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_COVERED: .*div\.promo-banner/) });
+    expect(cdp.filter((c) => c.method === 'Input.dispatchMouseEvent' && c.params.type === 'mousePressed')).toEqual([]);
     expect(box.events).not.toContain('click');
     expect(label.events).not.toContain('click');
   });
@@ -189,7 +174,7 @@ describe('custom checkbox: browser_click reaches the control through its visible
     const cover = doc.el('div', { class: 'modal' });
     doc.body.append(cover);
     stackAt(cover, label, box);
-    const res = await handleClick({ tabId: 1, selector: '#remember' });
+    const res = await handleClick({ tabId: 1, target: '#remember' });
     expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_COVERED: /) });
     expect(label.events).not.toContain('click');
   });
@@ -198,7 +183,7 @@ describe('custom checkbox: browser_click reaches the control through its visible
     const { box, label } = customCheckbox();
     box.hidden = true;
     stackAt(label);
-    const res = await handleClick({ tabId: 1, selector: '#remember' });
+    const res = await handleClick({ tabId: 1, target: '#remember' });
     expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_HIDDEN: /) });
     expect(label.events).not.toContain('click');
   });
@@ -216,61 +201,56 @@ describe('browser_click: the lock shield is never restyled by the agent input pa
     const btn = doc.el('button', { id: 'ok' }, 'OK');
     doc.body.append(btn);
     stackAt(btn);
-    const res = await handleClick({ tabId: 1, selector: '#ok' });
+    const res = await handleClick({ tabId: 1, target: '#ok' });
     expect(res).toMatchObject({ success: true, input: 'cdp' });
     expect((shield as any).style).toEqual({});
     expect((globalThis as any).__bcAgentInputUntil).toBe(0);
     await detachCdp(1);
-    cdpOk = false;
   });
 });
 
 describe('stale and unknown refs: one wording for every ref tool', () => {
   beforeEach(install);
 
-  it('browser_hover: a ref never issued here is REF_NOT_FOUND (was "Element not found")', async () => {
+  it('browser_click hover: a ref never issued here is REF_NOT_FOUND (was "Element not found")', async () => {
     doc.body.append(doc.el('button', {}, 'Menu'));
-    const res = await handleHover({ tabId: 1, ref: 'e5' });
+    const res = await handleClick({ tabId: 1, target: 'e5', hover: true });
     expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^REF_NOT_FOUND: ref e5 /) });
   });
 
-  it('browser_hover: a selector that matches nothing gets the selector message', async () => {
-    const res = await handleHover({ tabId: 1, selector: '#nothing-here' });
-    expect(res).toMatchObject({ success: false, error: 'No element matches selector #nothing-here on the current page (https://example.test/page).' });
+  it('browser_click hover: a selector that matches nothing gets the selector message', async () => {
+    const res = await handleClick({ tabId: 1, target: '#nothing-here', hover: true });
+    expect(res).toMatchObject({ success: false, error: 'NOT_FOUND: #nothing-here matches nothing' });
   });
 
-  it('browser_select: a ref issued earlier whose element is gone is REF_GONE', async () => {
-    fallbackByTab.set(1, new Map([['sgone-0', { text: 'Colour', role: 'combobox', tag: 'SELECT', nth: 0 }]]));
-    const res = await handleSelect({ tabId: 1, ref: 'sgone-0', value: 'red' });
-    expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^REF_GONE: ref sgone-0 /) });
-  });
-
-  it('browser_press_key: an unknown ref fails with REF_NOT_FOUND instead of pressing on the wrong control', async () => {
+  it('browser_type key: an unknown ref fails with REF_NOT_FOUND instead of pressing on the wrong control', async () => {
     doc.body.append(doc.el('input', {}));
-    const res = await handlePressKey({ tabId: 1, ref: 'e9', key: 'Enter' });
+    const res = await handleType({ tabId: 1, target: 'e9', key: 'Enter' });
     expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^REF_NOT_FOUND: ref e9 /) });
     expect(doc.body.events).toEqual([]);
   });
 
-  it('browser_press_key: a selector that matches nothing keeps the plain selector message', async () => {
-    const res = await handlePressKey({ tabId: 1, selector: '#missing', key: 'Enter' });
-    expect(res).toMatchObject({ success: false, error: 'No element matches selector #missing on the current page (https://example.test/page).' });
+  it('browser_type key: a selector that matches nothing keeps the plain selector message', async () => {
+    const res = await handleType({ tabId: 1, target: '#missing', key: 'Enter' });
+    expect(res).toMatchObject({ success: false, error: 'NOT_FOUND: #missing matches nothing' });
   });
 
-  it('browser_fill_form: a field with neither ref nor selector says so', async () => {
-    const res = await handleFillForm({ tabId: 1, fields: [{ value: 'x' }] });
-    expect(res.fields[0]).toMatchObject({ success: false, error: 'ref or selector is required (get refs from browser_snapshot).' });
+  it('browser_fill: a field with no target says so', async () => {
+    const res = await handleFill({ tabId: 1, fields: [{ value: 'x' }] });
+    expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^FILL_FAILED: 1 of 1 fields failed\n\(no target\): INVALID_ARGUMENT: target is empty/) });
   });
 
-  it('browser_fill_form: each field that does not resolve gets the same wording, in its own result', async () => {
+  it('browser_fill: each field that does not resolve gets the same wording, in its own result', async () => {
     doc.body.append(doc.el('input', { id: 'real' }));
-    const res = await handleFillForm({
+    const res = await handleFill({
       tabId: 1,
-      fields: [{ ref: 'e7', value: 'x' }, { selector: '#missing', value: 'y' }, { selector: '#real', value: 'z' }],
+      fields: [{ target: 'e7', value: 'x' }, { target: '#missing', value: 'y' }, { target: '#real', value: 'z' }],
     });
     expect(res.success).toBe(false);
-    expect(res.fields[0]).toMatchObject({ success: false, error: expect.stringMatching(/^REF_NOT_FOUND: ref e7 /) });
-    expect(res.fields[1]).toMatchObject({ success: false, error: 'No element matches selector #missing on the current page (https://example.test/page).' });
-    expect(res.fields[2]).toMatchObject({ success: true, value: 'z' });
+    // This debugger takes no text, so the real field is read back as not filled (VALUE_NOT_SET).
+    expect(res.error).toMatch(/^FILL_FAILED: 3 of 3 fields failed\n/);
+    expect(res.error).toContain('e7: REF_NOT_FOUND: ref e7 ');
+    expect(res.error).toContain('#missing: NOT_FOUND: #missing matches nothing');
+    expect(res.error).toContain('#real: VALUE_NOT_SET: kept ""');
   });
 });

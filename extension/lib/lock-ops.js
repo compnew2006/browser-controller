@@ -1,11 +1,11 @@
 /**
- * Lock operations shared by the tabs handler and the popup event wiring
- * (dedup: the lock → persist → shield → broadcast quartet lived in both).
+ * Ownership operations shared by the navigate handler (a tab a session opens),
+ * the tabs handler (close) and the popup event wiring (pin / unpin): the
+ * lock → persist → shield → broadcast quartet lives here once.
  * Note the asymmetry these helpers encode: lockTabUi throws on a foreign
  * owner (TabLockMap.lock refuses to steal); releaseTabUi releases
  * unconditionally (used when the caller has already established the right to
- * release). The owner-CHECKED unlock (browser_tabs unlock) stays inline in
- * handlers/tabs.js because its ordering differs (check before shield removal).
+ * release).
  */
 import { tabLocks, tabControl, persistSessionState } from './state.js';
 import { showLockShield, hideLockShield } from './overlay.js';

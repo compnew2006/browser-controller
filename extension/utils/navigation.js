@@ -1,10 +1,10 @@
 /**
  * Pure navigation helpers (framework-free → unit-testable without Chrome).
  *
- * `background.js` imports `isHashOnlyChange` to decide whether
+ * `handlers/navigation.js` imports `isHashOnlyChange` to decide whether
  * `handleNavigate` must wait for `chrome.tabs.onUpdated` `status === 'complete'`.
  * A hash/fragment-only change does NOT reload the document, so that event never
- * fires and the wait hangs for the full 55s timeout. Detecting the case lets
+ * fires and the wait hangs until the navigation timeout. Detecting the case lets
  * the handler skip the wait and settle on the SPA-settle delay alone.
  */
 
@@ -74,7 +74,7 @@ function filenameOf(disposition) {
  * What a main-frame response means for its tab, from its webRequest status and
  * headers. A 204/205 "No Content" never replaces the page, and an attachment (or a
  * type a browser saves) is downloaded, so the tab stays where it was. Neither one
- * fires the tab's `complete` event, which is why waiting for it hung for 55 s.
+ * fires the tab's `complete` event, which is why waiting for it hung until the timeout.
  *
  * @param {number} statusCode
  * @param {Array<{name: string, value?: string}>} [responseHeaders]

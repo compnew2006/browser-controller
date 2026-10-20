@@ -14,14 +14,15 @@ Use Browser Controller to check what's currently showing in my browser.
 
 - After making a code change, to verify it rendered correctly
 - To check if a form works, a button does what it should, or content loaded
-- To read page content I'm looking at
-- To debug visual issues or check responsive layout
+- To read page content I'm looking at (`browser_text` is the cheapest read)
+- To debug visual issues or check responsive layout (`browser_emulate { tabId, viewport }`)
 
-## Reading the snapshot efficiently
+## Reading the page efficiently
 
-- **`isNew: true`** on a ref means that element appeared since the last snapshot — focus on those when something just changed (e.g. an overlay opened after a click). You don't need to re-read the whole tree.
-- After `browser_scroll`, expect `refsMayBeStale: true` — re-snapshot before interacting on feeds like Facebook/Instagram that recycle DOM nodes.
-- If a click returns `freshRefs`, the element was scrolled away — retry with one of the new refs in the same response (no separate snapshot needed).
+- Use `query` or `target` on `browser_snapshot` to read one part of a large page.
+- After a click that opens something, snapshot again with `query` for what appeared.
+- A `REF_GONE` error means the page changed: take a new `browser_snapshot` and use its refs.
+- Use `browser_logs { tabId, errors: true }` for console errors and failed requests.
 
 ## Important
 

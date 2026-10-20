@@ -1,24 +1,25 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { requireTabId, forwardHandler } from './types.js';
+import { tabIdParam, forwardHandler } from './types.js';
 
 export const waitTool: ToolDefinition = {
   name: 'browser_wait',
-  summary: 'Wait for a duration or condition',  description:
-    'Wait for a selector (state visible/hidden/attached), text to appear (or vanish, state "hidden"), the URL to contain urlIncludes, or a fixed delay. Sees shadow DOM and same-origin iframes.',
+  summary: 'Wait for an element, a URL or a delay',
+  description: 'Wait for exactly one of: target visible (gone:true = hidden), url (substring or glob), ms (delay). Times out with TIMEOUT.',
   inputSchema: z.object({
-    tabId: requireTabId(),
-    selector: z.string().optional(),
-    state: z
-      .enum(['visible', 'hidden', 'attached'])
-      .optional()
-      .default('visible')
-      .describe('Wait until element is visible, hidden, or attached to DOM'),
-    timeout: z.number().optional().default(10000).describe('Max wait in ms, capped at 50000 (the result notes the cap)'),
-    delay: z.number().optional().describe('Fixed delay in ms, capped at 30000 (the result reports the time actually waited); ignores the other conditions'),
-    text: z.string().optional().describe('Case-insensitive; with state "hidden", waits until the text is gone'),
-    urlIncludes: z.string().optional().describe('Wait until the tab URL contains this string'),
+    tabId: tabIdParam,
+    target: z.string().optional(),
+    gone: z.boolean().optional(),
+    url: z.string().optional(),
+    ms: z.number().int().min(0).max(50_000).optional(),
+    timeout: z.number().int().min(1).max(50_000).optional(),
+  }).strict().superRefine((params, ctx) => {
+    const given = [params.target, params.url, params.ms].filter((v) => v !== undefined).length;
+    if (given !== 1) {
+      ctx.addIssue({ code: 'custom', path: ['target'], message: 'Give exactly one of target, url or ms' });
+    }
   }),
-  timeoutMs: 60_000,
+  // Waits can run up to the 50 s cap, so the transport must outlive it.
+  timeoutMs: 55_000,
   handler: forwardHandler('browser_wait'),
 };

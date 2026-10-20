@@ -13,6 +13,12 @@ import path from 'node:path';
 
 const STATE = path.join(os.homedir(), '.browser-controller');
 const token = JSON.parse(fs.readFileSync(path.join(STATE, 'token.json'), 'utf8')).token;
+// 3.0 IPC hello. Source of truth: mcp-server/src/protocol.ts (PROTOCOL_VERSION, IPC_PROTOCOL_CAPABILITIES,
+// which include tools-v3). The daemon refuses a hello without them. Keep in sync with protocol.ts.
+const IPC_HELLO_V3 = {
+  protocolVersion: 1,
+  capabilities: ['heartbeat', 'tool-routing', 'session-locks', 'cancellation', 'result-envelope', 'tools-v3'],
+};
 // Must match daemon-config.ts: Windows uses a named pipe, not a socket file.
 const sockPath = process.platform === 'win32'
   ? '\\\\.\\pipe\\browser-controller'
@@ -49,5 +55,5 @@ sock.on('data', (chunk) => {
   }
 });
 sock.on('error', (e) => { console.error('socket error:', e.message); process.exit(1); });
-sock.write(JSON.stringify({ kind: 'hello', token, agentName: 'CLI-driver' }) + '\n');
+sock.write(JSON.stringify({ kind: 'hello', token, agentName: 'CLI-driver', ...IPC_HELLO_V3 }) + '\n');
 setTimeout(() => { console.error('TIMEOUT (no result)'); process.exit(2); }, 60_000);

@@ -5,20 +5,22 @@
  * dispatch() rebuilt the tool map on every call.
  */
 import { runOnTab as runOnTabLib, tabLockedMessage } from './tab-concurrency.js';
-import { tabLocks, tabMutex, tabControl, observationSnapshots, persistSessionState, wedgedTabs, sessionAgentNames } from './state.js';
+import {
+  tabLocks, tabMutex, tabControl, persistSessionState, wedgedTabs, sessionAgentNames,
+  releaseSessionSettings, claimTabSetting, releaseBodyCapture,
+} from './state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from './connection.js';
 import { showLockShield, hideLockShield } from './overlay.js';
-import { getActiveTab, handleNavigate } from '../handlers/navigation.js';
-import { handleClick, handleType, handlePressKey, handleHover, handleSelect, handleClickByText, handleDialog, handleDrag, handleFillForm } from '../handlers/interaction.js';
-import { handleWait, handleScroll, handleSnapshot, handleFind, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
-import { handleTabs, handleConsole, handleNetwork, handleScreenshot, handleResizeWindow } from '../handlers/tabs.js';
-import { handleRunAction, handleUploadFile } from '../handlers/cdp.js';
-import { handleIntercept } from '../handlers/intercept.js';
-import { handleEmulate } from '../handlers/emulate.js';
+import { handleNavigate } from '../handlers/navigation.js';
+import { handleClick, handleType } from '../handlers/interaction.js';
+import { handleFill, handleDialog } from '../handlers/interaction-advanced.js';
+import { handleWait, handleScroll, handleSnapshot, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
+import { handleTabs } from '../handlers/tabs.js';
+import { handleScreenshot } from '../handlers/screenshot.js';
+import { handleEmulate, clearEmulation } from '../handlers/emulate.js';
+import { handleLogs } from '../handlers/logs.js';
+import { handleMock, releaseMock } from '../handlers/mock.js';
 import { handleInspectElement } from '../handlers/inspect.js';
-import { handleObserve, handleAct } from '../handlers/agent-api.js';
-import { handleWebMcpList, handleWebMcpCall } from '../handlers/webmcp.js';
-import { handleGif, isRecording, recordFrame, GIF_FRAME_TOOLS, currentTabId } from '../handlers/gif.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -37,41 +39,25 @@ import { handleGif, isRecording, recordFrame, GIF_FRAME_TOOLS, currentTabId } fr
  */
 const activeControllers = new Map();
 
-// Static registry: built once at module load. Legacy wire-name aliases (find /
-// get_page_text) are gone — the tool files send their canonical .name
-// (browser_find / browser_text), so aliases would only mask future drift
+// Static registry: built once at module load. Legacy wire-name aliases are gone:
+// the tool files send their canonical .name, so aliases would only mask future drift
 // (audit C1).
 const HANDLERS = {
   browser_navigate: handleNavigate,
+  browser_tabs: handleTabs,
+  browser_snapshot: handleSnapshot,
+  browser_text: handleGetPageText,
+  browser_screenshot: handleScreenshot,
   browser_click: handleClick,
   browser_type: handleType,
+  browser_fill: handleFill,
   browser_scroll: handleScroll,
-  browser_press_key: handlePressKey,
   browser_wait: handleWait,
-  browser_snapshot: handleSnapshot,
-  browser_screenshot: handleScreenshot,
-  browser_console: handleConsole,
-  browser_network: handleNetwork,
-  browser_tabs: handleTabs,
-  browser_hover: handleHover,
-  browser_select: handleSelect,
   browser_evaluate: handleEvaluate,
-  browser_webmcp_list: handleWebMcpList,
-  browser_webmcp_call: handleWebMcpCall,
-  browser_click_text: handleClickByText,
   browser_handle_dialog: handleDialog,
-  browser_upload_file: handleUploadFile,
-  browser_run_action: handleRunAction,
-  browser_drag: handleDrag,
-  browser_fill_form: handleFillForm,
-  browser_find: handleFind,
-  browser_text: handleGetPageText,
-  browser_intercept: handleIntercept,
-  browser_observe: handleObserve,
-  browser_act: handleAct,
-  browser_resize_window: handleResizeWindow,
   browser_emulate: handleEmulate,
-  browser_gif: handleGif,
+  browser_logs: handleLogs,
+  browser_mock: handleMock,
   browser_inspect_element: handleInspectElement,
 };
 
@@ -115,16 +101,46 @@ function sendToolResponse(id, result) {
   }
 }
 
+/** The error a call answers with when its caller cancelled it before it ran (X1). */
+function cancelledError() {
+  return new Error('TIMEOUT: the call was cancelled before it ran (its caller had left), so the tab was not touched');
+}
+
+/**
+ * Clear one tab setting whose owner session was released (state.js claimTabSetting). Each kind
+ * goes through the module that owns it. A tab already gone has nothing left to clear.
+ */
+function clearTabSetting(tabId, kind) {
+  try {
+    if (kind === 'mock') releaseMock(tabId);
+    else if (kind === 'bodies') releaseBodyCapture(tabId);
+    else if (kind === 'emulation') clearEmulation(tabId).catch(() => {}); // a failed clear: the tab is already gone or lost its session
+  } catch { /* the tab is already gone */ }
+}
+
+/**
+ * Record which session owns a tab setting after a call changed it (state.js claimTabSetting).
+ * A call that only reads (no override or rule given) keeps the current owner. A call that
+ * clears the setting drops the claim.
+ */
+function noteTabSetting(tool, params, sessionId, result) {
+  if (!result || result.success === false || params.tabId == null) return;
+  const { tabId } = params;
+  if (tool === 'browser_mock' && params.rules !== undefined) {
+    const cleared = Array.isArray(params.rules) && params.rules.length === 0;
+    claimTabSetting(tabId, 'mock', cleared ? null : sessionId);
+  } else if (tool === 'browser_emulate') {
+    const changed = Object.keys(params).some((key) => key !== 'tabId' && params[key] !== undefined);
+    const cleared = params.reset === true || !Object.keys(result.active ?? {}).length;
+    if (changed) claimTabSetting(tabId, 'emulation', cleared ? null : sessionId);
+  } else if (tool === 'browser_logs' && params.bodies !== undefined) {
+    claimTabSetting(tabId, 'bodies', params.bodies === true && result.bodyCapture?.active ? sessionId : null);
+  }
+}
+
 /** Which tabId does this call target? null = tab-agnostic (tabs list/create). */
 function extractTabId(_tool, params) {
   return typeof params.tabId === "number" ? params.tabId : null;
-}
-
-/** The new tab id when this call replaced a frozen tab (navigate/reload), else null. */
-function replacementOf(result) {
-  if (typeof result?.replacedTabId !== 'number') return null;
-  const fresh = result.tabId ?? result.reloaded;
-  return typeof fresh === 'number' ? fresh : null;
 }
 
 export async function handleMessage(msg) {
@@ -139,7 +155,8 @@ export async function handleMessage(msg) {
       // any shield calls below run — no async race (review NOTE 7a).
       const released = tabLocks.releaseByOwner(owner);
       tabControl.releaseByOwner(owner); // a gone agent no longer "controls" anything
-      observationSnapshots.dropSession(owner);
+      // Tab settings it set (mock rules, emulation overrides, body capture) go with it (L1).
+      for (const { tabId, kind } of releaseSessionSettings(owner)) clearTabSetting(tabId, kind);
       sessionAgentNames.delete(owner);
       // Persist: without this, a service-worker recycle after the disconnect
       // would restore the just-released lock from session storage and
@@ -183,16 +200,8 @@ export async function handleMessage(msg) {
   // Remember who a session is: a lock it takes is then shown to others by name.
   if (sessionId && agentName) sessionAgentNames.set(sessionId, agentName);
 
-  // Resolve navigate's documented active-tab fallback before lock/mutex routing.
-  // This freezes the target even if the user changes focus while the call waits.
-  if (tool === "browser_navigate" && typeof p.tabId !== "number") {
-    p.tabId = (await getActiveTab()).id;
-  }
-  // A GIF call naming a replaced frozen tab targets its replacement, so the
-  // lock check and the per-tab queue below apply to the tab it really touches.
-  if (tool === 'browser_gif' && p.action !== 'start' && typeof p.tabId === 'number') {
-    p.tabId = currentTabId(p.tabId);
-  }
+  // navigate without tabId opens a tab of its own (handleNavigate): there is no
+  // tab to queue on or lock-check yet, so it runs with the tab-less calls below.
   const tabId = extractTabId(tool, p);
 
   // A tool call without an id can never be answered: it used to collide in
@@ -214,7 +223,7 @@ export async function handleMessage(msg) {
   // prompt without waiting for page execution to settle.
   // A wedged tab's queue may still hold calls waiting on a frozen page:
   // navigate/reload are the recovery path and need no page cooperation.
-  const bypassesMutex = (tool === 'browser_tabs' && (p.action === 'close' || p.action === 'focus' || p.action === 'reload'))
+  const bypassesMutex = (tool === 'browser_tabs' && (p.action === 'close' || p.action === 'focus'))
     || tool === 'browser_handle_dialog'
     || (tool === 'browser_navigate' && wedgedTabs.has(tabId));
 
@@ -250,12 +259,6 @@ export async function handleMessage(msg) {
         controller.signal,
       );
       sendToolResponse(id, result);
-      // Recovery navigate replaced a frozen tab: record the new page, queued
-      // on the replacement's mutex like any other capture.
-      const fresh = replacementOf(result);
-      if (fresh != null && GIF_FRAME_TOOLS.has(tool) && isRecording(fresh)) {
-        await tabMutex.run(fresh, () => recordFrame(fresh, tool, result));
-      }
     } catch (err) {
       sendResponse(id, { success: false, error: err.message || String(err) });
     } finally {
@@ -274,6 +277,8 @@ export async function handleMessage(msg) {
     tabId,
     sessionId,
     async () => {
+      // X1: a call its caller cancelled while it queued behind the tab's mutex never runs.
+      if (controller.signal.aborted) throw cancelledError();
       // Record that this agent is acting on the tab so the popup's Open Tabs
       // list shows it as controlled rather than "free" (a plain call takes no
       // lock). Started only once the call really runs, not while it queues;
@@ -291,15 +296,11 @@ export async function handleMessage(msg) {
           await overlayStep(showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab'));
         }
         try {
+          // The shield step above can take a while: check again before the handler sends anything.
+          if (controller.signal.aborted) throw cancelledError();
           const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
           sendToolResponse(id, result);
-          // GIF recording: capture the page after the action (the reply is already
-          // sent; the tab mutex keeps the next call from racing the capture).
-          // A frozen tab replaced by this call records on its replacement.
-          const frameTab = replacementOf(result) ?? tabId;
-          if (GIF_FRAME_TOOLS.has(tool) && isRecording(frameTab) && !(result && result.success === false)) {
-            await recordFrame(frameTab, tool, result);
-          }
+          noteTabSetting(tool, p, sessionId, result);
         } catch (err) {
           sendResponse(id, { success: false, error: err.message || String(err) });
         } finally {

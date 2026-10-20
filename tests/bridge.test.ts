@@ -3,6 +3,7 @@ import { WebSocket } from 'ws';
 import http from 'node:http';
 import { ExtensionBridge, isDaemonResponsiveOnPort } from '../mcp-server/src/bridge.js';
 import { WS_HARD_MAX_PAYLOAD_BYTES } from '../mcp-server/src/bridge-frames.js';
+import { buildExtensionHelloAck } from '../mcp-server/src/protocol.js';
 
 let portCounter = 20_000 + (process.pid % 5_000);
 function nextPort() { return portCounter++; }
@@ -78,9 +79,20 @@ describe('ExtensionBridge', () => {
     return b;
   }
 
-  async function connectClient(port: number, path = ''): Promise<WebSocket> {
+  /** Answer the daemon's hello the way a 3.0 extension does; the helloAck names the browser. */
+  function answerHello(client: WebSocket, browserId?: string): void {
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'hello') {
+        client.send(JSON.stringify({ ...buildExtensionHelloAck('test'), ...(browserId ? { browserId, browserLabel: browserId } : {}) }));
+      }
+    });
+  }
+
+  async function connectClient(port: number, path = '', browserId?: string): Promise<WebSocket> {
     const client = new WebSocket(`ws://localhost:${port}${path}`);
     clients.push(client);
+    answerHello(client, browserId);
     await new Promise<void>((resolve, reject) => {
       client.on('open', resolve);
       client.on('error', reject);
@@ -128,7 +140,8 @@ describe('ExtensionBridge', () => {
 
   it('an oversized frame with no call to fail is dropped and the connection stays up', async () => {
     const port = nextPort();
-    const bridge = createBridge(port, { maxWsPayloadBytes: 64 });
+    // 200 bytes: the ~142-byte helloAck still fits, the 256-byte frame does not.
+    const bridge = createBridge(port, { maxWsPayloadBytes: 200 });
     await bridge.start();
 
     const client = await connectClient(port);
@@ -225,7 +238,7 @@ describe('ExtensionBridge', () => {
     const bridge = createBridge(port);
     await bridge.start();
 
-    await expect(bridge.waitForConnection(100)).rejects.toThrow('Timed out');
+    await expect(bridge.waitForConnection(100)).rejects.toThrow('NOT_CONNECTED: no Browser Controller extension connected within 0.1 s');
   });
 
   it('throws when calling tool without connection', async () => {
@@ -233,18 +246,44 @@ describe('ExtensionBridge', () => {
     const bridge = createBridge(port, { maxRetries: 0 });
     await bridge.start();
 
-    await expect(bridge.callTool('browser_click', {})).rejects.toThrow();
+    // No extension at all: the agent reads the NOT_CONNECTED code and what to check.
+    await expect(bridge.callTool('browser_click', {})).rejects.toThrow(
+      /^NOT_CONNECTED: no Browser Controller extension connected within 5 s; check that it is installed and enabled$/,
+    );
   }, 10_000);
+
+  // A call in flight when its browser goes away reads NOT_CONNECTED, not INTERNAL_ERROR.
+  it('a call in flight when the extension disconnects reads NOT_CONNECTED', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const client = await connectClient(port);
+    client.on('message', () => { /* never answers */ });
+    const call = bridge.callTool('browser_click', { ref: 'e1' });
+    await new Promise((r) => setTimeout(r, 30));
+    client.close();
+
+    await expect(call).rejects.toThrow(/^NOT_CONNECTED: Extension disconnected; the call may still have run, so check the page before repeating it$/);
+  });
 
   // Task 3.1 regression guard: this test would have caught the daemon shipping
   // with WS auth disabled (the token was loaded but never passed to the bridge).
-  it('with a token, accepts a connection that presents the right token', async () => {
+  it('with a token, REJECTS the right token when it is sent only in the ?token= query', async () => {
     const port = nextPort();
     const bridge = createBridge(port, { token: 'sekret' });
     await bridge.start();
 
-    await connectClient(port, '?token=sekret');
-    expect(bridge.isConnected()).toBe(true);
+    // The token travels only in the Sec-WebSocket-Protocol subprotocol (3.0 dropped the query fallback).
+    const client = new WebSocket(`ws://localhost:${port}?token=sekret`);
+    clients.push(client);
+    client.on('error', () => { /* refused upgrade */ });
+    await new Promise<void>((resolve) => {
+      client.on('close', () => resolve());
+      client.on('error', () => resolve());
+      setTimeout(resolve, 300);
+    });
+    expect(bridge.isConnected()).toBe(false);
   });
 
   it('with a token, REJECTS a connection missing the token', async () => {
@@ -291,6 +330,7 @@ describe('ExtensionBridge', () => {
   ): Promise<WebSocket> {
     const client = new WebSocket(`ws://localhost:${port}${path}`, subprotocols);
     clients.push(client);
+    answerHello(client);
     await new Promise<void>((resolve, reject) => {
       client.on('open', resolve);
       client.on('error', reject);
@@ -322,9 +362,8 @@ describe('ExtensionBridge', () => {
     expect(bridge.isConnected()).toBe(false);
   });
 
-  it('subprotocol token takes precedence over a conflicting ?token=', async () => {
-    // If both are present and the subprotocol one is correct, the connection
-    // succeeds (subprotocol wins; this matches the extension's dual-send).
+  it('reads only the subprotocol token: a conflicting ?token= query is ignored', async () => {
+    // The subprotocol token is the credential; the query string plays no part.
     const port = nextPort();
     const bridge = createBridge(port, { token: 'sekret' });
     await bridge.start();
@@ -362,6 +401,33 @@ describe('ExtensionBridge', () => {
       client.on('error', () => resolve());
     });
     expect(bridge.isConnected()).toBe(false);
+  });
+
+  // Regression (security review P2): a call is settled only by the browser it was sent to.
+  // A second connected socket that replies with the same id must not resolve or reject it.
+  it('ignores a reply to a call from a browser the call was not sent to', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const target = await connectClient(port, '', 'work');
+    const other = await connectClient(port, '', 'home');
+    let callId = '';
+    let sawCall = () => {};
+    const called = new Promise<void>((resolve) => { sawCall = resolve; });
+    target.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.tool) { callId = msg.id; sawCall(); }
+    });
+
+    const call = bridge.callTool('browser_snapshot', { tabId: 1 });
+    await called;
+    other.send(JSON.stringify({ id: callId, success: true, result: { spoofed: true } }));
+    other.send(JSON.stringify({ id: callId, success: false, error: 'CODE: spoofed' }));
+    await new Promise((r) => setTimeout(r, 30));
+    target.send(JSON.stringify({ id: callId, success: true, result: { real: true } }));
+
+    await expect(call).resolves.toEqual({ real: true });
   });
 
   // --- Call cancellation (audit C2) -----------------------------------------
@@ -430,7 +496,7 @@ describe('ExtensionBridge', () => {
       received.push(msg);
     });
 
-    await expect(bridge.callTool('browser_click', { ref: 'e1' })).rejects.toThrow(/timed out/i);
+    await expect(bridge.callTool('browser_click', { ref: 'e1' })).rejects.toThrow(/^TIMEOUT: browser_click did not answer in \d+ ms; it may still have run/);
     // Give the control message a tick to flush through the WS.
     await new Promise((r) => setTimeout(r, 50));
     const cancelMsg = received.find((m) => m.type === 'cancel');

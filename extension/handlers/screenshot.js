@@ -1,19 +1,26 @@
 /**
- * Screenshot handler (split out of tabs.js). One picture of a tab, sized for the
- * agent (longest side at most MAX_IMAGE_EDGE) and fitted under the 1 MB frame
- * limit. The active tab's viewport is read with captureVisibleTab (no debugger,
- * no tab switch); a full page or a zoom needs CDP.
+ * Screenshot handler (browser_screenshot, Browser Controller 3.0): one JPEG of a
+ * tab's viewport, of one element (`target`) or of one viewport rectangle (`region`).
+ *  - the active tab of its window: chrome.tabs.captureVisibleTab (no debugger, no
+ *    tab switch);
+ *  - a background tab: CDP Page.captureScreenshot, never activating it. When CDP
+ *    cannot capture it, the call fails (DEBUGGER_UNAVAILABLE); the user's tab is not switched.
+ * The longest side is at most MAX_IMAGE_EDGE and the base64 stays under
+ * SCREENSHOT_MAX_BASE64_CHARS (one WebSocket frame). The result's `scale` and
+ * `origin` map image pixels to viewport CSS px: viewportX = origin[0] + imageX / scale.
  */
-import { resolveTab, safeExec, execDom, getFallback } from '../lib/page-exec.js';
+import { resolveTab, safeExec, execDom, getFallback, assertResponsive, wedgedError, PAGE_EXEC_TIMEOUT_MS } from '../lib/page-exec.js';
 import { refErrorMessage } from '../lib/ref-errors.js';
 import { tabLocks, wedgedTabs, windowCaptureMutex } from '../lib/state.js';
 import { showLockShield, hideLockShield, setAgentCursorHidden, agentCursorEnabled } from '../lib/overlay.js';
 import { withCdp, ensureViewport } from '../lib/cdp-session.js';
+import { locateTarget, releaseShield } from '../lib/trusted-input.js';
+import { parseTarget } from '../lib/target.js';
 
 const CDP_CAPTURE_TIMEOUT_MS = 4000;
 /**
  * A background tab usually does not paint, so Page.captureScreenshot may never
- * answer: probe it this briefly, then show the tab the old way.
+ * answer: give up after this long and report DEBUGGER_UNAVAILABLE.
  */
 const BACKGROUND_PROBE_MS = 2500;
 /** Longest side of a returned image, in image pixels (the size an image is read at in full). */
@@ -24,9 +31,10 @@ export const MAX_IMAGE_EDGE = 1568;
  * is the JSON envelope. Keep in step with that default.
  */
 export const SCREENSHOT_MAX_BASE64_CHARS = 900_000;
-/** A full-page capture is cut at this height (the result says so). */
-export const FULL_PAGE_MAX_HEIGHT = 16_000;
+const JPEG_QUALITY = 80;
 const MIN_SCALE = 0.05;
+/** Removed in 3.0 and changing WHAT is captured: a call that sends one is refused, never answered with another picture. */
+const REFUSED_OPTIONS = ['fullPage', 'scale', 'ref', 'selector'];
 
 function withTimeout(promise, ms, what) {
   let timer;
@@ -34,6 +42,25 @@ function withTimeout(promise, ms, what) {
     promise,
     new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} timed out`)), ms); }),
   ]).finally(() => clearTimeout(timer));
+}
+
+function coded(code, message, cause) {
+  const err = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
+  err.code = code;
+  return err;
+}
+
+/**
+ * One shield step (a page script). A page that does not answer it within the page-call
+ * budget is marked wedged the way safeExec marks a first-time timeout, and the call fails
+ * TAB_WEDGED. A tab already marked was probed by assertResponsive before this runs.
+ * The steps swallow their own errors, so a rejection here is the timeout.
+ */
+function shieldStep(tabId, step) {
+  return withTimeout(step(), PAGE_EXEC_TIMEOUT_MS, 'shield step').catch(() => {
+    wedgedTabs.set(tabId, Date.now());
+    throw wedgedError(tabId, PAGE_EXEC_TIMEOUT_MS);
+  });
 }
 
 /** Pixel size of a base64 PNG/JPEG (null if it can't be read). */
@@ -60,50 +87,33 @@ export function imageSize(b64) {
 }
 
 /**
- * The image scale for a capture of cssW × cssH CSS px at device ratio dpr: the
- * requested scale, cut down so the longest side fits MAX_IMAGE_EDGE and the width
- * fits maxWidth. `edgeClamped` is true when the edge rule (not the caller) cut it.
+ * The image scale for a capture of cssW × cssH CSS px at device ratio dpr, cut down
+ * when the longest device-pixel side would exceed MAX_IMAGE_EDGE. `edgeClamped` is
+ * true when that rule (not the caller) cut it.
  */
-export function planScale({ cssW, cssH, dpr, scale, maxWidth }) {
+export function planScale({ cssW, cssH, dpr, scale }) {
   const edgeLimit = MAX_IMAGE_EDGE / (Math.max(cssW, cssH) * dpr);
-  let s = scale;
-  const edgeClamped = s > edgeLimit;
-  if (edgeClamped) s = edgeLimit;
-  if (maxWidth && cssW * s * dpr > maxWidth) s = maxWidth / (cssW * dpr);
-  return { scale: s, edgeClamped };
+  const edgeClamped = scale > edgeLimit;
+  return { scale: edgeClamped ? edgeLimit : scale, edgeClamped };
 }
 
 /**
- * Bring an encoded screenshot under the frame budget. A PNG first becomes a JPEG
- * at the same size; each later try shrinks the scale by the size ratio (with a
- * margin) and lowers the JPEG quality. `redo({format, quality, scale})` makes the
- * image for those settings. Throws SCREENSHOT_TOO_LARGE when no try fits.
+ * Bring an encoded JPEG under the frame budget: each try lowers the quality and
+ * shrinks the scale by the size ratio (with a margin). `redo({quality, scale})`
+ * encodes the picture again. Throws SCREENSHOT_TOO_LARGE when no try fits.
  */
 export async function fitToBudget(first, redo, budget = SCREENSHOT_MAX_BASE64_CHARS) {
   let shot = first;
   for (let tries = 0; shot.data.length > budget && tries < 3; tries++) {
     const ratio = Math.min(0.95, Math.sqrt(budget / shot.data.length) * 0.9);
-    const next = shot.format === 'png'
-      ? { format: 'jpeg', quality: 80, scale: shot.scale }
-      : { format: 'jpeg', quality: Math.max(40, shot.quality - 15), scale: shot.scale * ratio };
+    const next = { quality: Math.max(40, shot.quality - 15), scale: shot.scale * ratio };
     if (next.scale < MIN_SCALE) break;
     shot = await redo(next);
   }
   if (shot.data.length > budget) {
-    const err = new Error(`SCREENSHOT_TOO_LARGE: the image is still ${Math.round(shot.data.length / 1000)} KB at ${shot.width}×${shot.height} after downscaling (limit ${Math.round(budget / 1000)} KB). Ask for a smaller region, a scale below 1 or a maxWidth.`);
-    err.code = 'SCREENSHOT_TOO_LARGE';
-    throw err;
+    throw coded('SCREENSHOT_TOO_LARGE', `the image is still ${Math.round(shot.data.length / 1000)} KB at ${shot.width}×${shot.height} after downscaling (limit ${Math.round(budget / 1000)} KB). Ask for a smaller target or region.`);
   }
   return shot;
-}
-
-/** Notes for the result: what changed the picture from what was asked (the agent must know it is not 1:1). */
-function shotNotes({ edgeClamped, truncatedFrom, refit, format }) {
-  const notes = [];
-  if (edgeClamped) notes.push(`scaled down to a ${MAX_IMAGE_EDGE} px longest side`);
-  if (truncatedFrom) notes.push(`the page is ${truncatedFrom} px tall; only the first ${FULL_PAGE_MAX_HEIGHT} px were captured`);
-  if (refit) notes.push(`reduced to fit the 1 MB frame limit (${format})`);
-  return notes.length ? notes.join('; ') : null;
 }
 
 const errText = (err) => String(err?.message || err).slice(0, 200);
@@ -133,93 +143,34 @@ async function pageDpr(send, metrics, vv) {
 }
 
 /**
- * CDP capture (Page.captureScreenshot) with the debugger attached. Needed for a
- * full page and for zoom (a scale above 1 re-renders the page instead of
- * stretching pixels), and it is the only way to capture a background tab
- * without switching to it.
+ * The part of a w × h viewport (CSS px) a crop covers: the crop cut to the viewport.
+ * `clipped` when the crop reached past it.
  */
-async function cdpScreenshot(tabId, { format, quality, scale, maxWidth, fullPage, region, timeoutMs = CDP_CAPTURE_TIMEOUT_MS }) {
-  return withCdp(tabId, async (send) => {
-    let metrics = await send('Page.getLayoutMetrics');
-    if (!(metrics?.cssVisualViewport?.clientWidth > 0)) {
-      await ensureViewport(tabId);
-      metrics = await send('Page.getLayoutMetrics');
-    }
-    const vv = metrics.cssVisualViewport;
-    const content = metrics.cssContentSize || metrics.contentSize;
-    // region: a viewport rectangle (CSS px, same frame as click/hover x/y) —
-    // zoom into small UI with scale > 1.
-    let originX = 0;
-    let originY = 0;
-    let width = fullPage ? Math.ceil(content.width) : vv.clientWidth;
-    let height = fullPage ? Math.ceil(content.height) : vv.clientHeight;
-    const pageHeight = height;
-    if (fullPage && !region) height = Math.min(height, FULL_PAGE_MAX_HEIGHT);
-    if (region) {
-      originX = Math.max(0, Math.min(region.x, vv.clientWidth - 1));
-      originY = Math.max(0, Math.min(region.y, vv.clientHeight - 1));
-      width = Math.max(1, Math.min(region.width, vv.clientWidth - originX));
-      height = Math.max(1, Math.min(region.height, vv.clientHeight - originY));
-    }
-    const fullClip = !!fullPage && !region;
-    // The capture comes out at clip.scale × devicePixelRatio (device pixels).
-    // The layout metrics can't be trusted for that ratio (real Chrome at DPR 2
-    // reports equal device and CSS viewport widths), so ask the page.
-    const dpr = await pageDpr(send, metrics, vv);
-    const requested = Math.min(region ? 4 : 1, Math.max(0.05, scale ?? (region ? 2 : 1)));
-    const plan = planScale({ cssW: width, cssH: height, dpr, scale: requested, maxWidth });
-    const once = async ({ format: f, quality: q, scale: s }) => {
-      const { data } = await withTimeout(send('Page.captureScreenshot', {
-        format: f,
-        ...(f === 'jpeg' ? { quality: q } : {}),
-        captureBeyondViewport: fullClip,
-        clip: {
-          x: fullClip ? 0 : vv.pageX + originX,
-          y: fullClip ? 0 : vv.pageY + originY,
-          width, height, scale: s,
-        },
-      }), timeoutMs, 'Page.captureScreenshot');
-      const size = imageSize(data) || { width: Math.round(width * s * dpr), height: Math.round(height * s * dpr) };
-      return { data, format: f, quality: q, scale: s, width: size.width, height: size.height };
-    };
-    let shot = await once({ format, quality, scale: plan.scale });
-    // maxWidth is a promise about the IMAGE: if the ratio was still off, shrink
-    // by what the real image shows and capture once more.
-    if (maxWidth && shot.width > maxWidth + 1) {
-      shot = await once({ format, quality, scale: shot.scale * (maxWidth / shot.width) });
-    }
-    const beforeFit = shot;
-    shot = await fitToBudget(shot, once);
-    // How image pixels map to the viewport coordinates click/hover/scroll take:
-    // viewportX = origin[0] + imageX / scale (fullPage: page coordinates instead).
-    // The real image size is the ground truth (it includes the device pixel
-    // ratio: an 800 px viewport at DPR 2 is a 1600 px image, scale 2).
-    return {
-      data: shot.data,
-      format: shot.format,
-      width: shot.width,
-      height: shot.height,
-      frame: {
-        scale: Math.round((shot.width / width) * 1000) / 1000,
-        origin: [Math.round(originX), Math.round(originY)],
-        viewport: [Math.round(vv.clientWidth), Math.round(vv.clientHeight)],
-        ...(fullClip ? { page: true, scrollY: Math.round(vv.pageY) } : {}),
-      },
-      note: shotNotes({
-        edgeClamped: plan.edgeClamped,
-        truncatedFrom: fullClip && pageHeight > FULL_PAGE_MAX_HEIGHT ? pageHeight : 0,
-        refit: shot !== beforeFit,
-        format: shot.format,
-      }),
-    };
-  });
+function cropOf(w, h, crop) {
+  if (!crop) return { originX: 0, originY: 0, width: w, height: h, clipped: false };
+  const originX = Math.max(0, Math.min(crop.x, w - 1));
+  const originY = Math.max(0, Math.min(crop.y, h - 1));
+  const right = Math.max(originX + 1, Math.min(w, crop.x + crop.width));
+  const bottom = Math.max(originY + 1, Math.min(h, crop.y + crop.height));
+  return {
+    originX,
+    originY,
+    width: right - originX,
+    height: bottom - originY,
+    clipped: crop.x < 0 || crop.y < 0 || crop.x + crop.width > w || crop.y + crop.height > h,
+  };
 }
 
-/**
- * CSS size of the page's viewport (innerWidth × innerHeight), or null when the
- * page does not answer. Without it the picture is still right, but it carries no
- * coordinate frame (no toViewport mapping is claimed).
- */
+/** The pixel → viewport mapping of a picture: viewportX = origin[0] + imageX / scale. */
+function frameOf(imageWidth, cssWidth, view, vp) {
+  return {
+    scale: Math.round((imageWidth / cssWidth) * 1000) / 1000,
+    origin: [Math.round(view.originX), Math.round(view.originY)],
+    viewport: [Math.round(vp.width), Math.round(vp.height)],
+  };
+}
+
+/** CSS size of the page's viewport (innerWidth × innerHeight), or null when the page does not answer. */
 async function viewportOf(tabId) {
   try {
     const v = await safeExec(tabId, () => [window.innerWidth, window.innerHeight]);
@@ -230,161 +181,180 @@ async function viewportOf(tabId) {
 }
 
 /**
- * The visible viewport from captureVisibleTab: no debugger and no tab switch.
- * Crops (region) and downscales in the service worker, so the picture is what
- * was on screen. Callers hold windowCaptureMutex and the tab is the window's active tab.
+ * CDP capture (Page.captureScreenshot, debugger attached) of the viewport, or of
+ * `crop` inside it. A background tab is captured this way, and it never switches.
  */
-async function visibleScreenshot(tab, { format, quality, scale, maxWidth, region, protectedPage }) {
+async function cdpCapture(tabId, crop, timeoutMs) {
+  return withCdp(tabId, async (send) => {
+    let metrics = await send('Page.getLayoutMetrics');
+    if (!(metrics?.cssVisualViewport?.clientWidth > 0)) {
+      await ensureViewport(tabId);
+      metrics = await send('Page.getLayoutMetrics');
+    }
+    const vv = metrics.cssVisualViewport;
+    const view = cropOf(vv.clientWidth, vv.clientHeight, crop);
+    // The capture comes out at clip.scale × devicePixelRatio (device pixels). The
+    // layout metrics can't be trusted for that ratio (real Chrome at DPR 2 reports
+    // equal device and CSS viewport widths), so ask the page.
+    const dpr = await pageDpr(send, metrics, vv);
+    const plan = planScale({ cssW: view.width, cssH: view.height, dpr, scale: 1 });
+    const once = async ({ quality, scale }) => {
+      const { data } = await withTimeout(send('Page.captureScreenshot', {
+        format: 'jpeg',
+        quality,
+        clip: { x: vv.pageX + view.originX, y: vv.pageY + view.originY, width: view.width, height: view.height, scale },
+      }), timeoutMs, 'Page.captureScreenshot');
+      const size = imageSize(data) || { width: Math.round(view.width * scale * dpr), height: Math.round(view.height * scale * dpr) };
+      return { data, quality, scale, width: size.width, height: size.height };
+    };
+    const first = await once({ quality: JPEG_QUALITY, scale: plan.scale });
+    const shot = await fitToBudget(first, once);
+    return {
+      data: shot.data,
+      width: shot.width,
+      height: shot.height,
+      frame: frameOf(shot.width, view.width, view, { width: vv.clientWidth, height: vv.clientHeight }),
+      edgeClamped: plan.edgeClamped,
+      refit: shot !== first,
+      clipped: view.clipped,
+      via: 'cdp',
+    };
+  });
+}
+
+/**
+ * The active tab, from captureVisibleTab: the viewport as it is on screen, cropped
+ * and downscaled here, so the picture is what the user sees. Callers hold
+ * windowCaptureMutex and the tab is the window's active tab.
+ */
+async function visibleScreenshot(tab, crop, protectedPage) {
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
   const [shown] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
-  if (shown?.id !== tab.id) throw new Error('TAB_NOT_VISIBLE: the tab was switched away while it was captured.');
+  if (shown?.id !== tab.id) throw coded('TAB_NOT_VISIBLE', 'the tab was switched away while it was captured.');
   const bmp = await createImageBitmap(b64ToBlob(dataUrl.slice(dataUrl.indexOf(',') + 1), 'image/png'));
   try {
-    // Read the size now: a closed bitmap reports 0 (the GIF marker depends on it).
+    // Read the size now: a closed bitmap reports 0.
     const imgW = bmp.width;
     const imgH = bmp.height;
     // The page's CSS viewport gives the device pixel ratio: image px / CSS px.
     const vp = protectedPage ? null : await viewportOf(tab.id);
-    if (region && !vp) throw new Error('UNSUPPORTED: the page did not report its size, so a region cannot be cropped.');
+    if (crop && !vp) throw coded('UNSUPPORTED', 'the page did not report its size, so an element or region cannot be cropped.');
     const dpr = vp ? imgW / vp.width : 1;
     const cssW = imgW / dpr;
     const cssH = imgH / dpr;
-    let originX = 0;
-    let originY = 0;
-    let sx = 0;
-    let sy = 0;
-    let sw = imgW;
-    let sh = imgH;
-    if (region) {
-      originX = Math.max(0, Math.min(region.x, cssW - 1));
-      originY = Math.max(0, Math.min(region.y, cssH - 1));
-      sx = Math.round(originX * dpr);
-      sy = Math.round(originY * dpr);
-      sw = Math.max(1, Math.min(Math.round(region.width * dpr), imgW - sx));
-      sh = Math.max(1, Math.min(Math.round(region.height * dpr), imgH - sy));
-    }
-    const plan = planScale({ cssW: sw / dpr, cssH: sh / dpr, dpr, scale: scale ?? 1, maxWidth });
-    const encode = async ({ format: f, quality: q, scale: s }) => {
-      const w = Math.max(1, Math.round(sw * s));
-      const h = Math.max(1, Math.round(sh * s));
+    const view = cropOf(cssW, cssH, crop);
+    const sx = Math.round(view.originX * dpr);
+    const sy = Math.round(view.originY * dpr);
+    const sw = Math.max(1, Math.min(Math.round(view.width * dpr), imgW - sx));
+    const sh = Math.max(1, Math.min(Math.round(view.height * dpr), imgH - sy));
+    const plan = planScale({ cssW: sw / dpr, cssH: sh / dpr, dpr, scale: 1 });
+    const encode = async ({ quality, scale }) => {
+      const w = Math.max(1, Math.round(sw * scale));
+      const h = Math.max(1, Math.round(sh * scale));
       const canvas = new OffscreenCanvas(w, h);
       const ctx = canvas.getContext('2d');
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, w, h);
-      const blob = await canvas.convertToBlob(f === 'jpeg' ? { type: 'image/jpeg', quality: q / 100 } : { type: 'image/png' });
-      return { data: await blobToB64(blob), format: f, quality: q, scale: s, width: w, height: h };
+      const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: quality / 100 });
+      return { data: await blobToB64(blob), quality, scale, width: w, height: h };
     };
-    const first = await encode({ format, quality, scale: plan.scale });
+    const first = await encode({ quality: JPEG_QUALITY, scale: plan.scale });
     const shot = await fitToBudget(first, encode);
     return {
       data: shot.data,
-      format: shot.format,
       width: shot.width,
       height: shot.height,
-      // viewportX = origin[0] + imageX / scale, as for the CDP capture.
-      ...(vp ? {
-        frame: {
-          scale: Math.round((shot.width / (sw / dpr)) * 1000) / 1000,
-          origin: [Math.round(originX), Math.round(originY)],
-          viewport: [Math.round(vp.width), Math.round(vp.height)],
-        },
-      } : {}),
-      note: shotNotes({ edgeClamped: plan.edgeClamped, refit: shot !== first, format: shot.format }),
+      ...(vp ? { frame: frameOf(shot.width, sw / dpr, view, vp) } : {}),
+      edgeClamped: plan.edgeClamped,
+      refit: shot !== first,
+      clipped: view.clipped,
+      via: 'visible',
     };
   } finally {
     bmp.close?.();
   }
 }
 
-/**
- * Show a background tab for the capture and switch straight back. This steals
- * the user's view for a moment, so it is only the fallback for when the debugger
- * cannot capture the hidden tab.
- */
-function showBriefly(tab, opts, protectedPage) {
-  const needsCdp = opts.fullPage || opts.scale > 1;
-  return windowCaptureMutex.run(tab.windowId, async () => {
-    const [previousActive] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
-    await chrome.tabs.update(tab.id, { active: true });
-    try {
-      await new Promise((r) => setTimeout(r, 150));
-      const shot = needsCdp
-        ? await cdpScreenshot(tab.id, opts)
-        : await visibleScreenshot(tab, { ...opts, protectedPage });
-      return { ...shot, via: needsCdp ? 'cdp-activated' : 'visible-activated' };
-    } finally {
-      if (previousActive?.id != null && previousActive.id !== tab.id) {
-        await chrome.tabs.update(previousActive.id, { active: true }).catch(() => {});
-      }
-    }
-  });
-}
-
-/** Top-level viewport box of a ref/selector target (4 px margin), scrolled into
- * view first; `clipped` when the element does not fit the viewport.
- */
-async function elementRegion(tabId, ref, selector) {
-  return execDom(tabId, (_ref, _sel, _fb) => {
-    const D = globalThis.__bcDom;
-    if (!D) return { __needDom: true };
-    const el = D.resolve(_ref, _sel, _fb).el;
-    if (!el) return { success: false, error: 'Element not found' };
-    el.scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'nearest' });
-    const { x, y, rect } = D.centerOf(el);
-    if (!(rect.width > 0 && rect.height > 0)) return { success: false, error: 'Element has no visible box (hidden or zero-size)' };
-    const pad = 4;
-    const left = x - rect.width / 2 - pad;
-    const top = y - rect.height / 2 - pad;
-    const width = rect.width + 2 * pad;
-    const height = rect.height + 2 * pad;
-    return {
-      success: true,
-      region: { x: Math.max(0, left), y: Math.max(0, top), width, height },
-      clipped: left < 0 || top < 0 || left + width > innerWidth || top + height > innerHeight,
-    };
-  }, [ref ?? null, selector ?? null, getFallback(tabId, ref)]);
-}
-
-/**
- * How one picture is taken:
- *  - the active tab, plain viewport: captureVisibleTab (no debugger, no tab switch);
- *  - the active tab, full page or zoom: CDP;
- *  - a background tab: CDP without switching to it, else show it briefly.
- */
-async function takeShot(tab, opts, protectedPage) {
-  if (!tab.active) {
-    // Chrome may not paint a hidden tab, so the debugger capture can hang: probe briefly.
-    try {
-      return { ...(await cdpScreenshot(tab.id, { ...opts, timeoutMs: BACKGROUND_PROBE_MS })), via: 'cdp' };
-    } catch (err) {
-      return { ...(await showBriefly(tab, opts, protectedPage)), cdpFallback: errText(err) };
-    }
-  }
-  const needsCdp = opts.fullPage || opts.scale > 1;
-  let fallback = null;
-  if (needsCdp) {
-    try {
-      return { ...(await cdpScreenshot(tab.id, opts)), via: 'cdp' };
-    } catch (err) {
-      if (opts.fullPage) throw new Error(`UNSUPPORTED: a full-page screenshot needs the debugger, which failed (${errText(err)}).`, { cause: err });
-      // Zoom without the debugger: the plain viewport, which is honest, not an upscaled smear.
-      fallback = errText(err);
-      opts = { ...opts, scale: 1 };
-    }
-  }
+/** A CDP capture that failed is DEBUGGER_UNAVAILABLE: the caller learns the picture is not there. */
+async function debuggerShot(tabId, crop, timeoutMs) {
   try {
-    const shot = await windowCaptureMutex.run(tab.windowId, () => visibleScreenshot(tab, { ...opts, protectedPage }));
-    return { ...shot, via: 'visible', ...(fallback ? { cdpFallback: fallback } : {}) };
+    return await cdpCapture(tabId, crop, timeoutMs);
   } catch (err) {
-    // A page the debugger can't reach (chrome://) has no other way; a picture that
-    // is too big would be too big over CDP too; the rest may still be captured over CDP.
-    if (needsCdp || protectedPage || err?.code === 'SCREENSHOT_TOO_LARGE') throw err;
-    try {
-      return { ...(await cdpScreenshot(tab.id, opts)), via: 'cdp', cdpFallback: errText(err) };
-    } catch (cdpErr) {
-      throw new Error(`${errText(err)}; the debugger capture also failed: ${errText(cdpErr)}`, { cause: cdpErr });
+    throw coded('DEBUGGER_UNAVAILABLE', `the debugger could not capture the tab (${errText(err)}).`, err);
+  }
+}
+
+/**
+ * One picture, by where the tab is. The active tab comes from captureVisibleTab; if
+ * that fails, CDP is tried. A background tab is captured over CDP without being
+ * activated: when that fails, the call fails too (no tab switch).
+ */
+async function takeShot(tab, crop, protectedPage) {
+  if (!tab.active) return debuggerShot(tab.id, crop, BACKGROUND_PROBE_MS);
+  try {
+    return await windowCaptureMutex.run(tab.windowId, () => visibleScreenshot(tab, crop, protectedPage));
+  } catch (err) {
+    // A page the debugger cannot reach has no second way; a picture that is too big or has no size would fail the same over CDP.
+    if (protectedPage || ['SCREENSHOT_TOO_LARGE', 'UNSUPPORTED'].includes(err?.code)) throw err;
+    return { ...(await debuggerShot(tab.id, crop, CDP_CAPTURE_TIMEOUT_MS)), cdpFallback: errText(err) };
+  }
+}
+
+/** Page side (self-contained, serialized): the top-level viewport box of the element a target resolves to. */
+function pageBoxOf(t, fb) {
+  const D = globalThis.__bcDom;
+  if (!D || !D.resolveTarget) return { __needDom: true };
+  const hit = D.resolveTarget(t, fb);
+  if (hit.error) return { error: hit.error };
+  const el = hit.el;
+  if (!el || el.nodeType !== 1) return { error: 'REF_GONE' };
+  const { x, y, rect } = D.centerOf(el);
+  if (!(rect.width > 0 && rect.height > 0)) return { error: 'ELEMENT_HIDDEN: the element has no visible box (hidden or zero-size).' };
+  return { region: { x: x - rect.width / 2, y: y - rect.height / 2, width: rect.width, height: rect.height } };
+}
+
+/**
+ * The box of `target` in viewport CSS px. The locator (lib/trusted-input.js) resolves
+ * it and scrolls it into view, with the wording of every target error; the box is
+ * then read from the same element.
+ */
+async function elementBox(tabId, target, parsed) {
+  let loc = await locateTarget(tabId, { target });
+  if (loc?.success && loc.zeroViewport) {
+    // A tab never shown has no layout yet (0x0): size it over CDP, then measure again.
+    await withCdp(tabId, () => ensureViewport(tabId));
+    loc = await locateTarget(tabId, { target });
+    if (loc?.zeroViewport) throw coded('UNSUPPORTED', 'the tab has no layout (0x0 viewport), so the element cannot be measured.');
+  }
+  if (!loc?.success) throw new Error(loc?.error || `NOT_FOUND: ${target.trim()} matches nothing.`);
+  if (!loc.visible) throw coded('ELEMENT_HIDDEN', `${target.trim()} has no visible box (hidden or zero-size).`);
+  const fb = parsed.kind === 'ref' ? getFallback(tabId, parsed.ref) : null;
+  const box = await execDom(tabId, pageBoxOf, [parsed, fb]);
+  if (box?.error === 'REF_GONE') throw new Error(refErrorMessage(parsed.ref, fb));
+  if (!box || box.error) throw new Error(box?.error || `NOT_FOUND: ${target.trim()} matches nothing.`);
+  return box.region;
+}
+
+/**
+ * Validates the call; returns the parsed target (null without one). format, quality
+ * and maxWidth (removed in 3.0) are ignored: the picture is always a JPEG and the
+ * result states its real size.
+ */
+function checkRequest(params) {
+  for (const name of REFUSED_OPTIONS) {
+    if (params[name] !== undefined && params[name] !== null && params[name] !== false) {
+      throw coded('INVALID_ARGUMENT', `${name} is not a browser_screenshot option in 3.0. Use target (one element) or region (a viewport rectangle).`);
     }
   }
+  if (params.target != null && params.region != null) throw coded('INVALID_ARGUMENT', 'give target or region, not both.');
+  const { region } = params;
+  if (region != null && !([region.x, region.y, region.width, region.height].every(Number.isFinite) && region.width > 0 && region.height > 0)) {
+    throw coded('INVALID_ARGUMENT', 'region needs numeric x and y and a positive width and height (CSS px of the viewport).');
+  }
+  if (params.target == null) return null;
+  const parsed = parseTarget(params.target);
+  if (parsed.kind === 'point') throw coded('INVALID_ARGUMENT', 'a point is not an element: use region for a rectangle.');
+  return parsed;
 }
 
 export async function handleScreenshot(params) {
@@ -399,46 +369,41 @@ export async function handleScreenshot(params) {
 }
 
 async function captureScreenshot(params) {
-  const { tabId, format = 'png', quality = 80, maxWidth, fullPage = false, ref, selector } = params;
-  let { scale, region } = params;
+  const { tabId, target = null, region = null } = params;
+  const parsed = checkRequest(params);
   const tab = await resolveTab(tabId);
-  // ref / selector: just that element (an explicit region wins).
-  let element = null;
-  if ((ref || selector) && !region) {
-    element = await elementRegion(tabId, ref, selector);
-    if (!element?.success) {
-      if (ref && (!element || element.error === 'Element not found')) {
-        return { success: false, error: refErrorMessage(ref, getFallback(tabId, ref)) };
-      }
-      return element || { success: false, error: 'Element not found' };
-    }
-    region = element.region;
-    scale = scale ?? 1; // a region zooms 2× by default; an element is shown as it is
-  }
   const protectedPage = /^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '');
-  // Effective scale: a region zooms 2× by default (up to 4); the viewport and a page are at most 1.
-  const effective = Math.min(region ? 4 : 1, Math.max(0.05, scale ?? (region ? 2 : 1)));
-  const opts = { format, quality, scale: effective, maxWidth, fullPage, region };
-  // The shield is shown during EVERY agent action (router), not only while
-  // locked — always take it out of the picture; the router restores it.
+  // The shield is shown during EVERY agent action (router), not only while locked —
+  // always take it out of the picture; the router restores it.
   const wasLocked = !!tabLocks.owner(tabId);
-  if (!protectedPage) await hideLockShield(tabId);
+  if (!protectedPage) {
+    // A frozen page answers no script: fail fast here, before any step waits on it.
+    await assertResponsive(tabId);
+    await shieldStep(tabId, () => hideLockShield(tabId));
+  }
   try {
-    const shot = await takeShot(tab, opts, protectedPage);
+    const crop = target != null ? await elementBox(tabId, target, parsed) : region;
+    const shot = await takeShot(tab, crop, protectedPage);
+    const label = target != null ? `element ${target.trim()}` : (region ? 'region' : 'viewport');
+    const notes = [
+      ...(shot.clipped ? ['clipped to the viewport'] : []),
+      ...(shot.edgeClamped ? [`scaled down to a ${MAX_IMAGE_EDGE} px longest side`] : []),
+      ...(shot.refit ? ['reduced to fit the 1 MB frame limit'] : []),
+    ];
     return {
       success: true,
-      format: shot.format,
-      via: shot.via,
+      text: `${shot.width}x${shot.height} jpeg, ${label}${notes.length ? ` (${notes.join('; ')})` : ''}`,
+      image: { data: shot.data, mimeType: 'image/jpeg' },
       width: shot.width,
       height: shot.height,
-      ...(shot.frame ? { frame: shot.frame } : {}),
-      ...(shot.note ? { note: shot.note } : {}),
+      via: shot.via,
+      ...(shot.frame ? { scale: shot.frame.scale, origin: shot.frame.origin, viewport: shot.frame.viewport } : {}),
       ...(shot.cdpFallback ? { cdpFallback: shot.cdpFallback } : {}),
-      ...(element ? { element: { clipped: element.clipped } } : {}),
-      data: shot.data,
     };
   } finally {
-    if (!protectedPage && wasLocked) await showLockShield(tabId);
+    // The input window the locate opened (pageLocate, lib/trusted-input.js) closes with the call.
+    if (target != null) await releaseShield(tabId);
+    // The picture is already taken: a page that misses this step is marked wedged and the router restores its shield later.
+    if (!protectedPage && wasLocked) await shieldStep(tabId, () => showLockShield(tabId)).catch(() => {});
   }
 }
-

@@ -15,7 +15,7 @@
  *     lifetime for both. See loadSessionState/persistSessionState.
  */
 import { TabMutexMap, TabLockMap, TabControlMap } from './tab-concurrency.js';
-import { SnapshotRegistry } from './snapshot-registry.js';
+import { unpinCdp } from './cdp-session.js';
 
 export const PER_TAB_CAP = 200;
 // Response cap for unbounded result tools (evaluate/run_action). browser_text
@@ -26,11 +26,19 @@ export const MAX_RESULT_CHARS = 100_000;
 /** @type {Map<number, Array<object>>} */
 export const networkByTab = new Map();
 /**
- * browser_network captureBodies: tabId -> { bodies (lib/response-bodies.js),
+ * browser_logs bodies: tabId -> { bodies (lib/response-bodies.js),
  * unsubscribe (CDP events; null once stopped) }. In memory, like the buffers.
  * @type {Map<number, {bodies: object, unsubscribe: (() => void) | null}>}
  */
 export const bodyCaptureByTab = new Map();
+/**
+ * browser_mock rules: tabId -> { rules, off, send }. off and send are set while the tab's Fetch
+ * interception is attached (lib/cdp-session.js subscription). Owned by handlers/mock.js.
+ * @type {Map<number, {rules: object[], off?: () => void, send?: Function}>}
+ */
+export const mockByTab = new Map();
+/** CDP pin reason of a response-body capture (handlers/logs.js starts and pins it). */
+export const BODY_CAPTURE_PIN = 'network-bodies';
 /**
  * Smart-selector fallbacks (plan tasks 2–4). Map<tabId, Map<ref, fallback>>.
  * Populated at snapshot time; consumed by click/type when a ref no longer
@@ -39,6 +47,23 @@ export const bodyCaptureByTab = new Map();
  */
 export const fallbackByTab = new Map();
 /**
+ * The highest ref number each tab's documents have shown the agent (Map<tabId, n>). Refs are
+ * per document, so a new document's counter starts above this (lib/page-dom.js
+ * PAGE_DOM_INSTALL): a ref from an earlier page can never name an element of this one.
+ * Kept across navigations (the next document needs it); dropped with the tab.
+ */
+export const refHighWaterByTab = new Map();
+/** The counter base a new document of this tab starts from. */
+export function refBaseFor(tabId) {
+  return refHighWaterByTab.get(tabId) || 0;
+}
+/** Record the refs a page result showed (`highest`: their largest number); persisted when it moves up. */
+export function noteRefsShown(tabId, highest) {
+  if (!(highest > (refHighWaterByTab.get(tabId) || 0))) return;
+  refHighWaterByTab.set(tabId, highest);
+  persistSessionState();
+}
+/**
  * Tabs whose page stopped answering chrome.scripting (frozen main thread, a
  * giant document). Map<tabId, sinceMs>. While a tab is here every page call
  * first probes it with a short timeout and fails fast with TAB_WEDGED instead
@@ -46,21 +71,6 @@ export const fallbackByTab = new Map();
  * Cleared when the tab starts a new navigation or is closed.
  */
 export const wedgedTabs = new Map();
-/** browser_gif recordings: tabId -> recording (here so a replaced frozen tab can hand its recording over). */
-export const gifRecordings = new Map();
-/** Frozen tabs replaced by replaceFrozenTab: old tabId -> new tabId. */
-export const replacedTabs = new Map();
-/**
- * isNew feature: Map<tabId, string[]> of "fingerprints" (role|name) from the
- * PREVIOUS snapshot. The next snapshot marks any ref whose fingerprint isn't
- * in this set as `isNew: true`, so the agent can focus on what changed.
- * @type {Map<number, string[]>}
- */
-export const lastSnapshotFingerprints = new Map();
-/** Same, for `browser_snapshot source:"native"` (its roles/names differ from the DOM walker's). */
-export const lastNativeFingerprints = new Map();
-/** Bounded Observation V2 ownership metadata; page-side refs never live here. */
-export const observationSnapshots = new SnapshotRegistry();
 
 // --- Per-tab mutex (task 2.1) + per-agent tab locks (task 2.2) ------------
 // Pure, unit-tested primitives in lib/tab-concurrency.js.
@@ -94,14 +104,72 @@ export function getTabBuffer(map, tabId) {
   return arr;
 }
 
-export function pushCapped(arr, item, cap = PER_TAB_CAP) {
-  arr.push(item);
-  if (arr.length > cap) arr.splice(0, arr.length - cap);
+// --- Session-owned tab settings ---------------------------------------------
+// browser_mock rules ('mock'), browser_emulate overrides ('emulation') and browser_logs
+// response bodies ('bodies') outlive the call that set them. The session that set one last
+// owns it: its release (releaseSession) clears it, and a closed tab forgets it. Another
+// session's setting is never touched. Ownership is per tab and kind, so the last setter wins.
+/** @type {Map<number, Map<string, string>>} tabId -> kind -> sessionId */
+const settingOwners = new Map();
+
+/** `sessionId` set `kind` on `tabId`. An anonymous caller (no session) clears the claim: nobody owns it. */
+export function claimTabSetting(tabId, kind, sessionId) {
+  let kinds = settingOwners.get(tabId);
+  if (!kinds) {
+    kinds = new Map();
+    settingOwners.set(tabId, kinds);
+  }
+  if (sessionId) kinds.set(kind, sessionId);
+  else kinds.delete(kind);
+}
+
+/** The session that owns `kind` on `tabId`, or undefined. */
+export function tabSettingOwner(tabId, kind) {
+  return settingOwners.get(tabId)?.get(kind);
+}
+
+/**
+ * Take every setting `sessionId` owns, forgetting its claims. Returns [{tabId, kind}] for the
+ * caller to clear. Synchronous, like TabLockMap.releaseByOwner.
+ * @returns {Array<{tabId: number, kind: string}>}
+ */
+export function releaseSessionSettings(sessionId) {
+  const released = [];
+  if (!sessionId) return released;
+  for (const [tabId, kinds] of settingOwners) {
+    for (const [kind, owner] of kinds) {
+      if (owner !== sessionId) continue;
+      kinds.delete(kind);
+      released.push({ tabId, kind });
+    }
+    if (!kinds.size) settingOwners.delete(tabId);
+  }
+  return released;
+}
+
+/**
+ * Stop a tab's response-body capture: its listener, its bodies and its pin on the debugger
+ * session (the session may then detach when idle).
+ */
+export function releaseBodyCapture(tabId) {
+  bodyCaptureByTab.get(tabId)?.unsubscribe?.();
+  bodyCaptureByTab.delete(tabId);
+  unpinCdp(tabId, BODY_CAPTURE_PIN);
 }
 
 // --- MV3 session persistence (architecture item) ---------------------------
 
 const SESSION_STATE_KEY = "bcSessionState";
+/**
+ * A worker woken by a tab event can run listeners before loadSessionState() has read
+ * storage. Writing then would overwrite the stored locks with the empty in-memory state
+ * (X3). Until the load completes, a persist is deferred and flushed right after the load,
+ * and a tab closed meanwhile is not restored from storage.
+ */
+let sessionStateLoaded = false;
+let persistDeferred = false;
+/** @type {Set<number>} */
+const closedBeforeLoad = new Set();
 
 /**
  * Persist lock ownership + smart-selector fallbacks to chrome.storage.session.
@@ -110,6 +178,10 @@ const SESSION_STATE_KEY = "bcSessionState";
  * correctness gate on the mutation itself.
  */
 export function persistSessionState() {
+  if (!sessionStateLoaded) {
+    persistDeferred = true;
+    return;
+  }
   try {
     const fallbacks = {};
     for (const [tabId, map] of fallbackByTab) {
@@ -120,7 +192,7 @@ export function persistSessionState() {
         locks: tabLocks.snapshot(),
         daemonInstance: adoptedDaemonInstance,
         fallbacks,
-        observations: observationSnapshots.serialize(),
+        refHighWater: Object.fromEntries(refHighWaterByTab),
       },
     }).catch(() => {});
   } catch { /* storage unavailable — in-memory behavior */ }
@@ -139,6 +211,7 @@ export async function loadSessionState() {
     if (typeof state.daemonInstance === 'string') adoptedDaemonInstance = state.daemonInstance;
     if (Array.isArray(state.locks)) {
       for (const { tabId, sessionId, agentName, since } of state.locks) {
+        if (closedBeforeLoad.has(tabId)) continue; // the tab closed before its lock was read
         // lock() refuses to steal: a stale entry for a tab another live session
         // re-locked is impossible here (we're the only instance), but the guard
         // costs nothing.
@@ -147,48 +220,50 @@ export async function loadSessionState() {
         } catch {}
       }
     }
+    if (state.refHighWater && typeof state.refHighWater === "object") {
+      for (const [tabId, n] of Object.entries(state.refHighWater)) {
+        if (Number.isInteger(n) && n > 0 && !closedBeforeLoad.has(Number(tabId))) refHighWaterByTab.set(Number(tabId), n);
+      }
+    }
     if (state.fallbacks && typeof state.fallbacks === "object") {
       for (const [tabId, entries] of Object.entries(state.fallbacks)) {
-        if (entries && typeof entries === "object") {
+        if (entries && typeof entries === "object" && !closedBeforeLoad.has(Number(tabId))) {
           fallbackByTab.set(Number(tabId), new Map(Object.entries(entries)));
         }
       }
     }
-    observationSnapshots.restore(state.observations);
-  } catch { /* storage unavailable — start empty, as before */ }
+  } catch { /* storage unavailable — start empty, as before */ } finally {
+    sessionStateLoaded = true;
+    closedBeforeLoad.clear();
+    if (persistDeferred) {
+      persistDeferred = false;
+      persistSessionState();
+    }
+  }
 }
 
 /** Invalidate document-bound refs without releasing the tab's durable lock. */
 export function dropDocumentState(tabId) {
   wedgedTabs.delete(tabId);
   fallbackByTab.delete(tabId);
-  lastSnapshotFingerprints.delete(tabId);
-  lastNativeFingerprints.delete(tabId);
-  observationSnapshots.invalidateTab(tabId);
 }
 
-/** Drop one tab's durable state (tab closed). */
+/**
+ * Drop one tab's durable state (tab closed). Its mock rules go with it: the listener is
+ * unsubscribed, so nothing keeps answering on a dead tab (X15).
+ */
 export function dropTabState(tabId) {
   wedgedTabs.delete(tabId);
   networkByTab.delete(tabId);
   bodyCaptureByTab.get(tabId)?.unsubscribe?.();
   bodyCaptureByTab.delete(tabId);
   fallbackByTab.delete(tabId);
-  lastSnapshotFingerprints.delete(tabId);
-  lastNativeFingerprints.delete(tabId);
-  observationSnapshots.dropTab(tabId);
+  refHighWaterByTab.delete(tabId);
+  const mock = mockByTab.get(tabId);
+  mockByTab.delete(tabId);
+  mock?.off?.();
+  settingOwners.delete(tabId);
   tabLocks.release(tabId);
   tabControl.release(tabId);
-}
-
-// Short refs ("s4k2-17"): a per-worker salt keeps refs from a recycled service
-// worker from colliding with live ones in the page registry. The counter is
-// three base-36 digits (46,656 prefixes): it used to wrap at 1,296, so snapshot
-// 1,297 reused snapshot 1's prefix and a stale ref could resolve to another element.
-const REF_SALT = Math.random().toString(36).slice(2, 4);
-const REF_SEQ_LIMIT = 36 ** 3;
-let refSeq = 0;
-export function nextRefPrefix(kind) {
-  refSeq = (refSeq + 1) % REF_SEQ_LIMIT;
-  return `${kind}${REF_SALT}${refSeq.toString(36)}-`;
+  if (!sessionStateLoaded) closedBeforeLoad.add(tabId);
 }

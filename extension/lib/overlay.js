@@ -6,8 +6,8 @@
  *     running tool's name shown inside the frame — replaced the old corner
  *     badge, per user request), and
  *   - per-lock: for a tab lock's whole lifetime (plain frame, no label).
- * The agent cursor (drawn by the shared page runtime, lib/page-dom.js) is
- * switched on here and only needs hiding from screenshots.
+ * The agent cursor (drawn by the shared page runtime, lib/page-dom.js) is opt-in
+ * (popup setting, see agentCursorEnabled) and only needs hiding from screenshots.
  */
 
 /** chrome.storage.local key of the popup's "Show agent cursor" switch. */
@@ -62,12 +62,11 @@ export async function showLockShield(tabId, label) {
               'linear-gradient(to top,    rgba(37,99,235,.48) 0%, transparent 10%);' +
             'box-shadow:inset 0 0 70px 15px rgba(37,99,235,.25);';
           const block = (e) => {
-            // Agent's own synthetic events (handleType/handlePressKey dispatch
-            // KeyboardEvent directly on the target) have isTrusted===false and
-            // MUST pass through — otherwise the capture-phase document listener
-            // would swallow them before they reach the input, breaking typing on
-            // locked tabs. Real user input is isTrusted===true (DOM invariant,
-            // unforgeable) and gets blocked. (Fix-loop 3: audit C2.)
+            // Synthetic events (isTrusted===false, dispatched by a page script such
+            // as browser_evaluate) MUST pass through — otherwise the capture-phase
+            // document listener would swallow them before they reach the page.
+            // Real user input is isTrusted===true (DOM invariant, unforgeable) and
+            // gets blocked. (Fix-loop 3: audit C2.)
             if (e.isTrusted === false) return;
             // The agent's own CDP input (trusted-input.js) is isTrusted===true
             // too: it opens a short pass-through window around each action.

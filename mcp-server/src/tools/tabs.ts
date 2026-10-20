@@ -4,24 +4,17 @@ import { tabIdParam, forwardHandler } from './types.js';
 
 export const tabsTool: ToolDefinition = {
   name: 'browser_tabs',
-  summary: 'List, create, close, focus, reload, lock, or unlock tabs',  description:
-    'List, create, close, focus, reload or lock/unlock tabs; list needs no tabId and gives the tabIds every other tool needs. reload also recovers a frozen (TAB_WEDGED) tab. lock claims a tab for the calling agent: calls from other sessions are refused at once with TAB_LOCKED (owner and since when), not queued, until unlock or the owner disconnects.',
+  summary: 'List tabs, close or focus one, pick a browser',
+  description: 'list (default): this session\'s tabs and the user\'s focused tab. close / focus need tabId. browser picks this session\'s Chrome profile ("auto" = default).',
   inputSchema: z.object({
-    action: z
-      .enum(['list', 'create', 'close', 'focus', 'reload', 'lock', 'unlock']),
-    tabId: tabIdParam.optional().describe('For close/focus/reload/lock/unlock'),
-    bypassCache: z.boolean().optional().describe('reload: skip the cache'),
-    url: z.string().optional().describe('create: URL'),
-    active: z.boolean().optional().describe('create: false = open in the background'),
-    window: z.boolean().optional().describe('focus: raise its window too'),
-    fullUrls: z.boolean().optional().describe('list: keep long URLs whole'),
-  }).superRefine((params, ctx) => {
-    const targetedActions = ['close', 'focus', 'reload', 'lock', 'unlock'];
-    if (targetedActions.includes(params.action) && params.tabId === undefined) {
+    action: z.enum(['list', 'close', 'focus']).optional().describe('Default list'),
+    tabId: tabIdParam.optional(),
+    browser: z.string().optional().describe('"auto" or a browser id'),
+  }).strict().superRefine((params, ctx) => {
+    if ((params.action ?? 'list') !== 'list' && params.tabId === undefined) {
       ctx.addIssue({ code: 'custom', path: ['tabId'], message: `tabId is required for ${params.action}` });
     }
   }),
-  // reload waits for the new document (up to 30s); the other actions return at once.
-  timeoutMs: 35_000,
+  timeoutMs: 10_000,
   handler: forwardHandler('browser_tabs'),
 };

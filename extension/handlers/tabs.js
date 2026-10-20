@@ -1,309 +1,110 @@
 /**
- * Tab + debug-capture handlers (extracted from background.js): tabs
- * lifecycle (list/create/close/focus/lock/unlock), console/network reads.
- * The screenshot is in handlers/screenshot.js and is re-exported here.
+ * Tab handler (extracted from background.js): browser_tabs list / close / focus.
+ * Tabs are opened and reloaded by browser_navigate (handlers/navigation.js); the
+ * screenshot is handlers/screenshot.js, the page logs handlers/logs.js.
  */
-import { resolveTab, replaceFrozenTab, safeExec } from '../lib/page-exec.js';
-import {
-  tabLocks,
-  tabControl,
-  wedgedTabs,
-  networkByTab,
-  bodyCaptureByTab,
-  getTabBuffer,
-  persistSessionState,
-} from "../lib/state.js";
-import { hideLockShield } from "../lib/overlay.js";
-import { broadcastStatus } from "../lib/connection.js";
-import { lockTabUi, releaseTabUi } from "../lib/lock-ops.js";
-import { withCdp, subscribeCdpEvents, pinCdp, unpinCdp, isCdpPinned } from '../lib/cdp-session.js';
-import { collectBrowserLog, collectPageConsole } from '../lib/browser-log.js';
-import { listView, typeMatcher } from '../lib/network-capture.js';
-import { createBodyCapture, MAX_BODIES } from '../lib/response-bodies.js';
+import { resolveTab } from '../lib/page-exec.js';
+import { tabLocks, tabControl } from '../lib/state.js';
+import { releaseTabUi } from '../lib/lock-ops.js';
 import { tabLockedMessage } from '../lib/tab-concurrency.js';
 
-export { handleScreenshot, imageSize, planScale, fitToBudget, MAX_IMAGE_EDGE, SCREENSHOT_MAX_BASE64_CHARS, FULL_PAGE_MAX_HEIGHT } from './screenshot.js';
-
-export async function handleConsole(params) {
-  const { tabId, clear = false, pattern, level, limit, browser = false } = params;
-  // Validate the tab (audit finding, seen live): a wrong tabId used to return
-  // an empty success instead of an actionable error.
-  await resolveTab(tabId);
-  let re = null;
-  if (pattern) {
-    try { re = new RegExp(pattern, 'i'); } catch (err) { throw new Error(`Invalid pattern regex: ${err?.message || err}`, { cause: err }); }
-  }
-  const want = level ? new Set((Array.isArray(level) ? level : [level]).map((l) => String(l).toLowerCase())) : null;
-  const pick = (list) => {
-    let out = list;
-    if (want) out = out.filter((m) => want.has(String(m.level).toLowerCase()));
-    if (re) out = out.filter((m) => re.test(m.text));
-    if (Number.isInteger(limit) && limit > 0 && out.length > limit) out = out.slice(-limit);
-    return out;
-  };
-  // Chrome keeps the current document's console calls and uncaught exceptions
-  // and replays them to the debugger; browser:true adds what Chrome itself
-  // reported (failed loads, deprecations, violations…) and DevTools Issues.
-  const read = await withCdp(tabId, async (send) => {
-    const subscribe = (fn) => subscribeCdpEvents(tabId, fn);
-    const page = await collectPageConsole(send, subscribe, { clear, levels: want });
-    return { page, chrome: browser ? await collectBrowserLog(send, subscribe, { clear }) : null };
-  });
-  const msgs = pick(read.page);
-  const total = read.page.length;
-  const chromeLog = read.chrome && {
-    messages: pick(read.chrome.messages),
-    issues: re ? read.chrome.issues.filter((i) => re.test(`${i.code} ${i.type || ''} ${i.url || ''}`)) : read.chrome.issues,
-  };
-  return { success: true, messages: msgs, ...(msgs.length !== total ? { total } : {}), ...(chromeLog ? { browser: chromeLog } : {}) };
-}
-
-const BODY_PIN = 'network-bodies';
-
-/** Is the tab's body capture still running? Its session detaching (banner closed) ends it. */
-function bodyCaptureActive(tabId) {
-  const cap = bodyCaptureByTab.get(tabId);
-  if (!cap?.unsubscribe) return false;
-  if (isCdpPinned(tabId, BODY_PIN)) return true;
-  cap.unsubscribe();
-  cap.unsubscribe = null;
-  return false;
-}
-
 /**
- * Network domain on the tab's debugger session, bodies read as responses
- * finish, session pinned so it is not idle-detached. Network.disable is never
- * sent on stop: browser_emulate's throttling shares the domain.
- */
-async function startBodyCapture(tabId) {
-  if (bodyCaptureActive(tabId)) return;
-  await withCdp(tabId, async (send) => {
-    let cap = bodyCaptureByTab.get(tabId);
-    if (!cap) {
-      cap = { bodies: createBodyCapture({ getBody: (requestId) => send('Network.getResponseBody', { requestId }) }), unsubscribe: null };
-      bodyCaptureByTab.set(tabId, cap);
-    }
-    cap.unsubscribe = subscribeCdpEvents(tabId, (method, p) => {
-      if (method.startsWith('Network.')) cap.bodies.onEvent(method, p);
-    });
-    try {
-      await send('Network.enable', {});
-    } catch (err) {
-      cap.unsubscribe();
-      cap.unsubscribe = null;
-      throw err;
-    }
-    pinCdp(tabId, BODY_PIN);
-  });
-}
-
-function stopBodyCapture(tabId) {
-  const cap = bodyCaptureByTab.get(tabId);
-  if (cap?.unsubscribe) {
-    cap.unsubscribe();
-    cap.unsubscribe = null;
-  }
-  unpinCdp(tabId, BODY_PIN);
-}
-
-function responseBodyOf(tabId, entry) {
-  const cap = bodyCaptureByTab.get(tabId);
-  const body = cap?.bodies.find(entry);
-  if (body) return body;
-  if (!cap) return { unavailable: 'Body capture is off: call browser_network { tabId, captureBodies: true }, then make the request again.' };
-  return { unavailable: `Not captured: only document, xhr and fetch responses that start while capture is on are kept (the newest ${MAX_BODIES}).` };
-}
-
-export async function handleNetwork(params) {
-  const { tabId, clear = false, limit, filter, urlPattern, failed, type, requestId, fullUrls = false, captureBodies } = params;
-  await resolveTab(tabId); // same as handleConsole — no empty fake successes
-  if (captureBodies === true) await startBodyCapture(tabId);
-  else if (captureBodies === false) stopBodyCapture(tabId);
-  const cap = bodyCaptureByTab.get(tabId);
-  const capture = cap || captureBodies !== undefined
-    ? { bodyCapture: { active: bodyCaptureActive(tabId), bodies: cap?.bodies.size ?? 0 } }
-    : {};
-  if (requestId != null) {
-    // One request in full: complete URL, duration, redacted request/response headers (+ body when captured).
-    const hit = [...getTabBuffer(networkByTab, tabId)].reverse().find((r) => r.id === String(requestId));
-    if (!hit) {
-      return { success: false, error: `No captured request "${requestId}" in tab ${tabId} — list requests first (only the latest ones are kept).` };
-    }
-    return { success: true, request: { ...hit, ...(hit.error ? {} : { responseBody: responseBodyOf(tabId, hit) }) }, ...capture };
-  }
-  const ofType = typeMatcher(type); // validates before anything is read
-  let reqs = [...getTabBuffer(networkByTab, tabId)];
-  if (ofType) reqs = reqs.filter(ofType);
-  // urlPattern: plain substring (Claude-in-Chrome style); filter: regex.
-  if (urlPattern) reqs = reqs.filter((r) => String(r.url).includes(urlPattern));
-  // failed:true = only requests that errored (DNS, blocked, aborted…) or got a 4xx/5xx.
-  if (failed === true) reqs = reqs.filter((r) => r.error || (typeof r.status === 'number' && r.status >= 400));
-  if (filter) {
-    // An invalid pattern used to throw a raw SyntaxError out of the handler;
-    // surface it as an actionable error instead.
-    let re;
-    try {
-      re = new RegExp(filter);
-    } catch (err) {
-      throw new Error(`Invalid filter regex: ${err?.message || err}`, { cause: err });
-    }
-    reqs = reqs.filter((r) => re.test(r.url));
-  }
-  if (limit && Number.isInteger(limit) && limit > 0) {
-    reqs = reqs.slice(-limit); // most recent N
-  }
-  const hasBody = cap?.bodies.size ? (r) => cap.bodies.find(r)?.text !== undefined : () => false;
-  const requests = reqs.map((r) => ({ ...listView(r, { fullUrls }), ...(hasBody(r) ? { hasBody: true } : {}) }));
-  if (clear) {
-    networkByTab.set(tabId, []);
-    cap?.bodies.clear();
-  }
-  return { success: true, requests, ...capture };
-}
-
-/**
- * A locked tab belongs to its owner session: reloading, closing, focusing or
- * resizing it from another session (or an anonymous caller) would undo the
- * work the lock exists to protect. Refused at once with TAB_LOCKED.
+ * A locked tab belongs to its owner session: closing or focusing it from another session
+ * (or an anonymous caller) would undo the work the lock exists to protect. Refused at once with TAB_LOCKED.
  */
 function refuseLocked(tabId, sessionId) {
   const grant = tabLocks.grantOf(tabId);
   if (grant && grant.sessionId !== sessionId) throw new Error(tabLockedMessage(tabId, grant));
 }
 
-export async function handleTabs(params, sessionId) {
-  const { action, tabId, url } = params;
-  switch (action) {
-    case "list": {
-      // ALL windows, not {currentWindow:true}: "current window" is ill-defined
-      // in an MV3 service worker, and tabs in other windows were invisible and
-      // unfocusable. windowId disambiguates duplicates across windows.
-      const tabs = await chrome.tabs.query({});
-      return {
-        success: true,
-        // Compact: truncate long tracking URLs, omit lockedBy/controlledBy when
-        // null (saves tokens — a 20-tab list with full FB/Google URLs was ~3K tokens).
-        tabs: tabs.map((t) => {
-          const entry = { id: t.id, windowId: t.windowId, title: t.title, active: t.active };
-          const url = String(t.url || '');
-          entry.url = params.fullUrls || url.length <= 80 ? url : url.slice(0, 77) + '...';
-          const owner = tabLocks.owner(t.id);
-          if (owner) entry.lockedBy = owner; // omit when null — saves tokens
-          // ANOTHER agent is driving this unlocked tab right now (or did within
-          // the last 30s): steer clear instead of racing it. Your own activity
-          // is left out — it is not news to you.
-          const ctrl = owner ? undefined : tabControl.controller(t.id);
-          if (ctrl?.sessionId && ctrl.sessionId !== sessionId) entry.controlledBy = ctrl.sessionId;
-          return entry;
-        }),
-      };
-    }
-    case 'create': {
-      // active:false opens it in the background: the user's current tab stays in front.
-      const t = await chrome.tabs.create({ url: url || 'about:blank', ...(params.active === false ? { active: false } : {}) });
-      return { success: true, tabId: t.id, url: t.url || t.pendingUrl || url || 'about:blank', ...(params.active === false ? { active: false } : {}) };
-    }
-    case 'reload': {
-      if (!tabId) throw new Error('tabId required');
-      refuseLocked(tabId, sessionId);
-      const current = await resolveTab(tabId);
-      // A frozen page would block the reload until it frees up: replace the tab.
-      const fresh = await replaceFrozenTab(current, current.url, sessionId);
-      if (fresh) {
-        return { success: true, reloaded: fresh.id, replacedTabId: tabId, url: current.url, note: `tab ${tabId} was frozen and has been replaced by tab ${fresh.id}` };
-      }
-      const done = new Promise((resolve) => {
-        const timer = setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(false); }, 30_000);
-        function listener(id, info) {
-          if (id === tabId && info.status === 'complete') {
-            clearTimeout(timer);
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve(true);
-          }
-        }
-        chrome.tabs.onUpdated.addListener(listener);
-      });
-      await chrome.tabs.reload(tabId, { bypassCache: params.bypassCache === true });
-      const loaded = await done;
-      wedgedTabs.delete(tabId);
-      const t = await chrome.tabs.get(tabId);
-      return {
-        success: true, reloaded: tabId, url: t.url,
-        ...(loaded ? {} : { warning: 'load did not complete within 30s' }),
-      };
-    }
-    case "close": {
-      if (!tabId) throw new Error("tabId required");
-      refuseLocked(tabId, sessionId);
-      await chrome.tabs.remove(tabId);
-      releaseTabUi(tabId); // release + persist + shield removal
-      return { success: true, closed: tabId };
-    }
-    case "focus": {
-      if (!tabId) throw new Error("tabId required");
-      refuseLocked(tabId, sessionId);
-      const focusedTab = await chrome.tabs.update(tabId, { active: true });
-      // window:true also brings its window to the front (OS focus).
-      if (params.window === true && focusedTab?.windowId != null) {
-        await chrome.windows.update(focusedTab.windowId, { focused: true }).catch(() => {});
-      }
-      return { success: true, focused: tabId, ...(params.window === true ? { windowFocused: true } : {}) };
-    }
-    case "lock": {
-      if (!tabId) throw new Error("tabId required");
-      const owner = sessionId;
-      if (!owner) throw new Error("lock requires an authenticated session");
-      // Validate the tab exists — locking a phantom id would create an entry
-      // that onRemoved never cleans (it only fires for real tabs).
-      await resolveTab(tabId);
-      const shielded = await lockTabUi(
-        tabId,
-        owner,
-        `Tab ${tabId} locked by ${owner}`,
-      );
-      return { success: true, locked: tabId, owner, shielded };
-    }
-    case "unlock": {
-      if (!tabId) throw new Error("tabId required");
-      if (!sessionId)
-        throw new Error("unlock requires an authenticated session");
-      const was = tabLocks.owner(tabId);
-      tabLocks.unlock(tabId, sessionId);
-      refuseLocked(tabId, sessionId);
-      // Handing the tab back: show it free now, not "controlled" for the linger.
-      tabControl.settle(tabId);
-      persistSessionState();
-      hideLockShield(tabId);
-      broadcastStatus(`Tab ${tabId} unlocked (was ${was || "-"})`);
-      return { success: true, unlocked: tabId, previousSession: was || null };
-    }
-    default:
-      throw new Error(`Unknown action: ${action}`);
-  }
+/** Clip to `max` characters; the last one becomes an ellipsis. */
+const clip = (text, max) => (text.length <= max ? text : `${text.slice(0, max - 1)}…`);
+
+/** host + path of a web address, 80 characters at most. Other addresses are shown as they are. */
+function addressOf(raw) {
+  const text = String(raw || '');
+  let u;
+  try { u = new URL(text); } catch { return clip(text, 80); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return clip(text, 80);
+  return clip(`${u.host}${u.pathname === '/' ? '' : u.pathname}`, 80);
 }
 
-/** Resize / change the state of the window that holds a tab. */
-export async function handleResizeWindow(params, sessionId) {
-  const { tabId, width, height, state } = params;
-  const tab = await resolveTab(tabId);
-  // Another agent's lock: the window is theirs to size too.
-  refuseLocked(tabId, sessionId);
-  const update = {};
-  if (width != null) update.width = Math.round(width);
-  if (height != null) update.height = Math.round(height);
-  if (state) update.state = state;
-  // Sizes only apply to a normal window; a maximized one must be restored first.
-  if (update.width != null || update.height != null) {
-    if (update.state && update.state !== 'normal') { delete update.width; delete update.height; }
-    else update.state = 'normal';
+/** The title on one line, 60 characters at most, in quotes. */
+const titleOf = (tab) => `"${clip(String(tab.title || '').replace(/\s+/g, ' ').trim(), 60)}"`;
+
+/**
+ * browser_tabs list. The session's own tabs first, then the user's focused tab.
+ * Tabs another session owns or is driving are only counted: their titles and
+ * addresses belong to that agent (L4). The other user tabs are counted too.
+ * ALL windows are queried: "current window" is ill-defined in an MV3
+ * service worker, and windowId disambiguates tabs across windows.
+ */
+async function listTabs(sessionId) {
+  const [tabs, focused] = await Promise.all([
+    chrome.tabs.query({}),
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }),
+  ]);
+  const focusedId = focused[0]?.id;
+  const own = [];
+  const user = [];
+  let otherAgents = 0;
+  let rest = 0;
+  for (const tab of tabs) {
+    const owner = tabLocks.owner(tab.id);
+    // Another session driving an unowned tab right now (or within the last 30s) counts as its tab.
+    const driver = tabControl.controller(tab.id)?.sessionId ?? null;
+    if (owner !== undefined && owner === sessionId) own.push(tab);
+    else if (owner !== undefined || (driver && driver !== sessionId)) otherAgents += 1;
+    else if (tab.id === focusedId) user.push(tab);
+    else rest += 1;
   }
-  if (Object.keys(update).length === 0) throw new Error('width, height or state is required');
-  const win = await chrome.windows.update(tab.windowId, update);
-  await new Promise((r) => setTimeout(r, 200)); // let the page re-layout
-  let viewport = null;
-  try { viewport = await safeExec(tabId, () => [window.innerWidth, window.innerHeight], [], { timeoutMs: 2000 }); } catch { /* protected page */ }
+  const line = (tab, role) => `${tab.id} [${role}] ${titleOf(tab)} ${addressOf(tab.url)}`;
+  const lines = [
+    ...own.map((t) => line(t, 'own')),
+    ...user.map((t) => line(t, 'user, focused')),
+  ];
+  if (otherAgents) lines.push(`+${otherAgents} ${otherAgents === 1 ? 'tab' : 'tabs'} used by other agents`);
+  if (rest) lines.push(`+${rest} other ${rest === 1 ? 'tab' : 'tabs'}`);
+  const roleOf = (role) => (tab) => ({ tabId: tab.id, role });
   return {
-    success: true, windowId: win.id, state: win.state, width: win.width, height: win.height,
-    ...(Array.isArray(viewport) ? { viewport: { width: viewport[0], height: viewport[1] } } : {}),
+    success: true,
+    text: lines.length ? lines.join('\n') : 'no tabs',
+    tabs: [...own.map(roleOf('own')), ...user.map(roleOf('user'))],
+    otherAgentTabs: otherAgents,
   };
+}
+
+/** close and focus name the tab they act on. */
+function requireTabId(tabId, action) {
+  if (typeof tabId !== 'number') {
+    throw new Error(`INVALID_ARGUMENT: tabId is required for ${action}. Call browser_tabs list first.`);
+  }
+  return tabId;
+}
+
+export async function handleTabs(params, sessionId) {
+  const { action = 'list', tabId } = params;
+  switch (action) {
+    case 'list':
+      return listTabs(sessionId);
+    case 'close': {
+      const id = requireTabId(tabId, 'close');
+      refuseLocked(id, sessionId);
+      await resolveTab(id);
+      await chrome.tabs.remove(id);
+      releaseTabUi(id); // release + persist + shield removal
+      return { success: true, text: `closed tab ${id}`, closed: id };
+    }
+    case 'focus': {
+      const id = requireTabId(tabId, 'focus');
+      refuseLocked(id, sessionId);
+      const tab = await resolveTab(id);
+      await chrome.tabs.update(id, { active: true });
+      // Its window comes to the front too (OS focus).
+      if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+      return { success: true, text: `focused tab ${id}`, focused: id };
+    }
+    default:
+      throw new Error(`INVALID_ARGUMENT: unknown action "${action}". Use list, close or focus; browser_navigate opens and reloads tabs.`);
+  }
 }

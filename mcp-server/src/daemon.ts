@@ -42,11 +42,10 @@ import {
 } from './daemon-config.js';
 import {
   DAEMON_INSTANCE_ID,
-  IPC_PROTOCOL_CAPABILITIES,
+  OLDER_CLIENT_IPC_REASON,
   buildIpcWelcome,
   buildSessionId,
-  validateCapabilities,
-  validateProtocolVersion,
+  validateIpcHandshake,
 } from './protocol.js';
 import { ExtensionBridge } from './bridge.js';
 
@@ -115,7 +114,7 @@ class Daemon {
     // out the auth token). See SECURITY.md "First-contact TOFU window".
     this.enrollmentSecret = loadOrCreateEnrollment().secret;
     // Forward the token + enrollment secret to the bridge so the WS upgrade
-    // (?token= auth, plan 3.1) and the HTTP endpoints (X-BC-Enrollment auth)
+    // (subprotocol auth, plan 3.1) and the HTTP endpoints (X-BC-Enrollment auth)
     // are both enforced. Without these the guards in bridge.ts are dead code.
     this.bridge = new ExtensionBridge({
       port: DEFAULT_WS_PORT,
@@ -234,10 +233,10 @@ class Daemon {
             socket.destroy();
             return;
           }
-          const version = validateProtocolVersion(msg.protocolVersion);
-          const capabilities = validateCapabilities(msg.capabilities, IPC_PROTOCOL_CAPABILITIES);
-          if (!version.ok || !capabilities.ok) {
-            safeSend({ kind: 'denied', ok: false, reason: version.reason || capabilities.reason || 'Unsupported protocol.' });
+          // A client from before 3.0 (no tools-v3) is refused with the reason to restart it.
+          const check = validateIpcHandshake(msg, OLDER_CLIENT_IPC_REASON);
+          if (!check.ok) {
+            safeSend({ kind: 'denied', ok: false, reason: check.reason || 'Unsupported protocol.' });
             socket.destroy();
             return;
           }
@@ -383,7 +382,7 @@ class Daemon {
           kind: 'result',
           id: msg.id,
           success: false,
-          error: `Rate limit exceeded (${RATE_LIMIT_PER_MIN} calls/min). Retry in ~${retryInSec}s.`,
+          error: `RATE_LIMITED: Rate limit exceeded (${RATE_LIMIT_PER_MIN} calls/min). Retry in ~${retryInSec}s.`,
         });
         return;
       }

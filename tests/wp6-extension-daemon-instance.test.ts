@@ -34,6 +34,8 @@ const shieldTabs = vi.hoisted(() => [] as number[]);
 const { adoptDaemonInstance } = await import('../extension/lib/connection.js');
 const { tabLocks, tabControl, persistSessionState, loadSessionState, setAdoptedDaemonInstance } =
   await import('../extension/lib/state.js');
+// The worker's boot reads storage before it writes: persisting waits for that read.
+await loadSessionState();
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 

@@ -14,7 +14,6 @@ import {
   dropDocumentState,
 } from "./lib/state.js";
 import { showLockShield, hideLockShield } from "./lib/overlay.js";
-import { enrichCapture, initIntercept } from "./handlers/intercept.js";
 import { createNetworkCapture, pushNetworkEntry } from "./lib/network-capture.js";
 import { lockTabUi, releaseTabUi } from "./lib/lock-ops.js";
 import {
@@ -27,8 +26,6 @@ import {
 } from "./lib/connection.js";
 
 export function registerEventListeners() {
-  // Restore intercept rules that survived a service-worker restart (and sync them with Chrome).
-  initIntercept();
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     // NOTE: do NOT `return true` unconditionally. Returning true tells Chrome the
     // listener will call `respond()` ASYNCHRONOUSLY; if the sender (popup) closes
@@ -109,14 +106,7 @@ export function registerEventListeners() {
   // (lib/network-capture.js). Requests that never completed (DNS failure,
   // blocked, aborted, CORS…) arrive through onErrorOccurred.
   const capture = createNetworkCapture({
-    store: (tabId, entry) => {
-      pushNetworkEntry(getTabBuffer(networkByTab, tabId), entry);
-      // Intercept ledger for every finished request, failed (blocked) ones included
-      // (best-effort; never breaks capture).
-      try {
-        enrichCapture(tabId, entry);
-      } catch {}
-    },
+    store: (tabId, entry) => pushNetworkEntry(getTabBuffer(networkByTab, tabId), entry),
   });
   const allUrls = { urls: ["<all_urls>"] };
   // requestBody: POST/PUT payloads reach onBeforeRequest (a bounded, redacted preview is kept).

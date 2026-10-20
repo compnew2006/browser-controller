@@ -1,5 +1,5 @@
 /**
- * Response bodies for browser_network (opt-in, `captureBodies: true`).
+ * Response bodies for browser_logs (opt-in, `bodies: true`).
  * webRequest never sees bodies, so while capture is on the tab's debugger
  * session has the Network domain enabled: every Document/XHR/Fetch response
  * that finishes loading is read with Network.getResponseBody right away
@@ -7,6 +7,8 @@
  * webRequest's, so a buffered request finds its body by method + final URL +
  * nearest start time. Pure (no chrome global): the handler passes `getBody`.
  */
+
+import { redactTextKeys, redactUrl } from './network-capture.js';
 
 export const REDACTED = '[redacted]';
 export const MAX_BODIES = 50;
@@ -22,6 +24,20 @@ const INFLIGHT_CAP = 500;
 const TEXT_MIME = /^text\/|json|xml|javascript|ecmascript|x-www-form-urlencoded|graphql|csv|yaml/i;
 // Narrower than the header pattern: JSON keys such as "author" or "max_tokens" are ordinary data.
 const SENSITIVE_KEY = /token|secret|passw|api[-_]?key|^authorization$|^cookie$|^session[-_]?id$/i;
+
+/** Does `text` parse as JSON? */
+function parsesAsJson(text) {
+  try { JSON.parse(text); return true; } catch { return false; }
+}
+
+/**
+ * Redact a body for browser_logs. JSON is redacted by key at any depth (redactJsonBody). Any
+ * other text, and JSON cut off before its end, is redacted by its secret-looking key/value
+ * pairs (redactTextKeys): an HTML page or a form post carries secrets too (L2).
+ */
+export function redactBody(text) {
+  return parsesAsJson(text) ? redactJsonBody(text) : redactTextKeys(text);
+}
 
 /**
  * Replace the string values under credential keys (access_token, password,
@@ -59,7 +75,7 @@ function bodyView({ body, base64Encoded }, mimeType, maxChars) {
     if (!TEXT_MIME.test(mimeType || '')) return { binary: true, length: bytes.length };
     text = new TextDecoder().decode(bytes);
   }
-  const { text: safe, redacted } = redactJsonBody(text);
+  const { text: safe, redacted } = redactBody(text);
   return {
     text: safe.length > maxChars ? safe.slice(0, maxChars) : safe,
     length: safe.length,
@@ -88,7 +104,7 @@ export function createBodyCapture({ getBody, maxBodies = MAX_BODIES, maxChars = 
         const prev = inflight.get(p.requestId);
         if (!prev && !BODY_TYPES.has(p.type)) return undefined;
         // A redirect re-sends the same id: keep the first hop's start, follow the URL.
-        inflight.set(p.requestId, { method: p.request.method, url: p.request.url, start: prev?.start ?? p.wallTime * 1000 });
+        inflight.set(p.requestId, { method: p.request.method, url: redactUrl(p.request.url), start: prev?.start ?? p.wallTime * 1000 });
         if (inflight.size > INFLIGHT_CAP) inflight.delete(inflight.keys().next().value);
       } else if (method === 'Network.responseReceived') {
         const r = inflight.get(p.requestId);

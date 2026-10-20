@@ -2,7 +2,8 @@
  * Page-execution primitives (extracted from background.js): tab resolution,
  * the locator guard, and safeExec. Everything a handler needs to touch a page.
  */
-import { fallbackByTab, wedgedTabs, tabLocks, tabControl, persistSessionState, gifRecordings, replacedTabs } from './state.js';
+import { fallbackByTab, wedgedTabs, tabLocks, tabControl, persistSessionState, refBaseFor, noteRefsShown } from './state.js';
+import { highestRefIn } from './ref-errors.js';
 import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from './page-dom.js';
 import { tabLockedMessage } from './tab-concurrency.js';
 
@@ -22,27 +23,6 @@ export async function resolveTab(tabId) {
   } catch (err) {
     throw new Error(`Tab ${tabId} not found, call browser_tabs list first. (${err.message || err})`, { cause: err });
   }
-}
-
-/**
- * Locator guard for element-targeting tools. The MCP SDK receives the raw
- * zod shape, so schema-level superRefine never runs — and direct WS clients
- * bypass the schema entirely. Without this, "neither given" surfaced as the
- * misleading "Element undefined is gone from the DOM" after a wasted
- * round-trip (critical audit #10).
- */
-export function requireTarget(params, { allowPoint = false } = {}) {
-  if (allowPoint && hasPoint(params)) return;
-  if (!params.ref && !params.selector) {
-    throw new Error(allowPoint
-      ? 'ref or selector is required, or x+y viewport coordinates (get refs from browser_snapshot / browser_find).'
-      : 'ref or selector is required (get refs from browser_snapshot / browser_find).');
-  }
-}
-
-/** Viewport coordinates given (and no element locator): act at that point. */
-export function hasPoint(params) {
-  return Number.isFinite(params.x) && Number.isFinite(params.y);
 }
 
 /**
@@ -71,7 +51,7 @@ export function withTimeout(promise, ms, makeError) {
 export function wedgedError(tabId, ms) {
   const err = new Error(`TAB_WEDGED: tab ${tabId} did not respond within ${(ms / 1000).toFixed(1)}s `
     + '(frozen main thread or a huge document). browser_navigate it elsewhere, reload it '
-    + '(browser_tabs action:"reload") or close it; other tabs are unaffected.');
+    + '(browser_navigate url:"reload") or close it; other tabs are unaffected.');
   err.code = 'TAB_WEDGED';
   return err;
 }
@@ -114,13 +94,6 @@ export async function replaceFrozenTab(tab, url, sessionId = null) {
   // So does the agent's control (incl. this very call): the popup must not list
   // the replacement it is navigating as "free".
   tabControl.move(tab.id, fresh.id);
-  // A GIF recording moves with the tab: frames keep coming, export still works.
-  const rec = gifRecordings.get(tab.id);
-  if (rec) {
-    gifRecordings.delete(tab.id);
-    gifRecordings.set(fresh.id, rec);
-  }
-  replacedTabs.set(tab.id, fresh.id);
   chrome.tabs.remove(tab.id).catch(() => { /* already gone */ });
   return fresh;
 }
@@ -143,7 +116,7 @@ export async function assertResponsive(tabId) {
 export async function safeExec(tabId, func, args = [], opts = {}) {
   const tab = await resolveTab(tabId);
   if (/^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '')) {
-    throw new Error(`Cannot access protected page (${tab.url}). Tab ${tabId} is a browser-internal page.`);
+    throw new Error(`INVALID_ARGUMENT: Cannot access protected page (${tab.url}). Tab ${tabId} is a browser-internal page.`);
   }
   const sanitized = args.map((a) => (a === undefined ? null : a));
   await assertResponsive(tabId);
@@ -220,8 +193,14 @@ async function takePageError(tabId, since) {
  * the call repeated only when the document doesn't have it yet.
  */
 export async function execDom(tabId, func, args = [], opts = {}) {
-  const res = await safeExec(tabId, func, args, opts);
-  if (!res || res.__needDom !== true) return res;
-  await safeExec(tabId, PAGE_DOM_INSTALL, [PAGE_DOM_VERSION], opts);
-  return safeExec(tabId, func, args, opts);
+  let res = await safeExec(tabId, func, args, opts);
+  if (res && res.__needDom === true) {
+    // A new document has no runtime yet. Its ref counter starts above every ref the tab's
+    // earlier documents showed (lib/state.js refHighWaterByTab): a stale ref never names one of its elements.
+    await safeExec(tabId, PAGE_DOM_INSTALL, [PAGE_DOM_VERSION, refBaseFor(tabId)], opts);
+    res = await safeExec(tabId, func, args, opts);
+  }
+  // The refs this result shows the agent (a snapshot's, or an AMBIGUOUS reply's) raise the tab's mark.
+  noteRefsShown(tabId, highestRefIn(res));
+  return res;
 }

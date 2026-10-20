@@ -44,7 +44,6 @@ g.chrome = {
 
 const { PAGE_DOM_INSTALL, PAGE_DOM_VERSION, } = await import('../extension/lib/page-dom.js');
 const { execDom, safeExec } = await import('../extension/lib/page-exec.js');
-const { handleRunAction, handleUploadFile } = await import('../extension/handlers/cdp.js');
 const session = await import('../extension/lib/cdp-session.js');
 const { fallbackByTab } = await import('../extension/lib/state.js');
 
@@ -95,61 +94,5 @@ describe('a page function that throws is a failure for its caller (was: bare nul
     expect(g.__bcPageError).toMatchObject({ message: 'listener saw this' });
     delete g.addEventListener;
     delete g.__bcErrorRecorder;
-  });
-});
-
-describe('browser_run_action', () => {
-  it('a thrown error fails with SCRIPT_ERROR (was success:true with the error as the result)', async () => {
-    runQueue.push({ result: { value: { __bcOk: false, message: 'nope' } } });
-    const res = await handleRunAction({ tabId: 5, code: '({ execute() { throw new Error("nope"); } })', actionParams: {} });
-    expect(res).toEqual({ success: false, error: 'SCRIPT_ERROR: nope' });
-  });
-
-  it('a plain value is returned once, not wrapped as text inside a content envelope', async () => {
-    runQueue.push({ result: { value: { __bcOk: true, result: 'Title' } } });
-    expect(await handleRunAction({ tabId: 5, code: 'document.title', actionParams: {} })).toEqual({ success: true, result: 'Title' });
-  });
-
-  it('an action that returns MCP-style content keeps that content as its result', async () => {
-    const content = { content: [{ type: 'text', text: 'hi' }] };
-    runQueue.push({ result: { value: { __bcOk: true, result: content } } });
-    expect(await handleRunAction({ tabId: 5, code: '({ execute() { return { content: [] }; } })', actionParams: {} }))
-      .toEqual({ success: true, result: content });
-  });
-
-  it('multi-statement code is retried as a statement body after the expression form fails to parse', async () => {
-    runQueue.push({ exceptionDetails: { text: 'Uncaught SyntaxError: Unexpected token var', exception: { className: 'SyntaxError' } } });
-    runQueue.push({ result: { value: { __bcOk: true, result: 42 } } });
-    const code = 'var a = 40; var b = 2; return a + b;';
-    const res = await handleRunAction({ tabId: 5, code, actionParams: {} });
-    expect(res).toEqual({ success: true, result: 42 });
-    const evals = cdpCalls.filter((c) => c.method === 'Runtime.evaluate' && String(c.params.expression).includes('(async function'));
-    expect(evals).toHaveLength(2);
-    expect(evals[1].params.expression).toContain(code);
-  });
-
-  it('a run that never finishes returns TIMEOUT after 25 s instead of holding the tab', async () => {
-    runQueue.push(new Promise(() => {}));
-    await session.ensureCdp(5); // attach under real timers; only the run is timed
-    vi.useFakeTimers();
-    const pending = handleRunAction({ tabId: 5, code: 'new Promise(() => {})', actionParams: {} });
-    await vi.advanceTimersByTimeAsync(25_000);
-    await expect(pending).resolves.toMatchObject({ success: false, error: expect.stringMatching(/^TIMEOUT: /) });
-  });
-});
-
-describe('browser_upload_file', () => {
-  it('sets the file once, fires no events from the page side, and reports basenames only', async () => {
-    const input: FakeElement = doc.el('input', { id: 'file', type: 'file' });
-    doc.body.append(input);
-    const res = await handleUploadFile({ tabId: 5, selector: '#file', filePath: '/Users/someone/private/resume.pdf' });
-    expect(res).toEqual({ success: true, files: ['resume.pdf'], selector: '#file' });
-    const setCalls = cdpCalls.filter((c) => c.method === 'DOM.setFileInputFiles');
-    expect(setCalls).toHaveLength(1);
-    expect(setCalls[0].params.files).toEqual(['/Users/someone/private/resume.pdf']);
-    // Chromium fires input/change itself on setFileInputFiles; the page side must not add more.
-    expect(input.events).not.toContain('input');
-    expect(input.events).not.toContain('change');
-    expect(input.attrs.has('data-bc-upload')).toBe(false);
   });
 });

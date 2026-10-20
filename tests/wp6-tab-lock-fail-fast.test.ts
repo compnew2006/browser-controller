@@ -32,9 +32,10 @@ describe('explicit tab locks fail fast (TAB_LOCKED)', () => {
     await expect(runOnTab(locks, mutex, 7, 'sessionB', async () => 'free-ok')).resolves.toBe('free-ok');
   });
 
-  it('a call with no session (status reads) is never gated', async () => {
+  it('a call with no session is refused on a tab another session owns, and never queues behind it (L5)', async () => {
     locks.lock(9, 'sessionA');
-    await expect(runOnTab(locks, mutex, 9, null, async () => 'read-ok')).resolves.toBe('read-ok');
+    await expect(runOnTab(locks, mutex, 9, null, async () => 'read-ok')).rejects.toThrow(/^TAB_LOCKED: tab 9 is locked by sessionA/);
+    expect(locks.owner(9)).toBe('sessionA');
   });
 
   it('a lock attempt by another session is refused with the same TAB_LOCKED error', () => {

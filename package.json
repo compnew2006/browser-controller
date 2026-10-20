@@ -1,7 +1,7 @@
 {
   "name": "browser-controller",
   "mcpName": "io.github.noiemany/browser-controller",
-  "version": "2.7.0",
+  "version": "3.0.0",
   "description": "MCP server + Chrome extension that gives AI agents control of your real browser with existing sessions and logins",
   "type": "module",
   "bin": {
@@ -20,7 +20,6 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "smoke:real-chrome": "node scripts/smoke-real-chrome.mjs",
-    "smoke:webmcp": "node scripts/smoke-webmcp.mjs",
     "lint": "eslint mcp-server/src tests extension vitest.config.ts eslint.config.js",
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "typecheck": "tsc -p mcp-server/tsconfig.json --noEmit",

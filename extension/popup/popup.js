@@ -129,7 +129,7 @@ async function daemonFetch(pathAndQuery) {
 
 /**
  * Auto-pair: fetch the daemon's token over localhost and hand it to the
- * background worker so the WS connection carries ?token=. Runs once on popup
+ * background worker, which offers it in the WS subprotocol. Runs once on popup
  * open; safe to re-run. Silent if the daemon isn't up yet (it'll retry).
  * Requires the enrollment secret — without it /pair returns 403.
  */

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { buildIpcHello } from '../mcp-server/src/protocol.js';
 
 /**
  * Integration tests for the daemon's client-lifecycle behavior:
@@ -140,7 +141,7 @@ function connectClient(name: string, opts?: { replyToPing?: boolean }): Promise<
       }
     });
     socket.on('error', (e) => { if (!resolved) { clearTimeout(timer); reject(e); } });
-    socket.write(JSON.stringify({ kind: 'hello', token, agentName: name }) + '\n');
+    socket.write(JSON.stringify(buildIpcHello(token, name)) + '\n');
   });
 }
 
@@ -314,7 +315,7 @@ describe('daemon client lifecycle', { timeout: 30_000 }, () => {
         });
         socket.on('close', () => { clearTimeout(timer); resolve(); });
         socket.on('error', (e) => { clearTimeout(timer); reject(e); });
-        socket.write(JSON.stringify({ kind: 'hello', token: 'wrong-token', agentName: 'Bad' }) + '\n');
+        socket.write(JSON.stringify(buildIpcHello('wrong-token', 'Bad')) + '\n');
       })
     ).resolves.toBeUndefined();
   });
@@ -466,7 +467,7 @@ describe('daemon per-session rate limiting', { timeout: 30_000 }, () => {
         }
       });
       socket.on('error', (e) => { clearTimeout(timer); reject(e); });
-      socket.write(JSON.stringify({ kind: 'hello', token: rlToken, agentName: 'RlAgent' }) + '\n');
+      socket.write(JSON.stringify(buildIpcHello(rlToken, 'RlAgent')) + '\n');
     });
   }
 
@@ -475,13 +476,14 @@ describe('daemon per-session rate limiting', { timeout: 30_000 }, () => {
     // the 3rd+ are refused outright with the rate-limit message.
     const { results } = await connectAndFireCalls(BUDGET + 2);
     expect(results.length).toBe(BUDGET + 2);
-    const rateLimited = results.filter((r) => r.startsWith('Rate limit exceeded'));
-    const admitted = results.filter((r) => !r.startsWith('Rate limit exceeded'));
+    const rateLimited = results.filter((r) => r.includes('Rate limit exceeded'));
+    const admitted = results.filter((r) => !r.includes('Rate limit exceeded'));
     // Exactly the overflow count was refused on rate grounds...
     expect(rateLimited.length).toBe(2);
+    // ...each with the RATE_LIMITED code (mcp-server/dist must be rebuilt for the daemon to say so)...
+    rateLimited.forEach((r) => expect(r.startsWith('RATE_LIMITED: ')).toBe(true));
     // ...and the admitted ones are NOT rate-limit errors (they fail downstream).
     expect(admitted.length).toBe(BUDGET);
-    admitted.forEach((r) => expect(r.startsWith('Rate limit exceeded')).toBe(false));
   });
 
   it('fresh budget after reconnect (new session = new window)', async () => {

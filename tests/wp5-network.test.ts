@@ -5,15 +5,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
   storage: { session: { get: async () => ({}), set: async () => {} }, local: { get: async () => ({}), set: async () => {} } },
 };
 
-const { createNetworkCapture, summarizeRequestBody, pushNetworkEntry, listView, typeMatcher, BODY_PREVIEW_MAX, REDACTED } =
+const { createNetworkCapture, summarizeRequestBody, pushNetworkEntry, listView, BODY_PREVIEW_MAX, REDACTED } =
   await import('../extension/lib/network-capture.js');
-const { handleNetwork } = await import('../extension/handlers/tabs.js');
+const { handleLogs } = await import('../extension/handlers/logs.js');
 const { networkByTab, getTabBuffer } = await import('../extension/lib/state.js');
 
 const bytes = (text: string) => ({ bytes: new TextEncoder().encode(text).buffer });
 const rawBody = (text: string) => ({ raw: [bytes(text)] });
 
-describe('request body preview (browser_network requestId view)', () => {
+describe('request body preview (browser_logs requestId view)', () => {
   it('summarises form data by field and redacts the values of secret-looking keys', () => {
     expect(summarizeRequestBody({ formData: { user: ['ann'], password: ['hunter2'], api_key: ['k-1', 'k-2'] } })).toEqual({
       kind: 'form',
@@ -112,7 +112,7 @@ describe('network buffer eviction', () => {
   });
 });
 
-describe('list view and resource filters', () => {
+describe('list view', () => {
   it('lists only network fields: no intercept data, bodies or headers leak in', () => {
     const entry = {
       id: '1', method: 'POST', url: 'https://example.test/api', status: 200, type: 'xmlhttprequest', timestamp: 1, durationMs: 3,
@@ -121,14 +121,9 @@ describe('list view and resource filters', () => {
     };
     expect(Object.keys(listView(entry)).sort()).toEqual(['durationMs', 'id', 'method', 'status', 'timestamp', 'type', 'url']);
   });
-
-  it('a resource type filter rejects unknown names and inherited object properties', () => {
-    expect(() => typeMatcher('constructor')).toThrow(/Unknown resource type "constructor"/);
-    expect(typeMatcher(['xhr', 'img'])).toBeTypeOf('function');
-  });
 });
 
-describe('browser_network requestId view carries the body preview', () => {
+describe('browser_logs requestId view carries the body preview', () => {
   beforeEach(() => {
     networkByTab.clear();
     const c = createNetworkCapture({ store: (tabId: number, entry: any) => pushNetworkEntry(getTabBuffer(networkByTab, tabId), entry) });
@@ -137,9 +132,10 @@ describe('browser_network requestId view carries the body preview', () => {
   });
 
   it('returns the body in full by requestId, redacted, and keeps it out of the list', async () => {
-    const list = await handleNetwork({ tabId: 5 }) as any;
+    const list = await handleLogs({ tabId: 5, kind: 'network' }) as any;
     expect(list.requests[0]).not.toHaveProperty('requestBody');
-    const one = await handleNetwork({ tabId: 5, requestId: 'b1' }) as any;
+    const one = await handleLogs({ tabId: 5, requestId: 'b1' }) as any;
     expect(one.request.requestBody.preview).toBe(`{"token":"${REDACTED}","n":1}`);
+    expect(one.text).toContain(`payload (${one.request.requestBody.size} bytes): {"token":"${REDACTED}","n":1}`);
   });
 });

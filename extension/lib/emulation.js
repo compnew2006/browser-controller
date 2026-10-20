@@ -12,6 +12,10 @@ export const NETWORK_PRESETS = Object.freeze({
   none: { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 },
 });
 
+/** Largest viewport side a page may be given, in CSS px. */
+const MAX_VIEWPORT_PX = 10_000;
+const isViewportSize = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_VIEWPORT_PX;
+
 /**
  * The Emulation.UserAgentMetadata that matches a real browser's client hints. A bare
  * userAgent override makes Chrome empty navigator.userAgentData (brands and platform
@@ -36,11 +40,30 @@ export function userAgentMetadataFrom(real) {
 /**
  * Commands for the requested settings and the resulting active state.
  * Settings merge with `active`; "none", rate 1, null and "" clear their override.
+ * `viewport` sets the page's CSS viewport without resizing the window; null clears it.
  * `userAgentMetadata` (from userAgentMetadataFrom) rides along with a non-empty userAgent.
  */
 export function emulationPlan(params, active, { userAgentMetadata } = {}) {
   const state = { ...active };
   const commands = [];
+
+  if (params.viewport !== undefined) {
+    if (params.viewport === null) {
+      commands.push(['Emulation.clearDeviceMetricsOverride', {}]);
+      delete state.viewport;
+    } else {
+      const { width, height, deviceScaleFactor = 1, mobile = false } = params.viewport;
+      if (!isViewportSize(width) || !isViewportSize(height)) {
+        throw new Error(`INVALID_ARGUMENT: viewport needs whole-pixel width and height from 1 to ${MAX_VIEWPORT_PX}.`);
+      }
+      if (!(deviceScaleFactor > 0 && deviceScaleFactor <= 10)) {
+        throw new Error('INVALID_ARGUMENT: viewport deviceScaleFactor must be above 0 and at most 10.');
+      }
+      const viewport = { width, height, deviceScaleFactor, mobile: Boolean(mobile) };
+      commands.push(['Emulation.setDeviceMetricsOverride', viewport]);
+      state.viewport = viewport;
+    }
+  }
 
   if (params.network !== undefined) {
     const preset = NETWORK_PRESETS[params.network];

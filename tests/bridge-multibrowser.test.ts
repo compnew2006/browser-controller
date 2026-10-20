@@ -24,7 +24,7 @@ async function startBridge() {
 }
 
 /** A fake extension: answers the hello with its browser identity and echoes tool calls with its name. */
-async function fakeBrowser(p: number, browserId: string, opts: { silent?: boolean } = {}) {
+async function fakeBrowser(p: number, browserId: string, opts: { silent?: boolean; listText?: string } = {}) {
   const ws = new WebSocket(`ws://localhost:${p}`);
   sockets.push(ws);
   const calls: string[] = [];
@@ -33,7 +33,13 @@ async function fakeBrowser(p: number, browserId: string, opts: { silent?: boolea
     if (msg.type === 'hello') ws.send(JSON.stringify({ ...buildExtensionHelloAck('test'), browserId, browserLabel: `Chrome ${browserId}` }));
     if (msg.tool) {
       calls.push(msg.tool);
-      if (!opts.silent) ws.send(JSON.stringify({ id: msg.id, success: true, result: { from: browserId } }));
+      // silent: never answers a call, except a browser_tabs list (the bridge selects the browser before it lists).
+      if (opts.silent && msg.tool !== 'browser_tabs') return;
+      // A tab list answers with text (what the agent reads); other calls answer with machine data only.
+      const result = msg.tool === 'browser_tabs'
+        ? (opts.listText !== undefined ? { success: true, text: opts.listText } : { from: browserId, text: `tabs of ${browserId}` })
+        : { from: browserId };
+      ws.send(JSON.stringify({ id: msg.id, success: true, result }));
     }
   });
   await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
@@ -41,28 +47,40 @@ async function fakeBrowser(p: number, browserId: string, opts: { silent?: boolea
   return { ws, calls };
 }
 
+/** The browsers a session sees, as browser_tabs lists them (one header line each once several are connected). */
+async function browsersSeen(bridge: ExtensionBridge, sessionId: string) {
+  const res = await bridge.callTool('browser_tabs', { action: 'list' }, sessionId) as { text: string };
+  return [...res.text.matchAll(/^browser (\S+) "([^"]*)"( \(selected\))?$/gm)]
+    .map((m) => ({ browserId: m[1], label: m[2], selected: m[3] !== undefined }));
+}
+
+/** The browser that answered this session's browser_tabs list (a fake's text ends with "tabs of <browserId>"). */
+async function answeredBy(bridge: ExtensionBridge, sessionId: string, browser?: string): Promise<string> {
+  const params = browser === undefined ? { action: 'list' } : { action: 'list', browser };
+  const res = await bridge.callTool('browser_tabs', params, sessionId) as { text: string };
+  return res.text.split('\n').pop()!.replace(/^tabs of /, '');
+}
+
 describe('multi-browser bridge', () => {
   it('keeps several browsers connected; the first one seen is the default', async () => {
     const { bridge, port: p } = await startBridge();
     await fakeBrowser(p, 'work');
     await fakeBrowser(p, 'home');
-    const list = bridge.callTool('browser_list_browsers', {}, 's1') as Promise<any>;
-    const { browsers } = await list;
-    expect(browsers.map((b: any) => b.browserId).sort()).toEqual(['home', 'work']);
-    expect(browsers.find((b: any) => b.default).browserId).toBe('work');
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'work' });
+    const browsers = await browsersSeen(bridge, 's1');
+    expect(browsers.map((b) => b.browserId).sort()).toEqual(['home', 'work']);
+    expect(browsers.find((b) => b.selected)?.browserId).toBe('work');
+    expect(await answeredBy(bridge, 's1')).toBe('work');
   });
 
   it('routes a session to the browser it selected, other sessions keep the default', async () => {
     const { bridge, port: p } = await startBridge();
     await fakeBrowser(p, 'work');
     await fakeBrowser(p, 'home');
-    expect(await bridge.callTool('browser_select_browser', { browserId: 'Chrome home' }, 's1')).toMatchObject({ selected: 'home' });
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'home' });
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'work' });
-    await bridge.callTool('browser_select_browser', { browserId: 'auto' }, 's1');
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'work' });
-    await expect(bridge.callTool('browser_select_browser', { browserId: 'nope' }, 's1')).rejects.toThrow(/No connected browser/);
+    expect(await answeredBy(bridge, 's1', 'Chrome home')).toBe('home');
+    expect(await answeredBy(bridge, 's1')).toBe('home');
+    expect(await answeredBy(bridge, 's2')).toBe('work');
+    expect(await answeredBy(bridge, 's1', 'auto')).toBe('work');
+    await expect(bridge.callTool('browser_tabs', { action: 'list', browser: 'nope' }, 's1')).rejects.toThrow(/^NOT_CONNECTED: No connected browser/);
   });
 
   it('a reconnect of the same browser replaces its old socket; a different browser is untouched', async () => {
@@ -72,22 +90,22 @@ describe('multi-browser bridge', () => {
     const firstClosed = new Promise<void>((r) => first.ws.once('close', () => r()));
     await fakeBrowser(p, 'work');
     await firstClosed;
-    const { browsers } = await (bridge.callTool('browser_list_browsers', {}, 's1') as Promise<any>);
-    expect(browsers.map((b: any) => b.browserId).sort()).toEqual(['home', 'work']);
+    const browsers = await browsersSeen(bridge, 's1');
+    expect(browsers.map((b) => b.browserId).sort()).toEqual(['home', 'work']);
   });
 
   it('one browser disconnecting fails only its own calls', async () => {
     const { bridge, port: p } = await startBridge();
     const work = await fakeBrowser(p, 'work', { silent: true });
     await fakeBrowser(p, 'home');
-    await bridge.callTool('browser_select_browser', { browserId: 'work' }, 's1');
+    await answeredBy(bridge, 's1', 'work');
     const hanging = bridge.callTool('browser_wait', { delay: 10 }, 's1');
     await new Promise((r) => setTimeout(r, 50));
     work.ws.close();
     await expect(hanging).rejects.toThrow(/disconnected/);
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'home' });
+    expect(await answeredBy(bridge, 's2')).toBe('home');
     // The session that picked the gone browser gets a clear error, not the wrong browser.
-    await expect(bridge.callTool('browser_tabs', { action: 'list' }, 's1')).rejects.toThrow(/not connected/);
+    await expect(bridge.callTool('browser_tabs', { action: 'list' }, 's1')).rejects.toThrow(/^NOT_CONNECTED: Selected browser "work" is not connected/);
   });
 
   it('an auto session stays on its browser when another one connects (batch/retry safe)', async () => {
@@ -101,30 +119,70 @@ describe('multi-browser bridge', () => {
     expect(work.calls).toEqual(['browser_click', 'browser_type']);
     expect(home.calls).toEqual([]);
     // A new session takes the default (the first browser seen); list shows each session's own browser.
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'work' });
-    const listed = await (bridge.callTool('browser_list_browsers', {}, 's1') as Promise<any>);
-    expect(listed).toMatchObject({ selectedBrowserId: 'work', pinnedAuto: true });
-    expect(listed.browsers.find((b: any) => b.selected).browserId).toBe('work');
+    expect(await answeredBy(bridge, 's2')).toBe('work');
+    expect((await browsersSeen(bridge, 's1')).find((b) => b.selected)?.browserId).toBe('work');
     // A failed selection keeps the pin.
-    await expect(bridge.callTool('browser_select_browser', { browserId: 'nope' }, 's1')).rejects.toThrow(/No connected browser/);
+    await expect(bridge.callTool('browser_tabs', { action: 'list', browser: 'nope' }, 's1')).rejects.toThrow(/^NOT_CONNECTED: No connected browser/);
     expect(await bridge.callTool('browser_type', { tabId: 7, text: 'z' }, 's1')).toEqual({ from: 'work' });
     // Its browser gone: an error, never a silent switch to the other browser.
     work.ws.close();
     await new Promise((r) => setTimeout(r, 60));
-    await expect(bridge.callTool('browser_type', { tabId: 7, text: 'y' }, 's1')).rejects.toThrow(/"work" disconnected/);
+    await expect(bridge.callTool('browser_type', { tabId: 7, text: 'y' }, 's1')).rejects.toThrow(/^NOT_CONNECTED: This session's browser "work" disconnected/);
     expect(home.calls).toEqual([]); // nothing was routed to the browser that connected later
     // Selecting "auto" again re-pins to the current default.
-    await bridge.callTool('browser_select_browser', { browserId: 'auto' }, 's1');
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'home' });
+    expect(await answeredBy(bridge, 's1', 'auto')).toBe('home');
   });
 
   it('releasing a session forgets its browser choice', async () => {
     const { bridge, port: p } = await startBridge();
     await fakeBrowser(p, 'work');
     await fakeBrowser(p, 'home');
-    await bridge.callTool('browser_select_browser', { browserId: 'home' }, 's1');
+    await answeredBy(bridge, 's1', 'home');
     bridge.sendControl('releaseSession', { sessionId: 's1' });
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'work' });
+    expect(await answeredBy(bridge, 's1')).toBe('work');
+  });
+
+  it('browser_tabs picks the session browser, and a list starts with one line per browser when several are connected', async () => {
+    const { bridge, port: p } = await startBridge();
+    await fakeBrowser(p, 'work', { listText: 'tabs of work' });
+    await fakeBrowser(p, 'home', { listText: 'tabs of home' });
+    const list = await bridge.callTool('browser_tabs', { action: 'list' }, 's1') as { text: string };
+    expect(list.text).toBe('browser work "Chrome work" (selected)\nbrowser home "Chrome home"\n\ntabs of work');
+    // browser: "home" selects it first; the list then shows home as selected, and the browser param never reaches the extension.
+    const picked = await bridge.callTool('browser_tabs', { action: 'list', browser: 'home' }, 's1') as { text: string };
+    expect(picked.text).toBe('browser work "Chrome work"\nbrowser home "Chrome home" (selected)\n\ntabs of home');
+    // "auto" re-pins the session to the default.
+    const auto = await bridge.callTool('browser_tabs', { action: 'list', browser: 'auto' }, 's1') as { text: string };
+    expect(auto.text.split('\n')[0]).toBe('browser work "Chrome work" (selected)');
+  });
+
+  it('browser_tabs with one browser connected returns the extension text unchanged', async () => {
+    const { bridge, port: p } = await startBridge();
+    await fakeBrowser(p, 'work', { listText: 'only tabs' });
+    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ success: true, text: 'only tabs' });
+  });
+
+  it('browser_tabs close and focus get no browser lines, and an unknown browser fails before anything is sent', async () => {
+    const { bridge, port: p } = await startBridge();
+    const work = await fakeBrowser(p, 'work', { listText: 'x' });
+    await fakeBrowser(p, 'home', { listText: 'x' });
+    await bridge.callTool('browser_tabs', { action: 'focus', tabId: 7 }, 's1');
+    expect(work.calls).toEqual(['browser_tabs']);
+    await expect(bridge.callTool('browser_tabs', { action: 'list', browser: 'nope' }, 's1')).rejects.toThrow(/^NOT_CONNECTED: No connected browser "nope"/);
+    expect(work.calls).toEqual(['browser_tabs']);
+  });
+
+  it('a browser selection without a client session is INVALID_ARGUMENT, not a connection problem', async () => {
+    const { bridge, port: p } = await startBridge();
+    await fakeBrowser(p, 'work');
+    await expect(bridge.callTool('browser_tabs', { action: 'list', browser: 'work' })).rejects.toThrow(/^INVALID_ARGUMENT: Selecting a browser needs a client session/);
+  });
+
+  it('waiting for an extension that never connects says NOT_CONNECTED and what to check', async () => {
+    const { bridge } = await startBridge();
+    await expect(bridge.waitForConnection(50)).rejects.toThrow(
+      /^NOT_CONNECTED: no Browser Controller extension connected within 0\.05 s; check that it is installed and enabled$/,
+    );
   });
 
   it('the extension announces its browser identity in helloAck', () => {

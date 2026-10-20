@@ -114,10 +114,20 @@ describe('TabLockMap (task 2.2)', () => {
     expect(locks.owner(14)).toBe('sessionA');
   });
 
-  it('check passes when sessionId is null (no locking semantics)', () => {
+  it('a call with no session is a session of its own: refused on a tab another session owns (L5)', () => {
     locks.lock(13, 'agentA');
-    // A call with no session bypasses locking entirely (used by status reads).
-    expect(() => locks.check(13, null)).not.toThrow();
+    expect(() => locks.check(13, null)).toThrow(/^TAB_LOCKED: tab 13 is locked by agentA/);
+    expect(locks.owner(13)).toBe('agentA');
+  });
+
+  it('a call with no session passes on a tab nobody owns', () => {
+    expect(() => locks.check(19, null)).not.toThrow();
+  });
+
+  it('an anonymous lock is owned by the anonymous session: another anonymous call passes, a named one is refused', () => {
+    locks.lock(21, null);
+    expect(() => locks.check(21, null)).not.toThrow();
+    expect(() => locks.check(21, 'agentA')).toThrow(/^TAB_LOCKED/);
   });
 });
 

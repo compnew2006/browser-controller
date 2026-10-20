@@ -5,15 +5,15 @@ import { beforeEach, describe, expect, it } from 'vitest';
   storage: { session: { get: async () => ({}), set: async () => {} }, local: { get: async () => ({}), set: async () => {} } },
 };
 
-const { createNetworkCapture, redactHeaders, listView, REDACTED } = await import('../extension/lib/network-capture.js');
-const { handleNetwork } = await import('../extension/handlers/tabs.js');
-const { networkByTab, getTabBuffer, pushCapped } = await import('../extension/lib/state.js');
+const { createNetworkCapture, redactHeaders, redactUrl, listView, pushNetworkEntry, REDACTED } = await import('../extension/lib/network-capture.js');
+const { handleLogs } = await import('../extension/handlers/logs.js');
+const { networkByTab, getTabBuffer } = await import('../extension/lib/state.js');
 
 const LONG = `https://example.test/track?${Array.from({ length: 40 }, (_, i) => `param${i}=${'v'.repeat(15)}`).join('&')}`;
 
 function capture() {
   const stored: Array<[number, any]> = [];
-  const c = createNetworkCapture({ store: (tabId: number, entry: any) => { stored.push([tabId, entry]); pushCapped(getTabBuffer(networkByTab, tabId), entry); } });
+  const c = createNetworkCapture({ store: (tabId: number, entry: any) => { stored.push([tabId, entry]); pushNetworkEntry(getTabBuffer(networkByTab, tabId), entry); } });
   return { c, stored };
 }
 
@@ -74,7 +74,7 @@ describe('network capture (webRequest → per-tab buffer)', () => {
   });
 });
 
-describe('browser_network', () => {
+describe('browser_logs network block and requestId', () => {
   beforeEach(() => {
     networkByTab.clear();
     const { c } = capture();
@@ -84,19 +84,25 @@ describe('browser_network', () => {
     request(c, '4', 'https://example.test/app.js', { type: 'script' });
   });
 
-  it('filters by resource type, with xhr/fetch/document aliases and lists', async () => {
-    const urls = async (type: unknown) => (await handleNetwork({ tabId: 5, type }) as any).requests.map((r: any) => r.id);
-    expect(await urls('xhr')).toEqual(['2']);
-    expect(await urls('fetch')).toEqual(['2']);
-    expect(await urls('document')).toEqual(['1']);
-    expect(await urls(['image', 'script'])).toEqual(['3', '4']);
+  it('filters the URLs case-insensitively', async () => {
+    const urls = async (filter: string) => (await handleLogs({ tabId: 5, kind: 'network', filter }) as any).requests.map((r: any) => r.id);
+    expect(await urls('API/DATA')).toEqual(['2']);
+    expect(await urls('example.test')).toEqual(['1', '2', '3', '4']);
+    expect(await urls('nothing-matches')).toEqual([]);
   });
 
-  it('lists lean entries and returns one request in full by requestId', async () => {
-    const list = await handleNetwork({ tabId: 5 }) as any;
-    expect(list.requests.every((r: any) => !('requestHeaders' in r))).toBe(true);
-    expect(list.requests[2].url).toMatch(/…\[\+\d+ chars\]$/);
-    const one = await handleNetwork({ tabId: 5, requestId: '2' }) as any;
+  it('prints one line per request with a shortened URL, and returns one request in full by requestId', async () => {
+    const res = await handleLogs({ tabId: 5, kind: 'network' }) as any;
+    const lines = res.text.split('\n');
+    expect(lines[0]).toBe('network (4):');
+    expect(lines).toContain('r2 GET 200 xhr 42ms https://example.test/api/data');
+    const long = lines.find((l: string) => l.startsWith('r3 '));
+    expect(long).toMatch(/^r3 GET 204 image 42ms https:\/\/.*…$/);
+    expect(long.slice(long.indexOf('https://'))).toHaveLength(120);
+    expect(res.requests.every((r: any) => !('requestHeaders' in r))).toBe(true);
+    expect(res.requests[2].url).toBe(LONG); // the data keeps the full URL; only the line is cut
+
+    const one = await handleLogs({ tabId: 5, requestId: 'r2' }) as any;
     expect(one).toMatchObject({
       success: true,
       request: {
@@ -105,13 +111,26 @@ describe('browser_network', () => {
         responseHeaders: [{ name: 'x-test-header', value: 'bc-fixture' }],
       },
     });
-    expect((await handleNetwork({ tabId: 5, requestId: '3' }) as any).request.url).toBe(LONG);
-    const missing = await handleNetwork({ tabId: 5, requestId: 'nope' }) as any;
-    expect(missing.success).toBe(false);
-    expect(missing.error).toMatch(/nope/);
+    expect(one.text).toContain(`Cookie: ${REDACTED}`);
+    expect(one.text).toContain('x-test-header: bc-fixture');
+    expect((await handleLogs({ tabId: 5, requestId: '3' }) as any).request.url).toBe(LONG);
+    await expect(handleLogs({ tabId: 5, requestId: 'nope' })).rejects.toThrow(/^NOT_FOUND: request nope/);
   });
 
-  it('rejects an unknown resource type instead of silently returning nothing', async () => {
-    await expect(handleNetwork({ tabId: 5, type: 'pictures' })).rejects.toThrow(/Unknown resource type "pictures"/);
+  it('rejects a kind or a limit outside the contract instead of returning nothing', async () => {
+    await expect(handleLogs({ tabId: 5, kind: 'pictures' })).rejects.toThrow(/^INVALID_ARGUMENT: kind/);
+    await expect(handleLogs({ tabId: 5, kind: 'network', limit: 201 })).rejects.toThrow(/^INVALID_ARGUMENT: limit/);
+  });
+
+});
+
+describe('secret query values never reach the buffer (L3)', () => {
+  beforeEach(() => { networkByTab.clear(); });
+
+  it('a stored request URL has its secret-looking query values masked; the navigation URL is untouched', () => {
+    const { c, stored } = capture();
+    request(c, 'q1', 'https://api.test/items?access_token=abc123&page=2');
+    expect(stored[0][1].url).toBe('https://api.test/items?access_token=***&page=2');
+    expect(redactUrl('https://api.test/a?secret=1#frag')).toBe('https://api.test/a?secret=***#frag');
   });
 });

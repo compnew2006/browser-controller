@@ -6,11 +6,15 @@
  * autocomplete menus) and never fire focus/blur while the window is in the
  * background. Legacy grids and lookup widgets depend on all of that, so the
  * write tools now drive the page the way a user does, like Claude in Chrome.
- * The synthetic path stays as the fallback when CDP can't attach.
+ * There is no synthetic fallback: when the debugger cannot attach, input fails
+ * with DEBUGGER_UNAVAILABLE (requireSender).
  */
-import { ensureCdp, ensureViewport, hasCdp } from './cdp-session.js';
-import { safeExec, execDom } from './page-exec.js';
+import { ensureCdp, ensureViewport, hasCdp, getOpenDialog, subscribeCdpEvents } from './cdp-session.js';
+import { safeExec, execDom, getFallback, wedgedError } from './page-exec.js';
+import { wedgedTabs } from './state.js';
 import { agentCursorEnabled } from './overlay.js';
+import { parseTarget } from './target.js';
+import { refErrorMessage } from './ref-errors.js';
 
 const MOD_BITS = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
 
@@ -76,6 +80,17 @@ export function keyDefinition(rawKey) {
   return { key: ch, code: '', vk: 0, text: ch };
 }
 
+/**
+ * Control+a / Meta+a (no alt, no shift): select all in the focused field. macOS Chrome
+ * binds Control+a to "line start" and reads select-all from the key event's `commands`
+ * (the editing command Chrome itself sends for Cmd+A), so the command goes out with the
+ * key on every OS.
+ */
+function selectAllCombo(key, modifiers) {
+  const ctrlOrMeta = modifiers & (MOD_BITS.ctrl | MOD_BITS.meta);
+  return /^a$/i.test(key) && ctrlOrMeta !== 0 && !(modifiers & (MOD_BITS.alt | MOD_BITS.shift));
+}
+
 /** One full key press (keyDown[+char] / keyUp). With ctrl/alt/meta no text is produced. */
 export async function cdpKeyPress(send, rawKey, mods = []) {
   const def = keyDefinition(rawKey);
@@ -86,23 +101,9 @@ export async function cdpKeyPress(send, rawKey, mods = []) {
     type: printable ? 'keyDown' : 'rawKeyDown',
     ...base,
     ...(printable ? { text: def.text, unmodifiedText: def.text } : {}),
+    ...(selectAllCombo(def.key, modifiers) ? { commands: ['selectAll'] } : {}),
   });
   await send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
-}
-
-/** Up to this length text is typed key by key (keydown/keypress/input/keyup per char). */
-export const PER_KEY_MAX = 300;
-
-export async function cdpTypeText(send, text) {
-  if ([...text].length > PER_KEY_MAX) {
-    await send('Input.insertText', { text });
-    return;
-  }
-  for (const ch of text) {
-    if (ch === '\n') { await cdpKeyPress(send, 'Enter'); continue; }
-    if (ch === '\t') { await cdpKeyPress(send, 'Tab'); continue; }
-    await cdpKeyPress(send, ch);
-  }
 }
 
 export async function cdpClickAt(send, x, y, { button = 'left', clickCount = 1, modifiers = 0 } = {}) {
@@ -116,28 +117,32 @@ export async function cdpClickAt(send, x, y, { button = 'left', clickCount = 1, 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Page-side: resolve the target through the shared DOM runtime (ref registry →
- * first visible selector match across shadow roots and same-origin iframes →
- * verified fallback), scroll it into view, optionally focus/select it, and
+ * Page-side: resolve `target` (the parsed lib/target.js object) through the shared DOM
+ * runtime (D.resolveTarget), scroll it into view, optionally focus/select it, and
  * return its centre in TOP-level viewport coordinates (what CDP expects).
+ * A point `target` is returned as it is: no scroll, no focus, no element checks.
  * Also opens the agent's input window (__bcAgentInputUntil, lib/overlay.js) for
  * a few seconds, so the user-input block lets its trusted events through. With
  * `cursor` ({ effect, count }) the agent cursor glides to that centre (`cursorMs`).
  * Kept self-contained: it is serialized into the page by chrome.scripting.
  */
-function pageLocate(ref, sel, fb, mode, cursor, check) {
+function pageLocate(fb, mode, cursor, check, target) {
+  // `fb` is the snapshot's fallback descriptor of a ref target (lib/state.js fallbacks).
   const D = globalThis.__bcDom;
-  // An older runtime (installed before an extension update) has no cursor or clickTarget.
-  if (!D || !D.clickTarget || (cursor && !D.cursor)) return { __needDom: true };
+  // An older runtime (installed before an extension update) has no cursor, clickTarget or resolveTarget.
+  if (!D || !D.clickTarget || (cursor && !D.cursor) || (target && !D.resolveTarget)) return { __needDom: true };
   let el = null;
   let via = 'ref';
-  if (ref || sel || fb) {
-    const r = D.resolve(ref, sel, fb);
-    if (r.error === 'INVALID_SELECTOR') return { success: false, error: `Invalid CSS selector: ${sel}` };
-    if (r.el) { el = r.el; via = r.via; }
+  let viewPoint = null;
+  if (target) {
+    const r = D.resolveTarget(target, fb);
+    if (r.error) return { success: false, error: r.error, url: location.href, ...(r.issued !== undefined ? { issued: r.issued } : {}), ...(r.earlier ? { earlier: true } : {}) };
+    el = r.el || null;
+    via = r.via;
+    viewPoint = r.point || null;
   }
-  if (!el && (mode === 'active' || mode === 'focused' || mode === 'focused-clear')) {
-    el = document.activeElement;
+  if (!el && !viewPoint && (mode === 'active' || mode === 'focused' || mode === 'focused-clear')) {
+    el = document.activeElement || document.body;
     // Descend into focused shadow roots / same-origin frames.
     for (let i = 0; el && i < 10; i++) {
       const s = D.shadowOf(el);
@@ -147,15 +152,36 @@ function pageLocate(ref, sel, fb, mode, cursor, check) {
       break;
     }
     via = 'active';
-    // type without a target needs a real field, not the page body.
-    if (mode !== 'active' && (!el || el === document.body || el === document.documentElement)) {
+    // Typing without a target needs a real field (text-like input, textarea, contenteditable),
+    // not a button, a select or the page body. Keys without text need no field.
+    const typable = !!el && (el.isContentEditable || el.tagName === 'TEXTAREA'
+      || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'image', 'range', 'color', 'hidden'].includes(el.type)));
+    if (mode !== 'active' && !typable) {
       return { success: false, error: 'NO_FOCUS' };
     }
   }
-  if (!el) return { success: false, error: 'REF_GONE', _ref: ref, url: location.href };
+  if (!el && !viewPoint) return { success: false, error: 'REF_GONE', url: location.href };
 
   // The agent's trusted input passes the user-input block (see overlay.js).
   window.__bcAgentInputUntil = Date.now() + 8000;
+
+  if (viewPoint) {
+    // A point is aimed at as it is: no scroll, no focus, no element checks. `visible`
+    // here means the point is inside the viewport.
+    const inView = viewPoint.x >= 0 && viewPoint.y >= 0 && viewPoint.x <= window.innerWidth && viewPoint.y <= window.innerHeight;
+    const cursorMs = cursor && inView && D.cursor ? D.cursor(viewPoint.x, viewPoint.y, cursor.effect, cursor.count) : 0;
+    return {
+      success: true,
+      x: viewPoint.x, y: viewPoint.y,
+      zeroViewport: window.innerWidth === 0 || window.innerHeight === 0,
+      visible: inView,
+      focused: false,
+      needsSelectAll: false,
+      hasText: false,
+      ...(cursorMs ? { cursorMs } : {}),
+      via: 'point',
+    };
+  }
 
   if (via !== 'active') el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
   if (mode === 'focus' || mode === 'clear' || mode === 'focused-clear') {
@@ -191,6 +217,7 @@ function pageLocate(ref, sel, fb, mode, cursor, check) {
   let point = { x, y };
   let box = rect;
   let reportVia = via;
+  let onLabel = false;
   if (check === 'click') {
     const aim = D.clickTarget(el);
     if (aim.message) return { success: false, error: aim.message, x, y };
@@ -198,6 +225,7 @@ function pageLocate(ref, sel, fb, mode, cursor, check) {
       point = { x: aim.x, y: aim.y };
       box = aim.node.getBoundingClientRect();
       reportVia = aim.via;
+      onLabel = aim.via === 'label';
     }
   }
   // Agent cursor (lib/page-dom.js): glide to the point the real input will hit.
@@ -213,6 +241,7 @@ function pageLocate(ref, sel, fb, mode, cursor, check) {
     hasText: hasValue ? el.value.length > 0 : (el.textContent || '').length > 0,
     ...(cursorMs ? { cursorMs } : {}),
     ...(reportVia !== 'ref' ? { via: reportVia } : {}),
+    ...(onLabel ? { onLabel: true } : {}),
     // A fallback re-resolution says what it actually hit, so a wrong guess is visible.
     ...(via === 'fallback' ? { target: { role: D.roleOf(el), name: D.nameOf(el).slice(0, 60) } } : {}),
   };
@@ -234,7 +263,8 @@ function pageRelease() {
   const target = located && located.isConnected !== false ? located : (focusedTag ? a : null);
   if (!target) return { value: null };
   const value = typeof target.value === 'string' ? target.value : target.isContentEditable ? target.textContent : null;
-  return { value: value == null ? null : value.slice(0, 100), ...(focusedTag ? { focusedTag } : {}) };
+  // A password is reported as masked by the caller; its value never leaves the page.
+  return { value: value == null ? null : value.slice(0, 100), secret: target.type === 'password', ...(focusedTag ? { focusedTag } : {}) };
 }
 
 /**
@@ -276,20 +306,47 @@ export async function pointInfo(tabId, x, y, effect = 'move', count = 1) {
   return info;
 }
 
-/** A locate/click failure that says the target cannot be clicked (see pageLocate `check`). */
-export function isBlockedError(error) {
-  return /^ELEMENT_(HIDDEN|DISABLED|COVERED)\b/.test(String(error ?? ''));
+/**
+ * What a `target` string aims at: the parsed locator and, for a ref, its snapshot
+ * fallback (the descriptor the page re-finds a re-rendered element with). Throws
+ * INVALID_ARGUMENT for a blank target.
+ */
+export function targetAim(tabId, target) {
+  const parsed = parseTarget(target);
+  return { parsed, fb: parsed.kind === 'ref' ? getFallback(tabId, parsed.ref) : null };
 }
 
-export async function locateTarget(tabId, { ref, selector, fb, mode = 'none', cursor = null, check = null }) {
-  const loc = await execDom(tabId, pageLocate, [ref, selector, fb, mode, cursor, check]);
+/**
+ * A ref miss on the target path is worded here. The page says whether the ref was
+ * ever issued (`issued`); without that, the extension's own record decides
+ * (fallbackByTab). Either way it goes through refErrorMessage, as every ref tool does.
+ */
+export function wordTargetRefMiss(tabId, parsed, loc) {
+  if (!parsed || parsed.kind !== 'ref' || loc?.error !== 'REF_GONE') return loc;
+  const known = loc.issued !== undefined ? loc.issued : getFallback(tabId, parsed.ref);
+  return { ...loc, error: refErrorMessage(parsed.ref, known, !!loc.earlier) };
+}
+
+/**
+ * Locate the element (or point) a tool acts on: `target` is the one locator string
+ * (contract principle 2). Without one, `mode` decides (the active or focused element).
+ * Throws INVALID_ARGUMENT for a blank target.
+ */
+export async function locateTarget(tabId, { target, mode = 'none', cursor = null, check = null }) {
+  const parsed = target == null ? null : parseTarget(target);
+  // A ref on the target path keeps its snapshot fallback (the re-render re-find the ref path always had).
+  const aimFb = parsed?.kind === 'ref' ? getFallback(tabId, parsed.ref) : null;
+  const run = (cur) => execDom(tabId, pageLocate, [aimFb, mode, cur, check, parsed]);
+  let loc = await run(cursor);
   // Never-shown background tab: size its viewport, then measure again.
   if (loc?.success && loc.zeroViewport && hasCdp(tabId)) {
+    const first = loc;
     await ensureViewport(tabId).catch(() => {});
     // The cursor's effect already played: just move it to the real point.
-    return execDom(tabId, pageLocate, [ref, selector, fb, mode, cursor && { effect: 'track' }, check]);
+    loc = await run(cursor && { effect: 'track' });
+    if (first.via === 'fallback' && loc?.success) loc = { ...loc, via: 'fallback' };
   }
-  return loc;
+  return wordTargetRefMiss(tabId, parsed, loc);
 }
 
 /**
@@ -306,11 +363,160 @@ export async function locatePointer(tabId, target, effect, count = 1) {
   if (!loc?.success || !(loc.cursorMs > 0)) return loc;
   await sleep(loc.cursorMs);
   const again = await locateTarget(tabId, { ...aim, cursor: { effect: 'track' } });
-  // Gone during the glide: report it rather than clicking where it used to be
-  // (and close the shield pass-through the first measurement opened).
-  if (again?.error === 'REF_GONE') { await releaseShield(tabId); return again; }
-  // A blocked target after the glide is the answer too, not the first measurement.
-  return again?.success || isBlockedError(again?.error) ? again : loc;
+  // The answer is the measurement after the glide, never the first one: a target that
+  // vanished or became blocked during the glide is reported, not clicked where it was.
+  if (!again?.success) { await releaseShield(tabId); return again; }
+  // The first measurement re-found a stale ref; the second one reads the re-bound registry entry.
+  return loc.via === 'fallback' ? { ...again, via: 'fallback' } : again;
+}
+
+/**
+ * The tab's CDP session. Browser input never falls back to synthetic events:
+ * when the debugger cannot attach this throws DEBUGGER_UNAVAILABLE.
+ */
+export async function requireSender(tabId) {
+  try {
+    return await ensureCdp(tabId);
+  } catch (err) {
+    throw new Error(`DEBUGGER_UNAVAILABLE: could not attach the debugger to tab ${tabId} (${String(err?.message || err)}). Browser input needs it.`, { cause: err });
+  }
+}
+
+/** A page-controlled text cut to `max` characters for a result line ("…" marks the cut). */
+export function clipText(text, max = 200) {
+  const chars = [...String(text ?? '')];
+  return chars.length > max ? `${chars.slice(0, max).join('')}…` : chars.join('');
+}
+
+/** `confirm "Delete this item?"`: the dialog as a result line names it (type, clipped message). */
+export function dialogSummary(dialog) {
+  return `${dialog.type ?? 'dialog'} "${clipText(dialog.message ?? '')}"`;
+}
+
+/** How long one input dispatch may take before the tab counts as unresponsive. */
+export const INPUT_BUDGET_MS = 5_000;
+
+const cancelledError = () => new Error('TIMEOUT: the call ran out of time, so the input was stopped before it was sent; nothing more was pressed or typed.');
+
+/** A release (mouse up, key up) completes a press that already went out: it is sent even when the call is cancelled. */
+const isRelease = (method, params) => (method === 'Input.dispatchMouseEvent' && params?.type === 'mouseReleased')
+  || (method === 'Input.dispatchKeyEvent' && params?.type === 'keyUp');
+
+/**
+ * Refuse an input before anything is sent: a JS dialog is open on the tab (the page
+ * takes no input until it is answered), or the call was already cancelled.
+ */
+export function assertInputReady(tabId, signal) {
+  const open = getOpenDialog(tabId);
+  if (open) throw new Error(`DIALOG_OPEN: a ${dialogSummary(open)} is open on tab ${tabId}; answer it with browser_handle_dialog first.`);
+  if (signal?.aborted) throw cancelledError();
+}
+
+/**
+ * The CDP send for one input call. Two things a bare `await send(...)` gets wrong:
+ *  - A JS dialog that an input opens (confirm() in a click handler) blocks the page, so the
+ *    renderer never acks the dispatch that opened it. Each dispatch therefore races the tab's
+ *    Page.javascriptDialogOpening event: once a dialog is open the dispatch in flight is
+ *    abandoned (its late ack or rejection is swallowed), no later dispatch is sent, and
+ *    `blocked` holds the dialog.
+ *  - A renderer that never acks at all: after INPUT_BUDGET_MS the tab is marked wedged
+ *    (wedgedTabs, as safeExec does) and the call fails with the wedged-tab text.
+ * A cancelled call (`signal`, the bridge timed it out) starts no new dispatch; a release
+ * still goes out, so no button or key is left down. `send(method, params)` resolves true
+ * when the dispatch was sent and false when a dialog already blocks the page. close() ends
+ * the dialog watch: call it when the input is over.
+ */
+export function inputSession(tabId, send, signal) {
+  assertInputReady(tabId, signal);
+  let blocked = null;
+  let wake;
+  const opened = new Promise((resolve) => { wake = resolve; });
+  const off = subscribeCdpEvents(tabId, (method) => {
+    if (method !== 'Page.javascriptDialogOpening' || blocked) return;
+    blocked = getOpenDialog(tabId) ?? { type: 'dialog', message: '' };
+    wake();
+  });
+  return {
+    get blocked() { return blocked; },
+    /** The bare sender, for calls that are not input dispatches (file upload, the value probe). */
+    raw: send,
+    async send(method, params = {}) {
+      if (blocked) return false;
+      if (signal?.aborted && !isRelease(method, params)) throw cancelledError();
+      const dispatch = send(method, params);
+      dispatch.catch(() => {}); // a late ack or rejection after the dialog or the budget is swallowed
+      let timer;
+      const outcome = await Promise.race([
+        dispatch.then(() => 'acked'),
+        opened.then(() => 'dialog'),
+        new Promise((resolve) => { timer = setTimeout(() => resolve('stalled'), INPUT_BUDGET_MS); }),
+      ]).finally(() => clearTimeout(timer));
+      if (outcome === 'stalled') {
+        wedgedTabs.set(tabId, Date.now());
+        throw wedgedError(tabId, INPUT_BUDGET_MS);
+      }
+      return true;
+    },
+    close() { off(); },
+  };
+}
+
+/**
+ * Focus a target the way a person does: a trusted click on it, unless it already
+ * has focus. A failed check (hidden, disabled, covered) comes back with nothing clicked.
+ */
+export async function focusByClick(tabId, input, target) {
+  const loc = await locateTarget(tabId, { target, check: 'click' });
+  if (!loc.success || loc.focused || input.blocked) return loc;
+  await sleep(await cursorTo(tabId, loc.x, loc.y, 'click'));
+  await cdpClickAt(input.send, loc.x, loc.y);
+  return loc;
+}
+
+/** Page-side: where a target is now. No scroll, no focus, no actionability check. */
+function pageMeasure(t, fb) {
+  const D = globalThis.__bcDom;
+  if (!D || !D.resolveTarget) return { __needDom: true };
+  const r = D.resolveTarget(t, fb);
+  if (r.error) return { error: r.error };
+  const p = r.point ? { x: r.point.x, y: r.point.y } : D.centerOf(r.el);
+  return { x: p.x, y: p.y, inView: p.x >= 0 && p.y >= 0 && p.x <= window.innerWidth && p.y <= window.innerHeight };
+}
+
+/**
+ * Where a target's centre is right now, as measured by the page, and whether that
+ * point is inside the viewport. Measures only: use it after the last scroll.
+ */
+export async function measureTarget(tabId, target) {
+  const { parsed, fb } = targetAim(tabId, target);
+  const m = await execDom(tabId, pageMeasure, [parsed, fb]);
+  return wordTargetRefMiss(tabId, parsed, m);
+}
+
+/** Page-side: select everything in the field that has focus (a DOM selection, no key events). */
+function pageSelectFocused() {
+  let a = document.activeElement;
+  for (let i = 0; a && i < 10; i++) {
+    if (a.shadowRoot && a.shadowRoot.activeElement) { a = a.shadowRoot.activeElement; continue; }
+    if (a.tagName !== 'IFRAME') break;
+    try { a = a.contentDocument.activeElement; } catch { break; }
+  }
+  if (!a || a === document.body || a === document.documentElement) return {};
+  if (a.isContentEditable) {
+    const r = a.ownerDocument.createRange();
+    r.selectNodeContents(a);
+    const s = a.ownerDocument.defaultView.getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  } else if (typeof a.select === 'function') {
+    a.select();
+  }
+  return {};
+}
+
+/** First step of clear: select the focused field's whole contents, so the next insert or Backspace replaces them. */
+export async function selectFocused(tabId) {
+  await safeExec(tabId, pageSelectFocused, []);
 }
 
 function pageCursor(x, y, effect, count) {
@@ -330,29 +536,6 @@ export async function cursorTo(tabId, x, y, effect = 'move', count = 1) {
 }
 
 
-/** Open the agent's input window for its trusted input (raw-coordinate tools like drag). */
-export async function openShield(tabId) {
-  try {
-    await safeExec(tabId, () => {
-      window.__bcAgentInputUntil = Date.now() + 8000;
-    }, []);
-  } catch { /* protected page: CDP input still works, no window to open there */ }
-}
-
 export async function releaseShield(tabId) {
   try { return (await safeExec(tabId, pageRelease, [])) || {}; } catch { return {}; /* page navigated away */ }
-}
-
-/**
- * Attach the tab's CDP session or return null when CDP is unavailable
- * (another debugger owns the tab, policy blocks chrome.debugger…) so callers
- * fall back to synthetic events. `trusted:false` forces the synthetic path.
- */
-export async function trustedSender(tabId, trusted) {
-  if (trusted === false) return null;
-  try {
-    return await ensureCdp(tabId);
-  } catch {
-    return null;
-  }
 }

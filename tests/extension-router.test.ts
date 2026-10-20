@@ -54,7 +54,7 @@ const tabStore = new Map<
 };
 
 const { handleMessage, dispatchedTools } = await import('../extension/lib/router.js');
-const { tabLocks, tabControl, observationSnapshots, wedgedTabs } = await import('../extension/lib/state.js');
+const { tabLocks, tabControl, wedgedTabs } = await import('../extension/lib/state.js');
 const { allTools } = await import('../mcp-server/src/tools/index.js');
 
 function lastFrame(): Record<string, unknown> {
@@ -72,7 +72,6 @@ describe("extension router (handleMessage)", () => {
     sent.length = 0;
     tabStore.clear();
     tabLocks.unlockAll();
-    observationSnapshots.clear();
     (globalThis as any).chrome.scripting.executeScript = async () => [{ result: null }];
     tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
   });
@@ -84,21 +83,20 @@ describe("extension router (handleMessage)", () => {
   });
 
   it("marks in-band {success:false} results as wire failures WITH the payload (unified error channel)", async () => {
-    // browser_wait without selector/delay returns in-band {success:false} —
-    // the router must send success:false + the payload as `result`, not wrap
-    // it in a success envelope.
+    // browser_wait that times out returns in-band {success:false} — the router must
+    // send success:false + the payload as `result`, not wrap it in a success envelope.
     await handleMessage({
       id: "w1",
       tool: "browser_wait",
-      params: { tabId: 3 },
+      params: { tabId: 3, url: "https://never.test/x", timeout: 1 },
       sessionId: "s1",
     });
     await flush();
     const frame = lastFrame();
     expect(frame.id).toBe("w1");
     expect(frame.success).toBe(false);
-    expect(frame.error).toBe('Need selector, text, urlIncludes or delay');
-    expect(frame.result).toEqual({ success: false, error: 'Need selector, text, urlIncludes or delay' });
+    expect(frame.error).toMatch(/^TIMEOUT: url containing "https:\/\/never\.test\/x" not met after 1 ms$/);
+    expect(frame.result).toEqual({ success: false, error: frame.error });
   });
 
   it('frozen-tab navigate cannot replace a tab locked by another session', async () => {
@@ -166,83 +164,8 @@ describe("extension router (handleMessage)", () => {
     wedgedTabs.clear();
   });
 
-  it('a GIF call by the old id is checked against the lock of the replacement tab', async () => {
-    const { gifRecordings, replacedTabs } = await import('../extension/lib/state.js');
-    const rec = { frames: [{}], width: 800, maxFrames: 300, activate: true, recording: true, skipped: 0, startedAt: Date.now() };
-    gifRecordings.set(99, rec);
-    replacedTabs.set(3, 99);
-    tabStore.set(99, { id: 99, windowId: 1, url: 'https://a.test', title: 'A', active: true });
-    tabLocks.lock(99, 'session-a');
-    // Another session stops "tab 3": it must queue behind 99's lock, not stop the owner's recording.
-    await handleMessage({ id: 'g1', tool: 'browser_gif', params: { tabId: 3, action: 'stop' }, sessionId: 'session-b' });
-    await flush();
-    expect(rec.recording).toBe(true);
-    expect(sent.find((f) => f.id === 'g1' && f.success === true)).toBeUndefined();
-    // The owner using the old id reaches its recording.
-    await handleMessage({ id: 'g2', tool: 'browser_gif', params: { tabId: 3, action: 'stop' }, sessionId: 'session-a' });
-    await flush();
-    expect(rec.recording).toBe(false);
-    tabLocks.release(99);
-    await flush();
-    gifRecordings.clear();
-    replacedTabs.clear();
-    tabStore.delete(99);
-  });
-
-  it('recovery navigate of a frozen, recording tab captures a frame of the replacement', async () => {
-    const { gifRecordings, replacedTabs } = await import('../extension/lib/state.js');
-    const rec = { frames: [] as unknown[], width: 800, maxFrames: 300, activate: true, recording: true, skipped: 0, startedAt: Date.now() };
-    gifRecordings.set(3, rec);
-    wedgedTabs.set(3, Date.now());
-    tabStore.set(3, { id: 3, windowId: 1, url: 'https://frozen.test', title: 'F', active: true });
-    (globalThis as any).chrome.tabs.create = async () => { tabStore.set(99, { id: 99, windowId: 1, url: 'about:blank', title: '', active: true }); return { id: 99 }; };
-    (globalThis as any).chrome.tabs.remove = async () => {};
-    // The replacement finishes loading right away.
-    (globalThis as any).chrome.tabs.onUpdated = {
-      addListener: (fn: (id: number, info: unknown, tab: unknown) => void) => setTimeout(() => fn(99, { status: 'complete' }, tabStore.get(99)), 5),
-      removeListener: () => {},
-    };
-    await handleMessage({ id: 'n1', tool: 'browser_navigate', params: { tabId: 3, url: 'https://example.com/x', snapshot: false }, sessionId: 'session-a' });
-    for (let i = 0; i < 20 && rec.frames.length + rec.skipped === 0; i++) await flush();
-    expect(gifRecordings.get(99)).toBe(rec);
-    // A capture was attempted on tab 99 (the mock has no real CDP, so it may be skipped).
-    expect(sent.find((f) => f.id === 'n1')).toMatchObject({ success: true });
-    expect(rec.frames.length + rec.skipped).toBe(1);
-    delete (globalThis as any).chrome.tabs.onUpdated;
-    gifRecordings.clear();
-    replacedTabs.clear();
-    wedgedTabs.clear();
-    tabStore.delete(3);
-    tabStore.delete(99);
-  });
-
-  it('a GIF recording follows a frozen tab to its replacement (frames continue, old id still answers)', async () => {
-    const { replaceFrozenTab } = await import('../extension/lib/page-exec.js');
-    const { gifRecordings, replacedTabs } = await import('../extension/lib/state.js');
-    const { handleGif, isRecording } = await import('../extension/handlers/gif.js');
-    (globalThis as any).chrome.tabs.create = async () => ({ id: 99 });
-    (globalThis as any).chrome.tabs.remove = async () => {};
-    const rec = { frames: [{}, {}], width: 800, maxFrames: 300, activate: true, recording: true, skipped: 0, startedAt: Date.now() };
-    gifRecordings.set(3, rec);
-    wedgedTabs.set(3, Date.now());
-    const fresh = await replaceFrozenTab({ id: 3, windowId: 1, index: 0, active: true }, null, null);
-    expect(fresh.id).toBe(99);
-    expect(gifRecordings.get(99)).toBe(rec);
-    expect(gifRecordings.has(3)).toBe(false);
-    expect(isRecording(99)).toBe(true); // the router keeps adding frames on the new tab
-    // The old id (closed tab) still reaches the recording: no tab lookup for status/stop/export.
-    const realGet = (globalThis as any).chrome.tabs.get;
-    (globalThis as any).chrome.tabs.get = async (id: number) => { if (id === 3) throw new Error('No tab with id: 3'); return realGet(id); };
-    expect(await handleGif({ tabId: 3, action: 'status' })).toMatchObject({ success: true, recording: true, frames: 2 });
-    expect(await handleGif({ tabId: 3, action: 'stop' })).toMatchObject({ success: true, recording: false, frames: 2 });
-    (globalThis as any).chrome.tabs.get = realGet;
-    gifRecordings.clear();
-    replacedTabs.clear();
-    wedgedTabs.clear();
-  });
-
   it("converts a THROWN handler error into a wire-level error", async () => {
-    // click with neither ref nor selector throws in requireTarget.
+    // click with no target throws in parseTarget (INVALID_ARGUMENT, before any page is touched).
     await handleMessage({
       id: "c1",
       tool: "browser_click",
@@ -253,17 +176,17 @@ describe("extension router (handleMessage)", () => {
     const frame = lastFrame();
     expect(frame.id).toBe("c1");
     expect(frame.success).toBe(false);
-    expect(frame.error as string).toContain("ref or selector is required");
+    expect(frame.error as string).toContain("INVALID_ARGUMENT: target is empty");
   });
 
   it("routes a successful tool through the mutex and replies success", async () => {
     await handleMessage({
       id: "k1",
-      tool: "browser_network",
+      tool: "browser_logs",
       params: { tabId: 3 },
       sessionId: "s1",
     });
-    await flush();
+    await flush(400); // the console read settles for 100 ms before it answers
     const frame = lastFrame();
     expect(frame.id).toBe("k1");
     expect(frame.success).toBe(true);
@@ -274,7 +197,7 @@ describe("extension router (handleMessage)", () => {
     tabLocks.lock(3, "ownerA");
     await handleMessage({
       id: "k2",
-      tool: "browser_network",
+      tool: "browser_logs",
       params: { tabId: 3 },
       sessionId: "sessionB",
     });
@@ -285,17 +208,17 @@ describe("extension router (handleMessage)", () => {
     // The refused call never ran, so this session never became the tab's controller.
     expect(tabControl.controller(3)?.sessionId).not.toBe("sessionB");
     tabLocks.unlock(3, "ownerA");
-    await handleMessage({ id: "k3", tool: "browser_network", params: { tabId: 3 }, sessionId: "sessionB" });
-    await flush();
+    await handleMessage({ id: "k3", tool: "browser_logs", params: { tabId: 3 }, sessionId: "sessionB" });
+    await flush(400);
     expect(sent.find((f) => f.id === "k3")).toMatchObject({ success: true });
   });
 
   it("names the lock owner by its agent name in the TAB_LOCKED refusal", async () => {
     // The owner's first call records its agent name; the lock taken later carries it.
-    await handleMessage({ id: "o1", tool: "browser_console", params: { tabId: 3 }, sessionId: "owner-s", agentName: "Claude" });
+    await handleMessage({ id: "o1", tool: "browser_logs", params: { tabId: 3 }, sessionId: "owner-s", agentName: "Claude" });
     await flush();
     tabLocks.lock(3, "owner-s");
-    await handleMessage({ id: "k4", tool: "browser_console", params: { tabId: 3 }, sessionId: "sessionC", agentName: "Cursor" });
+    await handleMessage({ id: "k4", tool: "browser_logs", params: { tabId: 3 }, sessionId: "sessionC", agentName: "Cursor" });
     await flush();
     const frame = sent.find((f) => f.id === "k4");
     expect(frame).toMatchObject({ success: false });
@@ -304,133 +227,9 @@ describe("extension router (handleMessage)", () => {
   });
 });
 
-describe('observe/act concurrency integration', () => {
-  function register(snapshotId: string, tabId: number, sessionId: string) {
-    observationSnapshots.register({
-      snapshotId,
-      tabId,
-      sessionId,
-      documentId: `d_${tabId}`,
-      documentVersion: `d_${tabId}:1:0`,
-      routeEpoch: 1,
-      createdAt: Date.now(),
-    });
-  }
-
-  function delayedActionExecutor(delayMs = 25) {
-    let running = 0;
-    let maxRunning = 0;
-    (globalThis as any).chrome.scripting.executeScript = async (request: any) => {
-      const config = request.args?.[0];
-      if (!config?.snapshotId || !config?.params?.action) return [{ result: null }];
-      running += 1;
-      maxRunning = Math.max(maxRunning, running);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      running -= 1;
-      return [{ result: {
-        success: true,
-        ok: true,
-        action: config.params.action,
-        ref: config.params.ref,
-        documentVersion: `${config.documentId}:1:1`,
-        url: `https://example.com/${request.target.tabId}`,
-        metrics: { durationMs: delayMs, protocolCalls: 1 },
-      } }];
-    };
-    return () => maxRunning;
-  }
-
-  beforeEach(() => {
-    sent.length = 0;
-    tabStore.clear();
-    tabLocks.unlockAll();
-    observationSnapshots.clear();
-    tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/3', title: 'Three', active: true });
-    tabStore.set(4, { id: 4, windowId: 1, url: 'https://example.com/4', title: 'Four', active: false });
-  });
-
-  it('serializes simultaneous browser_act calls on the same tab', async () => {
-    register('s_one', 3, 'session-a');
-    register('s_two', 3, 'session-a');
-    const maxRunning = delayedActionExecutor();
-
-    await Promise.all([
-      handleMessage({ id: 'a1', tool: 'browser_act', params: { tabId: 3, snapshotId: 's_one', action: 'focus', ref: 'e1' }, sessionId: 'session-a' }),
-      handleMessage({ id: 'a2', tool: 'browser_act', params: { tabId: 3, snapshotId: 's_two', action: 'focus', ref: 'e2' }, sessionId: 'session-a' }),
-    ]);
-    await flush(140);
-
-    expect(maxRunning()).toBe(1);
-    expect(sent.filter((frame) => frame.id === 'a1' || frame.id === 'a2')).toHaveLength(2);
-  });
-
-  it('allows browser_act calls on different tabs to overlap', async () => {
-    register('s_three', 3, 'session-a');
-    register('s_four', 4, 'session-b');
-    const maxRunning = delayedActionExecutor();
-
-    await Promise.all([
-      handleMessage({ id: 'b1', tool: 'browser_act', params: { tabId: 3, snapshotId: 's_three', action: 'focus', ref: 'e1' }, sessionId: 'session-a' }),
-      handleMessage({ id: 'b2', tool: 'browser_act', params: { tabId: 4, snapshotId: 's_four', action: 'focus', ref: 'e1' }, sessionId: 'session-b' }),
-    ]);
-    await flush(100);
-
-    expect(maxRunning()).toBe(2);
-    expect(sent.filter((frame) => frame.id === 'b1' || frame.id === 'b2')).toHaveLength(2);
-  });
-
-  it('keeps same-tab observations independent across sessions', async () => {
-    register('s_agent_a', 3, 'session-a');
-    register('s_agent_b', 3, 'session-b');
-    delayedActionExecutor(5);
-
-    await handleMessage({ id: 'c1', tool: 'browser_act', params: { tabId: 3, snapshotId: 's_agent_a', action: 'focus', ref: 'e1' }, sessionId: 'session-a' });
-    await handleMessage({ id: 'c2', tool: 'browser_act', params: { tabId: 3, snapshotId: 's_agent_b', action: 'focus', ref: 'e2' }, sessionId: 'session-b' });
-    await flush(80);
-
-    expect(sent.find((frame) => frame.id === 'c1')?.success).toBe(true);
-    expect(sent.find((frame) => frame.id === 'c2')?.success).toBe(true);
-  });
-
-  it('rejects cross-session snapshot use before page action execution', async () => {
-    register('s_private', 3, 'session-a');
-    let actionExecutions = 0;
-    (globalThis as any).chrome.scripting.executeScript = async (request: any) => {
-      if (request.args?.[0]?.params?.action) actionExecutions += 1;
-      return [{ result: null }];
-    };
-
-    await handleMessage({
-      id: 'd1', tool: 'browser_act',
-      params: { tabId: 3, snapshotId: 's_private', action: 'focus', ref: 'e1' },
-      sessionId: 'session-b',
-    });
-    await flush(80);
-
-    expect(sent.find((frame) => frame.id === 'd1')).toMatchObject({
-      success: false,
-      error: 'SNAPSHOT_NOT_FOUND',
-      result: { reason: 'WRONG_SESSION' },
-    });
-    expect(actionExecutions).toBe(0);
-  });
-
-  it('drops a disconnected session snapshot without disturbing another session', async () => {
-    register('s_session_a', 3, 'session-a');
-    register('s_session_b', 3, 'session-b');
-
-    await handleMessage({ type: 'releaseSession', sessionId: 'session-a' });
-
-    expect(observationSnapshots.validate('s_session_a', 3, 'session-a')).toMatchObject({ error: 'SNAPSHOT_NOT_FOUND' });
-    expect(observationSnapshots.validate('s_session_b', 3, 'session-b')).toMatchObject({ ok: true });
-  });
-});
-
 describe('dispatch registry ↔ MCP tool registry (drift guard)', () => {
-  // Server-local tools never reach the extension: browser_batch runs other
-  // tools' handlers in the MCP process (the meta tool isn't in allTools).
-  // browser_batch runs in the MCP process; browser selection is answered by the bridge.
-  const wireTools = allTools.filter((t) => !['browser_batch', 'browser_shortcuts', 'browser_list_browsers', 'browser_select_browser'].includes(t.name));
+  // browser_batch is server-only: it runs other tools' handlers in the MCP process, so it has no extension handler.
+  const wireTools = allTools.filter((t) => t.name !== 'browser_batch');
 
   it('every registered MCP tool has an extension handler', () => {
     for (const tool of wireTools) {

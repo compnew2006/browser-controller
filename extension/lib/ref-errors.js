@@ -8,16 +8,38 @@
  * re-rendered, virtualized or navigated away). Never issued here (mistyped, or
  * from an old snapshot): REF_NOT_FOUND.
  */
-export function refErrorMessage(ref, known) {
+export function refErrorMessage(ref, known, earlier = false) {
+  // Issued by an earlier page of the tab (a navigation or reload since): the agent must not look for it here.
+  if (earlier) return `REF_GONE: ref ${ref} is from an earlier page (the page navigated or reloaded). Take a new browser_snapshot.`;
   return known
     ? `REF_GONE: ref ${ref} is no longer on the page (re-rendered, virtualized or navigated). Take a new browser_snapshot.`
     : `REF_NOT_FOUND: ref ${ref} is not on this page (mistyped, or from an older snapshot). Take a new browser_snapshot.`;
 }
 
 /**
- * A CSS selector that matches nothing on the page: a plain not-found message, not
- * a ref code (the selector is the agent's own text, there is no ref to refresh).
+ * The note a reply carries when a stale ref was re-found by its snapshot descriptor
+ * (the page changed under it, the ref still means the same element).
  */
-export function selectorErrorMessage(selector, url) {
-  return `No element matches selector ${selector} on the current page (${url || 'navigated?'}).`;
+export function reboundNote(ref) {
+  return `note: ${ref} was re-found after the page changed`;
+}
+
+/**
+ * The highest ref number a page result shows the agent: the refs of a snapshot and
+ * the candidates of an AMBIGUOUS reply (the only two places refs are issued and
+ * shown). 0 when the result shows none. The service worker keeps the tab's maximum
+ * so a new document starts its counter above every ref an earlier one showed.
+ */
+export function highestRefIn(res) {
+  let max = 0;
+  if (res && Array.isArray(res.refs)) {
+    for (const r of res.refs) {
+      const m = /^e(\d+)$/.exec(String(r && r.ref || ''));
+      if (m) max = Math.max(max, Number(m[1]));
+    }
+  }
+  if (res && typeof res.error === 'string' && res.error.startsWith('AMBIGUOUS')) {
+    for (const m of res.error.matchAll(/\be(\d+) "/g)) max = Math.max(max, Number(m[1]));
+  }
+  return max;
 }

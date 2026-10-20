@@ -13,11 +13,7 @@ export default defineConfig({
       include: [
         'mcp-server/src/bridge-security.ts',
         'mcp-server/src/protocol.ts',
-        'mcp-server/src/tools/meta.ts',
-        'extension/lib/observation-action.js',
-        'extension/lib/observation-v2.js',
         'extension/lib/protocol.js',
-        'extension/lib/snapshot-registry.js',
         'extension/lib/tab-concurrency.js',
       ],
       thresholds: {

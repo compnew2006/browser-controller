@@ -15,14 +15,26 @@ import {
   buildExtensionHello,
   buildIpcHello,
   buildIpcWelcome,
+  OLDER_CLIENT_IPC_REASON,
+  OLDER_DAEMON_IPC_REASON,
+  OLDER_EXTENSION_REASON,
+  REQUIRED_EXTENSION_CAPABILITIES,
+  validateExtensionCapabilities,
+  validateCapabilities,
+  validateExtensionHelloAck,
+  validateIpcHandshake,
   validateProtocolVersion,
 } from '../mcp-server/src/protocol.js';
 import {
   PROTOCOL_VERSION as EXTENSION_PROTOCOL_VERSION,
   EXTENSION_PROTOCOL_CAPABILITIES as BROWSER_CAPABILITIES,
+  REQUIRED_DAEMON_CAPABILITIES,
   buildExtensionHelloAck as buildBrowserHelloAck,
   validateDaemonHello,
 } from '../extension/lib/protocol.js';
+
+/** The capability list a 2.x extension advertised: no tools-v3. */
+const V2_EXTENSION_CAPABILITIES = ['tool-dispatch', 'ping-pong', 'cancellation', 'observe-act-v2', 'tab-locks', 'webmcp'];
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -54,6 +66,50 @@ describe('protocol handshake contract', () => {
     });
   });
 
+  // The IPC socket was unversioned before 3.0 (protocol 1, same capabilities): tools-v3 is what
+  // tells a 3.0 peer from a 2.x one, on both sides of the socket.
+  it('requires tools-v3 on the IPC socket, in the hello and in the welcome', () => {
+    expect(IPC_PROTOCOL_CAPABILITIES).toContain('tools-v3');
+    expect(buildIpcHello('token-1').capabilities).toContain('tools-v3');
+    expect(buildIpcWelcome('s1').capabilities).toContain('tools-v3');
+  });
+
+  it('refuses an IPC peer from before 3.0 (no tools-v3) with the reason for the side that is old', () => {
+    const v2Capabilities = IPC_PROTOCOL_CAPABILITIES.filter((c) => c !== 'tools-v3');
+    expect(validateIpcHandshake({ protocolVersion: PROTOCOL_VERSION, capabilities: v2Capabilities }, OLDER_CLIENT_IPC_REASON)).toEqual({
+      ok: false,
+      legacy: false,
+      reason: OLDER_CLIENT_IPC_REASON,
+    });
+    expect(validateIpcHandshake({ protocolVersion: PROTOCOL_VERSION, capabilities: v2Capabilities }, OLDER_DAEMON_IPC_REASON)).toEqual({
+      ok: false,
+      legacy: false,
+      reason: OLDER_DAEMON_IPC_REASON,
+    });
+    expect(OLDER_DAEMON_IPC_REASON).toMatch(/daemon is older than 3\.0: stop it .*restart your MCP client/);
+    expect(OLDER_CLIENT_IPC_REASON).toMatch(/MCP client is older than 3\.0: restart your MCP client/);
+  });
+
+  it('refuses an IPC peer with no protocolVersion or no capabilities instead of accepting it as legacy', () => {
+    expect(validateIpcHandshake({ capabilities: IPC_PROTOCOL_CAPABILITIES }, OLDER_CLIENT_IPC_REASON)).toMatchObject({
+      ok: false,
+      reason: OLDER_CLIENT_IPC_REASON,
+    });
+    expect(validateIpcHandshake({ protocolVersion: PROTOCOL_VERSION }, OLDER_CLIENT_IPC_REASON)).toMatchObject({
+      ok: false,
+      reason: OLDER_CLIENT_IPC_REASON,
+    });
+  });
+
+  it('accepts a current IPC hello and welcome, and still refuses a different protocol version', () => {
+    expect(validateIpcHandshake(buildIpcHello('token-1', 'Agent'), OLDER_CLIENT_IPC_REASON)).toEqual({ ok: true, legacy: false });
+    expect(validateIpcHandshake(buildIpcWelcome('s1'), OLDER_DAEMON_IPC_REASON)).toEqual({ ok: true, legacy: false });
+    expect(validateIpcHandshake({ protocolVersion: PROTOCOL_VERSION + 1, capabilities: IPC_PROTOCOL_CAPABILITIES }, OLDER_CLIENT_IPC_REASON)).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/unsupported protocol/i),
+    });
+  });
+
   it('builds versioned extension hello/ack frames with declared capabilities', () => {
     expect(buildExtensionHello('2.2.0')).toEqual({
       type: 'hello',
@@ -70,8 +126,12 @@ describe('protocol handshake contract', () => {
     });
   });
 
-  it('accepts missing protocolVersion as legacy but rejects mismatched versions', () => {
-    expect(validateProtocolVersion(undefined)).toEqual({ ok: true, legacy: true });
+  // No legacy acceptance anywhere: a missing version or capability list is refused, never "legacy".
+  it('refuses a missing protocolVersion or capability list, and a mismatched version', () => {
+    expect(validateProtocolVersion(undefined)).toMatchObject({ ok: false, reason: 'Missing protocol version.' });
+    expect(validateProtocolVersion(null)).toMatchObject({ ok: false, reason: 'Missing protocol version.' });
+    expect(validateCapabilities(undefined, IPC_PROTOCOL_CAPABILITIES)).toMatchObject({ ok: false });
+    expect(validateCapabilities(null, IPC_PROTOCOL_CAPABILITIES)).toMatchObject({ ok: false });
     expect(validateProtocolVersion(PROTOCOL_VERSION)).toEqual({ ok: true, legacy: false });
     expect(validateProtocolVersion(PROTOCOL_VERSION + 1)).toMatchObject({
       ok: false,
@@ -82,13 +142,62 @@ describe('protocol handshake contract', () => {
   it('keeps the browser-side protocol contract in parity with the daemon', () => {
     expect(EXTENSION_PROTOCOL_VERSION).toBe(PROTOCOL_VERSION);
     expect(BROWSER_CAPABILITIES).toEqual(EXTENSION_PROTOCOL_CAPABILITIES);
+    expect(REQUIRED_DAEMON_CAPABILITIES).toEqual(REQUIRED_EXTENSION_CAPABILITIES);
     expect(buildBrowserHelloAck('2.2.0')).toEqual(buildExtensionHelloAck('2.2.0'));
     expect(validateDaemonHello(buildExtensionHello('2.2.0'))).toEqual({ ok: true, legacy: false });
     expect(validateDaemonHello({ ...buildExtensionHello('2.2.0'), protocolVersion: 999 })).toMatchObject({ ok: false });
     expect(validateDaemonHello({ ...buildExtensionHello('2.2.0'), capabilities: [] })).toMatchObject({
       ok: false,
-      reason: expect.stringMatching(/missing required daemon capabilities/i),
+      reason: expect.stringMatching(/daemon is older than 3\.0/i),
     });
+  });
+
+  it('advertises the 3.0 tool contract and no 2.x capability', () => {
+    expect(EXTENSION_PROTOCOL_CAPABILITIES).toContain('tools-v3');
+    expect(EXTENSION_PROTOCOL_CAPABILITIES).toEqual(expect.arrayContaining(['tab-locks']));
+    expect(EXTENSION_PROTOCOL_CAPABILITIES).not.toContain('observe-act-v2');
+    expect(EXTENSION_PROTOCOL_CAPABILITIES).not.toContain('webmcp');
+  });
+
+  it('daemon side: a helloAck needs an explicit protocolVersion and tools-v3; a pre-3.0 peer is never legacy-accepted', () => {
+    const older = { ok: false, legacy: false, reason: OLDER_EXTENSION_REASON };
+    expect(validateExtensionHelloAck(buildExtensionHelloAck('2.2.0'))).toEqual({ ok: true, legacy: false });
+    expect(validateExtensionHelloAck({ type: 'helloAck', capabilities: EXTENSION_PROTOCOL_CAPABILITIES })).toEqual(older);
+    expect(validateExtensionHelloAck({ type: 'helloAck', protocolVersion: PROTOCOL_VERSION })).toEqual(older);
+    expect(validateExtensionHelloAck({ type: 'helloAck', protocolVersion: PROTOCOL_VERSION, capabilities: V2_EXTENSION_CAPABILITIES })).toEqual(older);
+    expect(validateExtensionHelloAck({ type: 'helloAck', protocolVersion: PROTOCOL_VERSION + 1, capabilities: EXTENSION_PROTOCOL_CAPABILITIES })).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/unsupported protocol/i),
+    });
+  });
+
+  it('daemon side: a helloAck without tools-v3 is an older extension, with the reload hint', () => {
+    expect(validateExtensionCapabilities(EXTENSION_PROTOCOL_CAPABILITIES)).toEqual({ ok: true, legacy: false });
+    expect(validateExtensionCapabilities(undefined)).toEqual({ ok: false, legacy: false, reason: OLDER_EXTENSION_REASON });
+    expect(validateExtensionCapabilities(V2_EXTENSION_CAPABILITIES)).toEqual({
+      ok: false,
+      legacy: false,
+      reason: 'The Browser Controller extension is older than 3.0: reload it at chrome://extensions.',
+    });
+    expect(validateExtensionCapabilities(['tools-v3'])).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/missing required protocol capabilities: tool-dispatch, ping-pong/i),
+    });
+  });
+
+  it('extension side: a daemon hello without tools-v3 is an older daemon, with the restart hint', () => {
+    expect(validateDaemonHello({ ...buildExtensionHello('2.2.0'), capabilities: V2_EXTENSION_CAPABILITIES })).toEqual({
+      ok: false,
+      legacy: false,
+      reason: 'The Browser Controller daemon is older than 3.0: restart your MCP client so it starts the 3.0 daemon.',
+    });
+    const olderDaemon = {
+      ok: false,
+      legacy: false,
+      reason: 'The Browser Controller daemon is older than 3.0: restart your MCP client so it starts the 3.0 daemon.',
+    };
+    expect(validateDaemonHello({ type: 'hello' })).toEqual(olderDaemon);
+    expect(validateDaemonHello({ type: 'hello', protocolVersion: PROTOCOL_VERSION })).toEqual(olderDaemon);
   });
 });
 
@@ -104,12 +213,13 @@ describe('ExtensionBridge protocol handshake', () => {
     await sleep(40);
   });
 
-  function createBridge(port: number, opts?: { defaultTimeoutMs?: number }): ExtensionBridge {
+  function createBridge(port: number, opts?: { defaultTimeoutMs?: number; handshakeGraceMs?: number }): ExtensionBridge {
     const bridge = new ExtensionBridge({
       port,
       maxRetries: 0,
       pingIntervalMs: 60_000,
       defaultTimeoutMs: opts?.defaultTimeoutMs ?? 250,
+      handshakeGraceMs: opts?.handshakeGraceMs,
     });
     bridges.push(bridge);
     return bridge;
@@ -169,20 +279,85 @@ describe('ExtensionBridge protocol handshake', () => {
     await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(/unsupported protocol/i);
   });
 
-  it('allows legacy extensions after the handshake grace period when no helloAck arrives', async () => {
+  it('rejects a 2.x extension whose helloAck lacks tools-v3 and tells the user to reload it', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port, { defaultTimeoutMs: 80 });
+    await bridge.start();
+
+    const { client, hello } = await connectWs(port);
+    await hello;
+    client.send(JSON.stringify({ type: 'helloAck', protocolVersion: PROTOCOL_VERSION, capabilities: V2_EXTENSION_CAPABILITIES }));
+
+    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(
+      'NOT_CONNECTED: The Browser Controller extension is older than 3.0: reload it at chrome://extensions.',
+    );
+  });
+
+  it('accepts a current extension helloAck', async () => {
     const port = nextPort();
     const bridge = createBridge(port);
     await bridge.start();
 
-    const { client } = await connectWs(port);
+    const { client, hello } = await connectWs(port);
+    await hello;
+    client.send(JSON.stringify(buildExtensionHelloAck()));
     client.on('message', (data) => {
       const msg = JSON.parse(data.toString());
-      if (msg.tool) {
-        client.send(JSON.stringify({ id: msg.id, success: true, result: { legacy: true } }));
-      }
+      if (msg.tool) client.send(JSON.stringify({ id: msg.id, success: true, result: { current: true } }));
     });
 
-    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).resolves.toEqual({ legacy: true });
+    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).resolves.toEqual({ current: true });
+  });
+
+  // No legacy acceptance: a pre-3.0 build has different tool names, so a helloAck that
+  // omits the protocol version or the capabilities is refused before any tool call.
+  it.each([
+    ['no protocolVersion', { type: 'helloAck', capabilities: EXTENSION_PROTOCOL_CAPABILITIES }],
+    ['no capabilities', { type: 'helloAck', protocolVersion: PROTOCOL_VERSION }],
+  ])('refuses a pre-3.0 helloAck with %s: no tool call is routed to it', async (_label, ack) => {
+    const port = nextPort();
+    const bridge = createBridge(port, { defaultTimeoutMs: 80 });
+    await bridge.start();
+
+    const { client, hello } = await connectWs(port);
+    await hello;
+    client.send(JSON.stringify(ack));
+
+    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(`NOT_CONNECTED: ${OLDER_EXTENSION_REASON}`);
+  });
+
+  it('refuses a peer that sends no helloAck within the handshake grace', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port, { handshakeGraceMs: 50 });
+    await bridge.start();
+
+    const { client } = await connectWs(port);
+    // A pre-3.0 build never acknowledges the hello; it must not be treated as ready.
+    client.on('message', () => { /* swallow the hello */ });
+
+    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(`NOT_CONNECTED: ${OLDER_EXTENSION_REASON}`);
+    expect(bridge.isConnected()).toBe(false);
+  });
+
+  it('holds a tool call until the helloAck arrives, then routes it', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const call = bridge.callTool('browser_snapshot', { tabId: 1 });
+    const client = new WebSocket(`ws://localhost:${port}`);
+    clients.push(client);
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'hello') setTimeout(() => client.send(JSON.stringify(buildExtensionHelloAck())), 30);
+      if (msg.tool) client.send(JSON.stringify({ id: msg.id, success: true, result: { waited: true } }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      client.once('open', () => resolve());
+      client.once('error', reject);
+    });
+
+    await expect(call).resolves.toEqual({ waited: true });
   });
 });
 
@@ -272,6 +447,19 @@ describe('daemon IPC protocol handshake', { timeout: 30_000 }, () => {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: expect.arrayContaining(['heartbeat', 'tool-routing', 'session-locks']),
     });
+  });
+
+  // Needs a rebuilt mcp-server/dist: this describe spawns dist/daemon.js.
+  it('refuses a pre-3.0 IPC client (no tools-v3) with the restart hint, before registering it', async () => {
+    const denied = await connectRaw({
+      kind: 'hello',
+      token,
+      agentName: 'V2Client',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: IPC_PROTOCOL_CAPABILITIES.filter((c) => c !== 'tools-v3'),
+    });
+
+    expect(denied).toMatchObject({ kind: 'denied', ok: false, reason: OLDER_CLIENT_IPC_REASON });
   });
 
   it('rejects an IPC client with an unsupported protocol version before registering it', async () => {

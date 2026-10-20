@@ -4,9 +4,9 @@
  *
  *   - {@link TabMutexMap}: one promise-chain per tabId. Calls to the SAME tab
  *     serialize; calls to DIFFERENT tabs run in parallel. (2.1)
- *   - {@link TabLockMap}: per-agent ownership of a tab. A call from a non-owner
- *     session fails at once with TAB_LOCKED: an explicit lock is not something
- *     to queue behind for half a minute. (2.2)
+ *   - {@link TabLockMap}: per-session ownership of a tab. A call from a non-owner
+ *     session fails at once with TAB_LOCKED: an owned tab is not something to
+ *     queue behind for half a minute. (2.2)
  *
  * router.js wires these together via runOnTab(); the vitest suites in
  * tests/tab-concurrency.test.ts and tests/wp6-tab-lock-fail-fast.test.ts prove
@@ -66,14 +66,15 @@ export class TabMutexMap {
 export function tabLockedMessage(tabId, grant) {
   const who = grant.agentName ? `${grant.agentName} (session ${grant.sessionId})` : grant.sessionId;
   const since = new Date(grant.since).toISOString();
-  return `TAB_LOCKED: tab ${tabId} is locked by ${who} since ${since}. The lock ends when that agent unlocks the tab or disconnects; use another tab until then.`;
+  return `TAB_LOCKED: tab ${tabId} is locked by ${who} since ${since}. The tab stays with that agent until it closes or the agent disconnects; open a tab of your own with browser_navigate.`;
 }
 
 /**
- * Explicit per-tab locks: tabId -> {sessionId, agentName, since}. Only the
- * owning session may act on a locked tab; any other session is refused at once
- * (see check()). Locks are taken with lock() and ended with unlock(), release()
- * or releaseByOwner().
+ * Per-tab ownership: tabId -> {sessionId, agentName, since}. Only the owning
+ * session may act on an owned tab; any other session is refused at once (see
+ * check()). A session takes ownership of the tab it opens (browser_navigate
+ * without tabId); lock() is that claim. It ends with unlock(), release() or
+ * releaseByOwner().
  */
 export class TabLockMap {
   /**
@@ -167,12 +168,12 @@ export class TabLockMap {
   /**
    * Refuse a call from `sessionId` on a tab that another session holds an
    * explicit lock on. Throws TAB_LOCKED at once, without waiting for the owner.
-   * A call with no session (status reads) is never gated.
+   * A call with no session is an anonymous session of its own (L5): it is refused
+   * on a tab a named session owns, and passes on a tab nobody owns.
    * @param {number} tabId
    * @param {string|null} sessionId
    */
   check(tabId, sessionId) {
-    if (sessionId == null) return;
     const held = this.locks.get(tabId);
     if (held && held.sessionId !== sessionId) throw new Error(tabLockedMessage(tabId, held));
   }
@@ -338,7 +339,7 @@ export async function runOnTab(locks, mutex, tabId, sessionId, fn) {
     locks.check(tabId, sessionId);
     const out = await mutex.run(tabId, async () => {
       const owner = locks.owner(tabId);
-      if (sessionId != null && owner !== undefined && owner !== sessionId) return DEFER;
+      if (owner !== undefined && owner !== sessionId) return DEFER;
       return { value: await fn() };
     });
     if (out !== DEFER) return out.value;
