@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const findTool: ToolDefinition = {
   name: 'browser_find',
-  summary: 'Find elements by natural language description',  description:
+  description:
     'Find elements by description ("search input", "Save button"); a control in a table row also matches the row\'s words. Returns refs; cheaper than a snapshot.',
   inputSchema: z.object({
     tabId: requireTabId(),

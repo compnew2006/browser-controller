@@ -15,7 +15,6 @@ export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   'cancellation',
   'observe-act-v2',
   'tab-locks',
-  'webmcp',
 ]);
 
 export interface ProtocolCheck {

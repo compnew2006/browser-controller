@@ -4,7 +4,6 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const clickTool: ToolDefinition = {
   name: 'browser_click',
-  summary: 'Click an element by ref or CSS selector',
   description: 'Click an element (ref or selector) or a viewport point (x/y, e.g. read off a screenshot) with a real mouse click. clickCount 2/3 = double/triple click; modifiers hold keys (ctrl+click opens a link in a new tab). A hidden, disabled or covered target is not clicked (HIDDEN / DISABLED / COVERED).',
   inputSchema: z.object({
     tabId: requireTabId(),

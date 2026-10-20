@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const textTool: ToolDefinition = {
   name: 'browser_text',
-  summary: 'Extract raw text content from a page',  description: 'Visible text of the page or of selector matches (shadow DOM included) — the cheapest read. mode:"article" = main content only; read long text on with offset = nextOffset.',
+  description: 'Visible text of the page or of selector matches (shadow DOM included) — the cheapest read. mode:"article" = main content only; read long text on with offset = nextOffset.',
   inputSchema: z.object({
     tabId: requireTabId(),
     selector: z.string().optional().describe('Every visible match, in page order'),

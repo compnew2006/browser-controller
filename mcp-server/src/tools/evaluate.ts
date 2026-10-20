@@ -4,7 +4,6 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const evaluateTool: ToolDefinition = {
   name: 'browser_evaluate',
-  summary: 'Run JavaScript in the page (top-level await, last value returned)',
   description:
     'Run JavaScript in a tab like the DevTools console: top-level await, the last expression\'s value is returned. Over CDP, so page CSP does not block it; mode:"scripting" = no debugger, CSP-bound, no top-level await. Prefer browser_click/browser_type for input.',
   inputSchema: z.object({

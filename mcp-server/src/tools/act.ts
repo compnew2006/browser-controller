@@ -4,7 +4,6 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const actTool: ToolDefinition = {
   name: 'browser_act',
-  summary: 'Safely act on a browser_observe snapshot ref',
   description:
     'Act on a browser_observe snapshot (snapshotId + ref). Refuses stale, hidden, disabled or covered targets: observe again on DOCUMENT_CHANGED / STALE_STATE / TARGET_OCCLUDED / ACTION_NOT_ALLOWED.',
   inputSchema: z.object({

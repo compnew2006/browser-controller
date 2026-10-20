@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const scrollTool: ToolDefinition = {
   name: 'browser_scroll',
-  summary: 'Scroll a tab up/down/left/right',  description:
+  description:
     'Scroll the page, a container (selector) or an element into view (toElement); position top/bottom. With x/y: a real wheel event at that point (inner panels, maps, virtual lists).',
   inputSchema: z.object({
     tabId: requireTabId(),

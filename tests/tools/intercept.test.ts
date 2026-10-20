@@ -11,11 +11,6 @@ describe("browser_intercept tool (S1)", () => {
     expect(toolMap.get("browser_intercept")).toBe(interceptTool);
   });
 
-  it("has a concise summary for progressive disclosure", () => {
-    expect(interceptTool.summary.length).toBeGreaterThan(10);
-    expect(interceptTool.summary.length).toBeLessThan(80);
-  });
-
   it("declares timeoutMs and is non-idempotent (mutating)", () => {
     expect(typeof interceptTool.timeoutMs).toBe("number");
     expect(toolTimeoutMs("browser_intercept")).toBe(interceptTool.timeoutMs);

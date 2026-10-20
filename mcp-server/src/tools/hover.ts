@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const hoverTool: ToolDefinition = {
   name: 'browser_hover',
-  summary: 'Hover over an element',  description: 'Hover an element (ref/selector) or a viewport point (x/y) to show tooltips, menus or hover states.',
+  description: 'Hover an element (ref/selector) or a viewport point (x/y) to show tooltips, menus or hover states.',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional(),

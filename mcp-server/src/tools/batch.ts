@@ -5,7 +5,7 @@ import { toolMap } from './index.js';
 import { parseToolParams } from '../register-tools.js';
 
 /** Tools that must not run inside a batch (recursion / discovery only). */
-const NOT_BATCHABLE = new Set(['browser_batch', 'browser_tools', 'browser_shortcuts']);
+const NOT_BATCHABLE = new Set(['browser_batch']);
 const MAX_STEPS = 200;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,7 +56,6 @@ function replacedBy(result: ToolResult, current: number): number | null {
  */
 export const batchTool: ToolDefinition = {
   name: 'browser_batch',
-  summary: 'Run several browser actions in one call (stops at first error)',
   description:
     'Run up to 200 tool calls in order in ONE call; stops at the first failure unless continueOnError. A top-level tabId fills steps that have none. output "last" / "errors" keeps long batches cheap.',
   inputSchema: z.object({

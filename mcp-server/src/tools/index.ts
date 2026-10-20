@@ -19,7 +19,6 @@ import { evaluateTool } from './evaluate.js';
 import { clickTextTool } from './click-text.js';
 import { dialogTool } from './dialog.js';
 import { uploadFileTool } from './upload-file.js';
-import { runActionTool } from './run-action.js';
 import { interceptTool } from './intercept.js';
 import { dragTool } from './drag.js';
 import { fillFormTool } from './fill-form.js';
@@ -28,10 +27,7 @@ import { actTool } from './act.js';
 import { batchTool } from './batch.js';
 import { resizeWindowTool } from './resize-window.js';
 import { emulateTool } from './emulate.js';
-import { gifTool } from './gif.js';
 import { listBrowsersTool, selectBrowserTool } from './browsers.js';
-import { shortcutsTool } from './shortcuts.js';
-import { webmcpListTool, webmcpCallTool } from './webmcp.js';
 import { inspectElementTool } from './inspect-element.js';
 
 export const allTools: ToolDefinition[] = [
@@ -54,7 +50,6 @@ export const allTools: ToolDefinition[] = [
   clickTextTool,
   dialogTool,
   uploadFileTool,
-  runActionTool,
   dragTool,
   fillFormTool,
   interceptTool,
@@ -63,12 +58,8 @@ export const allTools: ToolDefinition[] = [
   batchTool,
   resizeWindowTool,
   emulateTool,
-  gifTool,
   listBrowsersTool,
   selectBrowserTool,
-  shortcutsTool,
-  webmcpListTool,
-  webmcpCallTool,
   inspectElementTool,
 ];
 
@@ -80,7 +71,6 @@ export type ToolCapability = 'read' | 'write' | 'mixed';
 
 export interface ToolManifestEntry {
   name: string;
-  summary: string;
   description: string;
   inputSchema: unknown;
   timeoutMs: number | undefined;
@@ -96,7 +86,6 @@ function capabilityOf(tool: ToolDefinition): ToolCapability {
 
 export const toolManifest: ToolManifestEntry[] = allTools.map((tool) => ({
   name: tool.name,
-  summary: tool.summary,
   description: tool.description,
   inputSchema: z.toJSONSchema(tool.inputSchema),
   timeoutMs: tool.timeoutMs,

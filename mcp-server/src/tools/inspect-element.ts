@@ -4,7 +4,6 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const inspectElementTool: ToolDefinition = {
   name: 'browser_inspect_element',
-  summary: 'Inspect an element: computed styles, matching CSS rules, event listeners',
   description: 'Why an element looks/behaves as it does: computed styles (non-default ones; properties picks), the CSS rules that match it, highest priority first, with file:line and overridden names, inherited and ::before/::after rules, and event listeners (own + delegated to ancestors). rules and listeners use the debugger.',
   inputSchema: z.object({
     tabId: requireTabId(),

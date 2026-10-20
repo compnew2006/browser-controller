@@ -1,72 +1,10 @@
 /**
- * CDP-backed handlers (extracted from background.js): run_action and
- * upload_file — the two tools that cannot be implemented with
- * chrome.scripting (CSP bypass / DOM.setFileInputFiles).
+ * CDP-backed file upload (extracted from background.js): DOM.setFileInputFiles
+ * cannot be done with chrome.scripting.
  */
 import { resolveTab, execDom, getFallback } from '../lib/page-exec.js';
-import { MAX_RESULT_CHARS } from '../lib/state.js';
 import { ensureCdp } from '../lib/cdp-session.js';
 import { handleScreenshot } from './tabs.js';
-
-export async function handleRunAction(params, _sessionId, _agentName, signal) {
-  const { tabId, code, actionParams = {} } = params;
-  if (!code) throw new Error('code is required');
-  const tab = await resolveTab(tabId);
-
-  // run_action stays on CDP (plan decision: CDP-only, can't be scripted —
-  // it bypasses page CSP via the debugger protocol, unlike browser_evaluate).
-  const send = await ensureCdp(tab.id);
-  {
-    const paramsJson = JSON.stringify(actionParams);
-    // Dual mode: accept EITHER a {execute:function()} tool wrapper (legacy
-    // skill syntax) OR a plain JS expression/statement (simple usage like
-    // "document.title" or "var x=...; JSON.stringify(x)"). Previously only
-    // the wrapper worked; any plain expression returned "No execute function
-    // found", making the tool unusable for simple extraction tasks.
-    const expression = `(async function() {
-      try {
-        var result = await (${code});
-        if (result && typeof result.execute === "function") {
-          result = await result.execute(${paramsJson});
-        }
-        if (result && Array.isArray(result.content)) {
-          return result;
-        }
-        var raw = (typeof result === 'object' && result !== null) ? JSON.stringify(result) : String(result);
-        return { content: [{ type: 'text', text: raw }] };
-      } catch(e) {
-        return { error: e.message, stack: e.stack };
-      }
-    })()`;
-
-    const { result, exceptionDetails } = await send(
-      'Runtime.evaluate',
-      { expression, awaitPromise: true, returnByValue: true },
-    );
-
-    // Cancellation: if the caller (daemon/bridge) aborted while the page was
-    // evaluating (e.g. a long IIFE), the result is now useless — drop it so the
-    // tab mutex releases immediately and the next caller isn't queued behind a
-    // dead request.
-    if (signal?.aborted) {
-      return { success: false, error: 'aborted' };
-    }
-    if (exceptionDetails) {
-      return { success: false, error: exceptionDetails.exception?.description || exceptionDetails.text };
-    }
-    // Cap oversized results (same policy as handleEvaluate).
-    const raw = JSON.stringify(result.value);
-    if (raw && raw.length > MAX_RESULT_CHARS) {
-      return {
-        success: true,
-        result: { content: [{ type: 'text', text: raw.slice(0, MAX_RESULT_CHARS) + '…[truncated]' }] },
-        truncated: true,
-        fullLength: raw.length,
-      };
-    }
-    return { success: true, result: result.value };
-  }
-}
 
 /** Main-world expression returning the node marked data-bc-upload=token (pierces open shadow roots / same-origin frames). */
 export function findMarkedExpression(token) {

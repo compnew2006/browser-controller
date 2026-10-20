@@ -4,7 +4,6 @@ import { requireTabId, imageResult, jsonError, payloadOf } from './types.js';
 
 export const screenshotTool: ToolDefinition = {
   name: 'browser_screenshot',
-  summary: 'Capture a screenshot of a tab',
   description: 'Screenshot a tab over CDP (a background tab is shown for a moment). maxWidth / scale and format:"jpeg" cut tokens; fullPage, region (a viewport rectangle, zoomed) or ref/selector (one element). The result maps image pixels to click x/y.',
   inputSchema: z.object({
     tabId: requireTabId(),

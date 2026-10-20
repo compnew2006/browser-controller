@@ -4,7 +4,6 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const consoleTool: ToolDefinition = {
   name: 'browser_console',
-  summary: 'Read console messages from a tab',
   description: "Console messages and uncaught errors (with stacks) of the tab's current page, read through the debugger; filtered by pattern (regex), level and limit. browser:true adds what Chrome itself reported (failed loads, deprecations) and DevTools Issues.",
   inputSchema: z.object({
     tabId: requireTabId(),

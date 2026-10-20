@@ -4,7 +4,7 @@ import { requireTabId, tabIdParam, forwardHandler } from './types.js';
 
 export const uploadFileTool: ToolDefinition = {
   name: 'browser_upload_file',
-  summary: 'Upload a file to a file input element',  description:
+  description:
     'Set files on an <input type="file"> without a file dialog (ref/selector, or the first file input): filePath or files, absolute paths on the browser\'s machine. Or upload bytes (imageBase64, fromScreenshot) into a file input or dropped on a drop zone (ref/selector/x+y).',
   inputSchema: z.object({
     tabId: requireTabId(),

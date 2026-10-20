@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const fillFormTool: ToolDefinition = {
   name: 'browser_fill_form',
-  summary: 'Fill multiple form fields in one call',  description:
+  description:
     'Fill several fields in one call (text, select, checkbox, contentEditable), optionally submit.',
   inputSchema: z.object({
     tabId: requireTabId(),

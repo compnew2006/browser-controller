@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const waitTool: ToolDefinition = {
   name: 'browser_wait',
-  summary: 'Wait for a duration or condition',  description:
+  description:
     'Wait for a selector (state visible/hidden/attached), text to appear (or vanish, state "hidden"), the URL to contain urlIncludes, or a fixed delay. Sees shadow DOM and same-origin iframes.',
   inputSchema: z.object({
     tabId: requireTabId(),

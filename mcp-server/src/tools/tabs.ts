@@ -4,7 +4,7 @@ import { tabIdParam, forwardHandler } from './types.js';
 
 export const tabsTool: ToolDefinition = {
   name: 'browser_tabs',
-  summary: 'List, create, close, focus, reload, lock, or unlock tabs',  description:
+  description:
     'List, create, close, focus, reload or lock/unlock tabs; list gives the tabIds every other tool needs. lock makes other agents queue behind you; reload also recovers a frozen (TAB_WEDGED) tab.',
   inputSchema: z.object({
     action: z

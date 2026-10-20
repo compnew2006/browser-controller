@@ -7,7 +7,6 @@ import { forwardHandler } from './types.js';
 
 export const listBrowsersTool: ToolDefinition = {
   name: 'browser_list_browsers',
-  summary: 'List the connected browsers (Chrome profiles)',
   description:
     'Connected browsers (Chrome profiles): browserId, label, the default and the one this session uses. Only needed with several.',
   inputSchema: z.object({}),
@@ -18,7 +17,6 @@ export const listBrowsersTool: ToolDefinition = {
 
 export const selectBrowserTool: ToolDefinition = {
   name: 'browser_select_browser',
-  summary: 'Send this session\'s browser calls to one browser',
   description:
     'Route this session to one connected browser (browserId or label; "auto" = the default). List tabs again after switching.',
   inputSchema: z.object({

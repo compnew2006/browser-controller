@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const clickTextTool: ToolDefinition = {
   name: 'browser_click_text',
-  summary: 'Click an element by its visible text',  description:
+  description:
     'Click the control whose visible text or accessible name matches (case-insensitive; shadow DOM, same-origin iframes, portals), with a real mouse click.',
   inputSchema: z.object({
     tabId: requireTabId(),

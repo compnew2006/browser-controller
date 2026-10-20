@@ -2,20 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { parseToolParams, registerTools } from '../mcp-server/src/register-tools.js';
 import { allTools } from '../mcp-server/src/tools/index.js';
 import type { ToolHost } from '../mcp-server/src/tools/types.js';
 
 /**
- * Integration tests for the progressive-disclosure registration wiring
- * (register-tools.ts), driven through a REAL McpServer + Client over
- * InMemoryTransport — the same code path index.ts uses, minus the daemon.
- *
- * Covers the two modes:
- *  - fullMode (default): all 24 tools + browser_tools visible immediately.
- *  - progressive (BROWSER_CONTROLLER_PROGRESSIVE=1): only browser_tools
- *    visible; disabled tools reject calls; details activates + notifies.
+ * Tool registration (register-tools.ts) driven through a REAL McpServer +
+ * Client over InMemoryTransport — the same code path index.ts uses, minus the
+ * daemon.
  */
 
 // Fake daemon host — records calls, returns an empty success payload.
@@ -30,34 +24,33 @@ function makeFakeHost(): ToolHost & { calls: string[] } {
   };
 }
 
-async function setup(fullMode: boolean) {
+async function setup() {
   const server = new McpServer({ name: 'test-server', version: '0.0.0' });
   const host = makeFakeHost();
-  const registration = registerTools(server, host, fullMode);
+  registerTools(server, host);
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  return { server, client, host, registration };
+  return { server, client, host };
 }
 
-describe('registerTools — full mode (default)', () => {
-  it('exposes all browser tools + browser_tools immediately', async () => {
-    const { client } = await setup(true);
+describe('registerTools', () => {
+  it('exposes every browser tool', async () => {
+    const { client } = await setup();
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
-    expect(names).toHaveLength(allTools.length + 1); // 22 + meta
-    expect(names).toContain('browser_tools');
+    expect(names).toHaveLength(allTools.length);
     for (const tool of allTools) expect(names).toContain(tool.name);
   });
 
-  it('tools are callable directly without activation', async () => {
-    const { client, host } = await setup(true);
+  it('tools are callable directly', async () => {
+    const { client, host } = await setup();
     await client.callTool({ name: 'browser_click', arguments: { tabId: 1, selector: '#btn' } });
     expect(host.calls).toContain('browser_click');
   });
 
   it('validates the full tool schema before forwarding to the host', async () => {
-    const { client, host } = await setup(true);
+    const { client, host } = await setup();
     const result = await client.callTool({ name: 'browser_click', arguments: { tabId: 1 } });
     expect(result.isError).toBe(true);
     expect((result.content as Array<{ text: string }>)[0].text).toContain('ref or selector');
@@ -65,7 +58,7 @@ describe('registerTools — full mode (default)', () => {
   });
 
   it('validates tool arguments inside the wrapper before reaching the host', async () => {
-    const { client, host } = await setup(true);
+    const { client, host } = await setup();
     const result = await client.callTool({ name: 'browser_click', arguments: { tabId: 'not-a-number', selector: '#btn' } });
     expect(result.isError).toBe(true);
     expect((result.content as Array<{ text: string }>)[0].text).toMatch(/Invalid tool arguments|Expected number|number/i);
@@ -73,17 +66,15 @@ describe('registerTools — full mode (default)', () => {
   });
 
   it('exports the same schema validation helper used by registration', () => {
-    expect(parseToolParams(allTools.find((t) => t.name === 'browser_click')!, { tabId: 1, selector: '#btn' })).toEqual({
+    expect(parseToolParams(allTools.find((t) => t.name === 'browser_click')!, { tabId: 1, selector: '#btn' })).toMatchObject({
       tabId: 1,
       selector: '#btn',
-      button: 'left',
-      doubleClick: false,
     });
     expect(() => parseToolParams(allTools.find((t) => t.name === 'browser_click')!, { tabId: 'bad', selector: '#btn' })).toThrow();
   });
 
   it('rejects oversized argument payloads before reaching the host', async () => {
-    const { client, host } = await setup(true);
+    const { client, host } = await setup();
     const result = await client.callTool({
       name: 'browser_type',
       arguments: { tabId: 1, selector: '#in', text: 'x'.repeat(1_100_000) },
@@ -91,114 +82,5 @@ describe('registerTools — full mode (default)', () => {
     expect(result.isError).toBe(true);
     expect((result.content as Array<{ text: string }>)[0].text).toMatch(/exceed|too_big|too large/i);
     expect(host.calls).toHaveLength(0);
-  });
-
-  it('meta tool reports every tool as active', async () => {
-    const { client } = await setup(true);
-    const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'list' } });
-    const data = JSON.parse((result.content as Array<{ text: string }>)[0].text);
-    expect(data.tools.every((t: { active: boolean }) => t.active)).toBe(true);
-  });
-
-  it('meta tool list is a task→tool preamble + summaries; per-tool guidance comes with search/details', async () => {
-    const { client } = await setup(true);
-    const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'list' } });
-    const data = JSON.parse((result.content as Array<{ text: string }>)[0].text);
-    // preamble is the first-read orientation string for a first-time agent
-    expect(typeof data.preamble).toBe('string');
-    expect(data.preamble.length).toBeGreaterThan(200);
-    // the list stays in the agent's context: no per-tool guidance there
-    expect(data.tools.every((t: { guidance?: string }) => t.guidance === undefined)).toBe(true);
-    // the high-value evaluate↔run_action distinction is surfaced once the agent looks for them
-    const found = await client.callTool({ name: 'browser_tools', arguments: { action: 'search', query: 'evaluate run_action' } });
-    const { matches } = JSON.parse((found.content as Array<{ text: string }>)[0].text);
-    expect(matches.every((t: { guidance?: string }) => typeof t.guidance === 'string' && t.guidance.length > 0)).toBe(true);
-    const evalG = matches.find((t: { name: string }) => t.name === 'browser_evaluate');
-    const runG = matches.find((t: { name: string }) => t.name === 'browser_run_action');
-    expect(/CSP|null/i.test(evalG.guidance)).toBe(true);
-    expect(/bypasses CSP|CSP/i.test(runG.guidance)).toBe(true);
-    // browser_evaluate runs over CDP by default (mcp-server/src/tools/evaluate.ts):
-    // the guidance must not send agents away from it as "CSP-restricted".
-    expect(evalG.guidance).toMatch(/cdp/i);
-    expect(evalG.guidance).not.toMatch(/CSP-RESTRICTED|may return null/i);
-    expect(data.preamble).not.toMatch(/browser_evaluate is the CSP-bound|If browser_evaluate returns null/);
-  });
-
-  it('meta tool details returns guidance for the requested tool', async () => {
-    const { client } = await setup(false); // progressive mode so details also activates
-    const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'details', tool: 'browser_click' } });
-    const data = JSON.parse((result.content as Array<{ text: string }>)[0].text);
-    expect(typeof data.guidance).toBe('string');
-    expect(data.guidance.length).toBeGreaterThan(0);
-    expect(data.activated).toBe(true);
-  });
-});
-
-describe('registerTools — progressive mode', () => {
-  it('only browser_tools is visible in tools/list', async () => {
-    const { client } = await setup(false);
-    const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(['browser_tools']);
-  });
-
-  it('calling a disabled tool is rejected by the SDK', async () => {
-    const { client, host } = await setup(false);
-    // The SDK surfaces the McpError as an isError tool result, not a rejection.
-    const result = await client.callTool({ name: 'browser_click', arguments: { tabId: 1, selector: '#btn' } });
-    expect(result.isError).toBe(true);
-    expect((result.content as Array<{ text: string }>)[0].text).toContain('disabled');
-    expect(host.calls).toHaveLength(0); // never reached the daemon
-  });
-
-  it('details activates the tool: visible, callable, and list_changed sent', async () => {
-    const { client, host } = await setup(false);
-    let listChangedCount = 0;
-    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
-      listChangedCount++;
-    });
-
-    await client.callTool({
-      name: 'browser_tools',
-      arguments: { action: 'details', tool: 'browser_click' },
-    });
-
-    // now visible in tools/list…
-    const { tools } = await client.listTools();
-    const names = tools.map((t) => t.name);
-    expect(names).toContain('browser_click');
-    expect(names).toHaveLength(2); // browser_tools + browser_click only
-
-    // …and callable
-    await client.callTool({ name: 'browser_click', arguments: { tabId: 1, selector: '#btn' } });
-    expect(host.calls).toContain('browser_click');
-
-    // …and the client was notified
-    expect(listChangedCount).toBeGreaterThanOrEqual(1);
-  });
-
-  it('activating the same tool twice does not re-notify', async () => {
-    const { client } = await setup(false);
-    let listChangedCount = 0;
-    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
-      listChangedCount++;
-    });
-    const activate = () =>
-      client.callTool({ name: 'browser_tools', arguments: { action: 'details', tool: 'browser_snapshot' } });
-    await activate();
-    const after1 = listChangedCount;
-    await activate();
-    expect(listChangedCount).toBe(after1); // second activation is a no-op
-  });
-
-  it('other tools stay disabled after one activation', async () => {
-    const { client, host } = await setup(false);
-    await client.callTool({
-      name: 'browser_tools',
-      arguments: { action: 'details', tool: 'browser_click' },
-    });
-    const result = await client.callTool({ name: 'browser_type', arguments: { tabId: 1, selector: '#in', text: 'x' } });
-    expect(result.isError).toBe(true);
-    expect((result.content as Array<{ text: string }>)[0].text).toContain('disabled');
-    expect(host.calls).not.toContain('browser_type');
   });
 });

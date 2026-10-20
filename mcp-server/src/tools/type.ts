@@ -4,7 +4,6 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const typeTool: ToolDefinition = {
   name: 'browser_type',
-  summary: 'Type text into an input element',
   description: 'Type text into an input (ref/selector, or the focused element) with real key presses. change/blur fire only when focus leaves: follow with browser_press_key Tab to commit. Returns the field value.',
   inputSchema: z.object({
     tabId: requireTabId(),

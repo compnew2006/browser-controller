@@ -4,7 +4,6 @@ import { tabIdParam, forwardHandler } from './types.js';
 
 export const resizeWindowTool: ToolDefinition = {
   name: 'browser_resize_window',
-  summary: 'Resize/maximize the window that holds a tab',
   description:
     'Resize the window holding a tab, or set its state, for responsive testing. It is the user\'s window.',
   inputSchema: z.object({

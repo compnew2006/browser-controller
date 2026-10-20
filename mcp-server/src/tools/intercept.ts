@@ -19,7 +19,6 @@ const ruleSchema = z.object({
 
 export const interceptTool: ToolDefinition = {
   name: "browser_intercept",
-  summary: "Manage request intercept rules and captures per tab",
   description:
     "Per-tab network rules: block, redirect, header (set request headers), mock (the page receives mockStatus/mockBody/headers; needs a tabId, uses the debugger) or log; plus captures and a redacted HAR. Check enforcement / enforced / unsupported in the result.",
   inputSchema: z.object({

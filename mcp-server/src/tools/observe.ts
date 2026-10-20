@@ -4,7 +4,6 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const observeTool: ToolDefinition = {
   name: 'browser_observe',
-  summary: 'Observe compact actionable state for one tab',
   description:
     'Compact list of actionable elements (ref, role, name, state, bbox, allowedActions) plus a snapshotId for browser_act. Capped at maxChars (default 20000, then truncated:true).',
   inputSchema: z.object({

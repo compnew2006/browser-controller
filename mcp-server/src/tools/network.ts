@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from "./types.js";
 
 export const networkTool: ToolDefinition = {
   name: 'browser_network',
-  summary: 'Read network requests captured from a tab',  description: 'Requests a tab made (id, method, url, status, type, durationMs). Filter by urlPattern (substring), filter (regex), type or failed. requestId: one request with redacted headers. captureBodies:true keeps document/xhr/fetch response bodies from then on (the debugger stays attached until false); requestId then adds responseBody (credentials in JSON redacted).',
+  description: 'Requests a tab made (id, method, url, status, type, durationMs). Filter by urlPattern (substring), filter (regex), type or failed. requestId: one request with redacted headers. captureBodies:true keeps document/xhr/fetch response bodies from then on (the debugger stays attached until false); requestId then adds responseBody (credentials in JSON redacted).',
   inputSchema: z.object({
     tabId: requireTabId(),
     filter: z.string().optional().describe('URL regex'),

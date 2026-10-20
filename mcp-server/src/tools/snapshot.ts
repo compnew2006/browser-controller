@@ -4,7 +4,6 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const snapshotTool: ToolDefinition = {
   name: 'browser_snapshot',
-  summary: 'Get the accessibility tree with element refs',
   description:
     'Accessibility tree of the page with refs for every ref tool (shadow DOM and same-origin iframes included). Compact by default: interactive elements, landmarks and headings; capped at maxChars (default 20000, then truncated:true) — scope big pages with selector or ref. source:"native" = Chrome\'s own tree, via the debugger.',
   inputSchema: z.object({

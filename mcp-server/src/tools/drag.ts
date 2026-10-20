@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const dragTool: ToolDefinition = {
   name: 'browser_drag',
-  summary: 'Drag an element from one ref/selector to another',  description:
+  description:
     'Drag from an element (startRef/startSelector) or point (startX/startY) to another, with real mouse events.',
   inputSchema: z.object({
     tabId: requireTabId(),

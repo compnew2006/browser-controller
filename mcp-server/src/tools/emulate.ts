@@ -4,7 +4,6 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const emulateTool: ToolDefinition = {
   name: 'browser_emulate',
-  summary: 'Emulate network, CPU, location, color scheme or user agent in a tab',
   description:
     'Emulate in one tab: network preset, cpuThrottling, geolocation, colorScheme, reducedMotion, userAgent. Settings merge and last while the debugger stays attached; "none" / 1 / null / "" clears one, reset:true all.',
   inputSchema: z.object({

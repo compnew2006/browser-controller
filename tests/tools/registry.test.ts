@@ -17,15 +17,14 @@ describe("Tool Registry", () => {
     'browser_console', 'browser_network', 'browser_tabs', 'browser_find',
     'browser_text', 'browser_hover', 'browser_select', 'browser_evaluate',
     'browser_click_text', 'browser_handle_dialog',
-    'browser_upload_file', 'browser_run_action',
+    'browser_upload_file',
     'browser_drag', 'browser_fill_form', 'browser_intercept',
-    'browser_observe', 'browser_act', 'browser_batch', 'browser_resize_window', 'browser_emulate', 'browser_gif',
-    'browser_list_browsers', 'browser_select_browser', 'browser_shortcuts',
-    'browser_webmcp_list', 'browser_webmcp_call', 'browser_inspect_element',
+    'browser_observe', 'browser_act', 'browser_batch', 'browser_resize_window', 'browser_emulate',
+    'browser_list_browsers', 'browser_select_browser', 'browser_inspect_element',
   ];
   // Tools that run entirely in the MCP process (they call other tools' handlers)
   // and therefore never send a wire name of their own.
-  const localTools = new Set(['browser_batch', 'browser_shortcuts']);
+  const localTools = new Set(['browser_batch']);
 
   it(`registers every expected tool (${expectedTools.length})`, () => {
     expect(allTools.length).toBe(expectedTools.length);
@@ -42,23 +41,6 @@ describe("Tool Registry", () => {
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeTruthy();
       expect(typeof tool.handler).toBe("function");
-    }
-  });
-
-  // Progressive disclosure: every tool must have a concise `summary` for the
-  // browser_tools meta tool. Without it, search/list would return empty.
-  it("all tools have a summary (progressive disclosure)", () => {
-    for (const tool of allTools) {
-      expect(tool.summary, `${tool.name} must have a summary`).toBeTruthy();
-      expect(typeof tool.summary).toBe("string");
-      expect(
-        tool.summary.length,
-        `${tool.name} summary should be <80 chars`,
-      ).toBeLessThan(80);
-      expect(
-        tool.summary.length,
-        `${tool.name} summary should be >10 chars`,
-      ).toBeGreaterThan(10);
     }
   });
 

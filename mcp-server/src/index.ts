@@ -487,25 +487,8 @@ async function main(): Promise<void> {
   // 4) wire MCP <-> daemon
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: SERVER_INSTRUCTIONS });
 
-  // Progressive disclosure (Anthropic "Code Execution with MCP" pattern).
-  // CANONICAL documentation lives on registerTools() in register-tools.ts —
-  // this comment is intentionally just a pointer; the mechanism was previously
-  // explained in three places and they drifted.
-  // Only explicit opt-in values enable progressive mode. The previous truthiness
-  // check treated `=0` and `=false` as ENABLED — the exact opposite of what a
-  // user disabling it via BROWSER_CONTROLLER_PROGRESSIVE=0 intended.
-  const progressiveRaw = (process.env.BROWSER_CONTROLLER_PROGRESSIVE ?? '').trim().toLowerCase();
-  const fullMode = !(progressiveRaw === '1' || progressiveRaw === 'true');
-
-  // Registration logic lives in register-tools.ts so the disable/enable wiring
-  // is covered by tests/register-tools.test.ts (this main() needs a live daemon).
-  registerTools(server, client, fullMode, (msg) => console.error(`[${SERVER_NAME}] ${msg}`));
-
-  if (!fullMode) {
-    console.error(`[${SERVER_NAME}] progressive disclosure: ON (${allTools.length} tools hidden, use browser_tools to discover)`);
-  } else {
-    console.error(`[${SERVER_NAME}] full tool mode: ${allTools.length + 1} tools visible (set BROWSER_CONTROLLER_PROGRESSIVE=1 to start at ~170 tool-definition tokens instead of ~7,100)`);
-  }
+  registerTools(server, client);
+  console.error(`[${SERVER_NAME}] ${allTools.length} tools registered`);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
