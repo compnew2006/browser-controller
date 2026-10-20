@@ -5,7 +5,7 @@ import { forwardHandler } from './types.js';
 export const tabsTool: ToolDefinition = {
   name: 'browser_tabs',
   summary: 'List, create, close, focus, reload, lock, or unlock tabs',  description:
-    'Manage browser tabs: list, create, close, focus, reload, or lock. list requires no tabId. reload also recovers a frozen (TAB_WEDGED) tab. lock/unlock claim a tab for the calling agent so other agents queue behind it instead of racing (see browser_tabs lock).',
+    'Manage browser tabs: list, create, close, focus, reload, or lock. list requires no tabId. reload also recovers a frozen (TAB_WEDGED) tab. lock/unlock claim a tab for the calling agent: calls from other agents on it are refused at once with TAB_LOCKED (owner and since when) until it is unlocked or the owner disconnects.',
   inputSchema: z.object({
     action: z
       .enum(['list', 'create', 'close', 'focus', 'reload', 'lock', 'unlock'])

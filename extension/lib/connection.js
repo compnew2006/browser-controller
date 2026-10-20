@@ -5,7 +5,14 @@
  * background.js — this module must not import the router (that would cycle:
  * router → handlers → connection).
  */
-import { tabLocks, tabControl, loadSessionState } from './state.js';
+import {
+  tabLocks,
+  tabControl,
+  loadSessionState,
+  persistSessionState,
+  getAdoptedDaemonInstance,
+  setAdoptedDaemonInstance,
+} from './state.js';
 import { showLockShield, hideLockShield } from './overlay.js';
 import { buildExtensionHelloAck, validateDaemonHello } from './protocol.js';
 
@@ -221,11 +228,38 @@ export async function initConnection() {
     for (const t of all) {
       if (tabLocks.owner(t.id)) {
         try { await showLockShield(t.id); } catch {}
+        // A daemon hello may have released this lock while the sweep was awaiting.
+        if (!tabLocks.owner(t.id)) await hideLockShield(t.id);
       } else {
         try { await hideLockShield(t.id); } catch {}
       }
     }
   } catch {}
+}
+
+/**
+ * Locks, control entries and shields belong to the daemon instance that granted
+ * them. A hello from a DIFFERENT instance means the daemon restarted, so every
+ * agent session of the old one is gone and its locks are stale: release them,
+ * forget the control entries and take the shields down. The adopted instance
+ * is persisted with the locks, so the check also holds across a service-worker
+ * recycle. A hello with no instance id (a daemon from before instance ids)
+ * changes nothing. Returns how many locks were released.
+ * @param {string|undefined} instanceId
+ * @returns {number}
+ */
+export function adoptDaemonInstance(instanceId) {
+  if (typeof instanceId !== 'string' || !instanceId) return 0;
+  if (getAdoptedDaemonInstance() === instanceId) return 0;
+  setAdoptedDaemonInstance(instanceId);
+  const stale = tabLocks.snapshot();
+  tabLocks.unlockAll();
+  tabControl.clear();
+  persistSessionState();
+  // hideLockShield never throws (it is bounded and swallows per-tab errors).
+  for (const { tabId } of stale) hideLockShield(tabId);
+  if (stale.length) broadcastStatus(`Released ${stale.length} tab lock(s) left by a previous daemon`);
+  return stale.length;
 }
 
 function wsUrl() {
@@ -346,6 +380,8 @@ export async function connect() {
             socket.close(1002, 'incompatible protocol');
             return;
           }
+          // Before the ack and before any tool call: stale locks of a previous daemon go now.
+          adoptDaemonInstance(msg.instanceId);
           socket.send(JSON.stringify(buildExtensionHelloAck(chrome.runtime.getManifest().version, browserIdentity)));
           clearTimeout(handshakeTimeout);
           handshakeTimeout = null;

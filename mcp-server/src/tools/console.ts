@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const consoleTool: ToolDefinition = {
   name: 'browser_console',
-  summary: 'Read console messages from a tab',  description: 'Read console messages (log, info, warn, error, debug, uncaught errors) the page produced in a specific tab. Filter with pattern (regex) / level, and keep only the latest with limit. browser:true also returns what Chrome itself reported for the page — failed resource loads, deprecations, interventions, violations — and DevTools Issues (CORS, CSP, mixed content, cookies, forms), read through the debugger (yellow banner).',
+  summary: 'Read console messages from a tab',  description: 'Read console messages (log, info, warn, error, debug) the page produced in a specific tab. Uncaught errors and unhandled promise rejections come back as level error with kind uncaught or rejection and a short stack; console.error and assert entries carry a short stack too. Filter with pattern (regex) / level, and keep only the latest with limit. browser:true also returns what Chrome itself reported for the page — failed resource loads, deprecations, interventions, violations — and DevTools Issues (CORS, CSP, mixed content, cookies, forms), read through the debugger (yellow banner).',
   inputSchema: z.object({
     tabId: requireTabId(),
     browser: z.boolean().optional().describe('Also read Chrome-reported messages and DevTools Issues for the page (uses the debugger)'),

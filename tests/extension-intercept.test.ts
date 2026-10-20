@@ -205,6 +205,7 @@ describe("capture + HAR (S4)", () => {
   it("enrichCapture marks matched entries and ledgers them", async () => {
     await handleIntercept({
       action: "set-rules",
+      global: true,
       rules: [{ id: "blk-track", match: "tracker\\.example", action: "block" }],
     });
     const entry: Record<string, unknown> = {
@@ -304,6 +305,7 @@ describe("capture dedupe (fix)", () => {
   it("a matched request appears once in list-captures (not ledger + buffer)", async () => {
     await handleIntercept({
       action: "set-rules",
+      global: true,
       rules: [{ id: "blk-track", match: "tracker\\.example", action: "block" }],
     });
     // Simulate the events.js flow: buffer push, then enrich (mutates + ledgers).
@@ -326,6 +328,7 @@ describe("capture dedupe (fix)", () => {
   it("export-har counts each request once", async () => {
     await handleIntercept({
       action: "set-rules",
+      global: true,
       rules: [{ id: "blk-track", match: "tracker\\.example", action: "block" }],
     });
     const buf: Record<string, unknown>[] = [];

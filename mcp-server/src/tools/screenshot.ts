@@ -5,7 +5,7 @@ import { requireTabId, imageResult, jsonError, payloadOf } from './types.js';
 export const screenshotTool: ToolDefinition = {
   name: 'browser_screenshot',
   summary: 'Capture a screenshot of a tab',
-  description: 'Capture a screenshot of a tab over CDP. Use maxWidth / scale and format:"jpeg" to shrink the image (far fewer tokens); fullPage captures the whole scrollable page; region zooms into a rectangle; ref or selector captures just that element (scrolled into view). The result says how image pixels map to the x/y that click/hover/scroll take. A background tab is shown for a moment and the user\'s tab is switched straight back (Chrome does not paint hidden tabs). The agent\'s blue control frame is never in the picture.',
+  description: 'Capture a screenshot of a tab. The active tab\'s viewport is read from the screen with no debugger and no tab switch. fullPage and zoom (scale above 1 for a region) use the debugger. A background tab is captured over CDP without switching to it; if Chrome cannot capture it that way, it is shown briefly and the user\'s tab is switched straight back. Use maxWidth / scale and format:"jpeg" to shrink the image (fewer tokens); ref or selector captures just that element (scrolled into view). The longest side is capped at 1568 px and the image stays under the 1 MB message limit: when that changes the picture, the result says so in note. The result says how image pixels map to the x/y that click/hover/scroll take. The agent\'s blue control frame is never in the picture.',
   inputSchema: z.object({
     tabId: requireTabId(),
     format: z.enum(['png', 'jpeg']).optional().default('png'),
@@ -33,6 +33,8 @@ export const screenshotTool: ToolDefinition = {
         height?: number;
         frame?: { scale: number; origin: [number, number]; viewport: [number, number]; page?: boolean };
         element?: { clipped: boolean };
+        note?: string;
+        cdpFallback?: string;
       };
     } catch (err) {
       // Unified error channel: surface a payload-carrying rejection intact.
@@ -45,14 +47,21 @@ export const screenshotTool: ToolDefinition = {
     if (result.data) {
       const mimeType = result.format === 'jpeg' ? 'image/jpeg' : 'image/png';
       const image = imageResult(result.data, mimeType);
+      const meta: Record<string, unknown> = {
+        image: [result.width, result.height],
+        ...(result.element ? { element: result.element } : {}),
+        ...(result.note ? { note: result.note } : {}),
+        ...(result.cdpFallback ? { cdpFallback: result.cdpFallback } : {}),
+      };
       // Coordinate frame so a point seen in the image maps to click/hover/scroll x/y.
       if (result.frame) {
         const f = result.frame;
-        const map = f.page
+        meta.viewport = f.viewport;
+        meta.toViewport = f.page
           ? `page coords = imagePx / ${f.scale} (scroll first; viewport y = pageY - ${(f as { scrollY?: number }).scrollY ?? 0})`
           : `x = ${f.origin[0]} + imageX / ${f.scale}, y = ${f.origin[1]} + imageY / ${f.scale}`;
-        image.content.push({ type: 'text', text: JSON.stringify({ image: [result.width, result.height], viewport: f.viewport, toViewport: map, ...(result.element ? { element: result.element } : {}) }) });
       }
+      if (result.frame || result.note || result.cdpFallback) image.content.push({ type: 'text', text: JSON.stringify(meta) });
       return image;
     }
     // "Captured but no data" is a failure — the agent must not treat an

@@ -50,6 +50,13 @@ export function aggregateIssues(issues) {
 }
 
 /**
+ * Most Issue rows one read returns. Audits is enabled on this tab's own session,
+ * so the issues come from this tab; the noise is volume (many kinds on a busy
+ * page), so rows are sorted by count and the rest is summarised in one row.
+ */
+export const MAX_ISSUE_ROWS = 25;
+
+/**
  * Enable Log + Audits, gather the replayed entries, switch both off again.
  * `clear` empties Chrome's log afterwards (Issues have no clear).
  */
@@ -70,5 +77,13 @@ export async function collectBrowserLog(send, subscribe, { clear = false, settle
     await send('Log.disable').catch(() => {});
     await send('Audits.disable').catch(() => {});
   }
-  return { messages, issues: aggregateIssues(issues) };
+  return { messages, issues: capIssueRows(aggregateIssues(issues)) };
+}
+
+/** Most frequent rows first, at most MAX_ISSUE_ROWS, then one row counting what was left out. */
+export function capIssueRows(rows) {
+  const sorted = [...rows].sort((a, b) => b.count - a.count);
+  if (sorted.length <= MAX_ISSUE_ROWS) return sorted;
+  const omitted = sorted.length - MAX_ISSUE_ROWS;
+  return [...sorted.slice(0, MAX_ISSUE_ROWS), { code: 'Truncated', type: `${omitted} more issue kinds not listed (row cap ${MAX_ISSUE_ROWS})` }];
 }

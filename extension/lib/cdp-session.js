@@ -10,6 +10,10 @@
  * Every session also enables focus emulation: the page believes it has focus
  * even while its window is in the background, so focus/blur/focusin/focusout
  * fire as they would for a real user (legacy grids and lookups depend on them).
+ *
+ * Every session enables the Page domain too, so a JavaScript dialog that opens
+ * while the session is attached is recorded (see getOpenDialog). Chrome reports a
+ * dialog only to a session that had Page enabled before it opened.
  */
 
 export const IDLE_MS = 30_000;
@@ -24,8 +28,30 @@ function bounded(promise, what) {
   ]).finally(() => clearTimeout(timer));
 }
 
-/** tabId -> { ready: Promise<void>, timer } */
+/** settleWithin() result when the time ran out (the pending call is left to settle on its own). */
+export const TIMED_OUT = Symbol('timed out');
+
+/**
+ * Resolve with `promise`'s outcome, or with TIMED_OUT after `ms`. A CDP or
+ * chrome.scripting call into a frozen page never answers, so a handler races every
+ * such call against its own budget and returns on time, releasing its tab.
+ */
+export function settleWithin(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((resolve) => { timer = setTimeout(() => resolve(TIMED_OUT), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** tabId -> { ready: Promise<void>, timer, busy, emulation } */
 const sessions = new Map();
+
+/** tabId -> { type, message, defaultPrompt, url }: the JavaScript dialog Chrome reported open. */
+const openDialogs = new Map();
+
+/** tabId -> { state, reason }: overrides Chrome dropped when its debugger session ended. */
+const lostEmulation = new Map();
 
 function armIdle(tabId) {
   const s = sessions.get(tabId);
@@ -33,6 +59,7 @@ function armIdle(tabId) {
   clearTimeout(s.timer);
   if (s.busy > 0) return; // a long withCdp() call is still using the session
   if (s.emulation && Object.keys(s.emulation).length) return; // detaching would drop the overrides
+  if (openDialogs.has(tabId)) return; // only this session can answer the open dialog
   s.timer = setTimeout(() => { detachCdp(tabId); }, IDLE_MS);
 }
 
@@ -49,6 +76,36 @@ export function setCdpEmulation(tabId, state) {
   armIdle(tabId);
 }
 
+/** Overrides Chrome removed when the tab's debugger session ended and nobody has been told yet. */
+export function getLostEmulation(tabId) {
+  const lost = lostEmulation.get(tabId);
+  return lost ? { state: { ...lost.state }, reason: lost.reason } : null;
+}
+
+/** The lost overrides were reported to the agent (or deliberately reset). */
+export function clearLostEmulation(tabId) {
+  lostEmulation.delete(tabId);
+}
+
+/** browser_emulate reset: forget the overrides without reporting them as lost. */
+export function clearCdpEmulation(tabId) {
+  lostEmulation.delete(tabId);
+  const s = sessions.get(tabId);
+  if (s) s.emulation = {};
+}
+
+/** The JavaScript dialog Chrome reported open on the tab ({type, message, defaultPrompt, url}), or null. */
+export function getOpenDialog(tabId) {
+  const dialog = openDialogs.get(tabId);
+  return dialog ? { ...dialog } : null;
+}
+
+/** Forget the recorded dialog: it was answered, or Chrome says none is showing. */
+export function clearOpenDialog(tabId) {
+  openDialogs.delete(tabId);
+  armIdle(tabId);
+}
+
 async function attach(tabId) {
   const target = { tabId };
   try {
@@ -59,9 +116,15 @@ async function attach(tabId) {
     if (!/already attached/i.test(String(err?.message || err))) throw err;
     await bounded(chrome.debugger.sendCommand(target, 'Runtime.evaluate', { expression: '1' }), 'attach probe');
   }
-  await bounded(chrome.debugger.sendCommand(target, 'Emulation.setFocusEmulationEnabled', { enabled: true }), 'focus emulation').catch(() => {});
-  // Can fail while the page is still loading; locateTarget retries it.
-  await ensureViewport(tabId).catch(() => {});
+  // Setup runs together and each call is bounded: Page.enable (enabled on every attach so a
+  // dialog opened later is recorded) hangs while a dialog is already open, and a frozen tab
+  // must cost one bound, not one per call. The viewport probe can fail while the page is
+  // still loading; locateTarget retries it.
+  await Promise.all([
+    bounded(chrome.debugger.sendCommand(target, 'Page.enable'), 'page enable').catch(() => {}),
+    bounded(chrome.debugger.sendCommand(target, 'Emulation.setFocusEmulationEnabled', { enabled: true }), 'focus emulation').catch(() => {}),
+    ensureViewport(tabId).catch(() => {}),
+  ]);
 }
 
 /**
@@ -105,6 +168,15 @@ export async function ensureCdp(tabId) {
   return (method, params = {}) => chrome.debugger.sendCommand({ tabId }, method, params);
 }
 
+/**
+ * Send on the tab's existing debugger attachment, without attaching one. Rejects
+ * ("Debugger is not attached") when there is none, so a probe never shows the
+ * debugger banner.
+ */
+export function sendAttached(tabId, method, params = {}) {
+  return chrome.debugger.sendCommand({ tabId }, method, params);
+}
+
 /** Run fn(send) with the tab's session; no idle detach while fn runs. */
 export async function withCdp(tabId, fn) {
   const send = await ensureCdp(tabId);
@@ -118,11 +190,24 @@ export async function withCdp(tabId, fn) {
   }
 }
 
+/**
+ * Drop a tab's session. Overrides still set are kept as lost, so the next
+ * browser_emulate call reports them.
+ */
+function endSession(tabId, reason) {
+  const s = sessions.get(tabId);
+  if (s) {
+    clearTimeout(s.timer);
+    sessions.delete(tabId);
+    if (s.emulation && Object.keys(s.emulation).length) lostEmulation.set(tabId, { state: s.emulation, reason });
+  }
+  openDialogs.delete(tabId);
+}
+
 export async function detachCdp(tabId) {
   const s = sessions.get(tabId);
   if (!s) return;
-  clearTimeout(s.timer);
-  sessions.delete(tabId);
+  endSession(tabId, 'detached');
   try { await chrome.debugger.detach({ tabId }); } catch { /* already gone */ }
 }
 
@@ -146,22 +231,34 @@ export function subscribeCdpEvents(tabId, fn) {
 
 if (typeof chrome !== 'undefined' && chrome.debugger?.onEvent) {
   chrome.debugger.onEvent.addListener((source, method, params) => {
+    if (method === 'Page.javascriptDialogOpening') {
+      openDialogs.set(source.tabId, {
+        type: params?.type,
+        message: params?.message,
+        defaultPrompt: params?.defaultPrompt ?? null,
+        url: params?.url,
+      });
+      armIdle(source.tabId);
+    } else if (method === 'Page.javascriptDialogClosed') {
+      openDialogs.delete(source.tabId);
+      armIdle(source.tabId);
+    }
     const subs = eventSubscribers.get(source.tabId);
     if (subs) for (const fn of [...subs]) { try { fn(method, params); } catch { /* one bad subscriber must not starve the rest */ } }
   });
 }
 
 // The user can dismiss the debugger banner, or the tab can close/navigate to a
-// protected page: forget the session so the next call re-attaches cleanly.
+// protected page: forget the session so the next call re-attaches cleanly. Overrides
+// that were set are kept as lost so the next browser_emulate call says so.
 if (typeof chrome !== 'undefined' && chrome.debugger?.onDetach) {
-  chrome.debugger.onDetach.addListener((source) => {
-    const s = sessions.get(source.tabId);
-    if (s) { clearTimeout(s.timer); sessions.delete(source.tabId); }
+  chrome.debugger.onDetach.addListener((source, reason) => {
+    endSession(source.tabId, reason || 'detached');
   });
 }
 if (typeof chrome !== 'undefined' && chrome.tabs?.onRemoved) {
   chrome.tabs.onRemoved.addListener((tabId) => {
-    const s = sessions.get(tabId);
-    if (s) { clearTimeout(s.timer); sessions.delete(tabId); }
+    endSession(tabId, 'target_closed');
+    lostEmulation.delete(tabId);
   });
 }

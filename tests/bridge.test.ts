@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
 import http from 'node:http';
 import { ExtensionBridge, isDaemonResponsiveOnPort } from '../mcp-server/src/bridge.js';
+import { WS_HARD_MAX_PAYLOAD_BYTES } from '../mcp-server/src/bridge-frames.js';
 
 let portCounter = 20_000 + (process.pid % 5_000);
 function nextPort() { return portCounter++; }
@@ -103,19 +104,37 @@ describe('ExtensionBridge', () => {
     expect(bridge.isConnected()).toBe(true);
   });
 
-  it('closes oversized WebSocket frames before parsing them', async () => {
+  // Regression (audit #2): one oversized response used to close the socket with
+  // 1009, failing every agent's in-flight call. Now it fails only its own call.
+  it('an oversized response fails only the call it answers; the connection stays up', async () => {
     const port = nextPort();
     const bridge = createBridge(port);
     await bridge.start();
 
     const client = await connectClient(port);
-    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
-      client.once('close', (code, reason) => resolve({ code, reason: reason.toString() }));
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.tool === 'browser_screenshot') {
+        client.send(JSON.stringify({ id: msg.id, success: true, result: 'x'.repeat(1_100_000) }));
+      } else if (msg.tool) {
+        client.send(JSON.stringify({ id: msg.id, success: true, result: { ok: true } }));
+      }
     });
-    client.send(JSON.stringify({ id: 'huge', success: true, result: 'x'.repeat(1_100_000) }));
 
-    await expect(closed).resolves.toMatchObject({ code: 1009 });
-    expect(bridge.isConnected()).toBe(false);
+    await expect(bridge.callTool('browser_screenshot', { tabId: 1 })).rejects.toThrow(/RESPONSE_TOO_LARGE/);
+    expect(bridge.isConnected()).toBe(true);
+    await expect(bridge.callTool('browser_click', { ref: 'e1' })).resolves.toEqual({ ok: true });
+  });
+
+  it('an oversized frame with no call to fail is dropped and the connection stays up', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port, { maxWsPayloadBytes: 64 });
+    await bridge.start();
+
+    const client = await connectClient(port);
+    client.send('x'.repeat(256));
+    await new Promise((r) => setTimeout(r, 100));
+    expect(bridge.isConnected()).toBe(true);
   });
 
   it('sends tool call and receives response', async () => {
@@ -135,14 +154,14 @@ describe('ExtensionBridge', () => {
     expect(result).toEqual({ clicked: true });
   });
 
-  it('closes an extension socket that sends a frame over the payload limit', async () => {
+  it('a frame above the hard ceiling still closes the socket (1009)', async () => {
     const port = nextPort();
-    const bridge = createBridge(port, { maxWsPayloadBytes: 64 });
+    const bridge = createBridge(port);
     await bridge.start();
 
     const client = await connectClient(port);
     const closed = new Promise<number>((resolve) => client.once('close', (code) => resolve(code)));
-    client.send('x'.repeat(256));
+    client.send('x'.repeat(WS_HARD_MAX_PAYLOAD_BYTES + 1));
 
     await expect(closed).resolves.toBe(1009);
     expect(bridge.isConnected()).toBe(false);

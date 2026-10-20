@@ -16,8 +16,8 @@ import {
   dropDocumentState,
 } from "./lib/state.js";
 import { showLockShield, hideLockShield } from "./lib/overlay.js";
-import { enrichCapture } from "./handlers/intercept.js";
-import { createNetworkCapture } from "./lib/network-capture.js";
+import { enrichCapture, initIntercept } from "./handlers/intercept.js";
+import { createNetworkCapture, pushNetworkEntry } from "./lib/network-capture.js";
 import { lockTabUi, releaseTabUi } from "./lib/lock-ops.js";
 import {
   getOpenTabs,
@@ -29,6 +29,8 @@ import {
 } from "./lib/connection.js";
 
 export function registerEventListeners() {
+  // Restore intercept rules that survived a service-worker restart (and sync them with Chrome).
+  initIntercept();
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     // NOTE: do NOT `return true` unconditionally. Returning true tells Chrome the
     // listener will call `respond()` ASYNCHRONOUSLY; if the sender (popup) closes
@@ -37,13 +39,23 @@ export function registerEventListeners() {
     // so we return false (or nothing) — Chrome handles it without the warning.
     if (msg.type === "console" && sender.tab?.id != null) {
       const buf = getTabBuffer(consoleByTab, sender.tab.id);
-      pushCapped(buf, {
+      const entry = {
         level: msg.level,
         text: msg.text,
         timestamp: Date.now(),
         url: sender.tab.url,
-      });
+      };
+      // Uncaught errors and rejections: kind says which; stack is the top frames (MAIN-world capture).
+      if (msg.kind) entry.kind = String(msg.kind);
+      if (msg.stack) entry.stack = String(msg.stack);
+      pushCapped(buf, entry);
       return false; // fire-and-forget; no response expected
+    }
+    if (msg.type === "console-reset" && sender.tab?.id != null && sender.frameId === 0) {
+      // content.js in a new top-level document: the old page's console is gone.
+      // Network history stays (it is per request).
+      consoleByTab.delete(sender.tab.id);
+      return false;
     }
     if (msg.type === "getStatus") {
       // Async: fetch tabs before responding so the popup gets a full snapshot
@@ -120,17 +132,17 @@ export function registerEventListeners() {
   // blocked, aborted, CORS…) arrive through onErrorOccurred.
   const capture = createNetworkCapture({
     store: (tabId, entry) => {
-      pushCapped(getTabBuffer(networkByTab, tabId), entry);
-      // Intercept ledger enrichment for completed requests (best-effort; never breaks capture).
-      if (!entry.error) {
-        try {
-          enrichCapture(tabId, entry);
-        } catch {}
-      }
+      pushNetworkEntry(getTabBuffer(networkByTab, tabId), entry);
+      // Intercept ledger for every finished request, failed (blocked) ones included
+      // (best-effort; never breaks capture).
+      try {
+        enrichCapture(tabId, entry);
+      } catch {}
     },
   });
   const allUrls = { urls: ["<all_urls>"] };
-  chrome.webRequest.onBeforeRequest.addListener(capture.onBeforeRequest, allUrls);
+  // requestBody: POST/PUT payloads reach onBeforeRequest (a bounded, redacted preview is kept).
+  chrome.webRequest.onBeforeRequest.addListener(capture.onBeforeRequest, allUrls, ["requestBody"]);
   chrome.webRequest.onSendHeaders.addListener(capture.onSendHeaders, allUrls, ["requestHeaders"]);
   chrome.webRequest.onCompleted.addListener(capture.onCompleted, allUrls, ["responseHeaders"]);
   chrome.webRequest.onErrorOccurred.addListener(capture.onErrorOccurred, allUrls);

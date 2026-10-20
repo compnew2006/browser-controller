@@ -46,7 +46,7 @@ If only `browser_tools` appears in your tool list, the server is running in prog
 2. `browser_tools { action: "search", query: "click" }` — find tools by keyword
 3. `browser_tools { action: "details", tool: "browser_click" }` — full schema AND activates the tool (callable directly afterwards, stays active for the session)
 
-A `"Tool X disabled"` error means you must activate it via `browser_tools {action:"details"}` first.
+Calling a tool that is not active yet activates it first, so it runs at once.
 
 ### Navigation, Tabs & Windows
 - `browser_navigate` - Go to a URL (or `"back"` / `"forward"`); returns an inline snapshot unless `snapshot: false`. Params: `url`, `tabId` (optional, defaults to active — pass it anyway), `waitUntil`, `snapshot`
@@ -72,18 +72,18 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 - `browser_text` - Visible text, the cheapest read. Params: `tabId`, `selector`, `maxLength`, `mode` (`"article"` = main content), `offset`
 - `browser_snapshot` - Accessibility tree with refs. Params: `tabId`, `selector`, `ref`, `compact`, `filter`, `depth`, `maxChars`, `source` (`"dom"` default | `"native"` = Chrome's own computed tree via the debugger)
 - `browser_find` - Find elements by natural language. Params: `tabId`, `query`, `limit`, `role`
-- `browser_screenshot` - Image over CDP; the result maps image pixels to click `x`/`y`. Params: `tabId`, `format`, `quality`, `maxWidth`, `scale`, `region`, `fullPage`, `ref` / `selector` (one element)
+- `browser_screenshot` - Image of the tab (the active tab's viewport and elements need no debugger; full page and zoom use CDP); the result maps image pixels to click `x`/`y`. Params: `tabId`, `format`, `quality`, `maxWidth`, `scale`, `region`, `fullPage`, `ref` / `selector` (one element)
 - `browser_observe` - Compact actionable state + `snapshotId` for `browser_act`. Params: `tabId`, `maxElements`
 
 ### Chain, Replay & Record
-- `browser_batch` - Several tool calls in ONE round-trip; stops at the first failing step. Params: `actions` (`[{ tool, params }]`, max 200), `tabId` (default for the steps), `continueOnError`, `output` (all|last|errors)
+- `browser_batch` - Several tool calls in ONE round-trip; stops at the first failing step. Params: `actions` (`[{ tool, params }]`, max 100), `tabId` (default for the steps), `continueOnError`, `output` (all|last|errors)
 - `browser_shortcuts` - Saved flows with `{{variables}}`. Params: `action` (list|show|save|run|delete), `name`, `description`, `actions` (save), `vars` (run), `tabId`, `continueOnError`, `output`
-- `browser_gif` - Record the tab as an animated GIF: a frame after every page-changing action, clicks marked with a red ring. Params: `tabId`, `action` (start|frame|stop|status|export|clear), `width`, `maxFrames`, `activate`, `path`, `clear`. `export` writes the file (default `~/Downloads`) and returns its `path` — give that to the user.
+- `browser_gif` - Record the tab as an animated GIF: a frame after every page-changing action, clicks marked with a red ring. Params: `tabId`, `action` (start|frame|stop|status|export|clear), `width`, `maxFrames`, `activate` (start; default `false`: background-tab frames are skipped), `path`, `clear`. `export` writes the file (default `~/Downloads`) and returns its `path` — give that to the user.
 
 ### JavaScript & Dialogs (all require `tabId`)
 - `browser_evaluate` - Execute JS like the DevTools console (CDP by default, not blocked by CSP). Params: `tabId`, `expression`, `timeout`, `mode` (`"cdp"` | `"scripting"`)
 - `browser_run_action` - Action object `{ execute(params) }` or a plain expression, always via CDP. Params: `tabId`, `code`, `actionParams`
-- `browser_handle_dialog` - Handle alert/confirm/prompt (works even on a frozen page). Params: `tabId`, `action`, `promptText`
+- `browser_handle_dialog` - Handle an alert/confirm/prompt that opened while the tab had a debugger session (otherwise `NO_DIALOG`). Params: `tabId`, `action`, `promptText`
 
 ### WebMCP — the site's own tools (all require `tabId`)
 - `browser_webmcp_list` - Tools the page registers via WebMCP (`document.modelContext` / `<form toolname>`); `supported: false` when it has none. Params: `tabId`, `name`, `waitMs`
@@ -95,15 +95,15 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 ### Debug (per-tab buffers, capped at 200 entries)
 - `browser_console` - Console messages for a tab. Params: `tabId`, `pattern`, `level`, `limit`, `clear`, `browser` (Chrome-reported messages + DevTools Issues)
 - `browser_network` - Network requests for a tab. Params: `tabId`, `urlPattern`, `filter`, `type`, `failed`, `limit`, `clear`, `fullUrls`, `requestId` (one request with redacted headers)
-- `browser_intercept` - Block / redirect / add request headers per tab, captures, HAR export. Params: `action` (set-rules|list-rules|clear-rules|list-captures|export-har), `tabId`, `rules`, `filter`, `limit`. Check `enforcement` in the result: `capture-only` = rules are not applied.
+- `browser_intercept` - Block / redirect / add request headers per tab, captures, HAR export. Params: `action` (set-rules|list-rules|clear-rules|list-captures|export-har), `tabId`, `global` (set-rules without `tabId`: every tab of the browser), `rules`, `filter`, `limit`. Check `enforcement` in the result: `capture-only` = rules are not applied.
 
 ## Safe observe → act
 
-`browser_observe { tabId }` → `browser_act { tabId, snapshotId, action: "click", ref }`. The action re-checks the page first; `DOCUMENT_CHANGED`, `STALE_STATE`, `TARGET_OCCLUDED` or `ACTION_NOT_ALLOWED` mean nothing was done — observe again.
+`browser_observe { tabId }` → `browser_act { tabId, snapshotId, action: "click", ref }`. The action re-checks the page first; `DOCUMENT_CHANGED`, `STALE_STATE`, `ELEMENT_COVERED`, `ACTION_NOT_ALLOWED` or `OBSERVATION_EXPIRED` mean nothing was done — observe again.
 
 ## Multi-agent coordination
 
-- Call `browser_tabs { action: "lock", tabId }` to claim a tab. Other agents' calls to that tab will queue (not fail) until you `unlock`.
+- Call `browser_tabs { action: "lock", tabId }` to claim a tab. Other agents' calls to that tab are refused at once with `TAB_LOCKED` until you `unlock` (or disconnect).
 - Don't hold locks longer than needed.
 - The `browser_tabs list` response includes `lockedBy` per tab so you can see who owns what, and `controlledBy` when another agent is driving an unlocked tab right now (or did within 30 s) — pick another tab or lock it first.
 

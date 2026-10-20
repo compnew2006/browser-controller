@@ -21,13 +21,17 @@ export const interceptTool: ToolDefinition = {
   name: "browser_intercept",
   summary: "Manage request intercept rules and captures per tab",
   description:
-    "Capture, block, redirect, or add request headers to network traffic per tab (Chrome session rules). Actions: set-rules, list-rules, clear-rules, list-captures, export-har. 'mock' and 'log' rules are recorded in the capture ledger only — Chrome cannot fake response bodies — and set-rules reports them under unsupported with enforcement 'partial'.",
+    "Capture, block, redirect, or add request headers to network traffic (Chrome session rules). Actions: set-rules, list-rules, clear-rules, list-captures, export-har. set-rules needs tabId (or tabIds on every rule, or global:true for every tab of the browser, including the user's own tabs); without one it fails with TAB_REQUIRED. URL regexes are case-sensitive and must be RE2-compatible (no lookahead or backreferences): a rejected regex fails the call with INVALID_REGEX and changes nothing. 'mock' and 'log' rules are recorded in the capture ledger only (Chrome cannot fake response bodies); set-rules reports them under unsupported with enforcement 'partial'.",
   inputSchema: z.object({
     tabId: z
       .number()
       .int()
       .optional()
-      .describe("Target tab id. If omitted, rules apply globally."),
+      .describe("Target tab id. Required for set-rules unless every rule sets tabIds or global:true is passed."),
+    global: z
+      .boolean()
+      .optional()
+      .describe("Apply to every tab of the browser, including the user's own tabs. For set-rules without tabId."),
     action: z
       .enum([
         "set-rules",

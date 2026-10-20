@@ -95,6 +95,15 @@ describe('browser_tools meta tool (progressive disclosure)', () => {
     expect(JSON.stringify(schema)).not.toContain('"checks"');
   });
 
+  it('action "details" describes the input: a field with a default is optional', async () => {
+    // Regression: zod's default (output) mode marked defaulted fields as required.
+    const result = await metaTool.handler(fakeHost, { action: 'details', tool: 'browser_click' });
+    const schema = JSON.parse((result.content[0] as { text: string }).text).inputSchema;
+    expect(schema.required).toContain('tabId');
+    expect(schema.required ?? []).not.toContain('button');
+    expect(schema.required ?? []).not.toContain('doubleClick');
+  });
+
   it('action "details" with unknown tool returns error + available list', async () => {
     const result = await metaTool.handler(fakeHost, { action: 'details', tool: 'browser_nope' });
     const data = JSON.parse((result.content[0] as { text: string }).text);

@@ -46,12 +46,12 @@ describe("browser_intercept enforcement (stateful DNR)", () => {
     expect(res).toMatchObject({ success: true, enforcement: "full", scope: "tabs:15", enforced: 1 });
     expect(dynamicRules.size).toBe(0); // never browser-wide dynamic rules
     const [rule] = [...sessionRules.values()];
-    expect(rule.condition).toEqual({ regexFilter: "https://api\\.x\\.test/", tabIds: [15], resourceTypes: ["xmlhttprequest"] });
+    expect(rule.condition).toEqual({ regexFilter: "https://api\\.x\\.test/", isUrlFilterCaseSensitive: true, tabIds: [15], resourceTypes: ["xmlhttprequest"] });
   });
 
   it("clearing removes the rules from Chrome too (not just from the list)", async () => {
     await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ match: "https://ads\\.test/", action: "block" }] });
-    await handleIntercept({ action: "set-rules", rules: [{ match: "https://old\\.test/", action: "redirect", redirectUrl: "https://new.test/" }] });
+    await handleIntercept({ action: "set-rules", global: true, rules: [{ match: "https://old\\.test/", action: "redirect", redirectUrl: "https://new.test/" }] });
     expect(sessionRules.size).toBe(2);
     await handleIntercept({ action: "clear-rules", tabId: 15 });
     expect([...sessionRules.values()].map((r) => r.condition.regexFilter)).toEqual(["https://old\\.test/"]);

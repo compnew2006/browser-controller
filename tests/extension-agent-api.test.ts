@@ -197,7 +197,8 @@ describe('observe/act extension handlers', () => {
       tabId: 7, snapshotId: 's_upload', action: 'upload', ref: 'e1', filePath: '/tmp/resume.pdf',
     }, 'session-a');
 
-    expect(result).toMatchObject({ success: true, ok: true, action: 'upload', files: ['/tmp/resume.pdf'] });
+    // Basenames only: the result does not echo the local directory (browser_upload_file).
+    expect(result).toMatchObject({ success: true, ok: true, action: 'upload', files: ['resume.pdf'] });
     expect(debuggerCommands.filter((m) => m.startsWith('DOM.'))).toEqual(['DOM.setFileInputFiles']);
     expect(result.metrics).toMatchObject({ protocolCalls: 8 });
   });

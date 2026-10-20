@@ -18,7 +18,8 @@ import { resolveTab, execDom, safeExec, getFallback, assertResponsive, withTimeo
 import { withCdp } from '../lib/cdp-session.js';
 import { fallbackByTab, lastNativeFingerprints, persistSessionState, nextRefPrefix } from '../lib/state.js';
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
-import { mergeFrameTrees, shapeAxTree, applyBindings, attachRowContext, backendIdAtPath, lookAlikeRefs, pathOfTarget } from '../lib/ax-native.js';
+import { mergeFrameTrees, shapeAxTree, applyBindings, capTree, attachRowContext, backendIdAtPath, lookAlikeRefs, pathOfTarget } from '../lib/ax-native.js';
+import { refErrorMessage } from '../lib/ref-errors.js';
 
 /** AX tree of a very large page can take seconds; a frozen renderer never answers. */
 const AX_TIMEOUT_MS = 12_000;
@@ -112,10 +113,12 @@ async function resolvePaths(send, entries) {
  * register it under its ref and record its smart-selector fallback.
  * Self-contained: serialized into the page by chrome.scripting.
  */
-function pageBindNative(entries) {
+function pageBindNative(entries, refPrefix) {
   const D = globalThis.__bcDom;
   if (!D) return { __needDom: true };
+  D.beginRefGeneration?.(refPrefix);
   const gen = (globalThis.__browserControllerFallbackRuntime || {}).generateFallback || null;
+  const pass = {}; // one sibling index for every fallback of this pass (see smart-selector.js)
   const origin = location.origin;
   const bound = {};
   const fallbacks = {};
@@ -133,11 +136,16 @@ function pageBindNative(entries) {
     if (cur.tagName === 'A' && typeof cur.href === 'string' && cur.href) {
       bound[entry.ref].href = cur.href.startsWith(origin + '/') ? cur.href.slice(origin.length) : cur.href;
     }
+    // Password fields: the value never leaves the page; only "filled or not" does.
+    if (cur.tagName === 'INPUT' && String(cur.type || '').toLowerCase() === 'password') {
+      bound[entry.ref].secret = true;
+      bound[entry.ref].filled = !!cur.value;
+    }
     if (entry.context && D.rowContextOf) {
       const context = D.rowContextOf(cur);
       if (context) bound[entry.ref].context = context;
     }
-    try { if (gen) fallbacks[entry.ref] = gen(cur); } catch { /* descriptor is best-effort */ }
+    try { if (gen) fallbacks[entry.ref] = gen(cur, pass); } catch { /* descriptor is best-effort */ }
   }
   return { success: true, bound, fallbacks };
 }
@@ -161,7 +169,7 @@ export async function handleNativeSnapshot(params, { compact, maxChars }) {
     const hit = await execDom(tabId, pathOfTarget, [rootRef ?? null, selector ?? null, getFallback(tabId, rootRef), null]);
     if (hit?.error === 'INVALID_SELECTOR') return { success: false, error: `Invalid CSS selector: ${selector}` };
     if (!hit || hit.error) {
-      return { success: false, error: rootRef ? `ref ${rootRef} is gone — take a new snapshot` : 'Root element not found' };
+      return { success: false, error: rootRef ? refErrorMessage(rootRef, getFallback(tabId, rootRef)) : 'Root element not found' };
     }
     scope = hit;
   }
@@ -191,7 +199,7 @@ export async function handleNativeSnapshot(params, { compact, maxChars }) {
   }
 
   if (stage.scopeLost) {
-    return { success: false, error: rootRef ? `ref ${rootRef} is gone — take a new snapshot` : 'Root element not found' };
+    return { success: false, error: rootRef ? refErrorMessage(rootRef, getFallback(tabId, rootRef)) : 'Root element not found' };
   }
   if (stage.noAxNode) {
     return { success: false, error: 'Root element is not in the accessibility tree (hidden or aria-hidden) — scope to a visible element.' };
@@ -210,7 +218,7 @@ export async function handleNativeSnapshot(params, { compact, maxChars }) {
   let bound = {};
   if (bindEntries.length) {
     await safeExec(tabId, PAGE_FALLBACK_INSTALL, []);
-    const bind = await execDom(tabId, pageBindNative, [bindEntries]);
+    const bind = await execDom(tabId, pageBindNative, [bindEntries, refPrefix]);
     bound = bind?.bound || {};
     if (bind?.fallbacks) {
       // Merged, not replaced: a scoped snapshot must not invalidate refs from the full one.
@@ -221,7 +229,9 @@ export async function handleNativeSnapshot(params, { compact, maxChars }) {
       persistSessionState();
     }
   }
-  const tree = applyBindings(shaped.tree, bound, { dropUnbound: compact });
+  // Hrefs come from the bindings, so the cap is enforced on the bound tree (capTree).
+  const capped = capTree(applyBindings(shaped.tree, bound, { dropUnbound: compact }), maxChars);
+  const tree = capped.tree;
   const contextCut = lookAlikes.size > 0
     && attachRowContext(tree, bound, maxChars - JSON.stringify(tree).length).truncated;
   lastNativeFingerprints.set(tabId, shaped.fingerprints);
@@ -235,7 +245,7 @@ export async function handleNativeSnapshot(params, { compact, maxChars }) {
     title: current.title || '',
     compact,
     tree,
-    ...(shaped.truncated || contextCut ? {
+    ...(shaped.truncated || capped.truncated || contextCut ? {
       truncated: true,
       hint: 'Output capped (maxChars/depth). Scope it with selector or ref (a subtree), or raise maxChars.',
     } : {}),

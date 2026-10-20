@@ -26,10 +26,17 @@ export async function agentCursorEnabled() {
   }
 }
 
-// Lock-shield: a full-viewport transparent input-capture layer + a blue inner
-// frame. It blocks REAL user input on the top frame; the agent's own
-// synthetic events bypass hit-testing by construction (handleClick / handleType
-// dispatch directly on the resolved element). See specs/tab-control-lock/.
+// Lock-shield: a full-viewport translucent frame with a blue inner glow, shown
+// while an agent controls a tab (and for a tab lock's lifetime). The frame is
+// visual only: pointer-events:none keeps it out of hit-testing, so the page
+// keeps its own hover state (JS menus stay open while the agent works) and the
+// agent's trusted CDP input lands on the page elements directly.
+// The USER's input is blocked by capture-phase listeners on `document`, which
+// cancel pointer, key and wheel events before any page handler sees them. The
+// agent's own synthetic events (isTrusted:false) and its CDP input (isTrusted,
+// inside the window lib/trusted-input.js opens with __bcAgentInputUntil) pass
+// through. Focus events are not intercepted: swallowing them broke the page's
+// focus handlers. See specs/tab-control-lock/.
 // `label` (optional) renders the running tool's name as a badge INSIDE the
 // frame. Returns whether the injection succeeded — on protected pages
 // (chrome:// …) it silently never appears, and callers must be able to say so
@@ -47,7 +54,7 @@ export async function showLockShield(tabId, label) {
           // (user-tuned: half-width bands — sides 8%, top/bottom 10% — plus a
           // soft inset glow; was judged too wide at 16%/20%).
           el.style.cssText =
-            'position:fixed;inset:0;z-index:2147483647;pointer-events:auto;' +
+            'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
             'background:' +
               'linear-gradient(to right,  rgba(37,99,235,.48) 0%, transparent 8%),' +
               'linear-gradient(to left,   rgba(37,99,235,.48) 0%, transparent 8%),' +
@@ -68,30 +75,20 @@ export async function showLockShield(tabId, label) {
             e.preventDefault();
             e.stopImmediatePropagation();
           };
-          // Mouse/pointer listeners attach to `el` (the overlay is the top-most
-          // hit-target for pointer events, so capture listeners on `el` fire).
-          for (const type of ['pointerdown', 'click', 'mousedown', 'mouseup', 'contextmenu']) {
-            el.addEventListener(type, block, { capture: true });
-          }
-          // Keyboard/wheel/focus listeners attach to `document` instead: these
-          // events target elements INSIDE <body> (e.g. document.activeElement),
-          // and `el` is a SIBLING of <body> under <html> — NOT an ancestor — so a
-          // capture-phase listener on `el` would never be on the propagation path.
-          // `document` IS an ancestor of everything in <body>, so capture listeners
-          // there fire site-wide. wheel/keydown/keyup need passive:false so
-          // preventDefault() is honored.
-          const docTypes = ['keydown', 'keyup', 'focus', 'wheel'];
-          for (const type of docTypes) {
-            const opts = type === 'wheel' || type === 'keydown' || type === 'keyup'
-              ? { capture: true, passive: false }
-              : { capture: true };
-            document.addEventListener(type, block, opts);
-          }
-          // Stash the handler + types on `el` so hideLockShield can detach the
-          // document-level listeners before removing `el` (el.remove() does NOT
-          // auto-remove listeners bound to `document` — they would leak + keep
-          // blocking keyboard/wheel/focus on the tab after unlock).
-          el.__bcShieldDocListeners = { fn: block, types: docTypes };
+          // Every listener sits on `document` in the capture phase. The frame
+          // never receives events itself (pointer-events:none), and `document`
+          // is an ancestor of everything in <body>, so these fire site-wide.
+          // The `el` node is a sibling of <body> under <html>, so listeners on
+          // it would never be on the propagation path of page events.
+          const pointerTypes = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'];
+          const keyWheelTypes = ['keydown', 'keyup', 'wheel'];
+          for (const type of pointerTypes) document.addEventListener(type, block, { capture: true });
+          // wheel/keydown/keyup need passive:false so preventDefault() is honored.
+          for (const type of keyWheelTypes) document.addEventListener(type, block, { capture: true, passive: false });
+          // Stash the handler + types on `el` so hideLockShield can detach them
+          // before removing `el` (el.remove() does NOT auto-remove listeners
+          // bound to `document` — they would keep blocking input after unlock).
+          el.__bcShieldDocListeners = { fn: block, types: [...pointerTypes, ...keyWheelTypes] };
           // document.documentElement exists even before <body> (early injection).
           document.documentElement.appendChild(el);
         }
@@ -137,9 +134,9 @@ export async function hideLockShield(tabId) {
       func: () => {
         const el = document.getElementById('__bc-lock-shield');
         if (!el) return; // no-op if absent
-        // Detach document-level listeners (mouse/pointer listeners on `el`
-        // auto-remove with the element; document listeners do NOT, so detach
-        // them explicitly to avoid leaking keyboard/wheel/focus blocks).
+        // Detach the input-blocking listeners (all of them sit on `document`,
+        // and removing `el` does not remove those, so detach them explicitly
+        // to avoid leaking pointer/keyboard/wheel blocks after unlock).
         const bound = el.__bcShieldDocListeners;
         if (bound && typeof bound.fn === 'function' && Array.isArray(bound.types)) {
           for (const type of bound.types) {

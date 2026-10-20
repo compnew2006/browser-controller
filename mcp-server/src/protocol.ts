@@ -1,5 +1,26 @@
+import { randomInt } from 'node:crypto';
+
 /** Wire-protocol contract shared by the thin client, daemon, and extension. */
 export const PROTOCOL_VERSION = 1;
+
+/** Random id: 8 base36 characters. */
+export function newDaemonInstanceId(): string {
+  let id = '';
+  for (let i = 0; i < 8; i++) id += randomInt(36).toString(36);
+  return id;
+}
+
+/**
+ * The id of this daemon process. The extension gets it in the hello and drops
+ * the locks of any previous instance; it is also the prefix of every session id
+ * this process hands out, so session ids never repeat across daemon restarts.
+ */
+export const DAEMON_INSTANCE_ID = newDaemonInstanceId();
+
+/** `s-<instance>-<n>`: unique across daemon restarts, readable in logs and UI. */
+export function buildSessionId(instanceId: string, seq: number): string {
+  return `s-${instanceId}-${seq}`;
+}
 
 export const IPC_PROTOCOL_CAPABILITIES = Object.freeze([
   'heartbeat',
@@ -73,12 +94,14 @@ export function buildIpcWelcome(sessionId: string) {
   };
 }
 
-export function buildExtensionHello(appVersion: string) {
+export function buildExtensionHello(appVersion: string, instanceId?: string) {
   return {
     type: 'hello' as const,
     protocolVersion: PROTOCOL_VERSION,
     appVersion,
     capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
+    // Optional: a daemon from before instance ids sends none.
+    ...(instanceId ? { instanceId } : {}),
   };
 }
 

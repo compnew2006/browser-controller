@@ -96,7 +96,7 @@ export const toolManifest: ToolManifestEntry[] = allTools.map((tool) => ({
   name: tool.name,
   summary: tool.summary,
   description: tool.description,
-  inputSchema: z.toJSONSchema(tool.inputSchema),
+  inputSchema: z.toJSONSchema(tool.inputSchema, { io: 'input' }),
   timeoutMs: tool.timeoutMs,
   idempotent: tool.idempotent === true,
   capability: capabilityOf(tool),

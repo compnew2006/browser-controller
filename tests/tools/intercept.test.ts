@@ -44,6 +44,16 @@ describe("browser_intercept tool (S1)", () => {
     expect(parsed.success).toBe(true);
   });
 
+  it("keeps global:true so the extension can apply the rule to every tab", () => {
+    const parsed = interceptTool.inputSchema.safeParse({
+      action: "set-rules",
+      global: true,
+      rules: [{ match: "https://ads\\.example\\.com/", action: "block" }],
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.global).toBe(true);
+  });
+
   it("rejects an invalid action", () => {
     const parsed = interceptTool.inputSchema.safeParse({
       action: "nuke",

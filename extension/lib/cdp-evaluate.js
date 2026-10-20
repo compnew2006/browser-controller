@@ -63,6 +63,13 @@ export async function cdpEvaluate(send, expression, { timeoutMs = DEFAULT_EVAL_T
         else signal.addEventListener('abort', () => resolve({ aborted: true }), { once: true });
       })
     : null;
+  const timedOut = { success: false, error: `TIMEOUT: evaluate did not finish within ${budget}ms (pass a larger timeout, max ${MAX_EVAL_TIMEOUT_MS})` };
+  const failed = (d) => {
+    const msg = d.exception?.description || d.exception?.value || d.text || 'evaluate threw';
+    return { success: false, error: String(msg).slice(0, 2000) };
+  };
+  // Every CDP call that can wait on the page is raced against the budget and the abort.
+  const guarded = (p) => Promise.race([p, timeout, ...(aborted ? [aborted] : [])]);
   try {
     const run = send('Runtime.evaluate', {
       expression,
@@ -73,18 +80,23 @@ export async function cdpEvaluate(send, expression, { timeoutMs = DEFAULT_EVAL_T
       objectGroup: group,
       timeout: budget, // bounds synchronous execution; the race below bounds awaits
     });
-    const r = await Promise.race([run, timeout, ...(aborted ? [aborted] : [])]);
+    const r = await guarded(run);
     if (r.aborted) return { success: false, error: 'aborted' };
     if (r.timedOut) {
       // Leave the page alone — the pending promise just resolves into nothing.
-      return { success: false, error: `evaluate did not finish within ${budget}ms (pass a larger timeout, max ${MAX_EVAL_TIMEOUT_MS})` };
+      return timedOut;
     }
-    if (r.exceptionDetails) {
-      const d = r.exceptionDetails;
-      const msg = d.exception?.description || d.exception?.value || d.text || 'evaluate threw';
-      return { success: false, error: String(msg).slice(0, 2000) };
+    if (r.exceptionDetails) return failed(r.exceptionDetails);
+    let ro = r.result || {};
+    if (ro.subtype === 'promise' && ro.objectId) {
+      // In replMode awaitPromise does not wait for a plain promise-valued expression
+      // (the result stayed the promise, which serialized as {}): wait for it explicitly.
+      const settled = await guarded(send('Runtime.awaitPromise', { promiseObjectId: ro.objectId, returnByValue: false }));
+      if (settled.aborted) return { success: false, error: 'aborted' };
+      if (settled.timedOut) return timedOut;
+      if (settled.exceptionDetails) return failed(settled.exceptionDetails);
+      ro = settled.result || {};
     }
-    const ro = r.result || {};
     if (ro.type === 'undefined') return { success: true, result: null, type: 'undefined' };
     if (ro.unserializableValue !== undefined) return { success: true, result: ro.unserializableValue };
     if ('value' in ro && ro.objectId === undefined) return capped(ro.value);

@@ -14,8 +14,8 @@ export const waitTool: ToolDefinition = {
       .optional()
       .default('visible')
       .describe('Wait until element is visible, hidden, or attached to DOM'),
-    timeout: z.number().optional().default(10000).describe('Max wait time in ms'),
-    delay: z.number().optional().describe('Fixed delay in ms (ignores selector/text/urlIncludes)'),
+    timeout: z.number().optional().default(10000).describe('Max wait time in ms (capped at 50000; the result says so in note)'),
+    delay: z.number().optional().describe('Fixed delay in ms, capped at 30000 (ignores selector/text/urlIncludes). The result reports the time actually waited.'),
     text: z.string().optional().describe('Wait until this text is on the page (state "hidden": until it is gone). Case-insensitive.'),
     urlIncludes: z.string().optional().describe('Wait until the tab URL contains this string (e.g. after a client-side navigation).'),
   }),

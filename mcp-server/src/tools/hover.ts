@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const hoverTool: ToolDefinition = {
   name: 'browser_hover',
-  summary: 'Hover over an element',  description: 'Hover over an element (ref/selector) or a viewport point (x/y) to trigger tooltips, dropdown menus, or hover states. Real mouse move over CDP.',
+  summary: 'Hover over an element',  description: 'Hover over an element (ref/selector) or a viewport point (x/y) to trigger tooltips, dropdown menus, or hover states. Real mouse move over CDP, so CSS :hover applies. Without the debugger the hover is synthetic: JS hover handlers run, the result says trusted:false and that CSS :hover was not applied.',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot'),

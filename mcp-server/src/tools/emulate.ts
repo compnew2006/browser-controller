@@ -6,7 +6,7 @@ export const emulateTool: ToolDefinition = {
   name: 'browser_emulate',
   summary: 'Emulate network, CPU, location, color scheme or user agent in a tab',
   description:
-    'Emulate conditions in one tab through its debugger session: network ("offline", "slow-3g", "fast-3g", "none"), cpuThrottling (1 = off, 4 = 4× slower), geolocation {latitude, longitude, accuracy} (null clears; the page still needs location permission), colorScheme / reducedMotion (the prefers-color-scheme / prefers-reduced-motion media features), userAgent ("" clears). Settings merge with what is already active and last while the session stays attached (yellow debugger banner); reset:true clears them all. With no setting it only reports what is active.',
+    'Emulate conditions in one tab through its debugger session: network ("offline", "slow-3g", "fast-3g", "none"), cpuThrottling (1 = off, 4 = 4× slower), geolocation {latitude, longitude, accuracy} (null clears; the page still needs location permission), colorScheme / reducedMotion (the prefers-color-scheme / prefers-reduced-motion media features), userAgent ("" clears). Settings merge with what is already active and last while the session stays attached (yellow debugger banner); reset:true clears them all. If the banner is dismissed or DevTools opens, Chrome removes the overrides: the next call reports them under `lost` with a warning and does not re-apply them. With no setting it only reports what is active.',
   inputSchema: z.object({
     tabId: requireTabId(),
     network: z.enum(['offline', 'slow-3g', 'fast-3g', 'none']).optional().describe('Network throttling preset; "none" removes it'),

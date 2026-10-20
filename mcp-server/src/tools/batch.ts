@@ -3,10 +3,7 @@ import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { optionalTabId } from './types.js';
 import { toolMap } from './index.js';
 import { parseToolParams } from '../register-tools.js';
-
-/** Tools that must not run inside a batch (recursion / discovery only). */
-const NOT_BATCHABLE = new Set(['browser_batch', 'browser_tools', 'browser_shortcuts']);
-const MAX_STEPS = 200;
+import { BATCH_BUDGET_MS, BATCH_MAX_DELAY_MS, BATCH_MAX_STEPS, NOT_BATCHABLE, NO_DEFAULT_TAB } from './batch-limits.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const RATE_LIMITED = /Rate limit exceeded.*Retry in ~(\d+)s/;
@@ -14,13 +11,17 @@ const MAX_RATE_RETRIES = 3;
 
 /**
  * One step. A pure delay (browser_wait with only `delay`) sleeps here instead
- * of costing a daemon call. A step the daemon rejected for its per-session
- * rate limit never ran, so it is safe to wait out the window and resend it.
+ * of costing a daemon call, capped at BATCH_MAX_DELAY_MS. A step the daemon
+ * rejected for its per-session rate limit never ran, so it is safe to wait out
+ * the window and resend it, unless the wait would pass the batch deadline.
  */
-async function runStep(def: ToolDefinition, host: ToolHost, params: Record<string, unknown>): Promise<ToolResult> {
+async function runStep(def: ToolDefinition, host: ToolHost, params: Record<string, unknown>, deadline: number): Promise<ToolResult> {
   if (def.name === 'browser_wait' && typeof params.delay === 'number' && params.selector === undefined) {
-    await sleep(params.delay);
-    return { content: [{ type: 'text', text: JSON.stringify({ success: true, waited: params.delay }) }] };
+    const requested = params.delay;
+    const waited = Math.min(requested, BATCH_MAX_DELAY_MS);
+    await sleep(waited);
+    const note = waited < requested ? `delay clamped to ${BATCH_MAX_DELAY_MS} ms (requested ${requested} ms)` : undefined;
+    return { content: [{ type: 'text', text: JSON.stringify({ success: true, waited, ...(note ? { note } : {}) }) }] };
   }
   for (let attempt = 0; ; attempt++) {
     try {
@@ -28,7 +29,9 @@ async function runStep(def: ToolDefinition, host: ToolHost, params: Record<strin
     } catch (err) {
       const m = RATE_LIMITED.exec(err instanceof Error ? err.message : String(err));
       if (!m || attempt >= MAX_RATE_RETRIES) throw err;
-      await sleep((Number(m[1]) + 1) * 1000);
+      const waitMs = (Number(m[1]) + 1) * 1000;
+      if (Date.now() + waitMs > deadline) throw err;
+      await sleep(waitMs);
     }
   }
 }
@@ -58,17 +61,17 @@ export const batchTool: ToolDefinition = {
   name: 'browser_batch',
   summary: 'Run several browser actions in one call (stops at first error)',
   description:
-    'Run a sequence of browser tool calls (up to 200) in ONE call, in order, and get their results back (output:"last"/"errors" to keep long batches cheap). Use it to cut round-trips when you already know the next steps, e.g. click a field → type → press Tab → wait → read text. Stops at the first failing step (remaining steps are skipped) unless continueOnError is true. A top-level tabId is applied to every step that does not set its own. Steps cannot be nested batches.',
+    `Run a sequence of browser tool calls (up to ${BATCH_MAX_STEPS}) in ONE call, in order, and get their results back (output:"last"/"errors" to keep long batches cheap). Use it to cut round-trips when you already know the next steps, e.g. click a field → type → press Tab → wait → read text. Stops at the first failing step (remaining steps are skipped) unless continueOnError is true. No new step starts after ${BATCH_BUDGET_MS / 1000} s. A top-level tabId is applied to every step that does not set its own, except browser_tabs. A delay step sleeps at most ${BATCH_MAX_DELAY_MS / 1000} s. Steps cannot be nested batches.`,
   inputSchema: z.object({
-    tabId: optionalTabId().describe('Default tab id for every step that does not set its own tabId'),
+    tabId: optionalTabId().describe('Default tab id for every step that does not set its own tabId (never applied to browser_tabs)'),
     actions: z
       .array(z.object({
         tool: z.string().describe('Tool name, e.g. "browser_click"'),
         params: z.record(z.string(), z.unknown()).optional().describe('That tool\'s arguments'),
       }))
       .min(1)
-      .max(MAX_STEPS)
-      .describe(`Steps to run in order (max ${MAX_STEPS})`),
+      .max(BATCH_MAX_STEPS)
+      .describe(`Steps to run in order (max ${BATCH_MAX_STEPS})`),
     continueOnError: z.boolean().optional().default(false).describe('Keep going after a failing step'),
     output: z
       .enum(['all', 'last', 'errors'])
@@ -76,9 +79,8 @@ export const batchTool: ToolDefinition = {
       .default('all')
       .describe('all = the result of every step; last = only the last step result (+ any failure); errors = only failures. Use last/errors for long batches to save tokens.'),
   }),
-  // Longest a single MCP call may reasonably take; each step keeps its own
-  // transport timeout.
-  timeoutMs: 300_000,
+  // The batch's time budget (BATCH_BUDGET_MS). Each step keeps its own transport timeout.
+  timeoutMs: BATCH_BUDGET_MS,
   async handler(host, params) {
     const { actions, continueOnError, output } = params as {
       tabId?: number;
@@ -90,10 +92,16 @@ export const batchTool: ToolDefinition = {
     let tabId = (params as { tabId?: number }).tabId;
     const content: ToolResult['content'] = [];
     const batchStart = Date.now();
-    const stepMs: number[] = [];
+    const deadline = batchStart + BATCH_BUDGET_MS;
     let failed = 0;
     let ran = 0;
+    let timedOut = false;
     for (const [i, step] of actions.entries()) {
+      if (Date.now() >= deadline) {
+        content.push({ type: 'text', text: `step ${i + 1}/${actions.length}: TIMEOUT; ${actions.length - i} skipped (batch budget ${BATCH_BUDGET_MS / 1000} s)` });
+        timedOut = true;
+        break;
+      }
       const label = `[${i + 1}/${actions.length}] ${step.tool}`;
       const def = toolMap.get(step.tool);
       const stepStart = Date.now();
@@ -102,17 +110,16 @@ export const batchTool: ToolDefinition = {
         result = { content: [{ type: 'text', text: `Error: ${def ? 'cannot be used inside a batch' : 'unknown tool'}` }], isError: true };
       } else {
         const stepParams = { ...(step.params || {}) };
-        if (tabId !== undefined && stepParams.tabId === undefined && 'tabId' in def.inputSchema.shape) {
+        if (tabId !== undefined && stepParams.tabId === undefined && !NO_DEFAULT_TAB.has(def.name) && 'tabId' in def.inputSchema.shape) {
           stepParams.tabId = tabId;
         }
         try {
-          result = await runStep(def, host, parseToolParams(def, stepParams));
+          result = await runStep(def, host, parseToolParams(def, stepParams), deadline);
         } catch (err) {
           result = { content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
         }
       }
       const ms = Date.now() - stepStart;
-      stepMs.push(ms);
       ran++;
       if (!result.isError && tabId !== undefined) {
         const replacement = replacedBy(result, tabId);
@@ -132,11 +139,11 @@ export const batchTool: ToolDefinition = {
         }
       }
     }
-    // Timing is appended last so the summary stays the first text block.
-    content.push({ type: 'text', text: `timing: total ${Date.now() - batchStart} ms; steps ${stepMs.join(', ')} ms` });
+    // The total is the last line, so the summary stays the first text block.
+    content.push({ type: 'text', text: `${ran} steps, ${Date.now() - batchStart} ms` });
     return {
       content: [{ type: 'text', text: `batch: ${ran - failed}/${actions.length} steps ok` }, ...content],
-      ...(failed ? { isError: true } : {}),
+      ...(failed || timedOut ? { isError: true } : {}),
     };
   },
 };

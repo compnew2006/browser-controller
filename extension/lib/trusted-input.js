@@ -39,6 +39,12 @@ const NAMED_KEYS = {
   Control: { code: 'ControlLeft', vk: 17 },
   Alt: { code: 'AltLeft', vk: 18 },
   Meta: { code: 'MetaLeft', vk: 91 },
+  CapsLock: { code: 'CapsLock', vk: 20 },
+  NumLock: { code: 'NumLock', vk: 144 },
+  ScrollLock: { code: 'ScrollLock', vk: 145 },
+  PrintScreen: { code: 'PrintScreen', vk: 44 },
+  Pause: { code: 'Pause', vk: 19 },
+  ContextMenu: { code: 'ContextMenu', vk: 93 },
 };
 for (let i = 1; i <= 12; i++) NAMED_KEYS[`F${i}`] = { code: `F${i}`, vk: 111 + i };
 // US-layout code + Windows virtual key code for printable punctuation.
@@ -114,15 +120,15 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * first visible selector match across shadow roots and same-origin iframes →
  * verified fallback), scroll it into view, optionally focus/select it, and
  * return its centre in TOP-level viewport coordinates (what CDP expects).
- * Also opens the lock shield for the agent's own trusted input for a few
- * seconds, since trusted events are otherwise blocked by it. With `cursor`
- * ({ effect, count }) the agent cursor glides to that centre (`cursorMs`).
+ * Also opens the agent's input window (__bcAgentInputUntil, lib/overlay.js) for
+ * a few seconds, so the user-input block lets its trusted events through. With
+ * `cursor` ({ effect, count }) the agent cursor glides to that centre (`cursorMs`).
  * Kept self-contained: it is serialized into the page by chrome.scripting.
  */
-function pageLocate(ref, sel, fb, mode, cursor) {
+function pageLocate(ref, sel, fb, mode, cursor, check) {
   const D = globalThis.__bcDom;
-  // An older runtime (installed before an extension update) has no cursor.
-  if (!D || (cursor && !D.cursor)) return { __needDom: true };
+  // An older runtime (installed before an extension update) has no cursor or clickTarget.
+  if (!D || !D.clickTarget || (cursor && !D.cursor)) return { __needDom: true };
   let el = null;
   let via = 'ref';
   if (ref || sel || fb) {
@@ -148,10 +154,8 @@ function pageLocate(ref, sel, fb, mode, cursor) {
   }
   if (!el) return { success: false, error: 'REF_GONE', _ref: ref, url: location.href };
 
-  // Agent input pass-through for the lock shield (see overlay.js).
+  // The agent's trusted input passes the user-input block (see overlay.js).
   window.__bcAgentInputUntil = Date.now() + 8000;
-  const shield = document.getElementById('__bc-lock-shield');
-  if (shield) shield.style.pointerEvents = 'none';
 
   if (via !== 'active') el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
   if (mode === 'focus' || mode === 'clear' || mode === 'focused-clear') {
@@ -170,6 +174,8 @@ function pageLocate(ref, sel, fb, mode, cursor) {
   }
 
   const { x, y, rect } = D.centerOf(el);
+  // The field the caller aimed at (read back by pageRelease, see below).
+  window.__bcLocatedEl = el;
   let focusedEl = el.ownerDocument.activeElement;
   for (let i = 0; focusedEl && i < 10; i++) {
     const s = D.shadowOf(focusedEl);
@@ -179,58 +185,67 @@ function pageLocate(ref, sel, fb, mode, cursor) {
   const hasValue = 'value' in el && !el.isContentEditable && typeof el.value === 'string';
   let fullySelected = false;
   try { fullySelected = el.selectionStart === 0 && el.selectionEnd === el.value.length; } catch { /* number/email inputs */ }
-  // What a real click at (x, y) would hit (pierces shadow roots and same-origin frames).
-  let occludedBy = null;
-  try {
-    const hit = D.elementAt(x, y);
-    if (hit && !D.composedContains(el, hit) && !D.composedContains(hit, el)) occludedBy = D.describe(hit);
-  } catch { /* detached mid-measure */ }
+  // A click must reach its target: hidden, disabled or covered (lib/page-dom.js
+  // clickTarget) is a failure, measured before anything is clicked. A checkbox
+  // hidden under its visible <label> is clicked through that label instead.
+  let point = { x, y };
+  let box = rect;
+  let reportVia = via;
+  if (check === 'click') {
+    const aim = D.clickTarget(el);
+    if (aim.message) return { success: false, error: aim.message, x, y };
+    if (aim.via) {
+      point = { x: aim.x, y: aim.y };
+      box = aim.node.getBoundingClientRect();
+      reportVia = aim.via;
+    }
+  }
   // Agent cursor (lib/page-dom.js): glide to the point the real input will hit.
-  const cursorMs = cursor && rect.width > 0 && rect.height > 0 && D.cursor ? D.cursor(x, y, cursor.effect, cursor.count) : 0;
+  const cursorMs = cursor && box.width > 0 && box.height > 0 && D.cursor ? D.cursor(point.x, point.y, cursor.effect, cursor.count) : 0;
   return {
     success: true,
-    x, y,
+    x: point.x, y: point.y,
     zeroViewport: window.innerWidth === 0 || window.innerHeight === 0,
-    visible: rect.width > 0 && rect.height > 0,
+    visible: box.width > 0 && box.height > 0,
     focused,
     // clear: a value that select() could not select still needs Ctrl+A.
     needsSelectAll: hasValue && el.value.length > 0 && !fullySelected,
     hasText: hasValue ? el.value.length > 0 : (el.textContent || '').length > 0,
-    ...(occludedBy ? { occludedBy } : {}),
     ...(cursorMs ? { cursorMs } : {}),
-    ...(via !== 'ref' ? { via } : {}),
+    ...(reportVia !== 'ref' ? { via: reportVia } : {}),
     // A fallback re-resolution says what it actually hit, so a wrong guess is visible.
     ...(via === 'fallback' ? { target: { role: D.roleOf(el), name: D.nameOf(el).slice(0, 60) } } : {}),
   };
 }
 
-/** Close the shield pass-through; report the focused field's value for verification. */
+/** Close the agent's input window; report the focused field's value for verification. */
 function pageRelease() {
   window.__bcAgentInputUntil = 0;
-  const shield = document.getElementById('__bc-lock-shield');
-  if (shield) shield.style.pointerEvents = 'auto';
   let a = document.activeElement;
   for (let i = 0; a && i < 10; i++) {
     if (a.shadowRoot && a.shadowRoot.activeElement) { a = a.shadowRoot.activeElement; continue; }
     if (a.tagName !== 'IFRAME') break;
     try { a = a.contentDocument.activeElement; } catch { break; }
   }
-  if (!a || a === document.body) return { value: null };
-  const value = typeof a.value === 'string' ? a.value : a.isContentEditable ? a.textContent : null;
-  return { value: value == null ? null : value.slice(0, 500), focusedTag: a.tagName.toLowerCase() + (a.id ? `#${a.id}` : '') };
+  const focusedTag = a && a !== document.body ? a.tagName.toLowerCase() + (a.id ? `#${a.id}` : '') : undefined;
+  // The value is the field the caller aimed at: a Tab typed into it moves focus elsewhere.
+  const located = window.__bcLocatedEl || null;
+  window.__bcLocatedEl = null;
+  const target = located && located.isConnected !== false ? located : (focusedTag ? a : null);
+  if (!target) return { value: null };
+  const value = typeof target.value === 'string' ? target.value : target.isContentEditable ? target.textContent : null;
+  return { value: value == null ? null : value.slice(0, 100), ...(focusedTag ? { focusedTag } : {}) };
 }
 
 /**
  * Page-side: what is at a top-level viewport point (pierces shadow roots and
- * same-origin frames), open the shield pass-through for the agent's input,
- * and glide the agent cursor there.
+ * same-origin frames), open the agent's input window, and glide the agent
+ * cursor there.
  */
 function pagePointInfo(x, y, effect, count) {
   const D = globalThis.__bcDom;
   if (!D || (effect && !D.cursor)) return { __needDom: true };
   window.__bcAgentInputUntil = Date.now() + 8000;
-  const shield = document.getElementById('__bc-lock-shield');
-  if (shield) shield.style.pointerEvents = 'none';
   const inView = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight;
   const cursorMs = effect && D.cursor ? D.cursor(x, y, effect, count) : 0;
   const el = D.elementAt(x, y);
@@ -261,13 +276,18 @@ export async function pointInfo(tabId, x, y, effect = 'move', count = 1) {
   return info;
 }
 
-export async function locateTarget(tabId, { ref, selector, fb, mode = 'none', cursor = null }) {
-  const loc = await execDom(tabId, pageLocate, [ref, selector, fb, mode, cursor]);
+/** A locate/click failure that says the target cannot be clicked (see pageLocate `check`). */
+export function isBlockedError(error) {
+  return /^ELEMENT_(HIDDEN|DISABLED|COVERED)\b/.test(String(error ?? ''));
+}
+
+export async function locateTarget(tabId, { ref, selector, fb, mode = 'none', cursor = null, check = null }) {
+  const loc = await execDom(tabId, pageLocate, [ref, selector, fb, mode, cursor, check]);
   // Never-shown background tab: size its viewport, then measure again.
   if (loc?.success && loc.zeroViewport && hasCdp(tabId)) {
     await ensureViewport(tabId).catch(() => {});
     // The cursor's effect already played: just move it to the real point.
-    return execDom(tabId, pageLocate, [ref, selector, fb, mode, cursor && { effect: 'track' }]);
+    return execDom(tabId, pageLocate, [ref, selector, fb, mode, cursor && { effect: 'track' }, check]);
   }
   return loc;
 }
@@ -279,15 +299,18 @@ export async function locateTarget(tabId, { ref, selector, fb, mode = 'none', cu
  * during the animation must not make the click miss.
  */
 export async function locatePointer(tabId, target, effect, count = 1) {
-  if (!(await agentCursorEnabled())) return locateTarget(tabId, target);
-  const loc = await locateTarget(tabId, { ...target, cursor: { effect, count } });
+  // A click is only sent to a target that can take it (hidden/disabled/covered: fails).
+  const aim = effect === 'click' ? { ...target, check: 'click' } : target;
+  if (!(await agentCursorEnabled())) return locateTarget(tabId, aim);
+  const loc = await locateTarget(tabId, { ...aim, cursor: { effect, count } });
   if (!loc?.success || !(loc.cursorMs > 0)) return loc;
   await sleep(loc.cursorMs);
-  const again = await locateTarget(tabId, { ...target, cursor: { effect: 'track' } });
+  const again = await locateTarget(tabId, { ...aim, cursor: { effect: 'track' } });
   // Gone during the glide: report it rather than clicking where it used to be
   // (and close the shield pass-through the first measurement opened).
   if (again?.error === 'REF_GONE') { await releaseShield(tabId); return again; }
-  return again?.success ? again : loc;
+  // A blocked target after the glide is the answer too, not the first measurement.
+  return again?.success || isBlockedError(again?.error) ? again : loc;
 }
 
 function pageCursor(x, y, effect, count) {
@@ -307,15 +330,13 @@ export async function cursorTo(tabId, x, y, effect = 'move', count = 1) {
 }
 
 
-/** Let the agent's own trusted input through the lock shield (for raw-coordinate tools like drag). */
+/** Open the agent's input window for its trusted input (raw-coordinate tools like drag). */
 export async function openShield(tabId) {
   try {
     await safeExec(tabId, () => {
       window.__bcAgentInputUntil = Date.now() + 8000;
-      const shield = document.getElementById('__bc-lock-shield');
-      if (shield) shield.style.pointerEvents = 'none';
     }, []);
-  } catch { /* protected page: CDP input still works, no shield there */ }
+  } catch { /* protected page: CDP input still works, no window to open there */ }
 }
 
 export async function releaseShield(tabId) {

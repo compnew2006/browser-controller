@@ -1,0 +1,184 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { installFakePage, type FakeDocument, type FakeElement } from './helpers/fake-dom.js';
+
+// Synthetic-path mock (no debugger): executeScript runs the page function in-process.
+(globalThis as any).chrome = {
+  tabs: { get: async (id: number) => ({ id, url: 'https://example.test/page', windowId: 1 }), query: async () => [], onRemoved: { addListener: () => {} } },
+  scripting: { executeScript: async (o: { func: (...a: any[]) => unknown; args?: unknown[] }) => [{ result: await o.func(...(o.args ?? [])) }] },
+  storage: { session: { get: async () => ({}), set: async () => {} }, local: { get: async () => ({}), set: async () => {} } },
+  debugger: { attach: async () => { throw new Error('no debugger in tests'); }, detach: async () => {}, sendCommand: async () => ({}), onDetach: { addListener: () => {} } },
+};
+
+const { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } = await import('../extension/lib/page-dom.js');
+const { handleClick, handleClickByText } = await import('../extension/handlers/interaction.js');
+const { fallbackByTab } = await import('../extension/lib/state.js');
+
+let doc: FakeDocument;
+const D = () => (globalThis as any).__bcDom;
+
+/** The page's hit-test, as the browser answers it: topmost first. */
+function stackAt(...topmostFirst: FakeElement[]) {
+  (doc as any).elementsFromPoint = () => topmostFirst;
+}
+
+/** Stand-in for the extension's own lock shield (id __bc-*, pointer-events:auto). */
+function lockShield(): FakeElement {
+  const shield = doc.el('div', { id: '__bc-lock-shield' });
+  shield.closest = (sel: string) => (sel === '[id^="__bc-"]' ? shield : null) as any;
+  doc.body.append(shield);
+  return shield;
+}
+
+describe('clickBlocker: one actionability check for both click paths', () => {
+  beforeEach(() => {
+    doc = installFakePage();
+    fallbackByTab.clear();
+    PAGE_DOM_INSTALL(PAGE_DOM_VERSION);
+  });
+  afterEach(() => { delete (doc as any).elementsFromPoint; });
+
+  it('a visible, enabled element with nothing on top of it may be clicked', () => {
+    const btn = doc.el('button', {}, 'Save');
+    doc.body.append(btn);
+    stackAt(btn);
+    expect(D().clickBlocker(btn)).toBeNull();
+  });
+
+  it('display:none / hidden targets are ELEMENT_HIDDEN', () => {
+    const btn = doc.el('button', {}, 'Gone');
+    btn.hidden = true;
+    doc.body.append(btn);
+    expect(D().clickBlocker(btn)).toMatchObject({ message: expect.stringMatching(/^ELEMENT_HIDDEN: /) });
+  });
+
+  it('a disabled control is ELEMENT_DISABLED (native :disabled, aria-disabled, or a disabled ancestor)', () => {
+    const native = doc.el('button', {}, 'Native');
+    (native as any).matches = (sel: string) => sel === ':disabled' || FakeElementMatches(native, sel);
+    const aria = doc.el('button', { 'aria-disabled': 'true' }, 'Aria');
+    const group = doc.el('div', { 'aria-disabled': 'true' }, doc.el('a', { href: '/x' }, 'Inside'));
+    const inside = (group.children[0] as FakeElement);
+    doc.body.append(native, aria, group);
+    stackAt(native);
+    expect(D().clickBlocker(native)).toMatchObject({ message: expect.stringMatching(/^ELEMENT_DISABLED: /) });
+    stackAt(aria);
+    expect(D().clickBlocker(aria)).toMatchObject({ message: expect.stringMatching(/^ELEMENT_DISABLED: /) });
+    stackAt(inside);
+    expect(D().clickBlocker(inside)).toMatchObject({ message: expect.stringMatching(/^ELEMENT_DISABLED: /) });
+  });
+
+  it('a target covered by another element is ELEMENT_COVERED and names the cover', () => {
+    const btn = doc.el('button', {}, 'Buy');
+    const cover = doc.el('div', { class: 'cookie-banner' });
+    doc.body.append(btn, cover);
+    stackAt(cover, btn);
+    const block = D().clickBlocker(btn);
+    expect(block.message).toMatch(/^ELEMENT_COVERED: /);
+    expect(block.message).toContain('div.cookie-banner');
+  });
+
+  it('the target\'s own descendant on top of it is not a cover', () => {
+    const btn = doc.el('button', {}, doc.el('span', {}, 'Buy'));
+    doc.body.append(btn);
+    stackAt((btn.children[0] as FakeElement), btn);
+    expect(D().clickBlocker(btn)).toBeNull();
+  });
+
+  it('the extension\'s own overlays are transparent: the page underneath decides', () => {
+    const btn = doc.el('button', {}, 'Buy');
+    doc.body.append(btn);
+    const shield = lockShield();
+    stackAt(shield, btn);
+    expect(D().clickBlocker(btn)).toBeNull();
+    expect(D().elementAt(60, 20)).toBe(btn);
+  });
+});
+
+/** The fake's own matcher, for the cases where a test overrides `matches`. */
+function FakeElementMatches(el: FakeElement, sel: string): boolean {
+  return (Object.getPrototypeOf(el) as { matches: (s: string) => boolean }).matches.call(el, sel);
+}
+
+describe('browser_click refuses a target it cannot click (synthetic path)', () => {
+  beforeEach(() => {
+    doc = installFakePage();
+    fallbackByTab.clear();
+    PAGE_DOM_INSTALL(PAGE_DOM_VERSION);
+  });
+  afterEach(() => { delete (doc as any).elementsFromPoint; });
+
+  it('a covered button fails with ELEMENT_COVERED and no click is dispatched', async () => {
+    const btn = doc.el('button', { id: 'buy' }, 'Buy');
+    const cover = doc.el('div', { id: 'promo' });
+    doc.body.append(btn, cover);
+    stackAt(cover, btn);
+    const res = await handleClick({ tabId: 1, selector: '#buy' });
+    expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_COVERED: /) });
+    expect(btn.events).not.toContain('click');
+  });
+
+  it('a display:none button fails with ELEMENT_HIDDEN instead of firing its handler', async () => {
+    const btn = doc.el('button', { id: 'hid' }, 'Hidden');
+    btn.hidden = true;
+    doc.body.append(btn);
+    const res = await handleClick({ tabId: 1, selector: '#hid' });
+    expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_HIDDEN: /) });
+    expect(btn.events).not.toContain('click');
+  });
+
+  it('a disabled button fails with ELEMENT_DISABLED', async () => {
+    const btn = doc.el('button', { id: 'off', 'aria-disabled': 'true' }, 'Off');
+    doc.body.append(btn);
+    stackAt(btn);
+    const res = await handleClick({ tabId: 1, selector: '#off' });
+    expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_DISABLED: /) });
+    expect(btn.events).not.toContain('click');
+  });
+
+  it('an actionable button is still clicked (no regression on the happy path)', async () => {
+    const btn = doc.el('button', { id: 'ok' }, 'OK');
+    doc.body.append(btn);
+    stackAt(btn);
+    const res = await handleClick({ tabId: 1, selector: '#ok' });
+    expect(res).toMatchObject({ success: true, at: { x: 60, y: 20 } });
+    expect(res).not.toHaveProperty('warning');
+    expect(btn.events).toContain('click');
+  });
+
+  it('browser_click_text applies the same check to the control it matched', async () => {
+    const btn = doc.el('button', {}, 'Accept all');
+    const cover = doc.el('div', { class: 'modal' });
+    doc.body.append(btn, cover);
+    stackAt(cover, btn);
+    const res = await handleClickByText({ tabId: 1, text: 'accept all' });
+    expect(res).toMatchObject({ success: false, error: expect.stringMatching(/^ELEMENT_COVERED: /) });
+    expect(btn.events).not.toContain('click');
+  });
+});
+
+describe('browser_click_text: linear innermost-control selection', () => {
+  beforeEach(() => {
+    doc = installFakePage();
+    fallbackByTab.clear();
+    PAGE_DOM_INSTALL(PAGE_DOM_VERSION);
+  });
+
+  it('a wrapper row around a button is dropped in favour of the button', async () => {
+    const btn = doc.el('button', {}, 'Open report');
+    doc.body.append(doc.el('div', { class: 'row' }, doc.el('div', {}, btn)));
+    const res = await handleClickByText({ tabId: 1, text: 'open report' });
+    expect(res).toMatchObject({ success: true, matchCount: 1, clicked: 'Open report', role: 'button' });
+  });
+
+  it('2,000+ matches resolve in one pass (was quadratic: 8 s, TAB_WEDGED)', async () => {
+    const rows: FakeElement[] = [];
+    for (let i = 0; i < 2500; i++) {
+      rows.push(doc.el('div', { class: 'row' }, doc.el('div', {}, doc.el('button', {}, `Item ${i}`))));
+    }
+    doc.body.append(...rows);
+    const t0 = Date.now();
+    const res = await handleClickByText({ tabId: 1, text: 'item', index: 2499 });
+    const ms = Date.now() - t0;
+    expect(res).toMatchObject({ success: true, matchCount: 2500, clicked: 'Item 2499' });
+    expect(ms).toBeLessThan(3000);
+  });
+});

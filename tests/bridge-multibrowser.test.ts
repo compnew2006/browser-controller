@@ -42,26 +42,26 @@ async function fakeBrowser(p: number, browserId: string, opts: { silent?: boolea
 }
 
 describe('multi-browser bridge', () => {
-  it('keeps several browsers connected; the newest is the default', async () => {
+  it('keeps several browsers connected; the first one seen is the default', async () => {
     const { bridge, port: p } = await startBridge();
     await fakeBrowser(p, 'work');
     await fakeBrowser(p, 'home');
     const list = bridge.callTool('browser_list_browsers', {}, 's1') as Promise<any>;
     const { browsers } = await list;
     expect(browsers.map((b: any) => b.browserId).sort()).toEqual(['home', 'work']);
-    expect(browsers.find((b: any) => b.default).browserId).toBe('home');
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'home' });
+    expect(browsers.find((b: any) => b.default).browserId).toBe('work');
+    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'work' });
   });
 
   it('routes a session to the browser it selected, other sessions keep the default', async () => {
     const { bridge, port: p } = await startBridge();
     await fakeBrowser(p, 'work');
     await fakeBrowser(p, 'home');
-    expect(await bridge.callTool('browser_select_browser', { browserId: 'Chrome work' }, 's1')).toMatchObject({ selected: 'work' });
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'work' });
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'home' });
-    await bridge.callTool('browser_select_browser', { browserId: 'auto' }, 's1');
+    expect(await bridge.callTool('browser_select_browser', { browserId: 'Chrome home' }, 's1')).toMatchObject({ selected: 'home' });
     expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'home' });
+    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'work' });
+    await bridge.callTool('browser_select_browser', { browserId: 'auto' }, 's1');
+    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'work' });
     await expect(bridge.callTool('browser_select_browser', { browserId: 'nope' }, 's1')).rejects.toThrow(/No connected browser/);
   });
 
@@ -95,13 +95,13 @@ describe('multi-browser bridge', () => {
     const work = await fakeBrowser(p, 'work');
     // Step 1 of a batch: click in "work" (the only browser).
     expect(await bridge.callTool('browser_click', { tabId: 7 }, 's1')).toEqual({ from: 'work' });
-    const home = await fakeBrowser(p, 'home'); // newer: becomes the default
+    const home = await fakeBrowser(p, 'home'); // connects later: does not become the default
     // Step 2 must not land in "home" with the same tabId.
     expect(await bridge.callTool('browser_type', { tabId: 7, text: 'x' }, 's1')).toEqual({ from: 'work' });
     expect(work.calls).toEqual(['browser_click', 'browser_type']);
     expect(home.calls).toEqual([]);
-    // A new session takes the default; list shows each session's own browser.
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'home' });
+    // A new session takes the default (the first browser seen); list shows each session's own browser.
+    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's2')).toEqual({ from: 'work' });
     const listed = await (bridge.callTool('browser_list_browsers', {}, 's1') as Promise<any>);
     expect(listed).toMatchObject({ selectedBrowserId: 'work', pinnedAuto: true });
     expect(listed.browsers.find((b: any) => b.selected).browserId).toBe('work');
@@ -112,7 +112,7 @@ describe('multi-browser bridge', () => {
     work.ws.close();
     await new Promise((r) => setTimeout(r, 60));
     await expect(bridge.callTool('browser_type', { tabId: 7, text: 'y' }, 's1')).rejects.toThrow(/"work" disconnected/);
-    expect(home.calls).toEqual(['browser_tabs']);
+    expect(home.calls).toEqual([]); // nothing was routed to the browser that connected later
     // Selecting "auto" again re-pins to the current default.
     await bridge.callTool('browser_select_browser', { browserId: 'auto' }, 's1');
     expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'home' });
@@ -122,9 +122,9 @@ describe('multi-browser bridge', () => {
     const { bridge, port: p } = await startBridge();
     await fakeBrowser(p, 'work');
     await fakeBrowser(p, 'home');
-    await bridge.callTool('browser_select_browser', { browserId: 'work' }, 's1');
+    await bridge.callTool('browser_select_browser', { browserId: 'home' }, 's1');
     bridge.sendControl('releaseSession', { sessionId: 's1' });
-    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'home' });
+    expect(await bridge.callTool('browser_tabs', { action: 'list' }, 's1')).toEqual({ from: 'work' });
   });
 
   it('the extension announces its browser identity in helloAck', () => {

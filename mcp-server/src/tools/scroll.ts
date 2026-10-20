@@ -5,7 +5,7 @@ import { requireTabId, forwardHandler } from './types.js';
 export const scrollTool: ToolDefinition = {
   name: 'browser_scroll',
   summary: 'Scroll a tab up/down/left/right',  description:
-    'Scroll the page or an element. Supports pixel offsets, scrolling to elements, and named positions (top/bottom). Works with virtual scroll containers used by social media sites. With x/y it sends a real mouse-wheel event at that point, scrolling whatever is under it (inner panels, maps, virtual lists).',
+    'Scroll the page or an element. Supports pixel offsets, scrolling to elements, and named positions (top/bottom). Works with virtual scroll containers used by social media sites, and with app shells where an inner container scrolls instead of the page (the nearest scrollable container is used). The result has moved and the real position; when nothing could move it is an error (NOT_SCROLLABLE). With x/y it sends a real mouse-wheel event at that point, scrolling whatever is under it (inner panels, maps, virtual lists).',
   inputSchema: z.object({
     tabId: requireTabId(),
     direction: z.enum(['up', 'down', 'left', 'right']).optional().default('down'),

@@ -184,7 +184,11 @@ describe('PAGE_FALLBACK_INSTALL injection contract', () => {
     };
     globalThis.document = {
       body: {},
-      createTreeWalker: () => ({ nextNode: () => target }),
+      // One node, then end of tree (a walker that never ends would never stop the one-pass index).
+      createTreeWalker: () => {
+        let served = false;
+        return { nextNode: () => (served ? null : (served = true, target)) };
+      },
     } as any;
     globalThis.NodeFilter = { SHOW_ELEMENT: 1 } as any;
 

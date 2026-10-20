@@ -6,15 +6,26 @@ import { safeExec, execDom, resolveTab, getFallback, assertResponsive, hasPoint 
 import { trustedSender, pointInfo, releaseShield } from '../lib/trusted-input.js';
 import { fallbackByTab, lastSnapshotFingerprints, MAX_RESULT_CHARS, persistSessionState, nextRefPrefix } from '../lib/state.js';
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
-import { withCdp } from '../lib/cdp-session.js';
-import { cdpEvaluate } from '../lib/cdp-evaluate.js';
+import { withCdp, settleWithin, TIMED_OUT } from '../lib/cdp-session.js';
+import { cdpEvaluate, DEFAULT_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS } from '../lib/cdp-evaluate.js';
 import { handleNativeSnapshot } from './ax-snapshot.js';
+import { refErrorMessage } from '../lib/ref-errors.js';
 
 /** Default output cap for snapshots (chars of serialized tree). */
 export const SNAPSHOT_MAX_CHARS = 20_000;
 
+/** Longest fixed delay a browser_wait call sleeps (the rest is reported as capped). */
+const WAIT_DELAY_MAX_MS = 30_000;
+/** Longest condition wait: below the ~60 s transport timeout, so the call answers instead of timing out. */
+const WAIT_TIMEOUT_MAX_MS = 50_000;
+
 export async function handleWait(params, _sessionId, _agentName, signal) {
-  const { tabId, selector, state = 'visible', timeout = 10000, delay, text, urlIncludes } = params;
+  const { tabId, selector, state = 'visible', delay, text, urlIncludes } = params;
+  const requestedTimeout = Number.isFinite(params.timeout) ? params.timeout : 10000;
+  const timeout = Math.min(Math.max(0, requestedTimeout), WAIT_TIMEOUT_MAX_MS);
+  const clampNote = requestedTimeout > WAIT_TIMEOUT_MAX_MS
+    ? { note: `timeout capped at ${WAIT_TIMEOUT_MAX_MS} ms (requested ${requestedTimeout}); the call must answer before the transport timeout` }
+    : {};
 
   // A promise that rejects when this call is cancelled (client gone / bridge
   // timeout forwarded). Long waits race against it so a cancelled call releases
@@ -28,13 +39,15 @@ export async function handleWait(params, _sessionId, _agentName, signal) {
 
   const hasCondition = !!selector || text != null || !!urlIncludes;
   if (delay) {
-    const sleep = new Promise((r) => setTimeout(r, Math.min(delay, 30000)));
+    const waited = Math.min(delay, WAIT_DELAY_MAX_MS);
+    const sleep = new Promise((r) => setTimeout(r, waited));
     try {
       await (abortRace ? Promise.race([sleep, abortRace]) : sleep);
     } catch {
       return { success: false, error: 'aborted', waited: 0 };
     }
-    return { success: true, waited: delay }; // documented: a delay ignores the conditions
+    // documented: a delay ignores the conditions. `waited` is what really elapsed.
+    return { success: true, waited, ...(waited < delay ? { note: `delay capped at ${WAIT_DELAY_MAX_MS} ms (requested ${delay})` } : {}) };
   }
 
   if (!hasCondition) return { success: false, error: 'Need selector, text, urlIncludes or delay' };
@@ -79,12 +92,13 @@ export async function handleWait(params, _sessionId, _agentName, signal) {
         ...(urlIncludes ? { urlIncludes } : {}),
         state,
         elapsed: Date.now() - start,
+        ...clampNote,
       };
     }
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  return { success: false, error: `Timeout waiting for ${what} to be ${state}` };
+  return { success: false, error: `Timeout waiting for ${what} to be ${state}`, ...clampNote };
 }
 
 export async function handleScroll(params) {
@@ -121,30 +135,83 @@ export async function handleScroll(params) {
       return { success: false, error: 'Element not found' };
     }
 
-    const target = _sel ? D.resolve(null, _sel, null).el : window;
+    // A position (top/bottom) is a vertical move; otherwise the direction decides the axis.
+    const dirOf = _pos ? (_pos === 'top' ? 'up' : 'down') : _dir;
+    const axis = dirOf === 'left' || dirOf === 'right' ? 'x' : 'y';
+    const scrollingEl = document.scrollingElement || document.documentElement;
+    const overflows = (el) => (axis === 'y'
+      ? el.scrollHeight - el.clientHeight > 1
+      : el.scrollWidth - el.clientWidth > 1);
+    // Can `el` still move in the requested direction? (window: its document element)
+    const canMove = (el) => {
+      const win = el === window;
+      const s = win ? scrollingEl : el;
+      const at = win ? (axis === 'y' ? window.scrollY || 0 : window.scrollX || 0) : (axis === 'y' ? el.scrollTop : el.scrollLeft);
+      if (!overflows(s)) return false;
+      if (dirOf === 'up' || dirOf === 'left') return at > 0;
+      return at + (axis === 'y' ? s.clientHeight : s.clientWidth) < (axis === 'y' ? s.scrollHeight : s.scrollWidth) - 1;
+    };
+    const positionOf = (el) => (el === window
+      ? { x: window.scrollX || 0, y: window.scrollY || 0 }
+      : { x: el.scrollLeft || 0, y: el.scrollTop || 0 });
+
+    let target = _sel ? (D.resolve(null, _sel, null).el || null) : window;
     if (!target) return { success: false, error: 'Scroll container not found' };
-
-    if (_pos === 'top') {
-      if (target === window) window.scrollTo({ top: 0, behavior: 'smooth' });
-      else target.scrollTop = 0;
-      return { success: true, scrolledTo: 'top' };
+    // App shells: the document does not scroll, an inner container does. Use the
+    // nearest scrollable container under the viewport centre, else the largest one.
+    if (!_sel && !canMove(window)) {
+      const isScrollable = (el) => {
+        const st = D.styleOf(el);
+        const ov = st ? (axis === 'y' ? st.overflowY : st.overflowX) : '';
+        return /(auto|scroll|overlay)/.test(ov || '') && canMove(el);
+      };
+      let found = null;
+      for (let el = D.elementAt(window.innerWidth / 2 || 0, window.innerHeight / 2 || 0); el && !found; el = el.parentElement) {
+        if (el.nodeType === 1 && isScrollable(el)) found = el;
+      }
+      if (!found) {
+        let bestArea = 0;
+        for (const el of document.querySelectorAll('*')) {
+          if (!isScrollable(el) || !D.isVisible(el)) continue;
+          const area = el.clientWidth * el.clientHeight;
+          if (area > bestArea) { found = el; bestArea = area; }
+        }
+      }
+      if (found) target = found;
     }
-    if (_pos === 'bottom') {
-      if (target === window) window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
-      else target.scrollTop = target.scrollHeight;
-      return { success: true, scrolledTo: 'bottom' };
+
+    const before = positionOf(target);
+    if (_pos) {
+      const edge = _pos === 'top' ? 0 : (target === window ? scrollingEl.scrollHeight : target.scrollHeight);
+      if (target === window) window.scrollTo({ top: edge, behavior: 'instant' });
+      else target.scrollTop = edge;
+    } else {
+      const dx = _dir === 'right' ? _amt : _dir === 'left' ? -_amt : 0;
+      const dy = _dir === 'down' ? _amt : _dir === 'up' ? -_amt : 0;
+      if (target === window) window.scrollBy({ left: dx, top: dy, behavior: 'instant' });
+      else target.scrollBy({ left: dx, top: dy, behavior: 'instant' });
     }
-
-    const scrollOpts = { behavior: 'smooth' };
-    if (_dir === 'down') scrollOpts.top = _amt;
-    else if (_dir === 'up') scrollOpts.top = -_amt;
-    else if (_dir === 'right') scrollOpts.left = _amt;
-    else if (_dir === 'left') scrollOpts.left = -_amt;
-
-    if (target === window) window.scrollBy(scrollOpts);
-    else target.scrollBy(scrollOpts);
-
-    return { success: true, direction: _dir, amount: _amt };
+    const after = positionOf(target);
+    const moved = after.x !== before.x || after.y !== before.y;
+    const container = target === window ? undefined : D.describe(target);
+    if (!moved) {
+      // Nothing moved: say so. Reaching the requested edge is a success, not an error.
+      if (_pos && overflows(target === window ? scrollingEl : target) === false) {
+        return { success: false, error: 'NOT_SCROLLABLE: nothing on this page scrolls', moved: false, position: after };
+      }
+      if (_pos) return { success: true, scrolledTo: _pos, moved: false, position: after };
+      const why = overflows(target === window ? scrollingEl : target)
+        ? `already at the ${_dir === 'down' ? 'bottom' : _dir === 'up' ? 'top' : _dir === 'right' ? 'right' : 'left'} edge`
+        : 'nothing scrollable in this direction';
+      return { success: false, error: `NOT_SCROLLABLE: nothing moved (${why})`, moved: false, position: after };
+    }
+    return {
+      success: true,
+      ...(_pos ? { scrolledTo: _pos } : { direction: _dir, amount: _amt }),
+      moved: true,
+      position: after,
+      ...(container ? { container } : {}),
+    };
   }, [direction, amount, selector, toElement, position, fb]).then((res) => {
     // Scrolling a virtualized feed (FB/IG/Twitter) recycles DOM nodes, so any
     // refs the agent holds are now likely stale. Hint it to re-snapshot. We
@@ -191,10 +258,14 @@ export async function handleSnapshot(params) {
 
   return execDom(tabId, (_sel, _compact, _prevFingerprints, _refPrefix, _rootRef, _depth, _maxChars) => {
     const D = globalThis.__bcDom;
-    if (!D) return { __needDom: true };
+    // An older runtime (installed before an extension update) has no labelsOf.
+    if (!D || !D.labelsOf) return { __needDom: true };
+    D.beginRefGeneration?.(_refPrefix);
     let refCount = 0;
     /** @type {Record<string, object>} ref -> fallback, returned to background */
     const fallbacks = {};
+    /** One sibling index for every fallback of this pass (smart-selector.js). */
+    const fallbackPass = {};
     /** @type {string[]} fingerprints of THIS snapshot (role|name), returned to background */
     const fingerprints = [];
     // No previous snapshot → nothing is "new" (marking every node wasted tokens).
@@ -208,12 +279,21 @@ export async function handleSnapshot(params) {
     let truncated = false;
 
     // 'show' = render normally, 'pass' = no box of its own (display:contents,
-    // slots) but its children may render, false = hidden subtree.
+    // slots, hidden-but-walkable wrappers) but its children may render, false =
+    // hidden subtree, never listed. Hidden means: display:none, opacity:0 (the
+    // whole subtree is invisible), inert, aria-hidden="true", an extension
+    // overlay, or no box at all. Off-screen elements are NOT hidden: scrollable
+    // content must stay listed.
+    // The exception to opacity:0: a native checkbox/radio drawn over by its styled
+    // <label> is the control a person clicks, so it is listed (see labelledCheckable).
     function vis(el) {
+      if (D.isExtensionNode?.(el)) return false;
+      if (D.attr(el, 'aria-hidden') === 'true' || el.inert === true || (el.hasAttribute && el.hasAttribute('inert'))) return false;
       const s = D.styleOf(el);
       if (!s || s.display === 'none') return false;
+      if (parseFloat(s.opacity) === 0 && !labelledCheckable(el)) return false;
       if (s.display === 'contents' || el.tagName === 'SLOT') return 'pass';
-      if (s.visibility === 'hidden' || s.visibility === 'collapse' || parseFloat(s.opacity) === 0) {
+      if (s.visibility === 'hidden' || s.visibility === 'collapse') {
         // visibility is inherited but can be re-enabled below; keep walking.
         return 'pass';
       }
@@ -221,6 +301,34 @@ export async function handleSnapshot(params) {
       if (r.width > 0 && r.height > 0) return 'show';
       // Zero-size wrappers (custom-element hosts, overflow containers) can still hold visible children.
       return el.childElementCount > 0 || D.shadowOf(el) ? 'pass' : false;
+    }
+
+    /**
+     * A native checkbox/radio whose box is only transparent (opacity:0, the custom
+     * pattern) and whose label is visible: the control the user sees and clicks.
+     */
+    function labelledCheckable(el) {
+      if (el.tagName !== 'INPUT' || !['checkbox', 'radio'].includes(String(el.type || '').toLowerCase())) return false;
+      if (!D.isVisible(el, { ignoreOpacity: true })) return false;
+      return D.labelsOf(el).some((label) => D.isVisible(label));
+    }
+
+    /**
+     * Same-origin frames are walked (their body is in the flat tree). A frame whose
+     * document we cannot read is named, not silently dropped: its text, links and
+     * controls are simply not reachable from this page's script.
+     */
+    function crossOriginFrame(el) {
+      if (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME') return null;
+      if (D.frameDoc(el)) return null;
+      let origin = '';
+      try { origin = new URL(D.attr(el, 'src') || '', location.href).origin; } catch { /* no usable src: unnamed origin */ }
+      return origin && origin !== 'null' ? `cross-origin: ${origin}` : 'cross-origin';
+    }
+    function frameNode(name) {
+      const node = { role: 'iframe', name };
+      budget -= JSON.stringify(node).length + 16;
+      return node;
     }
 
     const role = (el) => D.roleOf(el);
@@ -250,13 +358,16 @@ export async function handleSnapshot(params) {
     function emit(el, r, n, extra, isNewCheck) {
       const ref = `${_refPrefix}${refCount++}`;
       D.registry.set(ref, el);
-      try { if (genFallback) fallbacks[ref] = genFallback(el); } catch {}
+      try { if (genFallback) fallbacks[ref] = genFallback(el, fallbackPass); } catch {}
       const fp = `${r}|${n}`;
       fingerprints.push(fp);
       const node = { ref, role: r, ...extra };
       if (n) node.name = n;
       if (isNewCheck && prevSet && !prevSet.has(fp)) node.isNew = true;
-      if (el.value !== undefined && el.value !== '' && typeof el.value !== 'object') node.value = String(el.value).slice(0, 200);
+      if (el.tagName === 'INPUT' && String(el.type || '').toLowerCase() === 'password') {
+        // A password is never printed: a mask says the field is filled.
+        if (el.value) node.value = '••••';
+      } else if (el.value !== undefined && el.value !== '' && typeof el.value !== 'object') node.value = String(el.value).slice(0, 200);
       if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) node.checked = el.checked;
       else if (D.attr(el, 'aria-checked')) node.checked = D.attr(el, 'aria-checked') === 'true';
       if (D.attr(el, 'aria-expanded')) node.expanded = D.attr(el, 'aria-expanded') === 'true';
@@ -276,6 +387,11 @@ export async function handleSnapshot(params) {
       if (budget <= 0) { truncated = true; return null; }
       const v = vis(el);
       if (!v) return null;
+      const xo = v === 'show' ? crossOriginFrame(el) : null;
+      if (xo) {
+        if (d > maxDepth) { truncated = true; return null; }
+        return frameNode(xo);
+      }
 
       const ia = v === 'show' && isInteractive(el);
       const r = role(el);
@@ -307,6 +423,11 @@ export async function handleSnapshot(params) {
       if (budget <= 0) { truncated = true; return null; }
       const v = vis(el);
       if (!v) return null;
+      const xo = v === 'show' ? crossOriginFrame(el) : null;
+      if (xo) {
+        if (d > maxDepth) { truncated = true; return null; }
+        return frameNode(xo);
+      }
 
       const r = role(el);
       const ia = v === 'show' && isInteractive(el);
@@ -335,7 +456,8 @@ export async function handleSnapshot(params) {
     let root = document.body;
     if (_rootRef) {
       root = D.registry.get(_rootRef);
-      if (!D.connected(root)) return { success: false, error: `ref ${_rootRef} is gone — take a new snapshot` };
+      // The extension words the stale-ref error (lib/ref-errors.js), not the page.
+      if (!D.connected(root)) return { success: false, error: 'REF_GONE', _ref: _rootRef };
     } else if (_sel) {
       const hit = D.resolve(null, _sel, null);
       if (hit.error === 'INVALID_SELECTOR') return { success: false, error: `Invalid CSS selector: ${_sel}` };
@@ -371,6 +493,10 @@ export async function handleSnapshot(params) {
       __fingerprints: fingerprints,
     };
   }, [selector ?? null, compact, prevFingerprints, refPrefix, rootRef ?? null, depth ?? null, maxChars]).then((res) => {
+    if (res && res.success === false && res.error === 'REF_GONE') {
+      res.error = refErrorMessage(res._ref, getFallback(tabId, res._ref));
+      delete res._ref;
+    }
     // Store the fallbacks per-tab so click/type can resolve stale refs, and
     // persist them across service-worker recycles (MV3 lifetime). Merged, not
     // replaced: a scoped snapshot must not invalidate refs from the full one.
@@ -407,37 +533,52 @@ export async function handleGetPageText(params) {
     if (!D) return { __needDom: true };
     const article = _mode === 'article';
     const budget = _from + _max + 1000;
+    /** Composed text of the roots: shadow roots and same-origin frames included. */
+    const textOf = (roots, art) => {
+      const parts = [];
+      let size = 0;
+      for (const root of roots) {
+        if (size > budget) break;
+        const part = D.pageText(root, { article: art, max: budget });
+        if (part) { parts.push(part); size += part.length + 2; }
+      }
+      return parts.join('\n\n');
+    };
     let roots = [document.body];
+    let note = null;
     if (_sel) {
       // EVERY match, not just the first: a selector list like "h1, .price"
-      // used to return only the h1 (found live). Same preference order as
-      // the resolver — visible light-DOM matches, then visible shadow/frame
-      // matches, then the first match even if hidden.
-      const light = D.queryAll(_sel, false);
-      if (light === null) return { success: false, error: `Invalid CSS selector: ${_sel}` };
-      let hits = light.filter((el) => D.isVisible(el));
-      if (!hits.length) {
-        const deep = D.queryAll(_sel, true) || [];
-        hits = deep.filter((el) => D.isVisible(el));
-        if (!hits.length && (deep[0] || light[0])) hits = [deep[0] || light[0]];
+      // used to return only the h1 (found live). Visible matches only (the
+      // resolver's light/shadow/frame order does not matter once we filter).
+      const all = D.queryAll(_sel, true);
+      if (all === null) return { success: false, error: `Invalid CSS selector: ${_sel}` };
+      if (!all.length) return { success: false, error: 'Element not found' };
+      // Extension overlays are never page text.
+      const shown = all.filter((el) => !D.isExtensionNode?.(el) && D.isVisible(el));
+      if (!shown.length) {
+        return { success: false, error: `ELEMENT_HIDDEN: ${_sel} matches only hidden elements (display:none, visibility:hidden or no box), so there is no visible text` };
       }
       // Outermost matches only — a match inside another match would repeat its text.
-      roots = hits.filter((el) => !hits.some((o) => o !== el && D.composedContains(o, el)));
+      roots = shown.filter((el) => !shown.some((o) => o !== el && D.composedContains(o, el)));
     } else if (article) {
       roots = [D.articleRoot()];
     }
     if (!roots.length || !roots[0]) return { success: false, error: 'Element not found' };
 
-    // Composed text: includes open/closed shadow roots and same-origin frames
-    // (innerText alone misses web-component content such as caniuse's tables).
-    const parts = [];
-    let size = 0;
-    for (const root of roots) {
-      if (size > budget) break;
-      const part = D.pageText(root, { article, max: budget });
-      if (part) { parts.push(part); size += part.length + 2; }
+    let text = textOf(roots, article);
+    // The article heuristic skips by class-name guesses ("share", "related",
+    // "comments"...), which can drop real paragraphs. Compared with the same
+    // roots' full text: when the heuristic keeps less than half of it, the full
+    // visible text of those roots is the honest answer.
+    let articleUsed = article;
+    if (article) {
+      const full = textOf(roots, false);
+      if (text.length < full.length * 0.5) {
+        note = `article mode kept ${Math.round(100 * text.length / Math.max(1, full.length))}% of the text, so the full visible text is returned`;
+        text = full;
+        articleUsed = false;
+      }
     }
-    let text = parts.join('\n\n');
     const total = text.length;
     if (_from) text = text.slice(_from);
     const truncated = text.length > _max;
@@ -448,7 +589,8 @@ export async function handleGetPageText(params) {
       ...(roots.length > 1 ? { matches: roots.length } : {}),
       ...(_from ? { offset: _from } : {}),
       ...(truncated ? { nextOffset: _from + _max } : {}),
-      ...(article ? { mode: 'article' } : {}),
+      ...(articleUsed ? { mode: 'article' } : {}),
+      ...(note ? { note } : {}),
       ...(total && _from >= total ? { note: `offset ${_from} is past the end (${total} chars)` } : {}),
     };
   }, [selector ?? null, max, mode, from]);
@@ -457,12 +599,16 @@ export async function handleGetPageText(params) {
 export { handleFind } from './find.js';
 
 /**
- * evaluate (task 1.5): runs in the page's MAIN world via chrome.scripting — no
- * chrome.debugger, so no yellow "is being debugged" banner. Replaces the old
- * CDP Runtime.evaluate path.
+ * evaluate. Default: CDP with REPL semantics (top-level await, the last expression is
+ * the result, the page's CSP does not apply). mode:"scripting", or no debugger
+ * available, runs the code in the page's MAIN world via chrome.scripting instead: no
+ * banner, but CSP-bound. Every result says which path ran (`via`). Both paths share one
+ * budget, `timeout` (default DEFAULT_EVAL_TIMEOUT_MS, the same default the MCP schema
+ * declares), and return TIMEOUT when it runs out.
  */
 export async function handleEvaluate(params, _sessionId, _agentName, signal) {
   const { tabId, expression, mode = 'cdp', timeout } = params;
+  const budget = Math.min(Math.max(1000, timeout ?? DEFAULT_EVAL_TIMEOUT_MS), MAX_EVAL_TIMEOUT_MS);
   await resolveTab(tabId);
   const tab = await chrome.tabs.get(tabId);
   if (/^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '')) {
@@ -476,25 +622,29 @@ export async function handleEvaluate(params, _sessionId, _agentName, signal) {
   if (mode !== 'scripting') {
     let attached = false;
     try {
-      return await withCdp(tabId, (send) => {
+      return await withCdp(tabId, async (send) => {
         attached = true;
-        return cdpEvaluate(send, expression, { timeoutMs: timeout, signal });
+        return { ...(await cdpEvaluate(send, expression, { timeoutMs: budget, signal })), via: 'cdp' };
       });
     } catch (err) {
       if (attached) throw err; // a real evaluate failure, not "no debugger"
     }
   }
 
-  // TWO stacked bugs found live (production stress audit): (1) the old
-  // wrapper `(async () => { ${expression} })()` is a BLOCK body — it evaluates
-  // the expression and DISCARDS it, so every result was undefined even where
-  // the injection worked; (2) async funcs lose returns across the world
-  // boundary (crbug 1304272). Fix: pass the RAW expression; the page-side
-  // direct eval() yields the completion value (expressions AND statement
-  // lists, await included via the async context), parked on a page global by
-  // a SYNC kick func and polled back by a SYNC read (sync MAIN-world returns
-  // verified working live).
-  await chrome.scripting.executeScript({
+  // The expression runs as a direct eval() in the page's MAIN world; its completion
+  // value (await included) is parked on a page global by a SYNC kick func and polled
+  // back by a SYNC read. The wrapper must not be a block body (that discards the value),
+  // and async funcs lose their return across the world boundary (crbug 1304272).
+  const deadline = Date.now() + budget;
+  const left = () => Math.max(1, deadline - Date.now());
+  const timedOut = {
+    success: false,
+    via: 'scripting',
+    error: `TIMEOUT: evaluate did not finish within ${budget}ms. The page may still be running it; the call returned so the tab is free.`,
+  };
+  // executeScript waits for the page's main thread. A busy page never answers, so every
+  // call is raced against the budget: a frozen page returns TIMEOUT instead of holding the tab.
+  const kicked = await settleWithin(chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
     func: (code) => {
@@ -510,27 +660,29 @@ export async function handleEvaluate(params, _sessionId, _agentName, signal) {
       return true;
     },
     args: [expression],
-  });
+  }), left());
+  if (kicked === TIMED_OUT) return timedOut;
 
   let out = null;
-  const deadline = Date.now() + Math.min(timeout ?? 5000, 120_000); // page-side settle budget
   while (Date.now() < deadline) {
-    const read = await chrome.scripting.executeScript({
+    const read = await settleWithin(chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
       func: () => (window.__bcEvalOut === undefined ? null : window.__bcEvalOut),
-    });
+    }), left());
+    if (read === TIMED_OUT) return timedOut;
     out = read?.[0]?.result ?? null;
     if (out) break;
     await new Promise((r) => setTimeout(r, 40));
   }
-  if (!out) return { success: false, error: 'evaluate returned no result' };
-  if (out.ok === false) return { success: false, error: out.error };
+  if (!out) return timedOut;
+  if (out.ok === false) return { success: false, via: 'scripting', error: out.error };
   // Cap oversized results: the page-side stringify has no bound, and a huge
   // value pins service-worker memory + floods the WS frame.
   if (typeof out.json === 'string' && out.json.length > MAX_RESULT_CHARS) {
     return {
       success: true,
+      via: 'scripting',
       result: out.json.slice(0, MAX_RESULT_CHARS),
       truncated: true,
       fullLength: out.json.length,
@@ -544,22 +696,59 @@ export async function handleEvaluate(params, _sessionId, _agentName, signal) {
     // fall back to the raw string so the caller still gets something useful.
     value = out.json;
   }
-  return { success: true, result: value };
+  return { success: true, via: 'scripting', result: value };
+}
+
+/** Refs a stale-ref error lists at most (the rest of the page is one browser_snapshot away). */
+export const CLOSEST_REFS_MAX = 5;
+
+/**
+ * Similarity of two names: Dice coefficient over character bigrams, 0..1. Forgiving
+ * about small edits ("Save" / "Save draft") and cheap enough for a whole page.
+ */
+export function nameSimilarity(a, b) {
+  const x = String(a || '').toLowerCase().trim();
+  const y = String(b || '').toLowerCase().trim();
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  if (x.length < 2 || y.length < 2) return 0;
+  const grams = new Map();
+  for (let i = 0; i < x.length - 1; i++) {
+    const g = x.slice(i, i + 2);
+    grams.set(g, (grams.get(g) || 0) + 1);
+  }
+  let common = 0;
+  for (let i = 0; i < y.length - 1; i++) {
+    const g = y.slice(i, i + 2);
+    const n = grams.get(g) || 0;
+    if (n > 0) { common++; grams.set(g, n - 1); }
+  }
+  return (2 * common) / ((x.length - 1) + (y.length - 1));
 }
 
 /**
- * Auto-re-snapshot helper (Facebook/Instagram virtualization recovery).
- *
- * On virtualized sites (FB/IG/Twitter feeds), scrolling can REMOVE a post from
- * the DOM entirely — so a stale `ref` + every in-page fallback all return null.
- * Rather than forcing the agent to do a full round-trip (error → snapshot →
- * retry), we snapshot the tab HERE and embed the fresh refs in the error so the
- * agent can retry in one step using the new refs.
- *
- * Returns a compact summary (refs + names) suitable for an error payload — NOT
- * the full tree (keeps it token-cheap). null if the re-snapshot itself failed.
+ * The refs whose names look most like `wanted.name` (a stale ref's last known
+ * name), best first, at most CLOSEST_REFS_MAX. A same-role match breaks ties.
+ * Refs below a minimum similarity are left out: nothing alike means no list.
  */
-export async function autoReSnapshot(tabId) {
+export function closestRefs(refs, wanted, limit = CLOSEST_REFS_MAX) {
+  const name = wanted && wanted.name ? String(wanted.name) : '';
+  if (!name) return [];
+  return refs
+    .map((r) => ({ r, score: nameSimilarity(r.name, name) + (wanted.role && r.role === wanted.role ? 0.05 : 0) }))
+    .filter((x) => x.score >= 0.3)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((x) => x.r);
+}
+
+/**
+ * Stale-ref recovery (virtualized feeds, re-rendered lists): a fresh snapshot
+ * whose refs look like the missing ref's last known name, so the agent can retry
+ * in one step. Returns at most CLOSEST_REFS_MAX refs and never the whole page:
+ * a 40-ref dump cost ~800 tokens on every stale click. null if the snapshot failed.
+ */
+export async function autoReSnapshot(tabId, wanted) {
   try {
     const res = await handleSnapshot({ tabId, compact: true });
     if (!res || !res.success || !res.tree) return null;
@@ -572,7 +761,7 @@ export async function autoReSnapshot(tabId) {
       if (n.children) walk(n.children);
     };
     walk(res.tree);
-    return { refs: refs.slice(0, 40), url: res.url, title: res.title };
+    return { refs: closestRefs(refs, wanted), url: res.url, title: res.title };
   } catch {
     return null;
   }

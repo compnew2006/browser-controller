@@ -3,6 +3,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { isIdempotent, toolTimeoutMs } from './tools/index.js';
 import { APP_VERSION } from './daemon-config.js';
 import {
+  DAEMON_INSTANCE_ID,
   buildExtensionHello,
   validateCapabilities,
   validateProtocolVersion,
@@ -21,20 +22,17 @@ import {
   newConnection,
   type ExtensionConnection,
 } from './bridge-connections.js';
+import { MAX_WS_MESSAGE_BYTES, WS_HARD_MAX_PAYLOAD_BYTES, rejectOversizedFrame } from './bridge-frames.js';
 
 export { isDaemonResponsiveOnPort } from './bridge-security.js';
 export { BRIDGE_TOOLS } from './bridge-connections.js';
+export { MAX_WS_MESSAGE_BYTES } from './bridge-frames.js';
 
 /** Handler for daemon-owned HTTP endpoints served on the bridge port. */
 export type HttpRequestHandler = (
   req: http.IncomingMessage,
   url: URL,
 ) => unknown | void | Promise<unknown | void>;
-
-export const MAX_WS_MESSAGE_BYTES = Math.max(
-  1024,
-  Number.parseInt(process.env.BC_MAX_WS_MESSAGE_BYTES ?? '', 10) || 1_000_000,
-);
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -119,8 +117,8 @@ export class ExtensionBridge {
     conn.state = state;
     conn.missedPongs = 0;
     const { browserId, label } = identityOf(info);
-    conn.browserId = browserId;
     conn.label = label;
+    this.conns.identify(conn, browserId);
     // A reconnect of the same browser replaces its old socket.
     for (const other of this.conns.siblingsOf(conn)) {
       this.dropConn(other, 'Extension reconnected');
@@ -275,7 +273,7 @@ export class ExtensionBridge {
       this.wss = new WebSocketServer({
         noServer: true,
         handleProtocols: pickAuthProtocol,
-        maxPayload: this.maxWsPayloadBytes,
+        maxPayload: Math.max(this.maxWsPayloadBytes, WS_HARD_MAX_PAYLOAD_BYTES),
       });
 
       server.on('upgrade', (req, socket, head) => {
@@ -316,6 +314,7 @@ export class ExtensionBridge {
         this.conns.add(conn);
 
         ws.on('message', (data: Buffer) => {
+          if (rejectOversizedFrame(data, this.maxWsPayloadBytes, this.pendingRequests, conn, (f) => this.handleResponse(f))) return;
           try {
             const msg = JSON.parse(data.toString());
             if (msg.type === 'helloAck') {
@@ -354,7 +353,7 @@ export class ExtensionBridge {
         // pre-handshake extension builds usable during a rolling local upgrade.
         setTimeout(() => {
           if (!this.conns.has(conn) || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(JSON.stringify(buildExtensionHello(APP_VERSION)));
+          ws.send(JSON.stringify(buildExtensionHello(APP_VERSION, DAEMON_INSTANCE_ID)));
           conn.handshakeTimer = setTimeout(() => {
             if (this.conns.has(conn) && conn.state === 'pending') {
               this.markExtensionReady(conn, 'legacy');

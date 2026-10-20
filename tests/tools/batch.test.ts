@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { toolMap } from '../../mcp-server/src/tools/index.js';
 import type { ToolHost } from '../../mcp-server/src/tools/types.js';
 
@@ -116,7 +116,7 @@ describe('browser_batch', () => {
     expect(calls).toEqual(['browser_click', 'browser_click']);
   });
 
-  it('reports elapsed time for each step and for the whole batch', async () => {
+  it('shows per-step time for the steps it prints, then one total line', async () => {
     const { host } = fakeHost();
     const res = await run(host, {
       tabId: 1,
@@ -128,7 +128,106 @@ describe('browser_batch', () => {
     const texts = res.content.map((c) => (c.type === 'text' ? c.text : ''));
     expect(texts.some((t) => /^\[1\/2\] browser_click ok \d+ ms$/.test(t))).toBe(true);
     expect(texts.some((t) => /^\[2\/2\] browser_press_key ok \d+ ms$/.test(t))).toBe(true);
-    expect(texts[texts.length - 1]).toMatch(/^timing: total \d+ ms; steps \d+, \d+ ms$/);
+    expect(texts[texts.length - 1]).toMatch(/^2 steps, \d+ ms$/);
+    expect(texts.some((t) => t.startsWith('timing:'))).toBe(false);
     expect(texts[0]).toBe('batch: 2/2 steps ok');
+  });
+
+  it('adds no per-step line for steps that output:last does not show', async () => {
+    const { host } = fakeHost();
+    const actions = Array.from({ length: 100 }, () => ({ tool: 'browser_press_key', params: { key: 'Tab' } }));
+    const res = await run(host, { tabId: 1, output: 'last', actions });
+    const texts = res.content.map((c) => (c.type === 'text' ? c.text : ''));
+    expect(texts.filter((t) => /^\[\d+\/100\] /.test(t))).toHaveLength(1);
+    expect(texts.some((t) => /^\[100\/100\] browser_press_key ok \d+ ms$/.test(t))).toBe(true);
+    expect(texts[texts.length - 1]).toMatch(/^100 steps, \d+ ms$/);
+  });
+
+  it('accepts at most 100 steps', () => {
+    const step = { tool: 'browser_click', params: { selector: '#a' } };
+    expect(batch.inputSchema.safeParse({ actions: Array(100).fill(step) }).success).toBe(true);
+    expect(batch.inputSchema.safeParse({ actions: Array(101).fill(step) }).success).toBe(false);
+  });
+
+  it('never gives the default tabId to browser_tabs, and never overrides a step tabId', async () => {
+    const { host, calls } = fakeHost();
+    const res = await run(host, {
+      tabId: 9,
+      actions: [
+        { tool: 'browser_tabs', params: { action: 'list' } },
+        { tool: 'browser_tabs', params: { action: 'close', tabId: 4 } },
+        { tool: 'browser_click', params: { selector: '#a' } },
+      ],
+    });
+    expect(res.isError).toBeUndefined();
+    expect(calls[0]!.params).not.toHaveProperty('tabId');
+    expect(calls[1]!.params.tabId).toBe(4);
+    expect(calls[2]!.params.tabId).toBe(9);
+  });
+
+  it('a browser_tabs close without its own tabId fails instead of closing the batch tab', async () => {
+    const { host, calls } = fakeHost();
+    const res = await run(host, { tabId: 9, actions: [{ tool: 'browser_tabs', params: { action: 'close' } }] });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/Invalid tool arguments for browser_tabs/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('caps a delay step at 10 s and says so', async () => {
+    vi.useFakeTimers();
+    try {
+      const { host } = fakeHost();
+      const pending = run(host, { tabId: 1, actions: [{ tool: 'browser_wait', params: { delay: 60_000 } }] });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const res = await pending;
+      const text = res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
+      expect(res.isError).toBeUndefined();
+      expect(text).toContain('"waited":10000');
+      expect(text).toContain('delay clamped to 10000 ms (requested 60000 ms)');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops starting new steps once the 50 s batch budget is spent', async () => {
+    vi.useFakeTimers();
+    try {
+      const host: ToolHost = {
+        async callTool(tool) {
+          await new Promise((resolve) => setTimeout(resolve, 30_000));
+          return { success: true, tool };
+        },
+      };
+      const pending = run(host, {
+        tabId: 1,
+        actions: [
+          { tool: 'browser_click', params: { selector: '#a' } },
+          { tool: 'browser_click', params: { selector: '#b' } },
+          { tool: 'browser_click', params: { selector: '#c' } },
+        ],
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      const res = await pending;
+      const texts = res.content.map((c) => (c.type === 'text' ? c.text : ''));
+      expect(res.isError).toBe(true);
+      expect(texts[0]).toBe('batch: 2/3 steps ok');
+      expect(texts).toContain('step 3/3: TIMEOUT; 1 skipped (batch budget 50 s)');
+      expect(texts[texts.length - 1]).toMatch(/^2 steps, \d+ ms$/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not sleep out a rate limit that would pass the batch budget', async () => {
+    const calls: string[] = [];
+    const host: ToolHost = {
+      async callTool(tool) {
+        calls.push(tool);
+        throw new Error('Rate limit exceeded (120 calls/min). Retry in ~60s.');
+      },
+    };
+    const res = await run(host, { tabId: 1, actions: [{ tool: 'browser_click', params: { selector: '#a' } }] });
+    expect(res.isError).toBe(true);
+    expect(calls).toHaveLength(1); // a 61 s wait is past the 50 s budget, so no retry
   });
 });

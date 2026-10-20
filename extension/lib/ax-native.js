@@ -38,6 +38,8 @@ const AX_TRANSPARENT_ROLES = new Set([
 /** Hard ceiling on nodes that get a ref (one CDP round-trip each). */
 export const MAX_NATIVE_REFS = 1500;
 const NAME_MAX = 80;
+/** What a password field's value is shown as (the value itself is never printed). */
+export const SECRET_MASK = '••••';
 
 const val = (v) => (v && typeof v === 'object' && 'value' in v ? v.value : v);
 const clean = (v, max = NAME_MAX) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
@@ -218,19 +220,23 @@ export function shapeAxTree(nodes, opts = {}) {
       rec = { role: own.role };
       if (name) rec.name = name;
       if (own.role !== 'text') {
-        const value = valueOf(node, role);
-        if (value !== undefined) rec.value = value;
-        Object.assign(rec, stateOf(props, role));
-        const desc = clean(val(node.description), NAME_MAX);
-        if (desc && !compact) rec.description = desc;
+        // A DOM-backed control reports its value only once the page has bound it
+        // (applyBindings masks passwords and drops what it could not verify).
+        let ref = null;
         if (node.backendDOMNodeId != null) {
           if (entries.length >= MAX_NATIVE_REFS) {
             refLimited = true;
           } else {
-            rec.ref = `${refPrefix}${refSeq++}`;
-            entries.push({ ref: rec.ref, backendNodeId: node.backendDOMNodeId, frame: node.frameIndex || 0 });
+            ref = `${refPrefix}${refSeq++}`;
+            entries.push({ ref, backendNodeId: node.backendDOMNodeId, frame: node.frameIndex || 0 });
           }
         }
+        const value = valueOf(node, role);
+        if (value !== undefined && (node.backendDOMNodeId == null || ref)) rec.value = value;
+        Object.assign(rec, stateOf(props, role));
+        const desc = clean(val(node.description), NAME_MAX);
+        if (desc && !compact) rec.description = desc;
+        if (ref) rec.ref = ref;
         fingerprints.push(`${own.role}|${name}`);
         if (prevFingerprints && !prevFingerprints.has(`${own.role}|${name}`)) rec.isNew = true;
       }
@@ -284,8 +290,12 @@ export function applyBindings(tree, bound, { dropUnbound = false } = {}) {
           continue;
         }
         delete node.ref;
-      } else if (node.ref && bound[node.ref].href) {
-        node.href = bound[node.ref].href;
+        delete node.value; // the element was not verified on the page: no value either
+      } else if (node.ref) {
+        const b = bound[node.ref];
+        if (b.href) node.href = b.href;
+        // Password fields: the mask when filled, nothing when empty. Never the value.
+        if (b.secret) { if (b.filled) node.value = SECRET_MASK; else delete node.value; }
       }
       out.push(node);
     }
@@ -293,6 +303,40 @@ export function applyBindings(tree, bound, { dropUnbound = false } = {}) {
   };
   const settled = settle(Array.isArray(tree) ? tree : tree ? [tree] : []);
   return settled.length === 0 ? null : settled.length === 1 ? settled[0] : settled;
+}
+
+/**
+ * Enforce maxChars on the FINAL tree. Bindings add hrefs after shapeAxTree had
+ * counted its budget, so the shaped size can overshoot the cap (the DOM walker
+ * counts hrefs as it emits them; this path did not). Same accounting as the DOM
+ * walker: a node costs its own JSON plus 16 chars, children are counted on their
+ * own. Nodes past the cap are dropped with their subtrees, in document order.
+ * @returns {{tree: object|object[]|null, truncated: boolean}}
+ */
+export function capTree(tree, maxChars) {
+  const roots = Array.isArray(tree) ? tree : tree ? [tree] : [];
+  if (!Number.isInteger(maxChars) || maxChars <= 0) return { tree: tree ?? null, truncated: false };
+  let used = 0;
+  let truncated = false;
+  const cut = (list) => {
+    const out = [];
+    for (const node of list) {
+      if (truncated) break;
+      const { children, ...own } = node;
+      const cost = JSON.stringify(own).length + 16;
+      if (used + cost > maxChars) { truncated = true; break; }
+      used += cost;
+      const copy = { ...own };
+      if (children && children.length) {
+        const kids = cut(children);
+        if (kids.length) copy.children = kids;
+      }
+      out.push(copy);
+    }
+    return out;
+  };
+  const kept = cut(roots);
+  return { tree: kept.length === 0 ? null : kept.length === 1 ? kept[0] : kept, truncated };
 }
 
 /** Depth-first nodes of a shaped tree (root object, array of roots, or null). */

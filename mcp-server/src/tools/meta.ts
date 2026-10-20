@@ -24,12 +24,13 @@ import { allTools, toolMap } from "./index.js";
  * `RegisteredTool.enable()` + `sendToolListChanged()`, so subsequent `tools/list`
  * responses include it.
  *
- * Default is FULL mode (all tools always visible). Set
- * BROWSER_CONTROLLER_PROGRESSIVE=1 to enable progressive disclosure (only
- * browser_tools is visible until the agent activates others on demand).
+ * Default is FULL mode (all tools always visible, and this tool is not
+ * registered). Set BROWSER_CONTROLLER_PROGRESSIVE=1 to enable progressive
+ * disclosure (only browser_tools is visible until the agent activates others on
+ * demand; a direct call to any tool activates it too).
  */
 export interface MetaToolDeps {
-  /** Activate a tool by name (enable + sendToolListChanged). No-op if already active. */
+  /** Activate a tool by name (show it in tools/list + sendToolListChanged). No-op if already active. */
   onActivate: (toolName: string) => void;
   /** Whether a tool is currently active (enabled). */
   isActive: (toolName: string) => boolean;
@@ -141,7 +142,7 @@ Actions:
 - "search": Find tools by keyword (e.g. query:"click" matches browser_click, browser_click_text).
 - "details": Get the full schema + description for one tool AND activate it so you can call it.
 
-Workflow: call "list" or "search" first, then "details" on the tool you need, then call that tool directly.`,
+Workflow: call "list" or "search" first, then "details" on the tool you need, then call that tool directly. Calling a tool directly, without details first, also activates it.`,
     inputSchema: z.object({
       action: z
         .enum(["list", "search", "details"])
@@ -228,7 +229,10 @@ Workflow: call "list" or "search" first, then "details" on the tool you need, th
         // z.toJSONSchema produces proper JSON Schema with parameter descriptions —
         // .shape serializes Zod's internal structure (1213 chars of noise without
         // descriptions). This is ~50% smaller AND includes the .describe() text.
-        const jsonSchema = z.toJSONSchema(def.inputSchema);
+        // io:"input" describes what the agent sends: the default (output) mode
+        // would mark every field that has a default as required. draft-7 is the
+        // dialect the SDK's tools/list uses.
+        const jsonSchema = z.toJSONSchema(def.inputSchema, { io: "input", target: "draft-7" });
         return textResult(
           JSON.stringify({
             name: def.name,

@@ -103,7 +103,7 @@ describe('frozen-tab escape hatch (mutex bypass for close/focus/dialog)', () => 
     await handleMessage({ id: 'x-dialog', tool: 'browser_handle_dialog', params: { tabId: 3, action: 'dismiss' }, sessionId: 's1' });
     await flush(80);
 
-    expect(sent.find((f) => f.id === 'x-dialog')).toMatchObject({ success: true, result: { handled: 'open-dialog' } });
+    expect(sent.find((f) => f.id === 'x-dialog')).toMatchObject({ success: true, result: { handled: true } });
     expect(cdpCommands).toContain('Page.handleJavaScriptDialog');
   });
 
@@ -125,17 +125,16 @@ describe('handle_dialog reaches an ALREADY-OPEN dialog via CDP', () => {
   it('dismisses an open dialog out-of-band (no page JS needed)', async () => {
     const res = await handleDialog({ tabId: 3, action: 'dismiss' });
     expect(cdpCommands).toContain('Page.handleJavaScriptDialog');
-    expect(res).toMatchObject({ success: true, handled: 'open-dialog', action: 'dismiss' });
-    // The override path must NOT have run — CDP already handled it.
+    expect(res).toMatchObject({ success: true, handled: true, action: 'dismiss' });
+    // Neither the override path nor any page injection runs.
     expect(injections.some((i) => i.func.includes('__mcpDialogOverrides'))).toBe(false);
   });
 
-  it('falls back to arming overrides when no dialog is currently showing', async () => {
+  it('reports NO_DIALOG and installs no page overrides when no dialog is showing', async () => {
     dialogCommandsFail.flag = true; // CDP says: no dialog open
     const res = await handleDialog({ tabId: 3, action: 'accept' });
-    expect(res.success).toBe(true);
-    const overrideInjection = injections.find((i) => i.func.includes('__mcpDialogOverrides'));
-    expect(overrideInjection, 'override pre-arm must run').toBeDefined();
-    expect(overrideInjection!.world).toBe('MAIN');
+    expect(res.success).toBe(false);
+    expect(String((res as { error?: string }).error)).toMatch(/^NO_DIALOG/);
+    expect(injections.some((i) => i.func.includes('__mcpDialogOverrides'))).toBe(false);
   });
 });

@@ -17,13 +17,13 @@ export const gifTool: ToolDefinition = {
   name: 'browser_gif',
   summary: 'Record the agent\'s actions in a tab as an animated GIF',
   description:
-    'Record what happens in a tab as an animated GIF (to show the user what was done). start begins recording: a frame is captured after every page-changing action (navigate, click, type, keys, scroll, hover, select, drag, forms…), clicks are marked with a red ring. frame adds one now, stop pauses, status/clear, export writes the .gif file (default ~/Downloads) and returns its path — the image itself is not returned. A background tab is shown for a moment per frame (Chrome does not paint hidden tabs); activate:false records only while the tab is visible.',
+    'Record what happens in a tab as an animated GIF (to show the user what was done). start begins recording: a frame is captured after every page-changing action (navigate, click, type, keys, scroll, hover, select, drag, forms…), clicks are marked with a red ring. frame adds one now, stop pauses, status/clear, export writes the .gif file (default ~/Downloads) and returns its path — the image itself is not returned. Frames are taken while the tab is visible; a background tab\'s frames are skipped (counted in skipped, with a note) unless activate:true, which shows that tab briefly for each frame and switches the user\'s view back.',
   inputSchema: z.object({
     tabId: requireTabId(),
     action: z.enum(['start', 'frame', 'stop', 'status', 'export', 'clear']).describe('Recording action'),
     width: z.number().int().min(200).max(1600).optional().describe('start: frame width in px (default 800)'),
     maxFrames: z.number().int().min(1).max(500).optional().describe('start: stop capturing after this many frames (default 300)'),
-    activate: z.boolean().optional().describe('start: briefly show a background tab to capture it (default true)'),
+    activate: z.boolean().optional().describe('start: also capture a background tab by briefly showing it for each frame (default false: those frames are skipped, so the user\'s view is never switched)'),
     path: z.string().optional().describe('export: where to write the .gif (default ~/Downloads/browser-recording-<time>.gif)'),
     clear: z.boolean().optional().describe('export: drop the frames afterwards (default true)'),
   }),

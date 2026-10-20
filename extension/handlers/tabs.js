@@ -1,262 +1,27 @@
 /**
  * Tab + debug-capture handlers (extracted from background.js): tabs
- * lifecycle (list/create/close/focus/lock/unlock), console/network reads,
- * screenshot.
+ * lifecycle (list/create/close/focus/lock/unlock), console/network reads.
+ * The screenshot is in handlers/screenshot.js and is re-exported here.
  */
-import { resolveTab, replaceFrozenTab, safeExec, execDom, getFallback } from '../lib/page-exec.js';
+import { resolveTab, replaceFrozenTab, safeExec } from '../lib/page-exec.js';
 import {
   tabLocks,
   tabControl,
   wedgedTabs,
-  windowCaptureMutex,
   consoleByTab,
   networkByTab,
   getTabBuffer,
   persistSessionState,
 } from "../lib/state.js";
-import { showLockShield, hideLockShield, setAgentCursorHidden, agentCursorEnabled } from "../lib/overlay.js";
+import { hideLockShield } from "../lib/overlay.js";
 import { broadcastStatus } from "../lib/connection.js";
 import { lockTabUi, releaseTabUi } from "../lib/lock-ops.js";
-import { withCdp, ensureViewport, subscribeCdpEvents } from '../lib/cdp-session.js';
+import { withCdp, subscribeCdpEvents } from '../lib/cdp-session.js';
 import { collectBrowserLog } from '../lib/browser-log.js';
 import { listView, typeMatcher } from '../lib/network-capture.js';
+import { tabLockedMessage } from '../lib/tab-concurrency.js';
 
-const CDP_CAPTURE_TIMEOUT_MS = 4000;
-
-function withTimeout(promise, ms, what) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} timed out`)), ms); }),
-  ]).finally(() => clearTimeout(timer));
-}
-
-/** Pixel size of a base64 PNG/JPEG (null if it can't be read). */
-export function imageSize(b64) {
-  let bin;
-  try { bin = atob(String(b64).slice(0, 87_384)); } catch { return null; }
-  const at = (i) => bin.charCodeAt(i);
-  if (bin.length > 24 && at(0) === 0x89 && bin.slice(1, 4) === 'PNG') {
-    return { width: ((at(16) << 24) | (at(17) << 16) | (at(18) << 8) | at(19)) >>> 0, height: ((at(20) << 24) | (at(21) << 16) | (at(22) << 8) | at(23)) >>> 0 };
-  }
-  if (at(0) === 0xff && at(1) === 0xd8) {
-    let i = 2;
-    while (i + 9 < bin.length) {
-      if (at(i) !== 0xff) { i++; continue; }
-      const marker = at(i + 1);
-      const len = (at(i + 2) << 8) | at(i + 3);
-      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
-        return { width: (at(i + 7) << 8) | at(i + 8), height: (at(i + 5) << 8) | at(i + 6) };
-      }
-      i += 2 + len;
-    }
-  }
-  return null;
-}
-
-/**
- * CDP capture (Page.captureScreenshot): works on a tab that is NOT the active
- * one in its window, so the user's view is never switched, and can downscale
- * (`scale`) or cap the width (`maxWidth`) to save image tokens.
- */
-/** Device pixels per CSS pixel: window.devicePixelRatio, else the layout-metrics ratio. */
-async function pageDpr(send, metrics, vv) {
-  try {
-    const r = await withTimeout(send('Runtime.evaluate', { expression: 'window.devicePixelRatio', returnByValue: true }), 1500, 'devicePixelRatio');
-    const v = Number(r?.result?.value);
-    if (v > 0 && v < 16) return v;
-  } catch { /* frozen or restricted page: fall back */ }
-  return metrics.visualViewport?.clientWidth > 0 ? metrics.visualViewport.clientWidth / vv.clientWidth : 1;
-}
-
-async function cdpScreenshot(tabId, { format, quality, scale, maxWidth, fullPage, region }) {
-  return withCdp(tabId, async (send) => {
-    let metrics = await send('Page.getLayoutMetrics');
-    if (!(metrics?.cssVisualViewport?.clientWidth > 0)) {
-      await ensureViewport(tabId);
-      metrics = await send('Page.getLayoutMetrics');
-    }
-    const vv = metrics.cssVisualViewport;
-    const content = metrics.cssContentSize || metrics.contentSize;
-    // region: a viewport rectangle (CSS px, same frame as click/hover x/y) —
-    // zoom into small UI with scale > 1.
-    let originX = 0;
-    let originY = 0;
-    let width = fullPage ? Math.ceil(content.width) : vv.clientWidth;
-    let height = fullPage ? Math.min(Math.ceil(content.height), 16_000) : vv.clientHeight;
-    if (region) {
-      originX = Math.max(0, Math.min(region.x, vv.clientWidth - 1));
-      originY = Math.max(0, Math.min(region.y, vv.clientHeight - 1));
-      width = Math.max(1, Math.min(region.width, vv.clientWidth - originX));
-      height = Math.max(1, Math.min(region.height, vv.clientHeight - originY));
-    }
-    let s = Math.min(region ? 4 : 1, Math.max(0.05, scale ?? (region ? 2 : 1)));
-    // The capture comes out at clip.scale × devicePixelRatio (device pixels).
-    // The layout metrics can't be trusted for that ratio (real Chrome at DPR 2
-    // reports equal device and CSS viewport widths), so ask the page.
-    const dpr = await pageDpr(send, metrics, vv);
-    if (maxWidth && width * s * dpr > maxWidth) s = maxWidth / (width * dpr);
-    const capture = (clipScale) => withTimeout(send('Page.captureScreenshot', {
-      format,
-      ...(format === 'jpeg' ? { quality } : {}),
-      captureBeyondViewport: !!fullPage && !region,
-      clip: {
-        x: fullPage && !region ? 0 : vv.pageX + originX,
-        y: fullPage && !region ? 0 : vv.pageY + originY,
-        width, height, scale: clipScale,
-      },
-    }), CDP_CAPTURE_TIMEOUT_MS, 'Page.captureScreenshot');
-    let { data } = await capture(s);
-    let size = imageSize(data);
-    // maxWidth is a promise about the IMAGE: if the ratio was still off, shrink
-    // by what the real image shows and capture once more.
-    if (maxWidth && size?.width > maxWidth + 1) {
-      s = s * (maxWidth / size.width);
-      ({ data } = await capture(s));
-      size = imageSize(data);
-    }
-    // How image pixels map to the viewport coordinates click/hover/scroll take:
-    // viewportX = origin[0] + imageX / scale (fullPage: page coordinates instead).
-    // The real image size is the ground truth (it includes the device pixel
-    // ratio: an 800 px viewport at DPR 2 is a 1600 px image, scale 2).
-    const imgW = size?.width || Math.round(width * s * dpr);
-    const imgH = size?.height || Math.round(height * s * dpr);
-    const frame = {
-      scale: Math.round((imgW / width) * 1000) / 1000,
-      origin: [Math.round(originX), Math.round(originY)],
-      viewport: [Math.round(vv.clientWidth), Math.round(vv.clientHeight)],
-      ...(fullPage && !region ? { page: true, scrollY: Math.round(vv.pageY) } : {}),
-    };
-    return { data, width: imgW, height: imgH, frame };
-  });
-}
-
-export async function handleScreenshot(params) {
-  // The agent cursor stays out of the picture: it would cover what was just clicked.
-  const cursor = !wedgedTabs.has(params.tabId) && await agentCursorEnabled();
-  if (cursor) await setAgentCursorHidden(params.tabId, true);
-  try {
-    return await captureScreenshot(params);
-  } finally {
-    if (cursor) await setAgentCursorHidden(params.tabId, false);
-  }
-}
-
-/**
- * Top-level viewport box of a ref/selector target (4 px margin), scrolled into
- * view first; `clipped` when the element does not fit the viewport.
- */
-async function elementRegion(tabId, ref, selector) {
-  return execDom(tabId, (_ref, _sel, _fb) => {
-    const D = globalThis.__bcDom;
-    if (!D) return { __needDom: true };
-    const el = D.resolve(_ref, _sel, _fb).el;
-    if (!el) return { success: false, error: 'Element not found' };
-    el.scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'nearest' });
-    const { x, y, rect } = D.centerOf(el);
-    if (!(rect.width > 0 && rect.height > 0)) return { success: false, error: 'Element has no visible box (hidden or zero-size)' };
-    const pad = 4;
-    const left = x - rect.width / 2 - pad;
-    const top = y - rect.height / 2 - pad;
-    const width = rect.width + 2 * pad;
-    const height = rect.height + 2 * pad;
-    return {
-      success: true,
-      region: { x: Math.max(0, left), y: Math.max(0, top), width, height },
-      clipped: left < 0 || top < 0 || left + width > innerWidth || top + height > innerHeight,
-    };
-  }, [ref ?? null, selector ?? null, getFallback(tabId, ref)]);
-}
-
-async function captureScreenshot(params) {
-  const { tabId, format = 'png', quality = 80, maxWidth, fullPage = false, ref, selector } = params;
-  let { scale, region } = params;
-  const tab = await resolveTab(tabId);
-  // ref / selector: just that element (an explicit region wins).
-  let element = null;
-  if ((ref || selector) && !region) {
-    element = await elementRegion(tabId, ref, selector);
-    if (!element?.success) return element || { success: false, error: 'Element not found' };
-    region = element.region;
-    scale = scale ?? 1; // a region zooms 2× by default; an element is shown as it is
-  }
-  const protectedPage = /^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '');
-  let cdpError = null;
-  if (!protectedPage) {
-    // The shield is shown during EVERY agent action (router), not only while
-    // locked — always take it out of the picture; the router restores it.
-    const wasLocked = !!tabLocks.owner(tabId);
-    await hideLockShield(tabId);
-    const opts = { format, quality, scale, maxWidth, fullPage, region };
-    const done = (shot, via) => ({
-      success: true, format, via, width: shot.width, height: shot.height, frame: shot.frame,
-      ...(element ? { element: { clipped: element.clipped } } : {}),
-      data: shot.data,
-    });
-    try {
-      if (tab.active) {
-        const shot = await cdpScreenshot(tabId, opts);
-        if (shot?.data) return done(shot, 'cdp');
-      } else {
-        // A background tab produces no compositor frames (Page.captureScreenshot
-        // just hangs, fromSurface:false too), so show it for a moment, capture
-        // over CDP (keeps scale/maxWidth/fullPage) and switch straight back.
-        const fg = await windowCaptureMutex.run(tab.windowId, async () => {
-          const [previousActive] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
-          await chrome.tabs.update(tabId, { active: true });
-          try {
-            await new Promise((r) => setTimeout(r, 150));
-            return await cdpScreenshot(tabId, opts);
-          } finally {
-            if (previousActive?.id != null && previousActive.id !== tabId) {
-              await chrome.tabs.update(previousActive.id, { active: true }).catch(() => {});
-            }
-          }
-        });
-        if (fg?.data) return done(fg, 'cdp-activated');
-      }
-    } catch (err) {
-      // debugger unavailable or the hidden tab would not paint: fall back below
-      cdpError = String(err?.message || err).slice(0, 200);
-    } finally {
-      if (wasLocked) await showLockShield(tabId);
-    }
-  }
-  return windowCaptureMutex.run(tab.windowId, async () => {
-    const [previousActive] = await chrome.tabs.query({
-      active: true,
-      windowId: tab.windowId,
-    });
-    const changedActiveTab = previousActive?.id !== tabId;
-    if (changedActiveTab) {
-      await chrome.tabs.update(tabId, { active: true });
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-
-    const wasLocked = !!tabLocks.owner(tabId);
-    if (wasLocked) await hideLockShield(tabId);
-    try {
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-        format,
-        quality: format === "jpeg" ? quality : undefined,
-      });
-      return { success: true, format, data: dataUrl.split(",")[1], ...(cdpError ? { cdpFallback: cdpError } : {}) };
-    } finally {
-      if (wasLocked) await showLockShield(tabId);
-      if (changedActiveTab && previousActive?.id != null) {
-        const [currentActive] = await chrome.tabs.query({
-          active: true,
-          windowId: tab.windowId,
-        });
-        if (currentActive?.id === tabId) {
-          await chrome.tabs
-            .update(previousActive.id, { active: true })
-            .catch(() => {});
-        }
-      }
-    }
-  });
-}
+export { handleScreenshot, imageSize, planScale, fitToBudget, MAX_IMAGE_EDGE, SCREENSHOT_MAX_BASE64_CHARS, FULL_PAGE_MAX_HEIGHT } from './screenshot.js';
 
 export async function handleConsole(params) {
   const { tabId, clear = false, pattern, level, limit, browser = false } = params;
@@ -328,6 +93,16 @@ export async function handleNetwork(params) {
   return { success: true, requests: reqs.map((r) => listView(r, { fullUrls })) };
 }
 
+/**
+ * A locked tab belongs to its owner session: reloading, closing, focusing or
+ * resizing it from another session (or an anonymous caller) would undo the
+ * work the lock exists to protect. Refused at once with TAB_LOCKED.
+ */
+function refuseLocked(tabId, sessionId) {
+  const grant = tabLocks.grantOf(tabId);
+  if (grant && grant.sessionId !== sessionId) throw new Error(tabLockedMessage(tabId, grant));
+}
+
 export async function handleTabs(params, sessionId) {
   const { action, tabId, url } = params;
   switch (action) {
@@ -362,10 +137,7 @@ export async function handleTabs(params, sessionId) {
     }
     case 'reload': {
       if (!tabId) throw new Error('tabId required');
-      const reloadOwner = tabLocks.owner(tabId);
-      if (reloadOwner && reloadOwner !== sessionId) {
-        throw new Error(`Tab ${tabId} is locked by ${reloadOwner} — unlock it from that session before reloading.`);
-      }
+      refuseLocked(tabId, sessionId);
       const current = await resolveTab(tabId);
       // A frozen page would block the reload until it frees up: replace the tab.
       const fresh = await replaceFrozenTab(current, current.url, sessionId);
@@ -394,23 +166,14 @@ export async function handleTabs(params, sessionId) {
     }
     case "close": {
       if (!tabId) throw new Error("tabId required");
-      // A locked tab belongs to its owner session — closing it from another
-      // session (or from an anonymous no-session caller) would destroy the
-      // work the lock exists to protect.
-      const closerOwner = tabLocks.owner(tabId);
-      if (closerOwner && closerOwner !== sessionId) {
-        throw new Error(`Tab ${tabId} is locked by ${closerOwner} — unlock it from that session before closing.`);
-      }
+      refuseLocked(tabId, sessionId);
       await chrome.tabs.remove(tabId);
       releaseTabUi(tabId); // release + persist + shield removal
       return { success: true, closed: tabId };
     }
     case "focus": {
       if (!tabId) throw new Error("tabId required");
-      const focusOwner = tabLocks.owner(tabId);
-      if (focusOwner && focusOwner !== sessionId) {
-        throw new Error(`Tab ${tabId} is locked by ${focusOwner} — unlock it from that session before focusing.`);
-      }
+      refuseLocked(tabId, sessionId);
       const focusedTab = await chrome.tabs.update(tabId, { active: true });
       // window:true also brings its window to the front (OS focus).
       if (params.window === true && focusedTab?.windowId != null) {
@@ -438,9 +201,7 @@ export async function handleTabs(params, sessionId) {
         throw new Error("unlock requires an authenticated session");
       const was = tabLocks.owner(tabId);
       tabLocks.unlock(tabId, sessionId);
-      if (tabLocks.owner(tabId)) {
-        throw new Error(`Tab ${tabId} is locked by another session`);
-      }
+      refuseLocked(tabId, sessionId);
       // Handing the tab back: show it free now, not "controlled" for the linger.
       tabControl.settle(tabId);
       persistSessionState();
@@ -457,8 +218,8 @@ export async function handleTabs(params, sessionId) {
 export async function handleResizeWindow(params, sessionId) {
   const { tabId, width, height, state } = params;
   const tab = await resolveTab(tabId);
-  const owner = tabLocks.owner(tabId);
-  if (owner && owner !== sessionId) throw new Error(`Tab ${tabId} is locked by ${owner} — unlock it from that session first.`);
+  // Another agent's lock: the window is theirs to size too.
+  refuseLocked(tabId, sessionId);
   const update = {};
   if (width != null) update.width = Math.round(width);
   if (height != null) update.height = Math.round(height);

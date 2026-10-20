@@ -53,6 +53,14 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
   debugger: { attach: async () => {}, detach: async () => {}, sendCommand: async () => ({}) },
 };
 
+// The screenshot path decodes and encodes with canvas APIs (service worker only; absent in Node).
+(globalThis as unknown as { createImageBitmap: unknown }).createImageBitmap = async () => ({ width: 800, height: 600, close() {} });
+(globalThis as unknown as { OffscreenCanvas: unknown }).OffscreenCanvas = class {
+  constructor(public width: number, public height: number) {}
+  getContext() { return { imageSmoothingQuality: 'low', drawImage() {} }; }
+  async convertToBlob(opts: { type: string }) { return new Blob([new Uint8Array(8)], { type: opts.type }); }
+};
+
 const { handleMessage } = await import('../extension/lib/router.js');
 const { handleScreenshot } = await import('../extension/handlers/tabs.js');
 const { tabLocks, tabControl } = await import('../extension/lib/state.js');

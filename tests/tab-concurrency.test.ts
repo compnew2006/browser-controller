@@ -65,28 +65,17 @@ describe('TabLockMap (task 2.2)', () => {
   let locks: TabLockMap;
   beforeEach(() => (locks = new TabLockMap()));
 
-  it('owner proceeds immediately; non-owner waits', async () => {
+  it('the owner proceeds; a non-owner is refused at once with TAB_LOCKED (no waiting)', () => {
     locks.lock(5, 'agentA');
-    // owner call returns without delay
-    await expect(locks.waitFor(5, 'agentA')).resolves.toBeUndefined();
-
-    // shorten the poll for the test
-    locks.acquireTimeoutMs = 200;
-    const waited = locks.waitFor(5, 'agentB');
-    // release after 60ms; agentB should then proceed, well before its timeout
-    setTimeout(() => locks.release(5), 60);
-    await expect(waited).resolves.toBeUndefined();
+    expect(() => locks.check(5, 'agentA')).not.toThrow();
+    expect(() => locks.check(5, 'agentB')).toThrow(/^TAB_LOCKED: tab 5 is locked by agentA/);
   });
 
-  it('release lets a previously-blocked session proceed', async () => {
+  it('release lets the other session pass the check', () => {
     locks.lock(7, 'agentA');
-    let resolved = false;
-    const p = locks.waitFor(7, 'agentB').then(() => { resolved = true; });
-    await new Promise((r) => setTimeout(r, 40));
-    expect(resolved).toBe(false); // still blocked
+    expect(() => locks.check(7, 'agentB')).toThrow('TAB_LOCKED');
     locks.release(7);
-    await p;
-    expect(resolved).toBe(true);
+    expect(() => locks.check(7, 'agentB')).not.toThrow();
   });
 
   it('unlock only releases if owned by the given session', () => {
@@ -101,8 +90,8 @@ describe('TabLockMap (task 2.2)', () => {
     locks.lock(1, 'a');
     locks.lock(2, 'b');
     expect(JSON.parse(JSON.stringify(locks.snapshot()))).toEqual([
-      { tabId: 1, sessionId: 'a' },
-      { tabId: 2, sessionId: 'b' },
+      { tabId: 1, sessionId: 'a', agentName: null, since: expect.any(Number) },
+      { tabId: 2, sessionId: 'b', agentName: null, since: expect.any(Number) },
     ]);
   });
 
@@ -114,26 +103,21 @@ describe('TabLockMap (task 2.2)', () => {
     expect(locks.owner(11)).toBe('sessionA');
   });
 
-  it('rejects instead of bypassing ownership when lock wait times out', async () => {
+  it('refuses instead of bypassing ownership: a non-owner gets TAB_LOCKED at once', () => {
     locks.lock(12, 'sessionA');
-    locks.acquireTimeoutMs = 100;
-    await expect(locks.waitFor(12, 'sessionB')).rejects.toThrow(
-      'Timed out waiting for tab 12 lock owned by sessionA',
-    );
+    expect(() => locks.check(12, 'sessionB')).toThrow(/^TAB_LOCKED: tab 12 is locked by sessionA/);
   });
 
   it('does not let another session steal an existing lock', () => {
     locks.lock(14, 'sessionA');
-    expect(() => locks.lock(14, 'sessionB')).toThrow(
-      'Tab 14 is already locked by sessionA',
-    );
+    expect(() => locks.lock(14, 'sessionB')).toThrow(/^TAB_LOCKED: tab 14 is locked by sessionA/);
     expect(locks.owner(14)).toBe('sessionA');
   });
 
-  it('waitFor returns immediately when sessionId is null (no locking semantics)', async () => {
+  it('check passes when sessionId is null (no locking semantics)', () => {
     locks.lock(13, 'agentA');
     // A call with no session bypasses locking entirely (used by status reads).
-    await expect(locks.waitFor(13, null)).resolves.toBeUndefined();
+    expect(() => locks.check(13, null)).not.toThrow();
   });
 });
 
@@ -183,26 +167,32 @@ describe('runOnTab (combined lock + mutex, tasks 2.1+2.2)', () => {
     locks = new TabLockMap();
   });
 
-  it('two agents on the same tab serialize, even when locked', async () => {
+  it('a call from another session is refused while the owner holds the lock; the owner still runs', async () => {
     const events: string[] = [];
     locks.lock(1, 'agentA');
 
-    // agentB's call should wait for agentA to release the lock AND then the mutex
-    const pB = runOnTab(locks, mutex, 1, 'agentB', async () => {
-      events.push('b-start');
-      await new Promise((r) => setTimeout(r, 20));
-      events.push('b-end');
-    });
+    // agentB is refused at once with TAB_LOCKED: it never runs, and nothing waits for agentA.
+    const pB = runOnTab(locks, mutex, 1, 'agentB', async () => { events.push('b-ran'); });
+    await expect(pB).rejects.toThrow(/^TAB_LOCKED/);
 
+    await runOnTab(locks, mutex, 1, 'agentA', async () => { events.push('a-ran'); });
+    expect(events).toEqual(['a-ran']);
+  });
+
+  it('unlocked calls on the same tab still serialize through the mutex', async () => {
+    const events: string[] = [];
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const pA = runOnTab(locks, mutex, 1, 'agentA', async () => {
       events.push('a-start');
-      await new Promise((r) => setTimeout(r, 20));
+      await sleep(20);
       events.push('a-end');
-      locks.release(1); // owner releases after finishing
     });
-
+    const pB = runOnTab(locks, mutex, 1, 'agentB', async () => {
+      events.push('b-start');
+      await sleep(5);
+      events.push('b-end');
+    });
     await Promise.all([pA, pB]);
-    // agentA ran first (it held the lock); agentB ran only after release
     expect(events).toEqual(['a-start', 'a-end', 'b-start', 'b-end']);
   });
 
@@ -234,13 +224,11 @@ describe('runOnTab (combined lock + mutex, tasks 2.1+2.2)', () => {
       return 'done';
     });
     // Simulate the race: agentA locks synchronously right after runOnTab is
-    // called — before B's fn can start.
+    // called — before B's fn can start. B is refused when it reaches the mutex.
     locks.lock(1, 'agentA');
-    await new Promise((r) => setTimeout(r, 120));
+    await expect(p).rejects.toThrow(/^TAB_LOCKED/);
     expect(events).toEqual([]); // B must NOT run while A holds the lock
-    locks.unlock(1, 'agentA');
-    await expect(p).resolves.toBe('done');
-    expect(events).toEqual(['b-ran']);
+    expect(locks.owner(1)).toBe('agentA');
   });
 });
 

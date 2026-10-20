@@ -13,9 +13,10 @@ import type { ToolHost } from '../mcp-server/src/tools/types.js';
  * InMemoryTransport — the same code path index.ts uses, minus the daemon.
  *
  * Covers the two modes:
- *  - fullMode (default): all 24 tools + browser_tools visible immediately.
+ *  - fullMode (default): every browser tool visible immediately; no browser_tools.
  *  - progressive (BROWSER_CONTROLLER_PROGRESSIVE=1): only browser_tools
- *    visible; disabled tools reject calls; details activates + notifies.
+ *    visible; a call to an inactive tool activates it and runs it; details
+ *    activates too; each activation notifies the client.
  */
 
 // Fake daemon host — records calls, returns an empty success payload.
@@ -41,13 +42,20 @@ async function setup(fullMode: boolean) {
 }
 
 describe('registerTools — full mode (default)', () => {
-  it('exposes all browser tools + browser_tools immediately', async () => {
+  it('exposes every browser tool immediately, and no browser_tools meta tool', async () => {
     const { client } = await setup(true);
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
-    expect(names).toHaveLength(allTools.length + 1); // 22 + meta
-    expect(names).toContain('browser_tools');
+    expect(names).toHaveLength(allTools.length);
+    expect(names).not.toContain('browser_tools'); // discovery is progressive-mode only
     for (const tool of allTools) expect(names).toContain(tool.name);
+  });
+
+  it('has no browser_tools meta tool to call', async () => {
+    const { client } = await setup(true);
+    const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'list' } });
+    expect(result.isError).toBe(true);
+    expect((result.content as Array<{ text: string }>)[0].text).toMatch(/not found/);
   });
 
   it('tools are callable directly without activation', async () => {
@@ -93,34 +101,6 @@ describe('registerTools — full mode (default)', () => {
     expect(host.calls).toHaveLength(0);
   });
 
-  it('meta tool reports every tool as active', async () => {
-    const { client } = await setup(true);
-    const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'list' } });
-    const data = JSON.parse((result.content as Array<{ text: string }>)[0].text);
-    expect(data.tools.every((t: { active: boolean }) => t.active)).toBe(true);
-  });
-
-  it('meta tool list returns a task→tool preamble and per-tool guidance', async () => {
-    const { client } = await setup(true);
-    const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'list' } });
-    const data = JSON.parse((result.content as Array<{ text: string }>)[0].text);
-    // preamble is the first-read orientation string for a first-time agent
-    expect(typeof data.preamble).toBe('string');
-    expect(data.preamble.length).toBeGreaterThan(200);
-    // every tool entry carries a non-empty guidance sentence
-    expect(data.tools.every((t: { guidance?: string }) => typeof t.guidance === 'string' && t.guidance.length > 0)).toBe(true);
-    // the high-value evaluate↔run_action distinction is surfaced
-    const evalG = data.tools.find((t: { name: string }) => t.name === 'browser_evaluate');
-    const runG = data.tools.find((t: { name: string }) => t.name === 'browser_run_action');
-    expect(/CSP|null/i.test(evalG.guidance)).toBe(true);
-    expect(/bypasses CSP|CSP/i.test(runG.guidance)).toBe(true);
-    // browser_evaluate runs over CDP by default (mcp-server/src/tools/evaluate.ts):
-    // the guidance must not send agents away from it as "CSP-restricted".
-    expect(evalG.guidance).toMatch(/cdp/i);
-    expect(evalG.guidance).not.toMatch(/CSP-RESTRICTED|may return null/i);
-    expect(data.preamble).not.toMatch(/browser_evaluate is the CSP-bound|If browser_evaluate returns null/);
-  });
-
   it('meta tool details returns guidance for the requested tool', async () => {
     const { client } = await setup(false); // progressive mode so details also activates
     const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'details', tool: 'browser_click' } });
@@ -138,13 +118,65 @@ describe('registerTools — progressive mode', () => {
     expect(tools.map((t) => t.name)).toEqual(['browser_tools']);
   });
 
-  it('calling a disabled tool is rejected by the SDK', async () => {
+  it('a call to an inactive tool activates it, runs it, and notifies the client', async () => {
+    // Regression: the SDK used to reject calls to disabled tools ("Tool X disabled"),
+    // so the agent had to call browser_tools details first.
     const { client, host } = await setup(false);
-    // The SDK surfaces the McpError as an isError tool result, not a rejection.
+    let listChangedCount = 0;
+    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+      listChangedCount++;
+    });
     const result = await client.callTool({ name: 'browser_click', arguments: { tabId: 1, selector: '#btn' } });
+    expect(result.isError).toBeFalsy();
+    expect(host.calls).toContain('browser_click');
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(['browser_click', 'browser_tools']);
+    expect(listChangedCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a call still validates its arguments before reaching the host', async () => {
+    const { client, host } = await setup(false);
+    const result = await client.callTool({ name: 'browser_click', arguments: { tabId: 1 } });
     expect(result.isError).toBe(true);
-    expect((result.content as Array<{ text: string }>)[0].text).toContain('disabled');
-    expect(host.calls).toHaveLength(0); // never reached the daemon
+    expect((result.content as Array<{ text: string }>)[0].text).toContain('ref or selector');
+    expect(host.calls).toHaveLength(0);
+  });
+
+  it('browser_tools list returns a task→tool preamble, per-tool guidance and activation state', async () => {
+    const { client } = await setup(false);
+    await client.callTool({ name: 'browser_tools', arguments: { action: 'details', tool: 'browser_hover' } });
+    const result = await client.callTool({ name: 'browser_tools', arguments: { action: 'list' } });
+    const data = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+    // preamble is the first-read orientation string for a first-time agent
+    expect(typeof data.preamble).toBe('string');
+    expect(data.preamble.length).toBeGreaterThan(200);
+    // every tool entry carries a non-empty guidance sentence
+    expect(data.tools.every((t: { guidance?: string }) => typeof t.guidance === 'string' && t.guidance.length > 0)).toBe(true);
+    // activation state follows the details call
+    expect(data.tools.find((t: { name: string }) => t.name === 'browser_hover').active).toBe(true);
+    expect(data.tools.find((t: { name: string }) => t.name === 'browser_click').active).toBe(false);
+    // the high-value evaluate↔run_action distinction is surfaced
+    const evalG = data.tools.find((t: { name: string }) => t.name === 'browser_evaluate');
+    const runG = data.tools.find((t: { name: string }) => t.name === 'browser_run_action');
+    expect(/CSP|null/i.test(evalG.guidance)).toBe(true);
+    expect(/bypasses CSP|CSP/i.test(runG.guidance)).toBe(true);
+    // browser_evaluate runs over CDP by default (mcp-server/src/tools/evaluate.ts):
+    // the guidance must not send agents away from it as "CSP-restricted".
+    expect(evalG.guidance).toMatch(/cdp/i);
+    expect(evalG.guidance).not.toMatch(/CSP-RESTRICTED|may return null/i);
+    expect(data.preamble).not.toMatch(/browser_evaluate is the CSP-bound|If browser_evaluate returns null/);
+  });
+
+  it('lists schemas as the agent sends them: a field with a default is not required', async () => {
+    // Regression: tools/list and browser_tools details used zod's output mode, which
+    // marked every defaulted field (browser_click's button, doubleClick) as required.
+    const { client } = await setup(false);
+    await client.callTool({ name: 'browser_tools', arguments: { action: 'details', tool: 'browser_click' } });
+    const { tools } = await client.listTools();
+    const click = tools.find((t) => t.name === 'browser_click')!;
+    expect(click.inputSchema.required ?? []).toContain('tabId');
+    expect(click.inputSchema.required ?? []).not.toContain('button');
+    expect(click.inputSchema.required ?? []).not.toContain('doubleClick');
   });
 
   it('details activates the tool: visible, callable, and list_changed sent', async () => {
@@ -187,15 +219,18 @@ describe('registerTools — progressive mode', () => {
     expect(listChangedCount).toBe(after1); // second activation is a no-op
   });
 
-  it('other tools stay disabled after one activation', async () => {
+  it('activation is per tool: other tools stay hidden until they are called or activated', async () => {
     const { client, host } = await setup(false);
     await client.callTool({
       name: 'browser_tools',
       arguments: { action: 'details', tool: 'browser_click' },
     });
+    const before = await client.listTools();
+    expect(before.tools.map((t) => t.name)).not.toContain('browser_type');
     const result = await client.callTool({ name: 'browser_type', arguments: { tabId: 1, selector: '#in', text: 'x' } });
-    expect(result.isError).toBe(true);
-    expect((result.content as Array<{ text: string }>)[0].text).toContain('disabled');
-    expect(host.calls).not.toContain('browser_type');
+    expect(result.isError).toBeFalsy();
+    expect(host.calls).toContain('browser_type');
+    const after = await client.listTools();
+    expect(after.tools.map((t) => t.name)).toContain('browser_type');
   });
 });

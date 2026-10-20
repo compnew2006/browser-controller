@@ -15,13 +15,25 @@
  * ambiguous is reported as gone instead of guessed.
  */
 
-export const PAGE_DOM_VERSION = 4;
+export const PAGE_DOM_VERSION = 6;
 
 export function PAGE_DOM_INSTALL(version) {
   if (globalThis.__bcDom && globalThis.__bcDom.v === version) return false;
   const REGISTRY_KEY = '__browserControllerLegacyRefRegistry';
   const registry = globalThis[REGISTRY_KEY] instanceof Map ? globalThis[REGISTRY_KEY] : new Map();
   globalThis[REGISTRY_KEY] = registry;
+
+  // Uncaught errors in this isolated world. chrome.scripting hands back a bare
+  // null when an injected function throws, so lib/page-exec.js reads the last
+  // error recorded here (and clears it) to turn that null into a failure.
+  if (!globalThis.__bcErrorRecorder && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    globalThis.__bcErrorRecorder = true;
+    window.addEventListener('error', (e) => {
+      const err = e && e.error;
+      const message = String((err && err.message) || String((e && e.message) || 'error').replace(/^Uncaught\s+/, ''));
+      globalThis.__bcPageError = { message, at: Date.now() };
+    });
+  }
 
   /** Computed style from the element's own window (frames have their own). */
   function styleOf(el) {
@@ -31,6 +43,37 @@ export function PAGE_DOM_INSTALL(version) {
 
   const clean = (v, max = 160) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
   const attr = (el, n) => (el && el.getAttribute ? el.getAttribute(n) || '' : '');
+
+  /**
+   * Elements the extension injects into pages (lib/overlay.js, the agent cursor
+   * below). They are never page content: find, snapshot and text skip them.
+   */
+  const EXTENSION_IDS = new Set(['__bc-lock-shield', '__bc-agent-cursor']);
+  function isExtensionNode(el) {
+    for (let cur = el, guard = 0; cur && cur.nodeType === 1 && guard < 512; guard++) {
+      if (EXTENSION_IDS.has(cur.id)) return true;
+      cur = cur.parentElement || (cur.parentNode && cur.parentNode.host) || null;
+    }
+    return false;
+  }
+
+  /**
+   * Bounded ref registry. Every snapshot, find and native pass registers its refs
+   * under its own prefix ("s4k2-", "f4k2-"). Only the last REF_GENERATIONS passes
+   * keep their refs: the oldest generation is dropped when a new one starts, so the
+   * registry no longer grows with every snapshot of a long session. A dropped ref
+   * resolves to REF_GONE (the smart-selector fallback can still find the element).
+   */
+  const REF_GENERATIONS = 10;
+  const refGenerations = [];
+  function beginRefGeneration(prefix) {
+    if (!prefix) return;
+    refGenerations.push(prefix);
+    while (refGenerations.length > REF_GENERATIONS) {
+      const old = refGenerations.shift();
+      for (const ref of Array.from(registry.keys())) if (ref.startsWith(old)) registry.delete(ref);
+    }
+  }
 
   /** Open or closed shadow root (closed ones via chrome.dom in the isolated world). */
   function shadowOf(el) {
@@ -75,16 +118,19 @@ export function PAGE_DOM_INSTALL(version) {
     return out;
   }
 
-  /** Composed-ancestor aware: display/visibility/opacity/content-visibility + a real box. */
-  function isVisible(el) {
+  /**
+   * Composed-ancestor aware: display/visibility/opacity/content-visibility + a real box.
+   * `ignoreOpacity`: opacity:0 still counts as rendered (a real click reaches it).
+   */
+  function isVisible(el, { ignoreOpacity = false } = {}) {
     if (!connected(el)) return false;
     // An element in a hidden/transparent/zero-size iframe is not visible either.
     let frameEl;
     try { frameEl = el.ownerDocument && el.ownerDocument.defaultView ? el.ownerDocument.defaultView.frameElement : null; } catch { frameEl = null; }
-    if (frameEl && !isVisible(frameEl)) return false;
+    if (frameEl && !isVisible(frameEl, { ignoreOpacity })) return false;
     try {
       if (typeof el.checkVisibility === 'function'
-        && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true, contentVisibilityAuto: true })) return false;
+        && !el.checkVisibility({ checkOpacity: !ignoreOpacity, checkVisibilityCSS: true, contentVisibilityAuto: true })) return false;
     } catch { /* old engine */ }
     let r;
     try { r = el.getBoundingClientRect(); } catch { return false; }
@@ -93,7 +139,7 @@ export function PAGE_DOM_INSTALL(version) {
     try {
       const st = styleOf(el);
       if (st && st.display === 'contents') {
-        for (const c of flatChildren(el)) if (c.nodeType === 1 && isVisible(c)) return true;
+        for (const c of flatChildren(el)) if (c.nodeType === 1 && isVisible(c, { ignoreOpacity })) return true;
       }
     } catch {}
     return false;
@@ -314,6 +360,22 @@ export function PAGE_DOM_INSTALL(version) {
     return { x, y, rect };
   }
 
+  /**
+   * The extension's own overlays (lock shield, agent cursor: ids __bc-*) are
+   * transparent to hit-testing: a click is judged against the page underneath.
+   */
+  function isOwnOverlay(n) {
+    return !!(n && typeof n.closest === 'function' && n.closest('[id^="__bc-"]'));
+  }
+  /** Topmost page element at a point in one document or shadow root. */
+  function topAt(root, x, y) {
+    let stack = null;
+    if (typeof root.elementsFromPoint === 'function') stack = root.elementsFromPoint(x, y);
+    else if (typeof root.elementFromPoint === 'function') stack = [root.elementFromPoint(x, y)];
+    for (const n of stack || []) if (n && !isOwnOverlay(n)) return n;
+    return null;
+  }
+
   /** Composed hit-test: the deepest element at a top-level point (pierces shadow roots and same-origin frames). */
   function elementAt(x, y) {
     let doc = document;
@@ -321,10 +383,10 @@ export function PAGE_DOM_INSTALL(version) {
     let py = y;
     let hit = null;
     for (let guard = 0; guard < 8; guard++) {
-      let h = doc.elementFromPoint(px, py);
+      let h = topAt(doc, px, py);
       while (h) {
         const s = shadowOf(h);
-        const inner = s && s.elementFromPoint ? s.elementFromPoint(px, py) : null;
+        const inner = s ? topAt(s, px, py) : null;
         if (!inner || inner === h) break;
         h = inner;
       }
@@ -337,6 +399,95 @@ export function PAGE_DOM_INSTALL(version) {
       doc = d;
     }
     return hit;
+  }
+
+  /** Disabled natively (incl. inside a disabled fieldset) or aria-disabled="true" on it or an ancestor. */
+  function isDisabled(el) {
+    try { if (el.matches && el.matches(':disabled')) return true; } catch { /* selector unsupported here */ }
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement || (n.getRootNode && n.getRootNode().host) || null) {
+      if (attr(n, 'aria-disabled') === 'true') return true;
+    }
+    return false;
+  }
+
+  /** Controls a <label> can name: a click on the label reaches them. */
+  const LABELABLE = new Set(['BUTTON', 'INPUT', 'METER', 'OUTPUT', 'PROGRESS', 'SELECT', 'TEXTAREA']);
+  /**
+   * The <label>s that name a form control (el.labels, which already includes an
+   * enclosing <label> that names it). Not any enclosing <label>: one that names
+   * another control does not activate this one.
+   */
+  function labelsOf(el) {
+    if (!el || !LABELABLE.has(el.tagName)) return [];
+    try { return Array.from(el.labels || []); } catch { return []; }
+  }
+  const isCheckable = (el) => el.tagName === 'INPUT' && ['checkbox', 'radio'].includes(String(el.type || attr(el, 'type') || '').toLowerCase());
+  /** Displayed (display, visibility, ancestors), opacity ignored; the box itself may be empty. */
+  function rendered(el) {
+    try {
+      if (typeof el.checkVisibility === 'function') return el.checkVisibility({ checkOpacity: false, checkVisibilityCSS: true, contentVisibilityAuto: true });
+    } catch { /* old engine: read the style below */ }
+    const st = styleOf(el);
+    return !!st && st.display !== 'none' && st.visibility !== 'hidden';
+  }
+  /** Topmost element at a top-level point, or null (detached mid-measure). */
+  function hitAt(at) {
+    try { return elementAt(at.x, at.y); } catch { return null; }
+  }
+  /**
+   * Does a click that lands on `hit` reach `el`? Yes for `el` itself, anything
+   * inside it, and anything inside one of its labels (a click on a <label>
+   * activates its control, as a person's click does). A null hit reaches it too.
+   */
+  function reachesControl(el, hit) {
+    if (!hit || hit === el || composedContains(el, hit)) return true;
+    return labelsOf(el).some((label) => composedContains(label, hit));
+  }
+  function coveredBy(el, hit) {
+    return { message: `ELEMENT_COVERED: the click point of ${describe(el)} is covered by ${describe(hit)}; the click would land there instead.` };
+  }
+
+  /**
+   * Why a real click on `el` would not reach it, or null when it would.
+   * Checked before any click (CDP or synthetic) so a failed click reports
+   * itself instead of "success". Returns { message } with a CODE prefix.
+   */
+  function clickBlocker(el) {
+    const rect = el.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0) || !isVisible(el, { ignoreOpacity: true })) {
+      return { message: `ELEMENT_HIDDEN: ${describe(el)} is not displayed (display:none, visibility:hidden or zero size); nothing was clicked.` };
+    }
+    if (isDisabled(el)) return { message: `ELEMENT_DISABLED: ${describe(el)} is disabled; nothing was clicked.` };
+    const hit = hitAt(centerOf(el));
+    if (!reachesControl(el, hit)) return coveredBy(el, hit);
+    return null;
+  }
+
+  /**
+   * Where a click on `el` goes: { node, x, y, via? } for a click that can reach
+   * it, or { message } (the clickBlocker codes) when it cannot. A checkbox or
+   * radio is often hidden under its styled <label> (an opacity:0 input, or no
+   * box at all) and the label is the visible control: when the control's own
+   * point is covered by its visible label, the click goes to the label's centre
+   * and says so (via 'label'; the label's click toggles the control). Any other
+   * cover is still ELEMENT_COVERED.
+   */
+  function clickTarget(el) {
+    const label = isCheckable(el) ? labelsOf(el).find((l) => isVisible(l)) || null : null;
+    if (label && rendered(el) && !isDisabled(el)) {
+      const rect = el.getBoundingClientRect();
+      const boxless = !(rect.width > 0 && rect.height > 0);
+      if (boxless || composedContains(label, hitAt(centerOf(el)))) {
+        const at = centerOf(label);
+        const hit = hitAt(at);
+        if (!hit || composedContains(label, hit) || composedContains(el, hit)) return { node: label, x: at.x, y: at.y, via: 'label' };
+        return coveredBy(label, hit);
+      }
+    }
+    const block = clickBlocker(el);
+    if (block) return block;
+    const at = centerOf(el);
+    return { node: el, x: at.x, y: at.y };
   }
 
   function composedContains(a, b) {
@@ -415,6 +566,7 @@ export function PAGE_DOM_INSTALL(version) {
       }
       if (n.nodeType === 11 || n.nodeType === 9) { for (const c of flatChildren(n)) walk(c, pre); return; }
       if (n.nodeType !== 1) return;
+      if (EXTENSION_IDS.has(n.id)) return; // the lock shield's label is not page text
       const tag = n.tagName;
       if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'TEMPLATE' || tag === 'svg' || tag === 'SVG') return;
       if (tag === 'BR') { push('\n'); return; }
@@ -458,9 +610,15 @@ export function PAGE_DOM_INSTALL(version) {
     return best || document.body;
   }
 
-  /** Page text: native innerText when there is no shadow DOM (fast), the flat-tree walker otherwise. */
+  /**
+   * Page text: native innerText (fast) only when the page has no shadow hosts and
+   * no same-origin frames. innerText skips both, so those pages take the flat-tree
+   * walker, which includes them.
+   */
   function pageText(root, { article = false, max = 1e7 } = {}) {
-    if (!article && root.ownerDocument === document && typeof root.innerText === 'string' && !hasShadowHosts()) {
+    const frameInside = allRoots(false).length > 1
+      || !!(root.querySelector && root.querySelector('iframe,frame'));
+    if (!article && root.ownerDocument === document && typeof root.innerText === 'string' && !hasShadowHosts() && !frameInside) {
       return root.innerText.replace(/\t/g, ' ').replace(/\n\s*\n/g, '\n\n').replace(/ +/g, ' ').trim();
     }
     return flatText(root, { article, max });
@@ -578,6 +736,7 @@ export function PAGE_DOM_INSTALL(version) {
     clean, attr, shadowOf, frameDoc, allRoots, queryAll, isVisible, flatChildren, hasShadowHosts,
     roleOf, nameOf, composedText, isInteractive, preciseMatch, resolve, centerOf, elementAt,
     composedContains, rowContextOf, describe, registry, flatText, articleRoot, pageText, styleOf, connected, cursor,
+    isExtensionNode, beginRefGeneration, clickBlocker, clickTarget, labelsOf,
   });
   return true;
 }

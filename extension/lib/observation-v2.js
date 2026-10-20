@@ -125,7 +125,7 @@ export function validateFreshness(observed = {}, current = {}) {
 export function PAGE_V2_INSTALL() {
   // Bump when the helpers change: a document keeps the runtime an older build
   // installed. A literal, because this source is serialized into the page.
-  const RUNTIME_VERSION = 3;
+  const RUNTIME_VERSION = 4;
   if (globalThis.__browserControllerV2Runtime?.version === RUNTIME_VERSION) return false;
 
   /** Pure semantic policy shared by observation and action revalidation. */
@@ -142,7 +142,7 @@ export function PAGE_V2_INSTALL() {
       || tag === 'textarea'
       || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'color', 'file', 'hidden'].includes(inputType));
     const isSelect = tag === 'select';
-    const isClickable = ['button', 'link', 'checkbox', 'radio', 'switch', 'menuitem', 'tab', 'option'].includes(role)
+    const isClickable = ['button', 'link', 'checkbox', 'radio', 'switch', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'option', 'combobox'].includes(role)
       || tag === 'button'
       || tag === 'a'
       || (tag === 'input' && ['button', 'submit', 'reset', 'checkbox', 'radio'].includes(inputType));
@@ -161,6 +161,9 @@ export function PAGE_V2_INSTALL() {
       add('focus');
       add('hover');
     } else if (descriptor.focusable) {
+      // A focusable element with no native or ARIA meaning is a click target
+      // only when it shows one (see descriptorOf: clickAffordance).
+      if (descriptor.clickAffordance) add('click');
       add('focus');
       add('hover');
     }
@@ -243,6 +246,15 @@ export function PAGE_V2_INSTALL() {
     const tabIndex = Number(element?.tabIndex);
     const scrollable = Number(element?.scrollHeight) > Number(element?.clientHeight) + 1
       || Number(element?.scrollWidth) > Number(element?.clientWidth) + 1;
+    const focusable = Number.isFinite(tabIndex) && tabIndex >= 0;
+    // Click handlers added with addEventListener cannot be seen from the
+    // isolated world, so a focusable element counts as clickable when it declares
+    // an onclick attribute or shows a pointer cursor.
+    let cursor = '';
+    if (focusable) {
+      try { cursor = String(element?.ownerDocument?.defaultView?.getComputedStyle?.(element)?.cursor || ''); } catch {}
+    }
+    const clickAffordance = focusable && (!!element?.hasAttribute?.('onclick') || cursor === 'pointer');
     return {
       role: roleOf(element),
       name: nameOf(element),
@@ -251,7 +263,8 @@ export function PAGE_V2_INSTALL() {
       disabled,
       readOnly,
       contentEditable: !!element?.isContentEditable,
-      focusable: Number.isFinite(tabIndex) && tabIndex >= 0,
+      focusable,
+      clickAffordance,
       scrollable,
       ...stableIdentity(element),
     };
@@ -415,6 +428,9 @@ export function PAGE_OBSERVE_V2(config) {
   let state = globalThis[STATE_KEY];
   if (!state || state.document !== document) {
     const random = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    // `revision` counts this document's actions only (documentVersion carries
+    // it). No DOM observer: nothing validates a DOM-mutation counter, and a
+    // document-wide MutationObserver cost every page mutation for no reader.
     state = {
       document,
       documentId: `d_${random}`,
@@ -423,10 +439,6 @@ export function PAGE_OBSERVE_V2(config) {
       lastUrl: location.href,
       snapshots: new Map(),
     };
-    try {
-      state.observer = new MutationObserver(() => { state.revision += 1; });
-      state.observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-    } catch {}
     globalThis[STATE_KEY] = state;
   }
   if (state.lastUrl !== location.href) {
@@ -471,10 +483,15 @@ export function PAGE_OBSERVE_V2(config) {
       const value = descriptor.inputType === 'password'
         ? undefined
         : helpers.clean(element.value ?? (element.isContentEditable ? element.textContent : ''), 200);
+      // checked means something only for checkable controls: every <input> has a
+      // boolean `checked` property, so reading it blindly reported false on text fields.
+      const checkable = descriptor.tagName === 'input' && ['checkbox', 'radio'].includes(descriptor.inputType);
+      const ariaChecked = helpers.attr(element, 'aria-checked');
       const stateView = {
         disabled: descriptor.disabled,
         ...(descriptor.readOnly ? { readOnly: true } : {}),
-        ...(typeof element.checked === 'boolean' ? { checked: element.checked } : {}),
+        ...(checkable ? { checked: element.checked === true } : {}),
+        ...(!checkable && (ariaChecked === 'true' || ariaChecked === 'false') ? { checked: ariaChecked === 'true' } : {}),
         ...(typeof element.selected === 'boolean' ? { selected: element.selected } : {}),
         ...(helpers.attr(element, 'aria-expanded') ? { expanded: helpers.attr(element, 'aria-expanded') === 'true' } : {}),
       };

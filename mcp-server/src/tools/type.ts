@@ -5,7 +5,7 @@ import { requireTabId, forwardHandler } from './types.js';
 export const typeTool: ToolDefinition = {
   name: 'browser_type',
   summary: 'Type text into an input element',
-  description: 'Focus an input (ref/selector — or, with neither, the element that already has focus) and type text with real key presses over CDP (keydown/keypress/input/keyup per character, like a user). Like a user, `change`/blur fire only when focus leaves — follow with browser_press_key Tab to commit. Returns the field value after typing. Falls back to synthetic events if the debugger cannot attach.',
+  description: 'Focus an input (ref/selector — or, with neither, the element that already has focus) and type text with real key presses over CDP (keydown/keypress/input/keyup per character, like a user). Like a user, `change`/blur fire only when focus leaves — follow with browser_press_key Tab to commit. Returns the number of characters typed (typed) and the targeted field\'s value (value, first 100 characters). Falls back to synthetic events if the debugger cannot attach.',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot'),

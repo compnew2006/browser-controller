@@ -35,11 +35,11 @@ It already has your browser open right there. It just can't see it.
 - **Tab targeting, not "the active tab."** Every action names a `tabId`. Move your mouse, switch tabs, watch YouTube — the agent keeps working on the tab you told it to. It never hijacks the page you're reading.
 - **Per-tab isolation.** Element refs, console logs, and network buffers are scoped per tab. A ref from tab 10 can never click something in tab 20.
 - **Per-tab concurrency.** Two actions on the _same_ tab serialize (no races); actions on _different_ tabs run in parallel.
-- **Tab locking.** An agent can claim a tab so others queue behind it instead of racing (`browser_tabs { action: "lock" }`). Locks survive Chrome's service-worker recycling (`chrome.storage.session`).
+- **Tab locking.** An agent can claim a tab (`browser_tabs { action: "lock" }`). Another agent's call on that tab is refused at once with `TAB_LOCKED` (naming the owner and since when) instead of racing it; the lock ends when the owner unlocks it or disconnects. Locks survive Chrome's service-worker recycling (`chrome.storage.session`).
 - **Agent-control shield.** While an agent works on a tab you see a translucent blue inner frame and your input on that tab is blocked (mouse, keyboard, wheel) — the badge shows `agent <name> controlling the tab` and disappears when the action finishes. Locking a tab keeps a plain frame for the lock's lifetime.
 - **Visible agent cursor (optional).** Switch on *Show agent cursor* in the popup's Settings and every agent mouse action (click, hover, wheel, drag — including `browser_act`) draws a blue pointer that glides to its target before the input lands — a ripple marks each click, the arrow presses in while dragging — so you can follow what the agent does. Off by default: the glide adds ~0.2–0.35 s to each mouse action on a visible tab (none in hidden tabs). It fades after a few idle seconds and stays out of the agent's own screenshots.
 - **Same-origin iframe piercing.** Legacy/enterprise UIs that live inside iframes (e.g. an ONT console in `iframe#mainFrame`) are reachable: all locator tools search iframe documents, and `find`/`click_text` walk every frame.
-- **Open-dialog rescue.** A native `alert`/`confirm`/`prompt` freezes the page's JS thread — `browser_handle_dialog` dismisses it out-of-band via CDP, no page JS needed, which also un-blocks every other tool on that tab. `browser_tabs close/focus` always work, even on a frozen tab.
+- **Open-dialog rescue.** A native `alert`/`confirm`/`prompt` freezes the page's JS thread — `browser_handle_dialog` dismisses it out-of-band via CDP, no page JS needed, which also un-blocks every other tool on that tab. It answers only a dialog that opened while the tab's debugger session was attached (see [`browser_handle_dialog`](#browser_handle_dialog)). `browser_tabs close/focus` skip the call queue, so they still work on a frozen tab (lock ownership is still checked).
 - **Authenticated local connection.** Token + enrollment secret, so no other local process can silently drive your browser — and after a one-time `npm run setup:pairing` the extension pairs itself, no secret to paste. Everything stays on localhost — no cloud, no telemetry.
 - **Versioned compatibility handshake.** The daemon and extension advertise an application-protocol version, build version, and capabilities before tool traffic is accepted. Explicitly incompatible protocol majors fail with an actionable error instead of producing unexplained timeouts; the build version is diagnostic and does not by itself make compatible peers fail.
 - **Real, trusted input.** Clicks, typing and key presses go through the Chrome DevTools Protocol, so the page sees `isTrusted` events, focus really moves, default actions run (Tab moves focus, Enter submits, arrows drive autocomplete menus) and focus/blur fire even while the window is in the background — legacy grids and lookup widgets behave as they do for a person. One debugger session per tab is reused and detached after 30 s idle (the yellow "being debugged" banner shows only while it is attached). Pass `trusted: false` for the old synthetic events with no banner; they are also the automatic fallback when the debugger can't attach.
@@ -311,7 +311,7 @@ browser_act { tabId: 15, snapshotId: "s_…", action: "click", ref: "e1" }
 browser_act { tabId: 15, snapshotId: "s_…", action: "type", ref: "e4", text: "London", clear: true }
 ```
 
-Before acting, the extension checks snapshot ownership, document/route identity, target semantics, current geometry and visibility, enabled state, allowed actions, and click-point occlusion. Recoverable replacements need one unique stable identity; ambiguous or unsafe state returns a compact error such as `DOCUMENT_CHANGED`, `STALE_STATE`, `TARGET_OCCLUDED`, or `ACTION_NOT_ALLOWED`. Call `browser_observe` again after one of these state errors.
+Before acting, the extension checks snapshot ownership, document/route identity, target semantics, current geometry and visibility, enabled state, allowed actions, and click-point occlusion. Recoverable replacements need one unique stable identity; ambiguous or unsafe state returns a compact error such as `DOCUMENT_CHANGED`, `STALE_STATE`, `ELEMENT_COVERED`, `ACTION_NOT_ALLOWED`, or `OBSERVATION_EXPIRED` (the snapshot is older than 60 s). Call `browser_observe` again after one of these state errors.
 
 ### Sites with their own tools (WebMCP)
 
@@ -385,6 +385,7 @@ browser_webmcp_call { tabId: 15, name: "place_order", input: {}, confirm: true }
 2. Agent B lists tabs, picks tab 11, locks it: `browser_tabs { action: "lock", tabId: 11 }`
 3. Both work in parallel. Each agent's calls serialize against its own tab; the two tabs never interfere.
 4. When done: `browser_tabs { action: "unlock", tabId: 10 }`.
+5. If another agent calls tab 10 while Agent A holds it, that call is refused at once with `TAB_LOCKED` (naming Agent A and when the lock was taken), not queued.
 
 ### The popup is your control panel
 
@@ -406,7 +407,8 @@ A fixed-height tabbed shell (the body never scrolls, only the lists do):
 - **The control shield is top-frame protection.** Its frame and input interception are installed in the top document. Do not treat it as a security boundary for independently focused or cross-origin child frames; avoid manual input anywhere in a tab while an agent owns it.
 - **Scrolling virtualized feeds** (Facebook/Instagram/Twitter): `browser_scroll` returns `refsMayBeStale: true` because those sites recycle DOM nodes. Re-snapshot before your next interaction.
 - **Duplicate elements**: when several elements share text+role (e.g. 3 "Like" buttons), the fallback resolver picks the correct one by ordinal (`nth`), not just the first match.
-- **A frozen tab** (native dialog blocking) doesn't deadlock you: `browser_handle_dialog` dismisses it via CDP, and `browser_tabs { action: "close" }` always works as the guaranteed way out.
+- **Locks and daemon restarts.** A lock ends when its owner unlocks the tab or disconnects, and a daemon restart releases every lock and tab-control mark the previous daemon left. Session ids carry the daemon's instance id (`s-<instance>-<n>`).
+- **A frozen tab** (native dialog blocking) doesn't deadlock you: `browser_handle_dialog` answers the dialog if the tab's debugger session was attached when it opened (otherwise `NO_DIALOG`), and `browser_tabs { action: "close" }` is the guaranteed way out unless another agent holds the tab's lock.
 
 ---
 
@@ -450,7 +452,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 |------|-------------|
 | [`browser_observe`](#browser_observe) | Compact atomic semantic observation with snapshot/document identity, geometry, state, and dynamic allowed actions |
 | [`browser_snapshot`](#browser_snapshot) | Accessibility tree with element refs. Compact mode (default) returns only interactive elements; `filter` / `depth` / `ref` or `selector` (subtree) / `maxChars` (default 20k) keep it small. Traverses open + closed shadow DOM, slots and same-origin iframes. `source: "native"` returns Chrome's own accessibility tree instead of the DOM-derived one ([details](#native-accessibility-tree)). |
-| [`browser_screenshot`](#browser_screenshot) | Capture a tab as an image over CDP — `maxWidth` / `scale` / `jpeg` to cut tokens, `fullPage` for the whole page, `region` to zoom; reports the pixel → x/y mapping |
+| [`browser_screenshot`](#browser_screenshot) | Capture a tab as an image (`fullPage` and zoom use CDP) — `maxWidth` / `scale` / `jpeg` to cut tokens, `fullPage` for the whole page, `region` to zoom; reports the pixel → x/y mapping |
 | [`browser_text`](#browser_text) | Extract text from page or element (incl. shadow DOM); `mode:"article"` = main content only; `offset` paging |
 | [`browser_find`](#browser_find) | Query elements by natural language ("search input", "Save button") — tokenized, role-aware, shadow DOM + same-origin iframes |
 
@@ -511,7 +513,7 @@ Paths are absolute and local to the machine running the browser. Omit `ref`/`sel
 | [`browser_intercept`](#browser_intercept) | Block, redirect or set request headers per tab (Chrome session rules); captures + HAR export. `mock`/`log` rules are ledger-only |
 | [`browser_network`](#browser_network) | Requests with status codes, durations and failures — per-tab; `urlPattern`, regex `filter`, `type`, `failed`, `limit`; `requestId` for one request's (redacted) headers |
 | [`browser_evaluate`](#browser_evaluate) | Run JavaScript like the DevTools console: top-level `await`, last value returned, not blocked by CSP |
-| [`browser_handle_dialog`](#browser_handle_dialog) | Dismiss/accept an open alert/confirm/prompt via CDP (works on frozen pages) |
+| [`browser_handle_dialog`](#browser_handle_dialog) | Dismiss/accept an alert/confirm/prompt that opened while the tab had a debugger session (`NO_DIALOG` otherwise) |
 | [`browser_run_action`](#browser_run_action) | Run a self-contained JS action object via CDP |
 
 **Use a site's own tools (WebMCP)**
@@ -552,7 +554,7 @@ One atomic, compact reading of a tab for the [safe Observe → Act loop](#safe-o
 
 #### `browser_snapshot`
 
-The accessibility tree of a tab, with a `ref` (`e12`) on every element that the ref-based tools accept. It sees shadow DOM, slotted content and same-origin iframes. After an action, elements that are new since the previous snapshot are tagged `isNew: true`.
+The accessibility tree of a tab, with a `ref` (`e12`) on every element that the ref-based tools accept. It sees shadow DOM, slotted content and same-origin iframes. After an action, elements that are new since the previous snapshot are tagged `isNew: true`. Password values show as `••••`. Hidden subtrees (`display: none`, `opacity: 0`, `inert`, `aria-hidden="true"`) are left out, except a transparent native checkbox or radio whose `<label>` is visible (the custom-checkbox pattern), and a cross-origin iframe appears as a stub `iframe` named `cross-origin: <origin>`. The page keeps the refs of its last 10 snapshot or find passes. A stale ref answers `REF_GONE` (the element was re-rendered or removed) or `REF_NOT_FOUND` (the ref was never issued on this page); `REF_GONE` can come with up to 5 `freshRefs` to retry with.
 
 - `tabId`
 - Scope: `selector` (a CSS subtree), `ref` (the subtree of an earlier ref), `depth` (max nesting, `0` = top level only)
@@ -565,10 +567,10 @@ The accessibility tree of a tab, with a `ref` (`e12`) on every element that the 
 An image of the tab, captured over CDP. The result also carries a small JSON block that maps image pixels back to the `x` / `y` that click/hover/scroll take, so a point you spot in the image can be clicked directly.
 
 - `tabId`, `format` (`"png"` default | `"jpeg"`), `quality` (0–100, default 80, JPEG only)
-- Cut image tokens: `maxWidth` (100–4000, keeps the aspect ratio), `scale` (0.05–4), or `format: "jpeg"`
+- Cut image tokens: `maxWidth` (100–4000, keeps the aspect ratio), `scale` (0.05–4), or `format: "jpeg"`. The longest side is capped at 1568 px, and an image still too large after downscaling fails with `SCREENSHOT_TOO_LARGE`.
 - `fullPage` (default `false`) captures the whole scrollable page; `region` `{ x, y, width, height }` zooms into a viewport rectangle (`scale` up to 4, default 2 there)
-- `ref` or `selector`: just that element, scrolled into view, with a 4 px margin (`scale` defaults to 1). The result says `element.clipped: true` when the element is bigger than the viewport; an element that is gone or has no box is an error, never a full-viewport picture.
-- A background tab is shown for a moment and the tab you were on is switched straight back, because Chrome does not paint hidden tabs. The agent's blue control frame and the agent cursor are never in the picture.
+- `ref` or `selector`: just that element, scrolled into view, with a 4 px margin (`scale` defaults to 1). The result says `element.clipped: true` when the element is bigger than the viewport; an element that is gone or has no box is an error (`REF_GONE` or `REF_NOT_FOUND` for a ref), never a full-viewport picture.
+- For the active tab, the plain viewport and an element (`ref` / `selector`) are read without the debugger; `fullPage` and zoom (`scale` above 1 with a `region`) use CDP. A background tab is first captured over CDP without being shown (that attaches the debugger); if Chrome cannot capture it that way, the tab is shown briefly and the tab you were on is switched straight back. The agent's blue control frame and the agent cursor are never in the picture.
 - Read-only: retried on timeout.
 
 #### `browser_text`
@@ -577,6 +579,7 @@ The visible text of the page or of an element, including shadow DOM. The cheapes
 
 - `tabId`, `selector` (every visible match is included in page order; `matches` says how many when there is more than one, so `"h1, .price"` returns both)
 - `maxLength` (1–100000, default 5000 characters), `offset` (page through a long text with the `nextOffset` of a truncated result)
+- A `selector` that matches only hidden elements fails with `ELEMENT_HIDDEN`.
 - `mode`: `"all"` (default) or `"article"` — main content only, without navigation, headers, footers, sidebars and banners
 - Read-only: retried on timeout.
 
@@ -591,7 +594,7 @@ Locates elements from a natural-language description (`"login button"`, `"search
 
 #### `browser_act`
 
-The safe way to act: runs one validated action against an immutable [`browser_observe`](#browser_observe) snapshot. Before acting it checks snapshot ownership, document/route identity, target semantics, geometry, visibility, enabled state, allowed actions and click-point occlusion; a failed check returns a compact error (`DOCUMENT_CHANGED`, `STALE_STATE`, `TARGET_OCCLUDED`, `ACTION_NOT_ALLOWED`) and nothing is clicked — call `browser_observe` again.
+The safe way to act: runs one validated action against an immutable [`browser_observe`](#browser_observe) snapshot. Before acting it checks snapshot ownership, document/route identity, target semantics, geometry, visibility, enabled state, allowed actions and click-point occlusion; a failed check returns a compact error (`DOCUMENT_CHANGED`, `STALE_STATE`, `ELEMENT_COVERED` when another element covers the target, `ACTION_NOT_ALLOWED`, or `OBSERVATION_EXPIRED` after the snapshot's 60 s) and nothing is clicked — call `browser_observe` again.
 
 - `tabId`, `snapshotId`, `ref` (optional only for a page scroll)
 - `action`: `click` | `type` | `select` | `hover` | `scroll` | `keypress` | `focus` | `upload`
@@ -604,6 +607,7 @@ A real mouse click over CDP: focus moves, default actions run and the page sees 
 - `tabId`, and a target (one is required): `ref`, `selector`, or `x` + `y`
 - `button` (`"left"` | `"right"` | `"middle"`), `doubleClick`, `clickCount` (1–3, overrides `doubleClick`; `3` selects a line), `modifiers` (`ctrl` | `alt` | `shift` | `meta` — ctrl+click opens a link in a new tab), `trusted`
 - Falls back to synthetic DOM events if the debugger cannot attach.
+- A target that is hidden, disabled or covered by another element is refused, not clicked: the result is `ELEMENT_HIDDEN`, `ELEMENT_DISABLED` or `ELEMENT_COVERED`, and nothing was clicked (`browser_click_text` does the same). A checkbox or radio drawn under its own visible `<label>` is clicked on that label, and the result says `via: "label"`.
 
 #### `browser_click_text`
 
@@ -613,7 +617,7 @@ Clicks the element whose visible text you name — the tool for React dropdowns,
 
 #### `browser_type`
 
-Types with real key presses (`keydown` / `keypress` / `input` / `keyup` per character), so autocomplete and lookup widgets react as they do for a person. Returns the field's value after typing.
+Types with real key presses (`keydown` / `keypress` / `input` / `keyup` per character), so autocomplete and lookup widgets react as they do for a person. Returns `typed` (the number of characters typed) and the field's `value` (its first 100 characters).
 
 - `tabId`, `text`, `clear` (default `false`), `trusted`
 - Target: `ref` or `selector`; with neither, it types into the element that already has focus.
@@ -625,6 +629,7 @@ Real key presses over CDP: `Tab` moves focus (and fires blur), `Enter` submits, 
 
 - `tabId`, `key`: a name (`Enter`, `Escape`, `Tab`, `ArrowDown`, `a`), a combo (`ctrl+a`), or a space-separated sequence (`"ArrowDown ArrowDown Enter"`, `"ctrl+a Backspace"`)
 - `repeat` (1–100, repeats the whole sequence), `modifiers`, `ref` / `selector` (focus this element first), `trusted`
+- An unknown key name fails with `UNKNOWN_KEY`. To type text, use `browser_type`.
 
 #### `browser_scroll`
 
@@ -633,33 +638,35 @@ Scrolls the page or an element, including the virtual containers social feeds us
 - `tabId`, `direction` (`up` | `down` | `left` | `right`, default `down`), `amount` (pixels, default 500)
 - `selector` (a scroll container), `toElement` (a ref or selector to bring into view), `position` (`"top"` | `"bottom"`)
 - `x` + `y`: send a real mouse-wheel event at that point, scrolling whatever is under it (inner panels, maps, virtual lists)
+- The result reports `moved`, `position` and, when a container other than the page moved, `container`. A page whose document cannot scroll (an app shell) is scrolled through its inner scroll container. When nothing moves, the call fails with `NOT_SCROLLABLE`.
 
 #### `browser_hover`
 
 A real mouse move, to trigger tooltips, dropdown menus and hover-only states.
 
 - `tabId`, `ref` / `selector` / `x` + `y`, `trusted`
+- Without the debugger (`trusted: false`, or when it cannot attach) only the page's JS hover handlers run: the result says `trusted: false` with a note, and CSS `:hover` is not applied.
 
 #### `browser_select`
 
 Picks an option in a native `<select>`. For custom dropdowns built from `<div>`s, click the trigger and then click the option (`browser_click_text` is handy).
 
-- `tabId`, `ref` / `selector`, and one of `value`, `label` (the option text) or `index` (0-based)
+- `tabId`, `ref` / `selector`, and one of `value`, `label` (the option text) or `index` (0-based); no matching option fails with `OPTION_NOT_FOUND`.
 
 #### `browser_wait`
 
 Waits for a condition instead of a fragile sleep — useful on SPAs. Visible matches include shadow DOM and same-origin iframes.
 
-- `tabId`, `timeout` (ms, default 10000)
+- `tabId`, `timeout` (ms, default 10000; capped at 50000, and the result notes a capped request)
 - `selector` + `state` (`"visible"` default | `"hidden"` | `"attached"`); `text` (waits until it is on the page, or with `state: "hidden"` until it is gone; case-insensitive); `urlIncludes` (waits until the tab URL contains the string, e.g. after a client-side navigation)
-- `delay` (ms): a fixed pause that ignores the other options. Inside [`browser_batch`](#browser_batch) a pure `delay` sleeps locally instead of costing a daemon call.
+- `delay` (ms, capped at 30000; the result reports the time actually `waited`): a fixed pause that ignores the other options. Inside [`browser_batch`](#browser_batch) a pure `delay` sleeps locally instead of costing a daemon call (at most 10 s there).
 
 #### `browser_fill_form`
 
 Fills several fields in one call instead of one `browser_type` per field. Handles text inputs, selects, checkboxes and `contentEditable` elements, using setters that React and Vue notice.
 
 - `tabId`, `fields`: a list of `{ ref | selector, value (string or boolean), clear (default true) }`
-- `submit` (default `false`): submit the form after filling
+- `submit` (default `false`): submit the form after filling, through the form's own submit path (`requestSubmit`, so validation applies). Nothing is submitted when a field failed. `FORM_AMBIGUOUS` (the fields belong to several forms) and `NO_FORM` (no field is inside a `<form>`) fail before anything is filled; `SUBMIT_BLOCKED` means the form did not submit.
 
 #### `browser_drag`
 
@@ -668,12 +675,13 @@ Drag-and-drop with CDP mouse events.
 - `tabId`
 - Start: `startRef` / `startSelector` / `startX` + `startY`; end: `endRef` / `endSelector` / `endX` + `endY`
 - `steps` (default 10): intermediate mouse moves along the way
+- If the two points cannot both be in view at once, the call fails with `TARGET_OFFSCREEN`.
 
 #### `browser_upload_file`
 
 Uploads files without ever opening the file dialog — see [Uploading files](#what-it-can-do) above for examples. The input is found by `ref`, `selector`, or (with neither) as the first `input[type="file"]` on the page; `input` / `change` events fire afterwards.
 
-- `tabId`, `filePath` (one file) or `files` (several; the input must allow `multiple`). Paths are absolute and local to the machine running the browser.
+- `tabId`, `filePath` (one file) or `files` (several; the input must allow `multiple`). Paths are absolute and local to the machine running the browser. All of them are checked first: a missing or unreadable file fails with `FILE_NOT_FOUND` (only its file name is reported) and nothing is uploaded.
 - No local file? `imageBase64` (+ `fileName`, `mimeType`) uploads bytes directly, and `fromScreenshot: true` uploads a fresh PNG screenshot (`screenshotTabId`, `region`). Either goes into a file input, or is dropped onto a drop zone given by `ref` / `selector` / `x` + `y`.
 
 ### Chain, replay & record
@@ -697,7 +705,8 @@ browser_batch {
 → "batch: 5/5 steps ok", the last step's result, and per-step timings
 ```
 
-- `actions`: 1–200 steps of `{ tool, params }`. The top-level `tabId` is the default for every step that does not set its own.
+- `actions`: 1–100 steps of `{ tool, params }`. The top-level `tabId` is the default for every step that does not set its own.
+- **Time budget:** 50 s for the whole batch. No step starts after it: the rest are reported as `step i/n: TIMEOUT; k skipped`. A step already running finishes under its own timeout, and a pure `delay` step sleeps at most 10 s.
 - It **stops at the first failing step** and skips the rest, so the agent never acts on a page that did not reach the expected state; `continueOnError: true` keeps going. The result is flagged `isError` if any step failed.
 - `output`: `"all"` (default, every step's result), `"last"` (only the last step plus any failure) or `"errors"` (only failures). Use `last` / `errors` for long batches to save tokens.
 - Each step is validated and executed exactly as if it were called alone, so its own timeout and error payload apply. Every step is still a call against the per-session rate limit; a step the limit rejected never ran, so the batch waits out the window and resends it (up to 3 times).
@@ -723,9 +732,9 @@ browser_shortcuts { action: "run", name: "add-todo", tabId: 15, vars: { item: "B
 ```
 
 - `action`: `list` (name, description, step count, variables), `show` (the full definition), `save`, `run`, `delete`
-- `name`: letters, digits, `_`, `.`, `-` (max 64). `save` takes `description` (≤500 characters) and `actions` (≤200 steps, the same format as `browser_batch`); saving an existing name overwrites it.
+- `name`: 1–64 characters: letters, digits, `_`, `.`, `-`, starting with a letter, digit or `_` (otherwise `INVALID_NAME`). `save` takes `description` (≤500 characters) and `actions` (≤100 steps, the same format as `browser_batch`); saving an existing name overwrites it. Each step is checked on save: an unknown tool is `UNKNOWN_TOOL`, a tool that cannot run in a batch is `NOT_BATCHABLE`, and a malformed `{{placeholder}}` is `BAD_PLACEHOLDER`.
 - `{{variable}}` placeholders can sit in any string parameter; the variable list is detected automatically. A string that is *exactly* one variable keeps the value's type, so `"{{count}}"` can carry a number or a boolean.
-- `run` takes `vars`, `tabId` (the default tab for steps without their own), `continueOnError` and `output` (default `"last"`). A missing variable is an error that lists the variables the shortcut needs. It runs as a `browser_batch`, so it stops at the first failing step.
+- `run` takes `vars`, `tabId` (the default tab for steps without their own), `continueOnError` and `output` (default `"last"`). A missing variable fails with `MISSING_PARAM`, which lists the variables the shortcut needs. It runs as a `browser_batch`, so it stops at the first failing step.
 - Stored locally in `~/.browser-controller/shortcuts.json` (set `BC_SHORTCUTS_FILE` to move it); nothing leaves the machine.
 
 #### `browser_gif`
@@ -748,7 +757,7 @@ browser_gif { tabId: 15, action: "export", path: "/Users/me/Desktop/login-flow.g
 
 | `action` | What it does |
 |----------|--------------|
-| `start` | Begin recording this tab and capture the first frame (how the page looks now). Options: `width` (maximum frame width, 200–1600 px, default 800), `maxFrames` (1–500, default 300), `activate` (default `true`, see below). Starting again on the same tab throws the earlier frames away. |
+| `start` | Begin recording this tab and capture the first frame (how the page looks now). Options: `width` (maximum frame width, 200–1600 px, default 800), `maxFrames` (1–500, default 300), `activate` (default `false`, see below). Starting again on the same tab throws the earlier frames away. |
 | `frame` | Add a frame right now, e.g. to capture the end state after a read-only step. Needs a prior `start`; works while paused. |
 | `stop` | Pause capturing but keep the frames. Returns `frames`, `skipped` and `seconds`. |
 | `status` | Returns `recording`, `frames` and `skipped`. |
@@ -762,7 +771,7 @@ How it behaves:
 - **Timing.** Each frame is shown for as long as the real pause before the next action, limited to between 0.4 s and 2.5 s; the last frame holds for 1.5 s. Frames are JPEG screenshots (quality 70), downscaled when the page is wider than `width`.
 - **Palette.** The GIF uses a fixed 256-colour palette. Flat UI and text look fine; photos and gradients show banding.
 - **Frame cap.** After `maxFrames` frames, further ones are skipped and counted in `skipped`.
-- **Background tabs.** Chrome does not paint hidden tabs. With `activate: true` (default) each frame briefly shows the tab (~150 ms, as `browser_screenshot` does) and switches back; with `activate: false` frames are only taken while the tab is already visible, and the rest are counted in `skipped`.
+- **Background tabs.** Chrome does not paint hidden tabs. By default (`activate: false`) frames are taken only while the tab is visible: a background tab's frames are skipped and counted in `skipped`, with a note. With `activate: true` each frame briefly shows the tab (~150 ms, as `browser_screenshot` does) and switches the user's view back.
 - **Where frames live.** Per tab, in the extension, until you export or clear them. A recording follows a frozen tab that `browser_navigate` / `browser_tabs reload` replaced. Large GIFs travel from the extension to the server in parts of up to 600 KB, which the server reassembles.
 - **Timeout:** 120 s; not retried.
 
@@ -775,6 +784,7 @@ Goes to a URL in a tab and, by default, returns a compact snapshot of the new pa
 - `url`: a URL, or `"back"` / `"forward"` to move through the tab's history
 - `tabId`: optional — it defaults to the active tab, but pass it explicitly so you never navigate the page the user is reading
 - `waitUntil`: `"load"` (default) | `"domcontentloaded"`; `snapshot` (default `true`): set `false` to skip the inline snapshot and save tokens
+- The result has the final `url` (after redirects), `requestedUrl` when that differs, and `status` (the HTTP status when Chrome reported it; 404 and 500 are reported, and the page still loaded). A `204` response or a file download returns `noContent: true` or `download: true` without loading a page. A failed load is `NAVIGATION_FAILED`, and `back` / `forward` with no history entry is `NO_HISTORY_ENTRY`. A scheme-less address gets `https://` (`http://` for `localhost`, `127.0.0.1` and `[::1]`).
 - A hash-only change resolves as soon as the URL is set. A frozen tab is replaced in place, and the result carries the new `tabId`.
 
 #### `browser_tabs`
@@ -786,7 +796,7 @@ Lists and manages tabs. This is where every `tabId` comes from.
 - `create`: `url`, `active` (`false` opens it in the background so the user keeps their tab)
 - `focus`: `window: true` also brings the tab's window to the front
 - `reload`: `bypassCache` skips the HTTP cache; it also recovers a frozen (`TAB_WEDGED`) tab
-- `lock` / `unlock`: claim a tab for the calling agent so other agents queue behind it instead of racing — see [Multi-agent coordination](#multi-agent-coordination-two-agents-two-tabs)
+- `lock` / `unlock`: claim a tab for the calling agent. Another agent's call on a locked tab is refused at once with `TAB_LOCKED` until the owner unlocks it or disconnects — see [Multi-agent coordination](#multi-agent-coordination-two-agents-two-tabs)
 - `close`, `focus` and `reload` skip the per-tab queue, so they still work on a tab frozen by a native dialog (lock ownership is still checked).
 
 #### `browser_resize_window`
@@ -816,28 +826,29 @@ browser_emulate { tabId: 15, network: "slow-3g", cpuThrottling: 4, colorScheme: 
 - `colorScheme` (`"light"` | `"dark"` | `"none"`), `reducedMotion` (`"reduce"` | `"none"`), `userAgent` (`""` clears)
 - Settings merge with what is already active, and the result lists everything that is (`active`); with no setting the call only reports it.
 - Overrides last while the debugger session stays attached — it is kept attached instead of being dropped after 30 s idle, so the yellow banner stays. `reset: true` clears everything (detaches the session); closing the banner clears it too.
+- If Chrome drops the overrides (the debugger session ended), the next `browser_emulate` result lists them as `lost` with a `warning`. `about:blank` tabs can be emulated.
 
 #### `browser_list_browsers`
 
-Lists every browser (Chrome profile or instance with the extension) connected to the daemon: `browserId`, `label`, `connectedAt`, a `default` flag on the most recently connected one, and `selected` on the one this session uses. With a single browser connected you never need it. Answered by the daemon itself; read-only, so it is retried.
+Lists every browser (Chrome profile or instance with the extension) connected to the daemon: `browserId`, `label`, `connectedAt`, a `default` flag on the earliest-seen live browser (the first one this daemon saw that is still connected), and `selected` on the one this session uses. With a single browser connected you never need it. Answered by the daemon itself; read-only, so it is retried.
 
 #### `browser_select_browser`
 
-Routes all of this session's tool calls to one connected browser, by `browserId` or `label` from `browser_list_browsers`. `"auto"` goes back to the default (the most recently connected browser). Tab ids belong to their browser, so list the tabs again after switching.
+Routes all of this session's tool calls to one connected browser, by `browserId` or `label` from `browser_list_browsers`. `"auto"` goes back to the default (the earliest-seen live browser). Tab ids belong to their browser, so list the tabs again after switching.
 
 ### Debug & advanced
 
 #### `browser_console`
 
-What the page logged in a tab: `log`, `info`, `warn`, `error`, `debug` and uncaught errors. The buffer is per tab and holds 200 entries.
+What the page logged in a tab: `log`, `info`, `warn`, `error`, `debug`, failed `console.assert` calls, uncaught errors (`kind: "uncaught"`) and unhandled promise rejections (`kind: "rejection"`), each with up to 5 stack frames. The buffer is per tab and holds 200 entries; it starts empty on each new top-level document.
 
 - `tabId`, `pattern` (case-insensitive regex, e.g. `"error|fail"`), `level` (one level or a list), `limit` (1–200, the most recent N matches)
-- `browser` (default `false`): also return `browser.messages` — what Chrome itself reported for the page and the page's console never sees: failed resource loads (`Failed to load resource … 404`), deprecations, interventions, violations, security warnings — and `browser.issues`, the DevTools Issues (CORS, CSP, mixed content, cookies, form fields…) as `{ code, type, url, count }`. Both cover the current document from its load, read through the debugger (yellow banner); `pattern` / `level` / `limit` apply to them too.
+- `browser` (default `false`): also return `browser.messages` — what Chrome itself reported for the page and the page's console never sees: failed resource loads (`Failed to load resource … 404`), deprecations, interventions, violations, security warnings — and `browser.issues`, the DevTools Issues (CORS, CSP, mixed content, cookies, form fields…) as `{ code, type, url, count }` (at most 25 rows; the rest are counted in one `Truncated` row). Both cover the current document from its load, read through the debugger (yellow banner); `pattern` / `level` / `limit` apply to them too.
 - `clear` (default `false`): empty the tab's buffer after reading (with `browser`, Chrome's log too). Because it can mutate, the tool is never retried on timeout.
 
 #### `browser_network`
 
-The requests a tab made: `id`, method, URL, status, type and `durationMs`; failed ones carry the error. Per tab, capped at 200 entries. URLs longer than 200 characters are shortened in the list (`…[+N chars]`).
+The requests a tab made: `id`, method, URL, status, type and `durationMs`; failed ones carry the error. Per tab, capped at 200 entries. A request with a body carries a short `requestBody` summary (form fields, or the start of a text body) with secret-looking values redacted. URLs longer than 200 characters are shortened in the list (`…[+N chars]`).
 
 - `tabId`, `urlPattern` (substring, e.g. `"/api/"`), `filter` (URL regex), `type` (one or a list: `xhr`/`fetch`, `document`, `script`, `stylesheet`, `image`, `font`, `media`, `websocket`, … — any webRequest resource type), `failed` (only network errors and HTTP 4xx/5xx), `limit` (1–200), `fullUrls` (keep long URLs whole)
 - `requestId` (an `id` from the list): that one request in full, with its request and response headers. Values of credential and session headers (`Authorization`, `Cookie`, `Set-Cookie`, API keys, tokens…) read `[redacted]`. Response bodies are not captured.
@@ -856,10 +867,10 @@ browser_intercept { tabId: 15, action: "set-rules", rules: [
 ```
 
 - `action`: `set-rules`, `list-rules`, `clear-rules`, `list-captures`, `export-har`
-- **Rules** (`set-rules`, up to 50): `match` (a URL regex, ≤500 characters; match-all patterns such as `.*` are rejected), `action` (`block` | `redirect` | `header` | `log` | `mock`), `id`, `types` (resource types such as `xmlhttprequest`, `script`, `image`), `tabIds`, `enabled` (default `true`), and per action `redirectUrl`, `headers` (set on matching *requests*), `mockStatus` / `mockBody`.
-- **Scope:** rules apply to the `tabId` you pass (or to each rule's `tabIds`); with neither they are global. Calling `set-rules` again replaces the rules of that scope, and an empty list removes them.
-- **Enforcement is reported, not assumed.** The result has `enforcement`: `"full"`, `"partial"` or `"capture-only"`, plus an `enforced` count and an `unsupported` list with the reason for each rule Chrome cannot apply. Chrome cannot fake a response body, so `mock` rules are only recorded in the capture ledger (and make the result `"partial"`); `log` rules are capture-only by design and are not counted as enforced. If Chrome rejects the rule set (its regex dialect is stricter than JavaScript's), enforcement falls back to `capture-only` with a `reason`.
-- `list-rules`: the stored rules and whether each is enforced. `clear-rules`: with `tabId`, removes that tab's rules (global rules stay); without it, removes all.
+- **Rules** (`set-rules`, up to 50): `match` (a case-sensitive URL regex, ≤500 characters; match-all patterns such as `.*` are rejected), `action` (`block` | `redirect` | `header` | `log` | `mock`), `id`, `types` (resource types such as `xmlhttprequest`, `script`, `image`), `tabIds`, `enabled` (default `true`), and per action `redirectUrl`, `headers` (set on matching *requests*), `mockStatus` / `mockBody`.
+- **Scope:** rules apply to the `tabId` you pass, to each rule's `tabIds`, or with `global: true` to every tab of the browser, your own tabs included. `set-rules` with none of these fails with `TAB_REQUIRED`; passing both `tabId` and `global: true` fails with `INVALID_ARGUMENT`. Calling `set-rules` again replaces the rules of that scope, and an empty list removes them.
+- **Enforcement is reported, not assumed.** The result has `enforcement`: `"full"`, `"partial"` or `"capture-only"`, plus an `enforced` count and an `unsupported` list with the reason for each rule Chrome cannot apply. Chrome cannot fake a response body, so `mock` rules are only recorded in the capture ledger (and make the result `"partial"`); `log` rules are capture-only by design and are not counted as enforced. A pattern that Chrome's RE2 regex engine rejects (lookahead, backreferences…) fails with `INVALID_REGEX`, which names the rules, and nothing is stored. If Chrome refuses the rule set as a whole, the call fails with `DNR_REJECTED` and the previous rules stay in place. Where the `declarativeNetRequest` API is missing, enforcement is `capture-only` with a `reason`.
+- `list-rules`: the stored rules and whether each is enforced. `clear-rules`: with `tabId`, removes that tab's rules (global rules stay); without it, removes all. Rules survive a service-worker restart, and requests a rule blocks still appear in `browser_network`.
 - `list-captures` (needs `tabId`): the tab's recorded requests, with `intercept.matchedRuleIds` on those a rule matched. `filter` (URL regex) and `limit` (1–200) narrow it.
 - `export-har` (needs `tabId`): a HAR 1.2 file of the tab's requests with their headers and duration; `filter` and `limit` narrow it like `list-captures`. Credential and session header values are redacted (`_redacted: true`), and bodies are not captured.
 
@@ -872,12 +883,13 @@ browser_evaluate { tabId: 15, expression: "const r = await fetch('/api/items'); 
 ```
 
 - `tabId`, `expression`, `timeout` (1000–120000 ms, default 30000; awaits are included)
+- The result says which path ran: `via: "cdp"` or `via: "scripting"`. A script that does not finish within `timeout` fails with `TIMEOUT`. A thrown error comes back as `success: false` with the error's text.
 - `mode`: `"cdp"` (default — page CSP does not block it; the yellow "being debugged" banner shows while the debugger is attached; if the debugger cannot attach, it falls back to the `scripting` path) or `"scripting"` (via `chrome.scripting` in the page's MAIN world: no banner, but a strict CSP can reject it and top-level `await` is not available)
 - Prefer `browser_click` / `browser_type` over dispatching events by hand. Powerful and non-idempotent, so never retried.
 
 #### `browser_handle_dialog`
 
-Accepts or dismisses a native `alert` / `confirm` / `prompt`. A dialog freezes the page's JavaScript thread, so this tool goes straight to CDP and skips the per-tab queue — it works on a frozen page, and unblocks every other tool on that tab.
+Accepts or dismisses a native `alert` / `confirm` / `prompt`. A dialog freezes the page's JavaScript thread, so this tool goes straight to CDP and skips the per-tab queue (lock ownership is still checked); answering it unblocks every other tool on that tab. Chrome reports a dialog only to a debugger session that was attached when it opened, so the tool answers only a dialog that opened while the tab had one. Calls that use the debugger attach it (trusted clicks and key presses, `browser_evaluate` in `cdp` mode, native snapshots, `browser_emulate`); the session is detached after 30 s idle unless a dialog is open. Otherwise the result is `NO_DIALOG`. The answer gets one bounded 3 s attempt: if it does not finish, the result is `TIMEOUT` and the dialog may still be open.
 
 - `tabId`, `action` (`"accept"` | `"dismiss"`), `promptText` (the text to enter for a `prompt()`)
 
@@ -894,6 +906,7 @@ browser_run_action {
 ```
 
 - `tabId`, `code`, `actionParams` (passed to `execute`, default `{}`)
+- Errors: `SCRIPT_ERROR` (with the message) when the code throws, and `TIMEOUT` after 25 s.
 - Prefer the dedicated tools (`browser_click`, `browser_type`, `browser_snapshot`) for those jobs. Non-idempotent, so never retried.
 
 ### Use a site's own tools (WebMCP)
@@ -932,6 +945,7 @@ browser_webmcp_call { tabId: 15, name: "add_to_cart", input: { sku: "A-1", qty: 
 The discovery tool behind [progressive disclosure](#configuration). With `BROWSER_CONTROLLER_PROGRESSIVE=1` it is the only tool visible at startup, and the agent pulls in the others when it needs them; by default every tool is visible and this is optional.
 
 - `action`: `"list"` — every tool with its summary, a one-line "use this when…" guidance and whether it is active, preceded by a short task → tool guide; `"search"` (with `query`) — tools whose name, summary or description match any word; `"details"` (with `tool`) — the full JSON schema and description of one tool, **and activates it** so it can be called directly
+- A call to a tool that is not active yet activates it first, so it runs at once.
 - It cannot be used as a step inside `browser_batch` or `browser_shortcuts`.
 
 ### Timeouts and retries
@@ -950,7 +964,7 @@ Each tool declares its transport timeout next to its definition (`mcp-server/src
 | 120 s | `browser_gif` |
 | 125 s | `browser_evaluate` (always longer than its own `timeout`, which can be up to 120 s) |
 | 130 s | `browser_webmcp_call` (always longer than its own `timeout`, up to 115 s, plus the form scan) |
-| 300 s | `browser_batch`, `browser_shortcuts` (each step keeps its own timeout) |
+| 50 s (batch budget) | `browser_batch`, `browser_shortcuts`: no step starts after it; each step keeps its own timeout |
 
 Only the read-only tools are **retried on timeout**: `browser_observe`, `browser_snapshot`, `browser_screenshot`, `browser_text`, `browser_find`, `browser_list_browsers` and `browser_webmcp_list`. Every other tool — including `browser_console` and `browser_network` (which mutate on `clear: true`) — is never retried, so a click cannot fire twice.
 
@@ -1002,6 +1016,7 @@ To fully reset: stop your MCP clients, delete the folder, and the next run recre
 - Per-session rate limit of 120 calls/min protects the daemon from a runaway agent loop.
 - Per-tool timeouts (5–15s for most actions, 60s for navigation), co-located with each tool's definition so they can't drift from the registry.
 - **Idempotent read tools** (snapshot, screenshot, text, find) are retried on timeout; **side-effecting tools** (click, type, navigate, evaluate) — and `console`/`network` (which mutate on `clear:true`) — are **never** retried, so a click can't fire twice.
+- A browser response over the WebSocket message limit (1 MB; `BC_MAX_WS_MESSAGE_BYTES`) fails that one call with `RESPONSE_TOO_LARGE`; the connection stays up.
 - If another process already holds port 7225, the daemon refuses to start rather than killing a process it didn't spawn — it reports the conflict so you can resolve it deliberately.
 
 ### Protocol compatibility
@@ -1181,7 +1196,7 @@ Any MCP-compatible client. Cursor, Claude Desktop, Claude Code, Windsurf, Cline,
 <details>
 <summary>Can two agents really work at the same time without breaking each other?</summary>
 
-Yes. Each agent connects to the shared daemon, gets its own `sessionId`, and targets a specific `tabId`. Actions on the same tab serialize through a per-tab mutex; actions on different tabs run in parallel. Optionally an agent can `lock` a tab to claim exclusive access; other agents queue behind the lock rather than failing.
+Yes. Each agent connects to the shared daemon, gets its own `sessionId`, and targets a specific `tabId`. Actions on the same tab serialize through a per-tab mutex; actions on different tabs run in parallel. Optionally an agent can `lock` a tab to claim exclusive access; other agents' calls on that tab are refused at once with `TAB_LOCKED` until the owner unlocks it or disconnects.
 
 </details>
 

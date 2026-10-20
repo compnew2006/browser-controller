@@ -5,7 +5,7 @@ import { requireTabId, forwardHandler } from './types.js';
 export const pressKeyTool: ToolDefinition = {
   name: 'browser_press_key',
   summary: 'Press a keyboard key (Enter, Tab, Escape, etc.)',  description:
-    'Press a keyboard key or combination (Enter, Escape, Tab, ArrowDown, etc). Accepts combos as "ctrl+a" or via modifiers, space-separated sequences ("ArrowDown ArrowDown Enter", "ctrl+a Backspace") and repeat. Real key press over CDP: Tab moves focus (fires blur/focusout), Enter submits, arrows drive autocomplete menus.',
+    'Press a keyboard key or combination (Enter, Escape, Tab, ArrowDown, CapsLock, etc). Accepts combos as "ctrl+a" or via modifiers, space-separated sequences ("ArrowDown ArrowDown Enter", "ctrl+a Backspace") and repeat. Real key press over CDP: Tab moves focus (fires blur/focusout), Enter submits, arrows drive autocomplete menus. A name that is not a key fails with UNKNOWN_KEY (to type text, use browser_type).',
   inputSchema: z.object({
     tabId: requireTabId(),
     key: z.string().describe('Key name (e.g. "Enter", "Escape", "Tab", "ArrowDown", "a"), a combo ("ctrl+a") or a space-separated sequence ("ArrowDown ArrowDown Enter")'),

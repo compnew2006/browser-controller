@@ -20,6 +20,8 @@ type CdpParams = Record<string, unknown>;
 const cdp = {
   calls: [] as Array<{ tabId: number; method: string; params: CdpParams }>,
   attachError: null as Error | null,
+  attaches: 0, // chrome.debugger.attach calls
+  probeError: null as Error | null, // chrome.scripting failure for the main-world API probe
   evaluate: null as null | ((params: CdpParams) => Promise<unknown>),
   /** Forms the page's DOM holds, as DOM.performSearch would find them. */
   forms: [] as Array<{ name: string; autoSubmit?: boolean; documentURL: string; nodeName?: string }>,
@@ -48,9 +50,19 @@ async function realEvaluate(params: CdpParams) {
     onRemoved: { addListener: () => {} },
   },
   windows: { get: async () => ({ width: 1280, height: 900 }) },
-  scripting: { executeScript: async () => [{ result: 1 }] },
+  // Runs the injected function in this realm, where the fake page is the global
+  // document (install), like a main-world injection would.
+  scripting: {
+    executeScript: async (opts: { func: (...a: unknown[]) => unknown; args?: unknown[] }) => {
+      if (cdp.probeError && opts.func.name === 'hasWebMcpApi') throw cdp.probeError;
+      return [{ result: opts.func(...(opts.args ?? [])) }];
+    },
+  },
   debugger: {
-    attach: async () => { if (cdp.attachError) throw cdp.attachError; },
+    attach: async () => {
+      cdp.attaches++;
+      if (cdp.attachError) throw cdp.attachError;
+    },
     detach: async () => {},
     sendCommand: async (target: { tabId: number }, method: string, params: CdpParams = {}) => {
       cdp.calls.push({ tabId: target.tabId, method, params });
@@ -538,6 +550,8 @@ describe('browser_webmcp handlers (real cdpEvaluate over a mocked debugger)', ()
 
   beforeEach(() => {
     cdp.calls.length = 0;
+    cdp.attaches = 0;
+    cdp.probeError = null;
     cdp.attachError = null;
     cdp.evaluate = null;
     cdp.forms = [];
@@ -562,6 +576,31 @@ describe('browser_webmcp handlers (real cdpEvaluate over a mocked debugger)', ()
     const r = await list({ tabId: 7 });
     expect(r.success).toBe(true);
     expect(r.supported).toBe(false);
+  });
+
+  it('list on a page without the WebMCP API returns an empty list and a note, with no debugger attach', async () => {
+    // Regression: list attached the debugger and ran the page runner before it knew
+    // the page had no WebMCP API (a visible banner and a round trip for nothing).
+    delete page.main.document.modelContext;
+    const r = await list({ tabId: 7, waitMs: 500 });
+    expect(r).toMatchObject({ success: true, supported: false, count: 0, tools: [], untrustedContent: true });
+    expect(String(r.reason)).toMatch(/no WebMCP API/);
+    expect(cdp.attaches).toBe(0);
+    expect(cdp.calls).toHaveLength(0);
+  });
+
+  it('list on a page with WebMCP attaches once and runs the runner', async () => {
+    page.register({ name: 'echo' });
+    const r = await list({ tabId: 7 });
+    expect(r).toMatchObject({ supported: true, count: 1 });
+    expect(runnerEvals().length).toBeGreaterThan(0);
+  });
+
+  it('list whose API probe cannot answer takes the full path, which still reports its errors', async () => {
+    page.register({ name: 'echo' });
+    cdp.probeError = new Error('Cannot access contents of the page');
+    expect(await list({ tabId: 7 })).toMatchObject({ supported: true, count: 1 });
+    expect(await list({ tabId: 404 }).catch((e: Error) => e.message)).toMatch(/not found/);
   });
 
   it('call: completed result, budget timeout + 3000', async () => {

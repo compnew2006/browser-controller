@@ -118,13 +118,32 @@ describe("extension router (handleMessage)", () => {
     wedgedTabs.clear();
   });
 
+  it('a dialog answer from a non-owner is refused with TAB_LOCKED (it skips the queue, not the lock)', async () => {
+    const debuggerCalls: unknown[] = [];
+    const debugger0 = (globalThis as any).chrome.debugger;
+    const realSend = debugger0.sendCommand;
+    debugger0.sendCommand = async (...args: unknown[]) => { debuggerCalls.push(args); return {}; };
+    tabLocks.lock(3, 'session-a', { agentName: 'Claude', since: 1000 });
+    await handleMessage({ id: 'd1', tool: 'browser_handle_dialog', params: { tabId: 3, action: 'accept' }, sessionId: 'session-b' });
+    await flush();
+    expect(sent.find((f) => f.id === 'd1')).toMatchObject({ success: false });
+    expect(String(sent.find((f) => f.id === 'd1')?.error)).toMatch(/^TAB_LOCKED: tab 3 is locked by Claude \(session session-a\)/);
+    expect(debuggerCalls).toEqual([]); // the dialog was never touched
+    // The owner is not refused by the lock (whatever the dialog handler then says).
+    await handleMessage({ id: 'd2', tool: 'browser_handle_dialog', params: { tabId: 3, action: 'accept' }, sessionId: 'session-a' });
+    await flush();
+    expect(String(sent.find((f) => f.id === 'd2')?.error ?? '')).not.toMatch(/TAB_LOCKED/);
+    tabLocks.release(3);
+    debugger0.sendCommand = realSend;
+  });
+
   it('the lock owner recovering its own frozen tab keeps the lock on the replacement', async () => {
     const { replaceFrozenTab } = await import('../extension/lib/page-exec.js');
     (globalThis as any).chrome.tabs.create = async () => ({ id: 99 });
     (globalThis as any).chrome.tabs.remove = async () => {};
     tabLocks.lock(3, 'session-a');
     wedgedTabs.set(3, Date.now());
-    await expect(replaceFrozenTab({ id: 3, windowId: 1, index: 0, active: true }, null, 'session-b')).rejects.toThrow(/locked by session-a/);
+    await expect(replaceFrozenTab({ id: 3, windowId: 1, index: 0, active: true }, null, 'session-b')).rejects.toThrow(/^TAB_LOCKED: tab 3 is locked by session-a/);
     const fresh = await replaceFrozenTab({ id: 3, windowId: 1, index: 0, active: true }, null, 'session-a');
     expect(fresh.id).toBe(99);
     expect(tabLocks.owner(99)).toBe('session-a');
@@ -251,7 +270,7 @@ describe("extension router (handleMessage)", () => {
     expect((frame.result as { messages: unknown[] }).messages).toEqual([]);
   });
 
-  it("honors tab-lock ownership: a non-owner call waits instead of running (TOCTOU fix, end-to-end)", async () => {
+  it("honors tab-lock ownership: a non-owner call is refused at once with TAB_LOCKED (end-to-end)", async () => {
     tabLocks.lock(3, "ownerA");
     await handleMessage({
       id: "k2",
@@ -259,12 +278,29 @@ describe("extension router (handleMessage)", () => {
       params: { tabId: 3 },
       sessionId: "sessionB",
     });
-    // No reply yet — B is queued behind owner A's lock.
-    expect(sent.filter((f) => f.id === "k2")).toEqual([]);
-    tabLocks.unlock(3, "ownerA");
-    await new Promise((r) => setTimeout(r, 120));
+    await flush();
     const frame = sent.find((f) => f.id === "k2");
-    expect(frame?.success).toBe(true);
+    expect(frame).toMatchObject({ success: false });
+    expect(String(frame?.error)).toMatch(/^TAB_LOCKED: tab 3 is locked by ownerA since /);
+    // The refused call never ran, so this session never became the tab's controller.
+    expect(tabControl.controller(3)?.sessionId).not.toBe("sessionB");
+    tabLocks.unlock(3, "ownerA");
+    await handleMessage({ id: "k3", tool: "browser_console", params: { tabId: 3 }, sessionId: "sessionB" });
+    await flush();
+    expect(sent.find((f) => f.id === "k3")).toMatchObject({ success: true });
+  });
+
+  it("names the lock owner by its agent name in the TAB_LOCKED refusal", async () => {
+    // The owner's first call records its agent name; the lock taken later carries it.
+    await handleMessage({ id: "o1", tool: "browser_console", params: { tabId: 3 }, sessionId: "owner-s", agentName: "Claude" });
+    await flush();
+    tabLocks.lock(3, "owner-s");
+    await handleMessage({ id: "k4", tool: "browser_console", params: { tabId: 3 }, sessionId: "sessionC", agentName: "Cursor" });
+    await flush();
+    const frame = sent.find((f) => f.id === "k4");
+    expect(frame).toMatchObject({ success: false });
+    expect(String(frame?.error)).toMatch(/^TAB_LOCKED: tab 3 is locked by Claude \(session owner-s\) since /);
+    tabLocks.release(3);
   });
 });
 

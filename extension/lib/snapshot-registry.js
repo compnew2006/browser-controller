@@ -65,11 +65,11 @@ export class SnapshotRegistry {
         if (invalidated.sessionId !== sessionId) return this.failure('SNAPSHOT_NOT_FOUND', 'WRONG_SESSION');
         return this.failure('DOCUMENT_CHANGED');
       }
-      return this.failure(this.expiredIds.has(snapshotId) ? 'SNAPSHOT_EXPIRED' : 'SNAPSHOT_NOT_FOUND');
+      return this.failure(this.expiredIds.has(snapshotId) ? 'OBSERVATION_EXPIRED' : 'SNAPSHOT_NOT_FOUND');
     }
     if (this.isExpired(entry)) {
       this.expire(snapshotId);
-      return this.failure('SNAPSHOT_EXPIRED');
+      return this.failure('OBSERVATION_EXPIRED');
     }
     if (entry.tabId !== tabId) return this.failure('SNAPSHOT_NOT_FOUND', 'WRONG_TAB');
     if (entry.sessionId !== sessionId) return this.failure('SNAPSHOT_NOT_FOUND', 'WRONG_SESSION');
@@ -121,7 +121,7 @@ export class SnapshotRegistry {
     return {
       ok: false,
       error,
-      message: error === 'SNAPSHOT_EXPIRED'
+      message: error === 'OBSERVATION_EXPIRED'
         ? 'The observation expired; call browser_observe again.'
         : error === 'DOCUMENT_CHANGED'
           ? 'The page document changed; call browser_observe again.'

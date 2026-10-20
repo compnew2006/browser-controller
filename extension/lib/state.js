@@ -61,11 +61,24 @@ export const observationSnapshots = new SnapshotRegistry();
 // Pure, unit-tested primitives in lib/tab-concurrency.js.
 export const tabMutex = new TabMutexMap();
 export const windowCaptureMutex = new TabMutexMap();
-export const tabLocks = new TabLockMap();
+/** sessionId -> agent name, recorded by the router on each call (names the owner in TAB_LOCKED). */
+export const sessionAgentNames = new Map();
+export const tabLocks = new TabLockMap({ nameOf: (sessionId) => sessionAgentNames.get(sessionId) });
 // Which agent is acting on a tab (in-flight + a short linger). In-memory only:
 // it is a live indicator for the popup, not a guarantee, so a worker recycle
 // may drop it harmlessly. Not exclusive — see TabControlMap.
 export const tabControl = new TabControlMap();
+
+// The daemon instance (hello.instanceId) this worker last adopted. Locks are
+// only valid for the daemon that granted them; connection.js
+// adoptDaemonInstance() compares against this and releases the stale ones.
+let adoptedDaemonInstance = null;
+export function getAdoptedDaemonInstance() {
+  return adoptedDaemonInstance;
+}
+export function setAdoptedDaemonInstance(instanceId) {
+  adoptedDaemonInstance = instanceId;
+}
 
 export function getTabBuffer(map, tabId) {
   let arr = map.get(tabId);
@@ -100,6 +113,7 @@ export function persistSessionState() {
     chrome.storage.session.set({
       [SESSION_STATE_KEY]: {
         locks: tabLocks.snapshot(),
+        daemonInstance: adoptedDaemonInstance,
         fallbacks,
         observations: observationSnapshots.serialize(),
       },
@@ -117,13 +131,14 @@ export async function loadSessionState() {
     const stored = await chrome.storage.session.get(SESSION_STATE_KEY);
     const state = stored?.[SESSION_STATE_KEY];
     if (!state) return;
+    if (typeof state.daemonInstance === 'string') adoptedDaemonInstance = state.daemonInstance;
     if (Array.isArray(state.locks)) {
-      for (const { tabId, sessionId } of state.locks) {
+      for (const { tabId, sessionId, agentName, since } of state.locks) {
         // lock() refuses to steal: a stale entry for a tab another live session
         // re-locked is impossible here (we're the only instance), but the guard
         // costs nothing.
         try {
-          tabLocks.lock(tabId, sessionId);
+          tabLocks.lock(tabId, sessionId, { agentName: agentName ?? undefined, since: typeof since === 'number' ? since : undefined });
         } catch {}
       }
     }
@@ -161,10 +176,13 @@ export function dropTabState(tabId) {
 }
 
 // Short refs ("s4k2-17"): a per-worker salt keeps refs from a recycled service
-// worker from colliding with live ones in the page registry.
+// worker from colliding with live ones in the page registry. The counter is
+// three base-36 digits (46,656 prefixes): it used to wrap at 1,296, so snapshot
+// 1,297 reused snapshot 1's prefix and a stale ref could resolve to another element.
 const REF_SALT = Math.random().toString(36).slice(2, 4);
+const REF_SEQ_LIMIT = 36 ** 3;
 let refSeq = 0;
 export function nextRefPrefix(kind) {
-  refSeq = (refSeq + 1) % 1296;
+  refSeq = (refSeq + 1) % REF_SEQ_LIMIT;
   return `${kind}${REF_SALT}${refSeq.toString(36)}-`;
 }

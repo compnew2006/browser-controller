@@ -169,8 +169,13 @@ function cssEscape(value) {
 export function PAGE_FALLBACK_INSTALL() {
   if (globalThis.__browserControllerFallbackRuntime) return false;
 
-  /** Snapshot-side: capture a stable fallback descriptor for a ref'd element. */
-  function generateFallback(el) {
+  /**
+   * Snapshot-side: capture a stable fallback descriptor for a ref'd element.
+   * `pass` is one object per snapshot (or find) pass, shared by all its refs: it
+   * holds the sibling index that nth is computed from, so the page is walked once
+   * per pass, not once per ref.
+   */
+  function generateFallback(el, pass) {
   if (!el || !el.tagName) return null;
 
   function isStableId(id) {
@@ -247,7 +252,14 @@ export function PAGE_FALLBACK_INSTALL() {
 
   const role = el.getAttribute('role') || el.tagName.toLowerCase();
 
-  function computeNth(target, wantRole, wantText) {
+  /**
+   * nth = how many visible same-role elements before `target` (document order)
+   * share its text. The pass indexes the body once, grouped by role; each
+   * candidate's visibility and text are read once per pass and cached. So a ref
+   * costs string comparisons over its same-role predecessors, never a page walk
+   * or a style read per ref (a 1,000-row table froze when every ref re-walked it).
+   */
+  function computeNth(target, wantRole, wantText, pass) {
     if (!wantText) return 0;
     const textLow = wantText.trim().toLowerCase();
     const isTextMatch = (candidate) => {
@@ -259,22 +271,40 @@ export function PAGE_FALLBACK_INSTALL() {
       return false;
     };
 
-    let seen = 0;
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-    let node;
-    while ((node = walker.nextNode())) {
-      if (node === target) return seen;
-      const nodeRole = node.getAttribute('role') || node.tagName.toLowerCase();
-      if (nodeRole !== wantRole) continue;
+    if (!pass.byRole) {
+      pass.byRole = new Map();
+      pass.text = new Map();
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const nodeRole = node.getAttribute('role') || node.tagName.toLowerCase();
+        let list = pass.byRole.get(nodeRole);
+        if (!list) { list = []; pass.byRole.set(nodeRole, list); }
+        list.push(node);
+      }
+    }
+    // Visible text of one candidate, read at most once per pass (null when hidden).
+    const textOf = (node) => {
+      if (pass.text.has(node)) return pass.text.get(node);
+      let out = null;
       const style = getComputedStyle(node);
-      if (style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0) continue;
-      const rect = node.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) continue;
-      const nodeText = (node.innerText || node.textContent || '').split('\n')[0].trim();
-      const accessibleName = (
-        node.getAttribute('aria-label') || node.getAttribute('alt') || node.getAttribute('title') || ''
-      ).trim();
-      if (isTextMatch(nodeText) || isTextMatch(accessibleName)) seen++;
+      if (!(style.display === 'none' || style.visibility === 'hidden' || parseFloat(style.opacity) === 0)) {
+        const rect = node.getBoundingClientRect();
+        if (rect.width !== 0 && rect.height !== 0) {
+          out = {
+            nodeText: (node.innerText || node.textContent || '').split('\n')[0].trim(),
+            accessibleName: (node.getAttribute('aria-label') || node.getAttribute('alt') || node.getAttribute('title') || '').trim(),
+          };
+        }
+      }
+      pass.text.set(node, out);
+      return out;
+    };
+
+    let seen = 0;
+    for (const node of pass.byRole.get(wantRole) || []) {
+      if (node === target) return seen;
+      const t = textOf(node);
+      if (t && (isTextMatch(t.nodeText) || isTextMatch(t.accessibleName))) seen++;
     }
     return seen;
   }
@@ -295,7 +325,7 @@ export function PAGE_FALLBACK_INSTALL() {
     // the same (role+name). Captured at snapshot time so the resolver can pick
     // the CORRECT sibling when several elements share text+role (e.g. 3 "Like"
     // buttons). Borrowed from BrowserOS's nth-recovery idea.
-    nth: computeNth(el, role, text),
+    nth: computeNth(el, role, text, pass || {}),
   };
   }
 

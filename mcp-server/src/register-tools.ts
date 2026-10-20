@@ -1,4 +1,5 @@
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { allTools } from './tools/index.js';
 import { createMetaTool } from './tools/meta.js';
@@ -65,16 +66,17 @@ const payloadLimitsSchema = z.unknown().superRefine((value, ctx) => {
 
 /**
  * Tool registration, extracted from index.ts's main() so the progressive
- * disclosure wiring (disable-by-default + enable-on-details) is testable
- * without a live daemon (see tests/register-tools.test.ts, which drives a
- * real McpServer over InMemoryTransport).
+ * disclosure wiring (hidden until activated; a call or details activates) is
+ * testable without a live daemon (see tests/register-tools.test.ts, which drives
+ * a real McpServer over InMemoryTransport).
  *
- * - fullMode=true  → all tools registered enabled (default; safe for agents
- *   whose instructions call tools directly).
- * - fullMode=false → BROWSER_CONTROLLER_PROGRESSIVE: every browser tool starts
- *   disabled; only the browser_tools meta tool is visible. When the agent
- *   requests {action:"details"}, onActivate enables the tool and notifies the
- *   client via tools/list_changed.
+ * - fullMode=true  → all tools registered and listed (default; safe for agents
+ *   whose instructions call tools directly). No browser_tools meta tool.
+ * - fullMode=false → BROWSER_CONTROLLER_PROGRESSIVE: every tool stays enabled
+ *   but tools/list shows only browser_tools and the tools activated so far. A
+ *   call to any tool activates it first (so it runs at once), and
+ *   {action:"details"} activates it too. Each activation sends
+ *   tools/list_changed.
  */
 export interface ToolRegistration {
   toolHandles: Map<string, RegisteredTool>;
@@ -115,38 +117,60 @@ export function registerTools(
   fullMode: boolean,
   log: (msg: string) => void = () => {},
 ): ToolRegistration {
-  // Track which tools are enabled (for the meta tool's isActive callback).
+  // Tools the client can see and call (progressive mode: the activated ones).
   const activeTools = new Set<string>();
   const toolHandles = new Map<string, RegisteredTool>();
 
   const metaDeps = {
     onActivate: (toolName: string) => {
-      if (activeTools.has(toolName)) return; // already active
-      const handle = toolHandles.get(toolName);
-      if (handle) {
-        handle.enable();
-        activeTools.add(toolName);
-        server.sendToolListChanged();
-        log(`progressive disclosure: activated "${toolName}"`);
-      }
+      if (activeTools.has(toolName) || !toolHandles.has(toolName)) return; // already active, or unknown
+      activeTools.add(toolName);
+      server.sendToolListChanged();
+      log(`progressive disclosure: activated "${toolName}"`);
     },
     isActive: (toolName: string) => activeTools.has(toolName),
   };
 
-  // Register all browser tools, keeping handles for enable/disable control.
+  // Every tool stays ENABLED in both modes. The SDK rejects a call to a disabled
+  // tool before any handler runs, so a disabled tool could never be activated by
+  // being called. Progressive mode hides the inactive tools from tools/list
+  // instead (below), and a call to any tool activates it before it runs.
   for (const tool of allTools) {
-    const handle = server.tool(tool.name, tool.description, tool.inputSchema.shape, wrapHandler(tool, host));
+    const call = wrapHandler(tool, host);
+    const handle = server.tool(
+      tool.name,
+      tool.description,
+      tool.inputSchema.shape,
+      fullMode
+        ? call
+        : async (params: Record<string, unknown>) => {
+          metaDeps.onActivate(tool.name);
+          return call(params);
+        },
+    );
     toolHandles.set(tool.name, handle);
-    if (fullMode) {
-      activeTools.add(tool.name);
-    } else {
-      handle.disable(); // hidden until the agent activates it via browser_tools
-    }
+    if (fullMode) activeTools.add(tool.name);
   }
 
-  // Register the meta tool LAST (always enabled — it's the discovery entry point).
-  const metaTool = createMetaTool(metaDeps);
-  server.tool(metaTool.name, metaTool.description, metaTool.inputSchema.shape, wrapHandler(metaTool, host));
+  if (!fullMode) {
+    // The meta tool is the discovery entry point, so it is always listed.
+    const metaTool = createMetaTool(metaDeps);
+    server.tool(metaTool.name, metaTool.description, metaTool.inputSchema.shape, wrapHandler(metaTool, host));
+
+    // tools/list shows browser_tools plus the activated tools. The SDK's own list
+    // handler shows every enabled tool, so this one replaces it. Schemas use the
+    // agent's input direction, like the SDK's list does.
+    const listed = [...allTools, metaTool];
+    server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: listed
+        .filter((t) => t.name === metaTool.name || activeTools.has(t.name))
+        .map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: z.toJSONSchema(t.inputSchema, { io: 'input', target: 'draft-7' }) as { type: 'object'; properties?: Record<string, object> },
+        })),
+    }));
+  }
 
   return { toolHandles, activeTools };
 }

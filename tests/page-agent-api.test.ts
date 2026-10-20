@@ -88,6 +88,8 @@ class FakeDocument extends FakeRoot {
   activeElement: FakeElement | null = null;
   defaultView: any;
   hit: FakeElement | null = null;
+  /** Everything stacked at the probed point, topmost first (default: just `hit`). */
+  stack: FakeElement[] | null = null;
 
   constructor() {
     super(null);
@@ -98,6 +100,7 @@ class FakeDocument extends FakeRoot {
       requestAnimationFrame: (callback: Function) => callback(),
       Event: FakeEvent,
       MouseEvent: FakeEvent,
+      PointerEvent: FakeEvent,
       KeyboardEvent: FakeEvent,
       HTMLInputElement: class {},
       HTMLTextAreaElement: class {},
@@ -111,7 +114,8 @@ class FakeDocument extends FakeRoot {
   }
 
   getElementById(id: string) { return this.elements.find((element) => element.id === id) || null; }
-  elementFromPoint() { return this.hit; }
+  elementsFromPoint() { return this.stack ?? (this.hit ? [this.hit] : []); }
+  elementFromPoint() { return this.elementsFromPoint()[0] ?? null; }
   execCommand(_command: string, _ui: boolean, value: string) {
     if (this.activeElement) this.activeElement.textContent += value;
     return true;
@@ -157,6 +161,12 @@ function observe(document: FakeDocument, snapshotId = 's_test') {
   });
 }
 
+/** A mouse click as the page sees it: pointer arrives, presses, releases, clicks. */
+const CLICK_EVENTS = [
+  'pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove',
+  'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click',
+];
+
 function act(observation: any, params: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return PAGE_ACT_V2({
     snapshotId: observation.snapshotId,
@@ -184,7 +194,7 @@ describe('page-side Observation Engine V2', () => {
 
     expect(result.elements).toEqual([
       expect.objectContaining({
-        ref: 'e1', role: 'button', name: 'Continue', state: { disabled: false, checked: false, selected: false },
+        ref: 'e1', role: 'button', name: 'Continue', state: { disabled: false, selected: false },
         bbox: [10, 20, 120, 32], visible: true, interactable: true,
         allowedActions: ['click', 'focus', 'hover'],
       }),
@@ -379,7 +389,7 @@ describe('page-side Safe Action Engine', () => {
 
     const result = await act(observation, { action: 'click', ref: 'e1' });
     expect(result).toMatchObject({ success: true, ok: true, action: 'click', ref: 'e1' });
-    expect(button.events).toEqual(['mouseover', 'mousedown', 'mouseup', 'click']);
+    expect(button.events).toEqual(CLICK_EVENTS);
   });
 
   it('a click reports its top-level point (browser_gif rings it), including frame offsets', async () => {
@@ -441,12 +451,12 @@ describe('page-side Safe Action Engine', () => {
     const result = await act(observe(document), { action: 'click', ref: 'e1' });
     expect(result).toMatchObject({
       success: false,
-      error: 'TARGET_OCCLUDED',
+      error: 'ELEMENT_COVERED',
       blockingElement: { role: 'dialog', name: 'Cookie preferences', tag: 'div' },
     });
     expect(await act(observe(document, 's_hover_overlay'), { action: 'hover', ref: 'e1' })).toMatchObject({
       success: false,
-      error: 'TARGET_OCCLUDED',
+      error: 'ELEMENT_COVERED',
     });
   });
 
@@ -454,12 +464,27 @@ describe('page-side Safe Action Engine', () => {
     const document = new FakeDocument();
     const button = document.add('button', 'Continue');
     const shield = document.add('div', 'agent test controlling the tab', { id: '__bc-lock-shield' });
-    document.hit = shield;
+    // The shield is stacked over the button: the page element is still the hit.
+    document.stack = [shield, button];
 
     const result = await act(observe(document, 's_lock_shield'), { action: 'click', ref: 'e1' });
 
     expect(result).toMatchObject({ success: true, ok: true, action: 'click', ref: 'e1' });
-    expect(button.events).toEqual(['mouseover', 'mousedown', 'mouseup', 'click']);
+    expect(button.events).toEqual(CLICK_EVENTS);
+  });
+
+  it('the lock shield is skipped but a real cover above the target still fails', async () => {
+    const document = new FakeDocument();
+    const button = document.add('button', 'Continue');
+    const shield = document.add('div', '', { id: '__bc-lock-shield' });
+    const cover = document.add('div', 'Promo banner', { role: 'dialog' });
+    document.stack = [shield, cover, button];
+    expect(await act(observe(document, 's_shield_cover'), { action: 'click', ref: 'e1' })).toMatchObject({
+      success: false,
+      error: 'ELEMENT_COVERED',
+      blockingElement: { role: 'dialog', name: 'Promo banner', tag: 'div' },
+    });
+    expect(button.events).toEqual([]);
   });
 
   it('accepts descendant and open-shadow host hit results', async () => {

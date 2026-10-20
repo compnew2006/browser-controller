@@ -5,10 +5,12 @@
  *   - {@link TabMutexMap}: one promise-chain per tabId. Calls to the SAME tab
  *     serialize; calls to DIFFERENT tabs run in parallel. (2.1)
  *   - {@link TabLockMap}: per-agent ownership of a tab. A call from a non-owner
- *     session waits (queues) until the owner releases. (2.2)
+ *     session fails at once with TAB_LOCKED: an explicit lock is not something
+ *     to queue behind for half a minute. (2.2)
  *
- * background.js wires these together via runOnTab(); the vitest suite in
- * tests/tab-concurrency.test.ts proves the ordering guarantees.
+ * router.js wires these together via runOnTab(); the vitest suites in
+ * tests/tab-concurrency.test.ts and tests/wp6-tab-lock-fail-fast.test.ts prove
+ * the ordering and refusal guarantees.
  */
 
 export class TabMutexMap {
@@ -54,31 +56,71 @@ export class TabMutexMap {
   }
 }
 
+/**
+ * The message of the TAB_LOCKED refusal: which agent holds the tab, and since
+ * when. `grant` is a TabLockMap grant ({sessionId, agentName, since}).
+ * @param {number} tabId
+ * @param {{sessionId: string, agentName: string|null, since: number}} grant
+ * @returns {string}
+ */
+export function tabLockedMessage(tabId, grant) {
+  const who = grant.agentName ? `${grant.agentName} (session ${grant.sessionId})` : grant.sessionId;
+  const since = new Date(grant.since).toISOString();
+  return `TAB_LOCKED: tab ${tabId} is locked by ${who} since ${since}. The lock ends when that agent unlocks the tab or disconnects; use another tab until then.`;
+}
+
+/**
+ * Explicit per-tab locks: tabId -> {sessionId, agentName, since}. Only the
+ * owning session may act on a locked tab; any other session is refused at once
+ * (see check()). Locks are taken with lock() and ended with unlock(), release()
+ * or releaseByOwner().
+ */
 export class TabLockMap {
-  constructor() {
-    /** @type {Map<number, string>} tabId -> sessionId */
+  /**
+   * @param {{nameOf?: (sessionId: string) => (string|null|undefined)}} [options]
+   *   Resolves the agent name of a session when a lock is taken, so the refusal
+   *   can name the owner.
+   */
+  constructor({ nameOf = () => null } = {}) {
+    /** @type {Map<number, {sessionId: string, agentName: string|null, since: number}>} */
     this.locks = new Map();
-    /** lock-wait timeout so a forgotten lock can't hang a caller forever */
-    this.acquireTimeoutMs = 30_000;
+    this.nameOf = nameOf;
   }
 
   /** Who owns tabId, or undefined if unlocked. */
   owner(tabId) {
-    return this.locks.get(tabId);
+    return this.locks.get(tabId)?.sessionId;
   }
 
-  /** Claim tabId for sessionId without stealing another session's lock. */
-  lock(tabId, sessionId) {
-    const owner = this.locks.get(tabId);
-    if (owner !== undefined && owner !== sessionId) {
-      throw new Error(`Tab ${tabId} is already locked by ${owner}`);
-    }
-    this.locks.set(tabId, sessionId);
+  /** The full grant for tabId (owner, agent name, lock time), or undefined. */
+  grantOf(tabId) {
+    const grant = this.locks.get(tabId);
+    return grant ? { ...grant } : undefined;
+  }
+
+  /**
+   * Claim tabId for sessionId without stealing another session's lock. A session
+   * that already holds the lock keeps its original grant. `grant` restores a
+   * persisted agent name and lock time; without it the name comes from nameOf
+   * and the time is now.
+   * @param {number} tabId
+   * @param {string} sessionId
+   * @param {{agentName?: string|null, since?: number}} [grant]
+   */
+  lock(tabId, sessionId, grant) {
+    const held = this.locks.get(tabId);
+    if (held && held.sessionId !== sessionId) throw new Error(tabLockedMessage(tabId, held));
+    if (held) return;
+    this.locks.set(tabId, {
+      sessionId,
+      agentName: grant?.agentName ?? this.nameOf(sessionId) ?? null,
+      since: grant?.since ?? Date.now(),
+    });
   }
 
   /** Release tabId only when the caller owns it. */
   unlock(tabId, sessionId) {
-    if (this.locks.get(tabId) === sessionId) {
+    if (this.owner(tabId) === sessionId) {
       this.locks.delete(tabId);
     }
   }
@@ -98,8 +140,8 @@ export class TabLockMap {
    */
   releaseByOwner(sessionId) {
     const released = [];
-    for (const [tabId, owner] of this.locks) {
-      if (owner === sessionId) {
+    for (const [tabId, grant] of this.locks) {
+      if (grant.sessionId === sessionId) {
         this.locks.delete(tabId);
         released.push(tabId);
       }
@@ -107,9 +149,14 @@ export class TabLockMap {
     return released;
   }
 
-  /** @returns {Array<{tabId:number,sessionId:string}>} serializable snapshot. */
+  /** @returns {Array<{tabId:number,sessionId:string,agentName:string|null,since:number}>} serializable snapshot. */
   snapshot() {
-    return Array.from(this.locks.entries()).map(([tabId, sessionId]) => ({ tabId, sessionId }));
+    return Array.from(this.locks, ([tabId, g]) => ({
+      tabId,
+      sessionId: g.sessionId,
+      agentName: g.agentName,
+      since: g.since,
+    }));
   }
 
   /** Release all locks. */
@@ -118,29 +165,16 @@ export class TabLockMap {
   }
 
   /**
-   * Wait until tabId is unlocked OR owned by sessionId (i.e. this session may
-   * proceed). Resolves immediately if already eligible; otherwise polls.
-   * @returns {Promise<void>}
+   * Refuse a call from `sessionId` on a tab that another session holds an
+   * explicit lock on. Throws TAB_LOCKED at once, without waiting for the owner.
+   * A call with no session (status reads) is never gated.
+   * @param {number} tabId
+   * @param {string|null} sessionId
    */
-  async waitFor(tabId, sessionId) {
-    if (sessionId == null) return; // no session → no locking semantics
-    const owner = this.locks.get(tabId);
-    if (owner === undefined || owner === sessionId) return;
-
-    const start = Date.now();
-    return new Promise((resolve, reject) => {
-      const tick = () => {
-        const cur = this.locks.get(tabId);
-        if (cur === undefined || cur === sessionId) {
-          resolve();
-        } else if (Date.now() - start > this.acquireTimeoutMs) {
-          reject(new Error(`Timed out waiting for tab ${tabId} lock owned by ${cur}`));
-        } else {
-          setTimeout(tick, 50);
-        }
-      };
-      tick();
-    });
+  check(tabId, sessionId) {
+    if (sessionId == null) return;
+    const held = this.locks.get(tabId);
+    if (held && held.sessionId !== sessionId) throw new Error(tabLockedMessage(tabId, held));
   }
 }
 
@@ -245,6 +279,14 @@ export class TabControlMap {
   }
 
   /**
+   * Forget every tab: the daemon that drove them is gone (see adoptDaemonInstance
+   * in connection.js). A call still running on a forgotten entry ends harmlessly.
+   */
+  clear() {
+    this.entries.clear();
+  }
+
+  /**
    * Forget `sessionId` (agent disconnected): drop its calls, and its label
    * unless another session still has a call running on that tab.
    */
@@ -274,14 +316,14 @@ export class TabControlMap {
 }
 
 /**
- * Convenience wrapper combining lock + mutex, matching runOnTab in background.js.
+ * Convenience wrapper combining lock + mutex, matching runOnTab in router.js.
  *
- * Ownership is re-checked INSIDE the mutex task: checking only before joining
- * the queue left a window (TOCTOU) where another session could lock the tab
- * between waitFor() resolving and fn() actually starting, letting a non-owner
- * act on a locked tab. When the tab changed hands, the task defers and the
- * outer loop waits again. waitFor() stays OUTSIDE the mutex — waiting while
- * holding the tab mutex would deadlock the owner's own unlock call.
+ * The lock is checked before the call joins the per-tab queue, and again INSIDE
+ * the mutex task: checking only before joining left a window (TOCTOU) where
+ * another session could lock the tab between the check and fn() starting. When
+ * the tab changed hands, the task defers and the check runs again, which now
+ * refuses the call with TAB_LOCKED. check() stays OUTSIDE the mutex, so a
+ * refused call never holds the queue.
  *
  * @param {TabLockMap} locks
  * @param {TabMutexMap} mutex
@@ -293,7 +335,7 @@ const DEFER = Symbol('runOnTab.defer');
 
 export async function runOnTab(locks, mutex, tabId, sessionId, fn) {
   for (;;) {
-    await locks.waitFor(tabId, sessionId);
+    locks.check(tabId, sessionId);
     const out = await mutex.run(tabId, async () => {
       const owner = locks.owner(tabId);
       if (sessionId != null && owner !== undefined && owner !== sessionId) return DEFER;

@@ -6,7 +6,7 @@ export const actTool: ToolDefinition = {
   name: 'browser_act',
   summary: 'Safely act on a browser_observe snapshot ref',
   description:
-    'Run a freshness-, semantics-, geometry-, visibility-, and occlusion-validated action against an immutable browser_observe snapshot. Call browser_observe again after stale/document errors.',
+    'Run a freshness-, semantics-, geometry-, visibility-, and occlusion-validated action against an immutable browser_observe snapshot. A target covered by another page element fails with ELEMENT_COVERED. Enter in a single-line form field submits its form. Call browser_observe again after stale/document errors and after OBSERVATION_EXPIRED.',
   inputSchema: z.object({
     tabId: requireTabId(),
     snapshotId: z.string().min(1).describe('snapshotId returned by browser_observe'),

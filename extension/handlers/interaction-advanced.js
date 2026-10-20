@@ -3,57 +3,45 @@
  * orchestration. Kept separate from the common pointer/keyboard handlers so
  * each module stays focused and reviewable.
  */
-import { resolveTab, safeExec, execDom, getFallback } from '../lib/page-exec.js';
-import { withCdp } from '../lib/cdp-session.js';
+import { resolveTab, execDom, getFallback } from '../lib/page-exec.js';
+import { withCdp, getOpenDialog, clearOpenDialog, sendAttached, settleWithin, TIMED_OUT } from '../lib/cdp-session.js';
 import { openShield, releaseShield, cursorTo, sleep } from '../lib/trusted-input.js';
+import { refErrorMessage, selectorErrorMessage } from '../lib/ref-errors.js';
 
+/** One answer to a dialog. A page that never accepts it returns TIMEOUT instead of holding the tab. */
+const DIALOG_ANSWER_MS = 3_000;
+
+/**
+ * handle_dialog: answers the JavaScript dialog open on the tab, over the tab's
+ * debugger session. The session records each dialog as it opens (cdp-session
+ * enables Page at attach), and that record says what is open. With nothing
+ * recorded the answer is still tried once over the existing attachment: a record
+ * can be lost while Chrome keeps the attachment (service-worker restart). No page
+ * code runs, and no debugger is attached just to look for a dialog.
+ */
 export async function handleDialog(params) {
   const { tabId, action = 'accept', promptText } = params;
   const tab = await resolveTab(tabId);
+  const recorded = getOpenDialog(tab.id);
 
-  // An ALREADY-OPEN native dialog freezes the page's JS thread — overrides
-  // can't help in that state. CDP handles it out-of-band, so try it first.
+  let answer;
   try {
-    return await withCdp(tab.id, async (send) => {
-      await send('Page.enable');
-      await send('Page.handleJavaScriptDialog', {
-        accept: action === 'accept',
-        promptText: promptText || '',
-      });
-      return { success: true, handled: 'open-dialog', action };
-    });
-  } catch {
-    // No dialog showing (or debugger unavailable) — arm future overrides.
-  }
-
-  // MAIN world is required: the page must see the overridden dialog methods.
-  return safeExec(tabId, (_action, _promptText) => {
-    window.__mcpDialogLog = window.__mcpDialogLog || [];
-    window.__mcpDialogAction = _action;
-    window.__mcpDialogPromptText = _promptText || '';
-
-    if (!window.__mcpDialogOverrides) {
-      window.__mcpDialogOverrides = true;
-      window.alert = function (msg) {
-        window.__mcpDialogLog.push({ type: 'alert', message: String(msg), timestamp: Date.now(), handled: window.__mcpDialogAction });
-      };
-      window.confirm = function (msg) {
-        const accepted = window.__mcpDialogAction === 'accept';
-        window.__mcpDialogLog.push({ type: 'confirm', message: String(msg), timestamp: Date.now(), result: accepted });
-        return accepted;
-      };
-      window.prompt = function (msg, def) {
-        const accepted = window.__mcpDialogAction === 'accept';
-        const text = accepted ? (window.__mcpDialogPromptText || def || '') : null;
-        window.__mcpDialogLog.push({ type: 'prompt', message: String(msg), timestamp: Date.now(), result: text });
-        return accepted ? text : null;
-      };
+    answer = await settleWithin(
+      sendAttached(tab.id, 'Page.handleJavaScriptDialog', { accept: action === 'accept', promptText: promptText || '' }),
+      DIALOG_ANSWER_MS,
+    );
+  } catch (err) {
+    if (/no dialog is showing|not attached/i.test(String(err?.message || err))) {
+      clearOpenDialog(tab.id);
+      return { success: false, error: `NO_DIALOG: Chrome has no dialog to answer on tab ${tab.id}. A dialog that opened before a debugger session was attached to this tab is out of reach: Chrome answers only the session that saw it open.` };
     }
-
-    const log = [...window.__mcpDialogLog];
-    window.__mcpDialogLog = [];
-    return { success: true, dialogs: log, message: log.length ? 'Retrieved dialog history' : 'Overrides configured' };
-  }, [action, promptText], { world: 'MAIN' });
+    throw err;
+  }
+  if (answer === TIMED_OUT) {
+    return { success: false, error: `TIMEOUT: the dialog was not answered within ${DIALOG_ANSWER_MS}ms; it may still be open.` };
+  }
+  clearOpenDialog(tab.id);
+  return { success: true, handled: true, action, type: recorded?.type ?? null, message: recorded?.message ?? null };
 }
 
 export async function handleDrag(params) {
@@ -67,19 +55,35 @@ export async function handleDrag(params) {
     const coords = await execDom(tabId, (_sRef, _sSel, _eRef, _eSel, _sFb, _eFb) => {
       const D = globalThis.__bcDom;
       if (!D) return { __needDom: true };
-      function find(ref, selector, fb) {
-        if (!ref && !selector) return null;
-        const el = D.resolve(ref, selector, fb).el;
-        if (!el) return null;
-        el.scrollIntoView({ behavior: 'instant', block: 'center' });
-        const { x, y } = D.centerOf(el);
-        return { x, y };
-      }
-      return { start: find(_sRef, _sSel, _sFb), end: find(_eRef, _eSel, _eFb) };
+      const find = (ref, selector, fb) => (ref || selector ? D.resolve(ref, selector, fb).el || null : null);
+      const inView = (point) => point.x >= 0 && point.y >= 0
+        && point.x <= globalThis.innerWidth && point.y <= globalThis.innerHeight;
+      const reveal = (el) => el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+      const sEl = find(_sRef, _sSel, _sFb);
+      const eEl = find(_eRef, _eSel, _eFb);
+      if (!sEl || !eEl) return { start: null, end: null };
+      // Both points are measured after the last scroll: scrolling to one point
+      // can move the other out of view, so a point measured earlier is stale.
+      reveal(sEl);
+      let start = D.centerOf(sEl);
+      let end = D.centerOf(eEl);
+      if (inView(start) && inView(end)) return { start, end };
+      reveal(eEl);
+      start = D.centerOf(sEl);
+      end = D.centerOf(eEl);
+      if (inView(start) && inView(end)) return { start, end };
+      // Neither scroll order keeps both points in the viewport at once.
+      return { start: null, end: null, offscreen: true };
     }, [startRef, startSelector, endRef, endSelector, getFallback(tabId, startRef), getFallback(tabId, endRef)]);
 
-    if (coords.start) { sx = coords.start.x; sy = coords.start.y; }
-    if (coords.end) { ex = coords.end.x; ey = coords.end.y; }
+    if (coords?.offscreen) {
+      return {
+        success: false,
+        error: 'TARGET_OFFSCREEN: the drop target cannot be scrolled into the viewport together with the drag source; move one closer or drag in steps.',
+      };
+    }
+    if (coords?.start) { sx = coords.start.x; sy = coords.start.y; }
+    if (coords?.end) { ex = coords.end.x; ey = coords.end.y; }
   }
 
   if (sx == null || sy == null || ex == null || ey == null) {
@@ -119,35 +123,87 @@ export async function handleFillForm(params) {
   if (!fields || !Array.isArray(fields) || fields.length === 0) {
     throw new Error('fields array is required');
   }
-  await resolveTab(tabId);
+  const tab = await resolveTab(tabId);
 
   // Attach each ref's snapshot descriptor so stale refs re-resolve (verified) in the page.
   const withFb = fields.map((f) => (f && f.ref ? { ...f, fb: getFallback(tabId, f.ref) } : f));
 
-  return execDom(tabId, (_fields, _submit) => {
+  const res = await execDom(tabId, (_fields, _submit) => {
     const D = globalThis.__bcDom;
     if (!D) return { __needDom: true };
 
+    // The value setter of the element's OWN realm: an element of a same-origin
+    // iframe is not an HTMLInputElement of this window, so the top window's
+    // prototype setter would throw. Same walk as browser_type's synthetic path.
     const setNativeValue = (target, nextValue) => {
-      const prototype = target instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+      let setter = null;
+      for (let p = Object.getPrototypeOf(target); p && !setter; p = Object.getPrototypeOf(p)) {
+        setter = Object.getOwnPropertyDescriptor(p, 'value')?.set || null;
+      }
       if (setter) setter.call(target, nextValue);
       else target.value = nextValue;
     };
+    // A form's default submit control, as implicit submission picks it.
+    const SUBMITTER = 'button:not([type]):not(:disabled), button[type="submit"]:not(:disabled), '
+      + 'input[type="submit"]:not(:disabled), input[type="image"]:not(:disabled)';
+    /**
+     * Submit through the form's own submit path (requestSubmit: validation and
+     * submit handlers run). Returns true only when the submit event fired, so a
+     * form blocked by constraint validation is reported as not submitted.
+     */
+    const submitForm = (form) => {
+      let fired = false;
+      const onSubmit = () => { fired = true; };
+      form.addEventListener('submit', onSubmit);
+      try {
+        const submitter = form.querySelector(SUBMITTER);
+        if (typeof form.requestSubmit === 'function') {
+          if (submitter) form.requestSubmit(submitter);
+          else form.requestSubmit();
+        } else if (submitter) {
+          submitter.click();
+        }
+      } finally {
+        form.removeEventListener('submit', onSubmit);
+      }
+      return fired;
+    };
+
+    // The element a field names, or why not: NO_TARGET (neither ref nor selector),
+    // REF_GONE (a ref that is stale or was never issued here; the extension words
+    // it), INVALID_SELECTOR, or NO_MATCH (a selector that matches nothing).
+    const resolveField = (field) => {
+      if (!field || !(field.ref || field.selector)) return { el: null, error: 'NO_TARGET' };
+      const found = D.resolve(field.ref, field.selector, field.fb);
+      if (found.el) return found;
+      if (field.ref) return { el: null, error: 'REF_GONE' };
+      return { el: null, error: found.error === 'INVALID_SELECTOR' ? 'INVALID_SELECTOR' : 'NO_MATCH' };
+    };
+    // The form every field belongs to, decided before typing anything, so a
+    // submit that cannot target one form is refused with no side effects.
+    let formToSubmit = null;
+    if (_submit) {
+      const owners = [...new Set(_fields.map((f) => resolveField(f).el).filter(Boolean).map((el) => el.form || null))];
+      if (owners.length > 1) {
+        return { success: false, error: 'FORM_AMBIGUOUS: the fields belong to several forms, so there is no single form to submit; nothing was filled.' };
+      }
+      if (owners.length === 1 && owners[0] === null) {
+        return { success: false, error: 'NO_FORM: none of the fields is inside a <form>, so there is nothing to submit; nothing was filled.' };
+      }
+      formToSubmit = owners[0] ?? null;
+    }
+
     const results = [];
-    let containingForm = null;
     for (const field of _fields) {
-      const { ref, selector, value, clear, fb } = field;
-      const el = D.resolve(ref, selector, fb).el;
+      const { ref, selector, value, clear } = field;
+      // Resolved as each field is reached: filling one field may re-render another.
+      const { el, error } = resolveField(field);
       if (!el) {
-        results.push({ selector: selector || ref, success: false, error: 'Not found' });
+        results.push({ selector: selector || ref, success: false, error });
         continue;
       }
 
       el.focus();
-      if (el.form && !containingForm) containingForm = el.form;
       const isChoice = el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio';
       if (clear !== false && !isChoice) {
         if (el.isContentEditable) el.textContent = '';
@@ -166,14 +222,14 @@ export async function handleFillForm(params) {
           results.push({ selector: selector || ref, success: false, error: `Option "${value}" not found` });
           continue;
         }
-        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-        if (setter) setter.call(el, option.value); else el.value = option.value;
+        setNativeValue(el, option.value);
         el.dispatchEvent(new Event('input', { bubbles: true }));
       } else if (el.type === 'checkbox' || el.type === 'radio') {
         const checked = value === true || value === 'true';
         if (el.checked !== checked) el.click();
       } else if (el.isContentEditable) {
-        document.execCommand('insertText', false, value);
+        // The element's own document: an iframe's editor is not in the top document.
+        el.ownerDocument.execCommand('insertText', false, value);
       } else {
         setNativeValue(el, String(value));
         el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -183,18 +239,41 @@ export async function handleFillForm(params) {
       results.push({ selector: selector || ref, success: true, value });
     }
 
-    if (_submit) {
-      const form = containingForm || document.querySelector('form');
-      if (form) {
-        const submitButton = form.querySelector('[type="submit"]') || form.querySelector('button:not([type="button"])');
-        if (submitButton) submitButton.click();
-        else form.submit();
-      }
-    }
-
     const failed = results.filter((result) => !result.success).length;
-    return failed === 0
-      ? { success: true, fields: results }
-      : { success: false, error: `${failed} of ${results.length} fields failed`, fields: results };
+    if (failed > 0) {
+      // A partly filled form is not submitted: it would send incomplete data.
+      return {
+        success: false,
+        error: `${failed} of ${results.length} fields failed${_submit ? '; the form was not submitted' : ''}`,
+        fields: results,
+      };
+    }
+    if (!_submit) return { success: true, fields: results };
+
+    if (!formToSubmit || !submitForm(formToSubmit)) {
+      return {
+        success: false,
+        error: 'SUBMIT_BLOCKED: the form did not submit (constraint validation stopped it, or it has no submit path).',
+        fields: results,
+        submitted: false,
+      };
+    }
+    return { success: true, fields: results, submitted: true };
   }, [withFb, submit]);
+
+  // A field that did not resolve gets the same wording as every other ref tool
+  // (lib/ref-errors.js), or the selector's own not-found message. Results come back
+  // one per field, in order, so the index names the field.
+  if (!Array.isArray(res?.fields)) return res;
+  const fieldError = (result, field) => {
+    if (result.error === 'REF_GONE') return refErrorMessage(field.ref, getFallback(tabId, field.ref));
+    if (result.error === 'NO_MATCH') return selectorErrorMessage(field.selector, tab.url);
+    if (result.error === 'INVALID_SELECTOR') return `Invalid CSS selector: ${field.selector}`;
+    if (result.error === 'NO_TARGET') return 'ref or selector is required (get refs from browser_snapshot).';
+    return result.error;
+  };
+  return {
+    ...res,
+    fields: res.fields.map((result, i) => (result.success ? result : { ...result, error: fieldError(result, fields[i] || {}) })),
+  };
 }

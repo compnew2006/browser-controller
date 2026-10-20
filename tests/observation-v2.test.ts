@@ -119,13 +119,13 @@ describe('Observation Engine V2 semantics', () => {
   });
 
   it('builds compact, machine-readable errors without throwing', () => {
-    expect(actionError('TARGET_OCCLUDED', 'Target is covered', {
+    expect(actionError('ELEMENT_COVERED', 'Target is covered', {
       ref: 'e4',
       blockingElement: { role: 'dialog', name: 'Cookie preferences' },
     })).toEqual({
       success: false,
       ok: false,
-      error: 'TARGET_OCCLUDED',
+      error: 'ELEMENT_COVERED',
       message: 'Target is covered',
       ref: 'e4',
       blockingElement: { role: 'dialog', name: 'Cookie preferences' },

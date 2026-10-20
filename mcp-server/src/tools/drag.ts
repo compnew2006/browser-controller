@@ -5,7 +5,7 @@ import { requireTabId, forwardHandler } from './types.js';
 export const dragTool: ToolDefinition = {
   name: 'browser_drag',
   summary: 'Drag an element from one ref/selector to another',  description:
-    'Drag from one element or position to another. Uses CDP mouse events for reliable drag-and-drop. Provide either refs/selectors or explicit x,y coordinates.',
+    'Drag from one element or position to another. Uses CDP mouse events for reliable drag-and-drop. Provide either refs/selectors or explicit x,y coordinates. Ref/selector endpoints are scrolled into view together; if the drop target cannot share the viewport with the source, the call fails with TARGET_OFFSCREEN.',
   inputSchema: z.object({
     tabId: requireTabId(),
     startRef: z.string().optional().describe('Ref of the element to drag from'),

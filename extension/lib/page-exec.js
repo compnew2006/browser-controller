@@ -4,6 +4,7 @@
  */
 import { fallbackByTab, wedgedTabs, tabLocks, tabControl, persistSessionState, gifRecordings, replacedTabs } from './state.js';
 import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from './page-dom.js';
+import { tabLockedMessage } from './tab-concurrency.js';
 
 /**
  * Resolve a tab by id, throwing a clear, actionable error if it's gone.
@@ -99,10 +100,9 @@ export async function probeResponsive(tabId, ms = WEDGE_PROBE_MS) {
 export async function replaceFrozenTab(tab, url, sessionId = null) {
   if (!wedgedTabs.has(tab.id)) return null;
   // Defence in depth (the router checks too): never replace another session's tab.
-  const owner = tabLocks.owner(tab.id);
-  if (owner && owner !== sessionId) {
-    throw new Error(`Tab ${tab.id} is locked by ${owner} — unlock it from that session first.`);
-  }
+  const grant = tabLocks.grantOf(tab.id);
+  if (grant && grant.sessionId !== sessionId) throw new Error(tabLockedMessage(tab.id, grant));
+  const owner = grant?.sessionId;
   const fresh = await chrome.tabs.create({ windowId: tab.windowId, index: tab.index, url: url || 'about:blank', active: !!tab.active });
   wedgedTabs.delete(tab.id);
   // The replacement keeps the caller's lock on the tab it is replacing.
@@ -134,9 +134,11 @@ export async function assertResponsive(tabId) {
  * safeExec (task 2.5): run chrome.scripting.executeScript against a tab,
  * turning "can't access chrome:// / webstore / devtools pages" into a clear
  * error instead of a silent timeout. `opts.world: 'MAIN'` runs the function in
- * the page's own JS context — required when the page must OBSERVE the effect
- * (e.g. handleDialog's window.alert overrides: in the default ISOLATED world
- * the page keeps its native alert() and real dialogs still block).
+ * the page's own JS context, for the few functions that must see the page's own
+ * globals (evaluate, and the history step of back/forward); the default ISOLATED
+ * world cannot reach them.
+ * A page function that throws is reported as SCRIPT_ERROR (see below). An async
+ * one must catch its own errors and return { __bcScriptError: message }.
  */
 export async function safeExec(tabId, func, args = [], opts = {}) {
   const tab = await resolveTab(tabId);
@@ -149,6 +151,8 @@ export async function safeExec(tabId, func, args = [], opts = {}) {
   // pinned the tab's mutex until the caller's own timeout, and every queued
   // call after it waited too (benchmark: 2 × 125 s on one JSON page).
   const ms = opts.timeoutMs ?? PAGE_EXEC_TIMEOUT_MS;
+  const startedAt = Date.now();
+  let res;
   try {
     const results = await withTimeout(chrome.scripting.executeScript({
       target: { tabId },
@@ -159,7 +163,7 @@ export async function safeExec(tabId, func, args = [], opts = {}) {
       wedgedTabs.set(tabId, Date.now());
       return wedgedError(tabId, ms);
     });
-    return results[0]?.result;
+    res = results[0]?.result;
   } catch (err) {
     if (err && err.code === 'TAB_WEDGED') throw err;
     const msg = err?.message || String(err);
@@ -167,6 +171,44 @@ export async function safeExec(tabId, func, args = [], opts = {}) {
       throw new Error(`Cannot execute on tab ${tabId}: ${msg}`, { cause: err });
     }
     throw err;
+  }
+  // A page function that throws comes back as a bare null (no error, no
+  // rejection). Two ways it reports itself instead: an in-band
+  // { __bcScriptError } object, or the uncaught error lib/page-dom.js recorded
+  // in the isolated world. Either becomes a failure for every caller.
+  if (res && typeof res === 'object' && typeof res.__bcScriptError === 'string') throw scriptError(res.__bcScriptError);
+  if (res == null && opts.world !== 'MAIN') {
+    const thrown = await takePageError(tabId, startedAt);
+    if (thrown) throw scriptError(thrown);
+  }
+  return res;
+}
+
+function scriptError(message) {
+  const err = new Error(`SCRIPT_ERROR: ${message}`);
+  err.code = 'SCRIPT_ERROR';
+  return err;
+}
+
+/**
+ * Reads and clears the last uncaught error recorded in the page's isolated
+ * world since `since` (null when none). Older errors belong to other calls.
+ */
+async function takePageError(tabId, since) {
+  try {
+    const results = await withTimeout(chrome.scripting.executeScript({
+      target: { tabId },
+      args: [since],
+      func: (sinceMs) => {
+        const recorded = globalThis.__bcPageError ?? null;
+        globalThis.__bcPageError = null;
+        return recorded && recorded.at >= sinceMs ? recorded.message : null;
+      },
+    }), WEDGE_PROBE_MS, () => new Error('page error probe timed out'));
+    const message = results[0]?.result;
+    return typeof message === 'string' && message ? message : null;
+  } catch {
+    return null; // the read itself failed: report the original result, as before
   }
 }
 

@@ -15,7 +15,7 @@
  * sanitize() allow-lists statuses/codes and field types; the untrustedContent
  * flag and note are set HERE, never taken from the page.
  */
-import { resolveTab, assertResponsive, withTimeout } from '../lib/page-exec.js';
+import { resolveTab, assertResponsive, safeExec, withTimeout } from '../lib/page-exec.js';
 import { withCdp } from '../lib/cdp-session.js';
 import { cdpEvaluate } from '../lib/cdp-evaluate.js';
 import { buildWebMcpExpression, WEBMCP_LIMITS } from '../lib/webmcp-page.js';
@@ -55,6 +55,22 @@ const ERROR_CODES = new Map([
 ]);
 /** Page-derived fields ride on failures too (error text, names, frame URLs). */
 const UNTRUSTED = Object.freeze({ untrustedContent: true, note: UNTRUSTED_NOTE });
+const NO_WEBMCP_REASON = 'This page has no WebMCP API (document.modelContext is missing): it registers no WebMCP tools, '
+  + 'or WebMCP is off in this browser (Chrome: origin trial, or chrome://flags/#enable-webmcp-testing). Use the regular browser tools.';
+
+/**
+ * Main-world probe, run without the debugger. It applies the same first check as
+ * the runner (lib/webmcp-page.js), so false means the runner would answer
+ * supported:false. Chrome serializes the function, so it must not close over
+ * anything in this module.
+ */
+function hasWebMcpApi() {
+  const mc = document.modelContext;
+  return !!mc && typeof mc.getTools === 'function' && typeof mc.executeTool === 'function';
+}
+
+/** The list answer for a page without the WebMCP API: an empty list and a note, not an error. */
+const noWebMcpList = (reason = NO_WEBMCP_REASON) => ({ success: true, supported: false, count: 0, tools: [], reason, ...UNTRUSTED });
 
 function fail(code, message, extra = {}) {
   return { success: false, code, error: `${code}: ${message}`, ...extra };
@@ -243,6 +259,13 @@ export async function handleWebMcpList(params = {}, _sessionId, _agentName, sign
   const waitMs = clampInt(params.waitMs, 0, WEBMCP_LIST_MAX_WAIT_MS, 0);
   const name = typeof params.name === 'string' && params.name ? params.name.slice(0, 200) : undefined;
 
+  // Cheap pre-check, no debugger: a page without the WebMCP API is answered here,
+  // with no attach, no DOM scan and no runner round trip. When the probe cannot
+  // answer (protected page, missing tab, wedged tab), the full path runs and
+  // reports that error as before.
+  const hasApi = await safeExec(tabId, hasWebMcpApi, [], { world: 'MAIN' }).catch(() => undefined);
+  if (hasApi === false) return noWebMcpList();
+
   let reply;
   try {
     reply = parseRunnerReply(await evaluateRunner(tabId, { action: 'list', waitMs, name }, waitMs + LIST_BUDGET_MS, signal));
@@ -265,9 +288,7 @@ export async function handleWebMcpList(params = {}, _sessionId, _agentName, sign
   }
 
   const r = reply.value;
-  if (r.supported === false) {
-    return { success: true, supported: false, reason: str(r.reason, 1_000) ?? 'WebMCP is not available on this page.', ...UNTRUSTED };
-  }
+  if (r.supported === false) return noWebMcpList(str(r.reason, 1_000) ?? NO_WEBMCP_REASON);
   if (r.supported !== true || !Array.isArray(r.tools)) return fail('WEBMCP_PAGE_ERROR', 'The page returned an unexpected WebMCP reply.');
   const schemaCap = name ? WEBMCP_LIMITS.budgetChars : WEBMCP_LIMITS.schemaMaxChars;
   const tools = r.tools.slice(0, 1_000).map((t) => sanitizeTool(t, schemaCap));

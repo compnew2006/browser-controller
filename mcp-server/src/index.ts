@@ -492,7 +492,7 @@ async function main(): Promise<void> {
   if (!fullMode) {
     console.error(`[${SERVER_NAME}] progressive disclosure: ON (${allTools.length} tools hidden, use browser_tools to discover)`);
   } else {
-    console.error(`[${SERVER_NAME}] full tool mode: ${allTools.length + 1} tools visible (set BROWSER_CONTROLLER_PROGRESSIVE=1 to cut initial tool tokens ~96%)`);
+    console.error(`[${SERVER_NAME}] full tool mode: ${allTools.length} tools visible (set BROWSER_CONTROLLER_PROGRESSIVE=1 to cut initial tool tokens ~96%)`);
   }
 
   const transport = new StdioServerTransport();

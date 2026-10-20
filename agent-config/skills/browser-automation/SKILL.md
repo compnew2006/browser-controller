@@ -26,7 +26,7 @@ If `tabId` is missing you'll get: *"tabId is required. Call browser_tabs list fi
 
 ### If only `browser_tools` is visible (progressive mode)
 
-The server hides tool definitions until needed (`BROWSER_CONTROLLER_PROGRESSIVE=1`). Use `browser_tools { action: "list" }` or `{ action: "search", query: "…" }` to discover tools, then `{ action: "details", tool: "browser_click" }` to get the schema and activate it. A `"Tool X disabled"` error means activate it via `details` first; once activated it stays callable for the session.
+The server hides tool definitions until needed (`BROWSER_CONTROLLER_PROGRESSIVE=1`). Use `browser_tools { action: "list" }` or `{ action: "search", query: "…" }` to discover tools, then `{ action: "details", tool: "browser_click" }` to get the schema and activate it. Calling a tool that is not active yet activates it first, so it runs at once; once active it stays callable for the session.
 
 ## Reading Pages
 
@@ -53,7 +53,7 @@ Always pass `tabId`, then use refs from that tab's snapshot:
 - `browser_press_key { tabId, key: "Enter" }`
 - `browser_scroll { tabId, direction: "down" }`
 
-Also available: `browser_navigate { tabId, url }` (returns an inline snapshot of the new page), `browser_click_text { tabId, text }` (React portals/overlays missing from the snapshot), `browser_hover`, `browser_select` (native `<select>`), `browser_drag`, `browser_handle_dialog { tabId, action: "accept" }` (an alert/confirm/prompt freezing the page) and `browser_run_action` (a JS action object via CDP).
+Also available: `browser_navigate { tabId, url }` (returns an inline snapshot of the new page), `browser_click_text { tabId, text }` (React portals/overlays missing from the snapshot), `browser_hover`, `browser_select` (native `<select>`), `browser_drag`, `browser_handle_dialog { tabId, action: "accept" }` (an alert/confirm/prompt that opened while the tab had a debugger session; otherwise `NO_DIALOG`) and `browser_run_action` (a JS action object via CDP).
 
 ### When a ref breaks (automatic recovery)
 
@@ -87,7 +87,7 @@ The top-level `tabId` applies to every step that doesn't set its own. Use `outpu
 
 ### Acting safely on a changing page: `browser_observe` → `browser_act`
 
-`browser_observe { tabId }` returns a `snapshotId` and compact refs with their `allowedActions`. `browser_act { tabId, snapshotId, action: "click", ref }` re-checks the page (document, visibility, enabled state, what covers the click point) before acting. `DOCUMENT_CHANGED`, `STALE_STATE`, `TARGET_OCCLUDED` or `ACTION_NOT_ALLOWED` mean nothing was done — call `browser_observe` again.
+`browser_observe { tabId }` returns a `snapshotId` and compact refs with their `allowedActions`. `browser_act { tabId, snapshotId, action: "click", ref }` re-checks the page (document, visibility, enabled state, what covers the click point) before acting. `DOCUMENT_CHANGED`, `STALE_STATE`, `ELEMENT_COVERED`, `ACTION_NOT_ALLOWED` or `OBSERVATION_EXPIRED` mean nothing was done — call `browser_observe` again.
 
 ## Repeated Flows: `browser_shortcuts`
 
@@ -110,7 +110,7 @@ browser_shortcuts { action: "run", name: "add-todo", tabId: 15, vars: { item: "B
 2. Do the work — a frame is captured after every page-changing action (navigate, click, type, keys, scroll, forms…); clicks are marked with a red ring
 3. `browser_gif { tabId, action: "export" }` writes a `.gif` (default `~/Downloads/browser-recording-<time>.gif`, or pass `path`) and returns its `path` — tell the user where it is
 
-Read-only tools (snapshot, text, find…) add no frames; add one with `action: "frame"`. `stop` pauses, `status` reports the frame count, `clear` discards. A background tab is shown for a moment per frame because Chrome doesn't paint hidden tabs.
+Read-only tools (snapshot, text, find…) add no frames; add one with `action: "frame"`. `stop` pauses, `status` reports the frame count, `clear` discards. A background tab's frames are skipped (with a note) unless `start` was given `activate: true`, which shows that tab for a moment per frame.
 
 ## Network Control: `browser_intercept`
 
@@ -141,7 +141,7 @@ Some sites expose their actions to agents through WebMCP. `browser_webmcp_list {
 
 - `browser_console { tabId, pattern: "error|fail" }` reads console output for that tab (filter with `pattern`, `level`, `limit`); `browser: true` adds what Chrome reported (failed loads, deprecations) and DevTools Issues
 - `browser_network { tabId, failed: true }` shows requests for that tab (`urlPattern`, `filter`, `type`, `failed`, `limit`); `requestId` returns one request with its (redacted) headers
-- `browser_screenshot { tabId, maxWidth: 1024, format: "jpeg" }` captures the tab over CDP (a background tab is shown for a moment); `maxWidth` and JPEG keep the image small
+- `browser_screenshot { tabId, maxWidth: 1024, format: "jpeg" }` captures the tab (a background tab is captured over CDP without being shown, and only shown briefly if Chrome cannot capture it that way); `maxWidth` and JPEG keep the image small
 
 ## Common Mistakes
 
@@ -149,6 +149,6 @@ Some sites expose their actions to agents through WebMCP. `browser_webmcp_list {
 - Using a ref from one tabId against a different tabId
 - Ignoring `freshRefs` and re-sending a stale ref that already failed
 - Re-reading the whole tree when `isNew` refs would suffice
-- Holding a tab lock too long (other agents queue behind you)
+- Holding a tab lock too long (other agents' calls on that tab are refused with `TAB_LOCKED`)
 - Five separate calls for steps you already knew — one `browser_batch` would do
 - Resizing the user's own window for a responsive check without asking

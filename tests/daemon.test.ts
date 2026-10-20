@@ -185,7 +185,8 @@ describe('daemon client lifecycle', { timeout: 30_000 }, () => {
 
   it('admits a client and assigns a session id', async () => {
     const { sessionId, socket } = await connectClient('TestAgent');
-    expect(sessionId).toMatch(/^s\d+$/);
+    // s-<8-char daemon instance id>-<counter>: unique across daemon restarts.
+    expect(sessionId).toMatch(/^s-[0-9a-z]{8}-\d+$/);
     socket.destroy();
   });
 

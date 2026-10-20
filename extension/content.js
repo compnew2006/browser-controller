@@ -2,6 +2,11 @@
   'use strict';
   if (window.__browserControllerInjected) return;
   window.__browserControllerInjected = true;
+  // A new top-level document: its console starts empty. Sent before any entry of
+  // this document is relayed, so it can never drop one of the new page's logs.
+  if (window === window.top) {
+    try { chrome.runtime.sendMessage({ type: 'console-reset' }); } catch {}
+  }
 
   const orig = {
     log: console.log,
@@ -38,23 +43,16 @@
   console.debug = (...a) => capture('debug', ...a);
 
   // Page console entries from console-main.js (MAIN world), JSON on a DOM event.
+  // Uncaught errors and unhandled rejections come through the same channel: this
+  // isolated world does not see the page's own error events.
   document.addEventListener('__bc_console_entry', (e) => {
     let entry;
     try { entry = JSON.parse(e.detail); } catch { return; }
     if (!entry || typeof entry.text !== 'string') return;
     if (entry.text.indexOf('ResizeObserver loop') !== -1) return;
-    try { chrome.runtime.sendMessage({ type: 'console', level: String(entry.level || 'log'), text: entry.text.slice(0, 2100) }); } catch {}
-  });
-
-  window.addEventListener('error', (e) => {
-    // Silence the well-known ResizeObserver loop warning: it's a benign browser
-    // notice (element resized during its own observation callback), not a real
-    // error. Every RO-based UI triggers it; capturing it just spams the console.
-    if (e && typeof e.message === 'string' && e.message.indexOf('ResizeObserver loop') !== -1) return;
-    capture('error', `Uncaught: ${e.message} at ${e.filename}:${e.lineno}`);
-  });
-
-  window.addEventListener('unhandledrejection', (e) => {
-    capture('error', `Unhandled rejection: ${e.reason}`);
+    const msg = { type: 'console', level: String(entry.level || 'log'), text: entry.text.slice(0, 2100) };
+    if (entry.kind) msg.kind = String(entry.kind);
+    if (typeof entry.stack === 'string') msg.stack = entry.stack.slice(0, 1000);
+    try { chrome.runtime.sendMessage(msg); } catch {}
   });
 })();

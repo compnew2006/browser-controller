@@ -6,7 +6,7 @@ export const runActionTool: ToolDefinition = {
   name: 'browser_run_action',
   summary: 'Run arbitrary JS via CDP (bypasses CSP)',
   description:
-    'Run a self-contained JavaScript action object in the page context via CDP. code is an expression that evaluates to an object with an execute(params) method (called with actionParams), or a plain expression whose value is returned. Returns the action result directly. Always runs over the debugger, so page CSP does not apply and it never falls back to chrome.scripting; shows a yellow "is being debugged" banner. For plain one-off JS, browser_evaluate (also CDP by default, console-style) is simpler. Prefer the dedicated tools (browser_click/browser_type/browser_snapshot) over hand-written JS for those specific tasks.',
+    'Run a self-contained JavaScript action object in the page context via CDP. code is an expression that evaluates to an object with an execute(params) method (called with actionParams), or a plain expression whose value is returned; multi-statement code is accepted too (its value is returned only through an explicit return). A thrown error fails with SCRIPT_ERROR and a run longer than 25 s fails with TIMEOUT. Always runs over the debugger, so page CSP does not apply and it never falls back to chrome.scripting; shows a yellow "is being debugged" banner. For plain one-off JS, browser_evaluate (also CDP by default, console-style) is simpler. Prefer the dedicated tools (browser_click/browser_type/browser_snapshot) over hand-written JS for those specific tasks.',
   inputSchema: z.object({
     tabId: requireTabId(),
     code: z

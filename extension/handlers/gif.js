@@ -8,7 +8,7 @@
 import { resolveTab } from '../lib/page-exec.js';
 import { gifRecordings as recordings, replacedTabs } from '../lib/state.js';
 import { encodeGif, drawMarker } from '../lib/gif-encoder.js';
-import { handleScreenshot } from './tabs.js';
+import { handleScreenshot } from './screenshot.js';
 
 /** Tools after which a frame is captured. Reads (text/snapshot/find…) don't change the page. */
 export const GIF_FRAME_TOOLS = new Set([
@@ -29,6 +29,13 @@ export function currentTabId(tabId) {
   return id;
 }
 
+/** A note for stop/status when frames were skipped because the tab was in the background. */
+function hiddenNote(rec) {
+  return rec.hidden
+    ? { note: `${rec.hidden} frame(s) skipped: the tab was in the background (start with activate:true to show it briefly for each frame)` }
+    : {};
+}
+
 export function isRecording(tabId) {
   const r = recordings.get(tabId);
   return !!(r && r.recording);
@@ -41,8 +48,9 @@ export async function recordFrame(tabId, label, result) {
   if (rec.frames.length >= rec.maxFrames) { rec.skipped++; return; }
   try {
     const tab = await chrome.tabs.get(tabId);
-    // Hidden tabs don't paint; activating one flashes it for ~150 ms (like browser_screenshot).
-    if (!tab.active && !rec.activate) { rec.skipped++; return; }
+    // Hidden tabs don't paint. Showing one for a frame steals the user's view, so
+    // a background tab is only captured with activate:true (and then only briefly).
+    if (!tab.active && !rec.activate) { rec.skipped++; rec.hidden = (rec.hidden ?? 0) + 1; return; }
     const shot = await handleScreenshot({ tabId, format: 'jpeg', quality: 70, maxWidth: rec.width });
     if (!shot?.data) { rec.skipped++; return; }
     const f = shot.frame;
@@ -53,6 +61,15 @@ export async function recordFrame(tabId, label, result) {
   } catch {
     rec.skipped++;
   }
+}
+
+/**
+ * Where a click ring goes on the output frame. `at` is the click in the captured
+ * frame's own pixels (frame: fw × fh); the output is W × H. A frame whose size
+ * reads as 0 is taken as the output size, so the ring never divides by zero.
+ */
+export function ringCenter(at, [fw, fh], [W, H]) {
+  return [at[0] * (W / (fw || W)), at[1] * (H / (fh || H))];
 }
 
 function b64ToBytes(b64) {
@@ -74,13 +91,20 @@ async function encodeRecording(rec) {
   let H = 0;
   for (const fr of rec.frames) {
     const bmp = await createImageBitmap(new Blob([b64ToBytes(fr.data)], { type: 'image/jpeg' }));
-    if (!W) { W = bmp.width; H = bmp.height; }
+    // This frame's own size, read BEFORE the bitmap is closed (a closed one reports 0,
+    // which put the click ring at the wrong spot whenever a frame's size differed).
+    const fw = bmp.width;
+    const fh = bmp.height;
+    if (!W) { W = fw; H = fh; }
     const canvas = new OffscreenCanvas(W, H);
     const ctx = canvas.getContext('2d');
     ctx.drawImage(bmp, 0, 0, W, H);
     bmp.close?.();
     const rgba = ctx.getImageData(0, 0, W, H).data;
-    if (fr.at) drawMarker(rgba, W, H, fr.at[0] * (W / (bmp.width || W)), fr.at[1] * (H / (bmp.height || H)));
+    if (fr.at) {
+      const [cx, cy] = ringCenter(fr.at, [fw, fh], [W, H]);
+      drawMarker(rgba, W, H, cx, cy);
+    }
     decoded.push({ rgba, t: fr.t });
   }
   const frames = decoded.map((d, i) => ({
@@ -103,7 +127,7 @@ export async function handleGif(params) {
         frames: [],
         width: Math.min(Math.max(Number(params.width) || 800, 200), 1600),
         maxFrames: Math.min(Math.max(Number(params.maxFrames) || 300, 1), MAX_FRAMES_CAP),
-        activate: params.activate !== false,
+        activate: params.activate === true, // default: never switch the user's view
         recording: true,
         skipped: 0,
         startedAt: Date.now(),
@@ -125,12 +149,12 @@ export async function handleGif(params) {
       const rec = recordings.get(tabId);
       if (!rec) throw new Error('Not recording this tab.');
       rec.recording = false;
-      return { success: true, recording: false, frames: rec.frames.length, skipped: rec.skipped, seconds: Math.round((Date.now() - rec.startedAt) / 1000) };
+      return { success: true, recording: false, frames: rec.frames.length, skipped: rec.skipped, seconds: Math.round((Date.now() - rec.startedAt) / 1000), ...hiddenNote(rec) };
     }
     case 'status': {
       const rec = recordings.get(tabId);
       return rec
-        ? { success: true, recording: rec.recording, frames: rec.frames.length, skipped: rec.skipped }
+        ? { success: true, recording: rec.recording, frames: rec.frames.length, skipped: rec.skipped, ...hiddenNote(rec) }
         : { success: true, recording: false, frames: 0 };
     }
     case 'clear': {

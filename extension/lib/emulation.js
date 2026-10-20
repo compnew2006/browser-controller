@@ -13,10 +13,32 @@ export const NETWORK_PRESETS = Object.freeze({
 });
 
 /**
+ * The Emulation.UserAgentMetadata that matches a real browser's client hints. A bare
+ * userAgent override makes Chrome empty navigator.userAgentData (brands and platform
+ * included), so the override carries the real browser's values instead.
+ */
+export function userAgentMetadataFrom(real) {
+  const pairs = (list) => (Array.isArray(list) ? list.map(({ brand, version }) => ({ brand, version })) : []);
+  const metadata = {
+    brands: pairs(real.brands),
+    fullVersionList: pairs(real.fullVersionList),
+    platform: real.platform || '',
+    platformVersion: real.platformVersion || '',
+    architecture: real.architecture || '',
+    model: real.model || '',
+    mobile: Boolean(real.mobile),
+  };
+  if (real.bitness) metadata.bitness = real.bitness;
+  if (typeof real.wow64 === 'boolean') metadata.wow64 = real.wow64;
+  return metadata;
+}
+
+/**
  * Commands for the requested settings and the resulting active state.
  * Settings merge with `active`; "none", rate 1, null and "" clear their override.
+ * `userAgentMetadata` (from userAgentMetadataFrom) rides along with a non-empty userAgent.
  */
-export function emulationPlan(params, active) {
+export function emulationPlan(params, active, { userAgentMetadata } = {}) {
   const state = { ...active };
   const commands = [];
 
@@ -57,7 +79,9 @@ export function emulationPlan(params, active) {
   }
 
   if (params.userAgent !== undefined) {
-    commands.push(['Emulation.setUserAgentOverride', { userAgent: params.userAgent }]);
+    const override = { userAgent: params.userAgent };
+    if (params.userAgent !== '' && userAgentMetadata) override.userAgentMetadata = userAgentMetadata;
+    commands.push(['Emulation.setUserAgentOverride', override]);
     if (params.userAgent === '') delete state.userAgent;
     else state.userAgent = params.userAgent;
   }

@@ -5,7 +5,7 @@ import { requireTabId, forwardHandler } from './types.js';
 export const clickTextTool: ToolDefinition = {
   name: 'browser_click_text',
   summary: 'Click an element by its visible text',  description:
-    'Click an element by its visible text content (case-insensitive, CSS text-transform does not matter). Matches accessible names, aria-label/title and composed text including shadow DOM and same-origin iframes, then clicks the control that owns the text (e.g. the <button> around a <span>) with a real (trusted) mouse click. Works on React dropdowns, portals, and overlays that may not appear in snapshots. CSP-safe (no eval).',
+    'Click an element by its visible text content (case-insensitive, CSS text-transform does not matter). Matches accessible names, aria-label/title and composed text including shadow DOM and same-origin iframes, then clicks the control that owns the text (e.g. the <button> around a <span>) with a real (trusted) mouse click. Works on React dropdowns, portals, and overlays that may not appear in snapshots. CSP-safe (no eval). A matched control that is hidden, disabled or covered fails with ELEMENT_HIDDEN / ELEMENT_DISABLED / ELEMENT_COVERED and nothing is clicked.',
   inputSchema: z.object({
     tabId: requireTabId(),
     text: z.string().describe('Text to match against the element name or visible text'),

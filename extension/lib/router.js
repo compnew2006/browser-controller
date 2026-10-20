@@ -4,8 +4,8 @@
  * controllers. The handler registry is a module-level constant — the old
  * dispatch() rebuilt the tool map on every call.
  */
-import { runOnTab as runOnTabLib } from './tab-concurrency.js';
-import { tabLocks, tabMutex, tabControl, observationSnapshots, persistSessionState, wedgedTabs } from './state.js';
+import { runOnTab as runOnTabLib, tabLockedMessage } from './tab-concurrency.js';
+import { tabLocks, tabMutex, tabControl, observationSnapshots, persistSessionState, wedgedTabs, sessionAgentNames } from './state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from './connection.js';
 import { showLockShield, hideLockShield } from './overlay.js';
 import { getActiveTab, handleNavigate } from '../handlers/navigation.js';
@@ -138,6 +138,7 @@ export async function handleMessage(msg) {
       const released = tabLocks.releaseByOwner(owner);
       tabControl.releaseByOwner(owner); // a gone agent no longer "controls" anything
       observationSnapshots.dropSession(owner);
+      sessionAgentNames.delete(owner);
       // Persist: without this, a service-worker recycle after the disconnect
       // would restore the just-released lock from session storage and
       // resurrect stale exclusivity (spec-review finding).
@@ -177,6 +178,8 @@ export async function handleMessage(msg) {
   const p = { ...(params || {}) };
   const sessionId = msg.sessionId || null;
   const agentName = msg.agentName || null;
+  // Remember who a session is: a lock it takes is then shown to others by name.
+  if (sessionId && agentName) sessionAgentNames.set(sessionId, agentName);
 
   // Resolve navigate's documented active-tab fallback before lock/mutex routing.
   // This freezes the target even if the user changes focus while the call waits.
@@ -214,11 +217,12 @@ export async function handleMessage(msg) {
     || (tool === 'browser_navigate' && wedgedTabs.has(tabId));
 
   // Skipping the queue must not skip lock ownership: runOnTab enforces it for
-  // queued calls, so the frozen-tab navigate path checks it here.
-  if (tool === 'browser_navigate' && bypassesMutex) {
+  // queued calls, so the frozen-tab navigate and the dialog paths check it here
+  // (a plain in-memory lookup, so it cannot wait on a frozen page).
+  if ((tool === 'browser_navigate' || tool === 'browser_handle_dialog') && bypassesMutex) {
     const owner = tabLocks.owner(tabId);
     if (owner && owner !== sessionId) {
-      sendResponse(id, { success: false, error: `Tab ${tabId} is locked by ${owner} — unlock it from that session first.` });
+      sendResponse(id, { success: false, error: tabLockedMessage(tabId, tabLocks.grantOf(tabId)) });
       return;
     }
   }

@@ -4,7 +4,7 @@ import { requireTabId, forwardHandler } from './types.js';
 
 export const selectTool: ToolDefinition = {
   name: 'browser_select',
-  summary: 'Select an option in a dropdown element',  description: 'Select an option from a dropdown/select element',
+  summary: 'Select an option in a dropdown element',  description: 'Select an option from a dropdown/select element. value must match an option value exactly; label matches the option text case-insensitively. No matching option fails with OPTION_NOT_FOUND, listing the available labels.',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot'),

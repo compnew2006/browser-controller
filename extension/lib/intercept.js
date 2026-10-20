@@ -4,6 +4,8 @@
  * the wire boundary is untrusted so both ends validate (ADR-4).
  */
 
+import { resolveTypes } from "./resource-types.js";
+
 export const MAX_RULES = 50;
 export const MAX_MATCH_LEN = 500;
 export const MAX_MOCK_BODY = 20_000;
@@ -52,8 +54,18 @@ export function validateRule(rule, index = 0) {
   if (rule.types !== undefined && !Array.isArray(rule.types)) {
     throw new Error(`${where}: types must be an array`);
   }
+  if (rule.types !== undefined) {
+    try {
+      resolveTypes(rule.types);
+    } catch (err) {
+      throw new Error(`${where}: ${err.message}`, { cause: err });
+    }
+  }
   if (rule.tabIds !== undefined && !Array.isArray(rule.tabIds)) {
     throw new Error(`${where}: tabIds must be an array`);
+  }
+  if (rule.tabIds !== undefined && !rule.tabIds.every(Number.isInteger)) {
+    throw new Error(`${where}: tabIds must be integers`);
   }
   return rule;
 }

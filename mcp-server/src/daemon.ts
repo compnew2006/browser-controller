@@ -40,7 +40,14 @@ import {
   type IpcClientMessage,
   type IpcDaemonMessage,
 } from './daemon-config.js';
-import { buildIpcWelcome, IPC_PROTOCOL_CAPABILITIES, validateCapabilities, validateProtocolVersion } from './protocol.js';
+import {
+  DAEMON_INSTANCE_ID,
+  IPC_PROTOCOL_CAPABILITIES,
+  buildIpcWelcome,
+  buildSessionId,
+  validateCapabilities,
+  validateProtocolVersion,
+} from './protocol.js';
 import { ExtensionBridge } from './bridge.js';
 
 const SERVER_NAME = 'browser-controller-daemon';
@@ -236,6 +243,7 @@ class Daemon {
           }
           authed = true;
           const name = msg.agentName || 'agent';
+          const sessionId = buildSessionId(DAEMON_INSTANCE_ID, ++this.sessionIdCounter);
           // Liveness-based dedup by agentName. When an IDE respawns the MCP
           // client (Cursor does this on every reload), the old socket may not
           // have delivered `close` yet and is typically a half-open (dead)
@@ -256,12 +264,12 @@ class Daemon {
               existingSocket.destroy();
               this.clients.delete(existingSocket);
             } else {
-              console.error(`[${SERVER_NAME}] co-existing session ${existing.sessionId} (${name}, missedPongs=${existing.missedPongs}) — new connection accepted as s${this.sessionIdCounter + 1}`);
+              console.error(`[${SERVER_NAME}] co-existing session ${existing.sessionId} (${name}, missedPongs=${existing.missedPongs}) — new connection accepted as ${sessionId}`);
             }
           }
           client = {
             socket,
-            sessionId: `s${++this.sessionIdCounter}`,
+            sessionId,
             agentName: name,
             connectedAt: Date.now(),
             pending: new Map(),

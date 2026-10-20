@@ -193,6 +193,14 @@ describe('browser_snapshot source:"native"', () => {
     expect(named(res.tree, 'Title').level).toBe(1);
   });
 
+  it('the maxChars cap holds for the final tree, hrefs included (the DOM walker already counted them)', async () => {
+    for (const maxChars of [150, 200, 240, 260, 300, 330, 400]) {
+      const res = await native({ maxChars });
+      expect(res.success).toBe(true);
+      expect(JSON.stringify(res.tree ?? null).length, `maxChars ${maxChars}`).toBeLessThanOrEqual(maxChars);
+    }
+  });
+
   it('batches the CDP bridge per frame (Chrome rejects mixing JS contexts)', async () => {
     const res = await native();
     expect(res.success).toBe(true);
@@ -260,7 +268,8 @@ describe('browser_snapshot source:"native"', () => {
   it('reports a bad selector, a missing root and a stale ref without touching CDP results', async () => {
     expect(await native({ selector: '###' })).toMatchObject({ success: false, error: expect.stringContaining('Invalid CSS selector') });
     expect(await native({ selector: '.nope' })).toMatchObject({ success: false, error: 'Root element not found' });
-    expect(await native({ ref: 'gone-ref' })).toMatchObject({ success: false, error: expect.stringContaining('ref gone-ref is gone') });
+    // One stale-ref wording for every tool (lib/ref-errors.js); never issued in this tab, so NOT_FOUND.
+    expect(await native({ ref: 'gone-ref' })).toMatchObject({ success: false, error: expect.stringMatching(/^REF_NOT_FOUND: ref gone-ref /) });
   });
 
   it('flags only elements that appeared since the previous native snapshot', async () => {

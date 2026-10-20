@@ -5,7 +5,7 @@ import { requireTabId, forwardHandler } from './types.js';
 export const clickTool: ToolDefinition = {
   name: 'browser_click',
   summary: 'Click an element by ref or CSS selector',
-  description: 'Click an element on the page using a ref from snapshot or a CSS selector, or at x/y viewport coordinates (e.g. read off a screenshot). clickCount 3 = triple click (select a line); modifiers hold keys (ctrl+click opens a link in a new tab). Uses a real mouse click over CDP (isTrusted events, real focus, default actions — works in background windows); falls back to synthetic DOM events if the debugger cannot attach.',
+  description: 'Click an element on the page using a ref from snapshot or a CSS selector, or at x/y viewport coordinates (e.g. read off a screenshot). clickCount 3 = triple click (select a line); modifiers hold keys (ctrl+click opens a link in a new tab). Uses a real mouse click over CDP (isTrusted events, real focus, default actions — works in background windows); falls back to synthetic DOM events if the debugger cannot attach. An element that is hidden, disabled or covered by another element fails with ELEMENT_HIDDEN / ELEMENT_DISABLED / ELEMENT_COVERED and nothing is clicked. A checkbox/radio drawn under its own visible label is clicked on that label (result via: "label").',
   inputSchema: z.object({
     tabId: requireTabId(),
     ref: z.string().optional().describe('Element reference from snapshot (e.g. "e12")'),

@@ -39,7 +39,8 @@ describe('SnapshotRegistry', () => {
 
     expect(registry.validate('s_1', 7, 'agent-a')).toMatchObject({
       ok: false,
-      error: 'SNAPSHOT_EXPIRED',
+      error: 'OBSERVATION_EXPIRED',
+      message: 'The observation expired; call browser_observe again.',
     });
     expect(registry.validate('missing', 7, 'agent-a')).toMatchObject({
       ok: false,
@@ -56,7 +57,7 @@ describe('SnapshotRegistry', () => {
     expect(registry.size).toBe(2);
     expect(registry.validate('s_1', 7, 'agent-a')).toMatchObject({
       ok: false,
-      error: 'SNAPSHOT_EXPIRED',
+      error: 'OBSERVATION_EXPIRED',
     });
   });
 

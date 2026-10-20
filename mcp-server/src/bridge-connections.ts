@@ -34,14 +34,16 @@ export function identityOf(info?: { browserId?: unknown; browserLabel?: unknown 
 
 /**
  * The set of extension connections plus each session's browser choice.
- * Routing: a session's selected browser, else the default — the most
- * recently connected live browser (so one browser behaves exactly as before).
- * An "auto" session is pinned to the browser its first call went to: tab ids
- * belong to one browser, so a browser connecting mid-session (or mid-batch,
- * or between a call and its retry) must not take over that session's calls.
+ * Routing: a session's selected browser, else the default — the earliest-seen
+ * live browser (see primary). An "auto" session is pinned to the browser its
+ * first call went to: tab ids belong to one browser, so a browser connecting
+ * mid-session (or mid-batch, or between a call and its retry) must not take
+ * over that session's calls.
  */
 export class ExtensionConnections {
   private conns = new Set<ExtensionConnection>();
+  /** browserId -> epoch ms this daemon first saw that browser. Kept across reconnects. */
+  private firstSeen = new Map<string, number>();
   /** sessionId -> browserId chosen with browser_select_browser. */
   private sessionBrowser = new Map<string, string>();
   /** sessionId -> browserId an "auto" session was pinned to by its first call. */
@@ -60,10 +62,31 @@ export class ExtensionConnections {
     return this.all().filter((c) => ExtensionConnections.isLive(c));
   }
 
-  /** The default browser: the most recently connected live one. */
+  /**
+   * A connection's browser identity is now known (its helloAck). Only the
+   * first sighting of a browserId counts: a reconnect (service-worker recycle)
+   * of the same browser keeps its place.
+   */
+  identify(conn: ExtensionConnection, browserId: string): void {
+    conn.browserId = browserId;
+    if (!this.firstSeen.has(browserId)) this.firstSeen.set(browserId, Date.now());
+  }
+
+  /**
+   * The default browser: the earliest-seen live one. Connecting a second
+   * browser, or recycling the default's service worker, never moves it, so new
+   * sessions keep landing on the same browser.
+   */
   primary(): ExtensionConnection | null {
     let best: ExtensionConnection | null = null;
-    for (const c of this.live()) if (!best || c.connectedAt >= best.connectedAt) best = c;
+    let bestSeen = Infinity;
+    for (const c of this.live()) {
+      const seen = this.firstSeen.get(c.browserId) ?? c.connectedAt;
+      if (!best || seen < bestSeen) {
+        best = c;
+        bestSeen = seen;
+      }
+    }
     return best;
   }
 
@@ -139,6 +162,7 @@ export class ExtensionConnections {
 
   clear(): void {
     this.conns.clear();
+    this.firstSeen.clear();
     this.sessionBrowser.clear();
     this.autoBrowser.clear();
   }
