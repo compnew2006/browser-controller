@@ -183,7 +183,10 @@ function pageLocate(ref, sel, fb, mode, cursor) {
   let occludedBy = null;
   try {
     const hit = D.elementAt(x, y);
-    if (hit && !D.composedContains(el, hit) && !D.composedContains(hit, el)) occludedBy = D.describe(hit);
+    // A custom checkbox/switch draws its box over the real input inside the same label.
+    const label = hit && hit.closest ? hit.closest('label') : null;
+    const sameLabel = label && (label.control === el || label.contains(el));
+    if (hit && !sameLabel && !D.composedContains(el, hit) && !D.composedContains(hit, el)) occludedBy = D.describe(hit);
   } catch { /* detached mid-measure */ }
   // Agent cursor (lib/page-dom.js): glide to the point the real input will hit.
   const cursorMs = cursor && rect.width > 0 && rect.height > 0 && D.cursor ? D.cursor(x, y, cursor.effect, cursor.count) : 0;
@@ -192,6 +195,7 @@ function pageLocate(ref, sel, fb, mode, cursor) {
     x, y,
     zeroViewport: window.innerWidth === 0 || window.innerHeight === 0,
     visible: rect.width > 0 && rect.height > 0,
+    disabled: el.disabled === true || (el.getAttribute && el.getAttribute('aria-disabled') === 'true'),
     focused,
     // clear: a value that select() could not select still needs Ctrl+A.
     needsSelectAll: hasValue && el.value.length > 0 && !fullySelected,
@@ -216,7 +220,8 @@ function pageRelease() {
     try { a = a.contentDocument.activeElement; } catch { break; }
   }
   if (!a || a === document.body) return { value: null };
-  const value = typeof a.value === 'string' ? a.value : a.isContentEditable ? a.textContent : null;
+  let value = typeof a.value === 'string' ? a.value : a.isContentEditable ? a.textContent : null;
+  if (value != null && a.type === 'password') value = '•'.repeat(Math.min(value.length, 20));
   return { value: value == null ? null : value.slice(0, 500), focusedTag: a.tagName.toLowerCase() + (a.id ? `#${a.id}` : '') };
 }
 

@@ -23,7 +23,7 @@ export const gifTool: ToolDefinition = {
     action: z.enum(['start', 'frame', 'stop', 'status', 'export', 'clear']),
     width: z.number().int().min(200).max(1600).optional().describe('start: px (default 800)'),
     maxFrames: z.number().int().min(1).max(500).optional().describe('start: default 300'),
-    activate: z.boolean().optional().describe('start: show a background tab briefly per frame (default true)'),
+    activate: z.boolean().optional().describe('start: show a background tab briefly per frame, hiding the user\'s tab (default false)'),
     path: z.string().optional().describe('export: default ~/Downloads'),
     clear: z.boolean().optional().describe('export: drop the frames after (default true)'),
   }),

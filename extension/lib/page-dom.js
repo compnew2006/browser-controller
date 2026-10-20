@@ -15,7 +15,7 @@
  * ambiguous is reported as gone instead of guessed.
  */
 
-export const PAGE_DOM_VERSION = 4;
+export const PAGE_DOM_VERSION = 5;
 
 export function PAGE_DOM_INSTALL(version) {
   if (globalThis.__bcDom && globalThis.__bcDom.v === version) return false;
@@ -300,7 +300,15 @@ export function PAGE_DOM_INSTALL(version) {
 
   /** Top-level viewport centre of an element (adds same-origin iframe offsets). */
   function centerOf(el) {
-    const rect = el.getBoundingClientRect();
+    let rect = el.getBoundingClientRect();
+    // A zero-size wrapper (an inline <a> around a positioned card) is clicked through what it shows.
+    if (!(rect.width > 0 && rect.height > 0) && el.querySelectorAll) {
+      const kids = el.querySelectorAll('*');
+      for (let i = 0; i < kids.length && i < 50; i++) {
+        const r = kids[i].getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) { rect = r; break; }
+      }
+    }
     let x = rect.left + rect.width / 2;
     let y = rect.top + rect.height / 2;
     let win = el.ownerDocument ? el.ownerDocument.defaultView : null;

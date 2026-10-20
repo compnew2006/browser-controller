@@ -4,6 +4,7 @@
  */
 import { fallbackByTab, wedgedTabs, tabLocks, tabControl, persistSessionState, gifRecordings, replacedTabs } from './state.js';
 import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from './page-dom.js';
+import { openDialog } from './cdp-session.js';
 
 /**
  * Resolve a tab by id, throwing a clear, actionable error if it's gone.
@@ -142,6 +143,14 @@ export async function safeExec(tabId, func, args = [], opts = {}) {
   const tab = await resolveTab(tabId);
   if (/^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '')) {
     throw new Error(`Cannot access protected page (${tab.url}). Tab ${tabId} is a browser-internal page.`);
+  }
+  // A dialog blocks the page's main thread: say so at once, don't wait it out
+  // and mark the tab frozen.
+  const dialog = openDialog(tabId);
+  if (dialog) {
+    const err = new Error(`DIALOG_OPEN: a ${dialog.type} dialog is open in tab ${tabId} ("${dialog.message}"). Answer it with browser_handle_dialog.`);
+    err.code = 'DIALOG_OPEN';
+    throw err;
   }
   const sanitized = args.map((a) => (a === undefined ? null : a));
   await assertResponsive(tabId);

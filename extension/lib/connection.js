@@ -5,7 +5,7 @@
  * background.js — this module must not import the router (that would cycle:
  * router → handlers → connection).
  */
-import { tabLocks, tabControl, loadSessionState } from './state.js';
+import { tabLocks, tabControl, loadSessionState, adoptDaemonInstance } from './state.js';
 import { showLockShield, hideLockShield } from './overlay.js';
 import { buildExtensionHelloAck, validateDaemonHello } from './protocol.js';
 
@@ -68,10 +68,31 @@ export function setCurrentActivity(name) {
 }
 
 /** Send a JSON frame to the daemon if (and only if) the socket is open. */
+// The daemon's frame cap (its hello says; 1 MB by default). A bigger frame
+// makes it close the socket, failing every agent's call in flight.
+let maxMessageBytes = 1_000_000;
+
+/** Room for a tool's own payload (a screenshot), leaving a tenth for the envelope. */
+export function resultBudgetBytes() {
+  return Math.floor(maxMessageBytes * 0.9);
+}
+
+function utf8Length(text) {
+  return text.length * 3 <= maxMessageBytes ? text.length : new TextEncoder().encode(text).length;
+}
+
 export function sendJson(obj) {
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(obj));
+  if (ws?.readyState !== WebSocket.OPEN) return;
+  let text = JSON.stringify(obj);
+  const bytes = utf8Length(text);
+  if (bytes > maxMessageBytes && obj?.id != null) {
+    text = JSON.stringify({
+      id: obj.id,
+      success: false,
+      error: `RESULT_TOO_LARGE: the result is ${Math.ceil(bytes / 1024)} KB, over the ${Math.floor(maxMessageBytes / 1024)} KB limit. Ask for less (a region, maxWidth, a selector or a limit).`,
+    });
   }
+  ws.send(text);
 }
 
 /**
@@ -345,6 +366,14 @@ export async function connect() {
             broadcastStatus(lastError);
             socket.close(1002, 'incompatible protocol');
             return;
+          }
+          if (Number.isInteger(msg.maxMessageBytes) && msg.maxMessageBytes >= 1024) maxMessageBytes = msg.maxMessageBytes;
+          // A restarted daemon: locks of its previous run would block every agent
+          // (and the user) and be inherited by whoever gets the same session id.
+          if (typeof msg.instanceId === 'string') {
+            const stale = adoptDaemonInstance(msg.instanceId);
+            for (const tabId of stale) hideLockShield(tabId).catch(() => {});
+            if (stale.length) broadcastStatus(`Released ${stale.length} tab lock(s) left by a previous daemon run`);
           }
           socket.send(JSON.stringify(buildExtensionHelloAck(chrome.runtime.getManifest().version, browserIdentity)));
           clearTimeout(handshakeTimeout);

@@ -69,6 +69,8 @@ On dynamic sites (React re-renders, virtualized feeds) refs can go stale. The ex
 - `browser_press_key` takes combos (`"ctrl+a"`) and sequences (`"ArrowDown ArrowDown Enter"`)
 - `browser_upload_file { tabId, ref, filePath: "/abs/path/file.pdf" }` sets a file input without opening the file dialog
 - No ref? `browser_click` also takes `x` / `y` read off a `browser_screenshot` (the screenshot result tells you how image pixels map to them)
+- `HIDDEN` / `DISABLED` / `COVERED` from `browser_click`: nothing was clicked. Hover the menu that reveals the item, wait until it is enabled, or close what covers it
+- A result with `dialog: { type, message }` (or `DIALOG_OPEN` from another tool): answer it with `browser_handle_dialog { tabId, action }` before anything else
 
 ### Fewer round-trips: `browser_batch`
 
@@ -114,7 +116,7 @@ Read-only tools (snapshot, text, find…) add no frames; add one with `action: "
 
 ## Network Control: `browser_intercept`
 
-Block, redirect or add request headers for one tab with `action: "set-rules"` (rules match a URL regex), see matched requests with `list-captures`, and export a HAR with `export-har` (headers and bodies are left out). Always check `enforcement` in the result: `capture-only` means Chrome is not applying the rules. A `mock` rule with a `tabId` really answers the page (`mockStatus`, `mockBody`, response `headers`) — use it to test an empty list, an error status or a slow/failed API without touching the server; `clear-rules` when done. A global mock (no `tabId`) is reported under `unsupported`.
+Block, redirect or add request headers for one tab with `action: "set-rules"` (rules match a URL regex), see matched requests with `list-captures`, and export a HAR with `export-har` (headers and bodies are left out). Always check `enforcement` in the result: `capture-only` means Chrome is not applying the rules. A `mock` rule with a `tabId` really answers the page (`mockStatus`, `mockBody`, response `headers`) — use it to test an empty list, an error status or a slow/failed API without touching the server; `clear-rules` when done. `set-rules` needs a `tabId`; a regex with lookarounds or backreferences is refused (Chrome's RE2).
 
 ## Sites with their own tools (WebMCP)
 

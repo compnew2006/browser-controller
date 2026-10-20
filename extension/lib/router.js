@@ -8,6 +8,7 @@ import { runOnTab as runOnTabLib } from './tab-concurrency.js';
 import { tabLocks, tabMutex, tabControl, observationSnapshots, persistSessionState, wedgedTabs } from './state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from './connection.js';
 import { showLockShield, hideLockShield } from './overlay.js';
+import { openDialog } from './cdp-session.js';
 import { getActiveTab, handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType, handlePressKey, handleHover, handleSelect, handleClickByText, handleDialog, handleDrag, handleFillForm } from '../handlers/interaction.js';
 import { handleWait, handleScroll, handleSnapshot, handleFind, handleGetPageText, handleEvaluate } from '../handlers/inspection.js';
@@ -94,6 +95,12 @@ function overlayStep(promise) {
 
 function sendResponse(id, response) {
   sendJson({ id, ...response });
+}
+
+/** A dialog left open by the call (a click that opened confirm()): say which. */
+function withDialog(tabId, result) {
+  const dialog = tabId == null ? null : openDialog(tabId);
+  return dialog && result && typeof result === 'object' && !Array.isArray(result) ? { ...result, dialog } : result;
 }
 
 /**
@@ -245,7 +252,7 @@ export async function handleMessage(msg) {
         agentName,
         controller.signal,
       );
-      sendToolResponse(id, result);
+      sendToolResponse(id, withDialog(tabId, result));
       // Recovery navigate replaced a frozen tab: record the new page, queued
       // on the replacement's mutex like any other capture.
       const fresh = replacementOf(result);
@@ -283,12 +290,12 @@ export async function handleMessage(msg) {
         // running tool. agentName is a top-level WS field (audit M1); fall back
         // to a generic label for anonymous direct-WS callers.
         // Best effort and bounded: the shield is cosmetic, a frozen page must not block the tool.
-        if (!wedgedTabs.has(tabId)) {
+        if (!wedgedTabs.has(tabId) && !openDialog(tabId)) {
           await overlayStep(showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab'));
         }
         try {
           const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
-          sendToolResponse(id, result);
+          sendToolResponse(id, withDialog(tabId, result));
           // GIF recording: capture the page after the action (the reply is already
           // sent; the tab mutex keeps the next call from racing the capture).
           // A frozen tab replaced by this call records on its replacement.
@@ -303,7 +310,7 @@ export async function handleMessage(msg) {
           updateBadge(isWsConnected() ? 'connected' : 'disconnected');
           // A locked tab keeps a plain frame (no label) for the lock's lifetime;
           // an unlocked tab loses the frame once this action completes.
-          if (!wedgedTabs.has(tabId)) {
+          if (!wedgedTabs.has(tabId) && !openDialog(tabId)) {
             if (tabLocks.owner(tabId)) await overlayStep(showLockShield(tabId));
             else await overlayStep(hideLockShield(tabId));
           }

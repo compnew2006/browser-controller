@@ -6,6 +6,7 @@
 import { resolveTab, requireTarget, hasPoint, execDom, getFallback } from '../lib/page-exec.js';
 import { autoReSnapshot } from './inspection.js';
 import { trustedSender, locateTarget, locatePointer, releaseShield, cdpClickAt, cdpKeyPress, cdpTypeText, keyDefinition, modifierBits, pointInfo, cursorTo, sleep } from '../lib/trusted-input.js';
+import { lastMousePoint } from '../lib/cdp-session.js';
 
 export { handleDialog, handleDrag, handleFillForm } from './interaction-advanced.js';
 
@@ -47,6 +48,14 @@ async function requireCdp(tabId, what) {
   return send;
 }
 
+/** Why a located target must not be clicked (null: click it). */
+function clickRefusal(loc) {
+  if (loc.disabled) return 'DISABLED: the element is disabled; nothing was clicked.';
+  if (!loc.visible) return 'HIDDEN: the element is not displayed; nothing was clicked. If a menu reveals it, hover that menu first.';
+  if (loc.occludedBy) return `COVERED: ${loc.occludedBy} covers the element; nothing was clicked. Close what covers it first, or click it by x/y.`;
+  return null;
+}
+
 /** Real mouse click at viewport coordinates (the same CSS-pixel frame as browser_screenshot). */
 async function clickAtPoint(tabId, params) {
   const { x, y, button = 'left' } = params;
@@ -78,9 +87,24 @@ export async function handleClick(params) {
   // agent cursor glides there first so a person can follow the click.
   const send = await trustedSender(tabId, trusted);
   if (send && BUTTONS.has(button)) {
-    const loc = await locatePointer(tabId, { ref, selector, fb }, 'click', clickCountOf(params));
+    const target = { ref, selector, fb };
+    let loc = await locatePointer(tabId, target, 'click', clickCountOf(params));
     if (loc && loc.success === false && loc.error === 'REF_GONE') return refGone(tabId, loc, ref, selector);
-    if (loc?.success && loc.visible) {
+    // A hover-revealed item (a menu entry) can lose its hover to the agent's
+    // frame: put the pointer back where the agent left it and look again.
+    const back = lastMousePoint(tabId);
+    if (loc?.success && !loc.visible && back) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: back.x, y: back.y });
+      await sleep(150);
+      loc = (await locatePointer(tabId, target, 'click', clickCountOf(params))) || loc;
+    }
+    if (loc?.success) {
+      // Only what a user could click is clicked; anything else says why.
+      const refusal = clickRefusal(loc);
+      if (refusal) {
+        await releaseShield(tabId);
+        return { success: false, error: refusal };
+      }
       try {
         await cdpClickAt(send, loc.x, loc.y, { button, clickCount: clickCountOf(params), modifiers: clickModifiers(params) });
       } finally {
@@ -91,11 +115,9 @@ export async function handleClick(params) {
         input: 'cdp',
         at: { x: Math.round(loc.x), y: Math.round(loc.y) },
         ...(loc.via ? { via: loc.via } : {}),
-        ...(loc.occludedBy ? { warning: `click point is covered by ${loc.occludedBy}` } : {}),
       };
     }
     await releaseShield(tabId);
-    // Zero-size element: no point to hit — fall through to the synthetic path.
   }
 
   const res = await execDom(tabId, async (_ref, _sel, _btn, _dbl, _fb) => {
@@ -129,8 +151,13 @@ export async function handleClick(params) {
       if (el) el.scrollIntoView({ behavior: 'instant', block: 'center' });
     }
     if (!el) return { success: false, error: 'REF_GONE', _ref };
-
-    const rect = el.getBoundingClientRect();
+    if (el.disabled === true || el.getAttribute('aria-disabled') === 'true') {
+      return { success: false, error: 'DISABLED: the element is disabled; nothing was clicked.' };
+    }
+    const { rect } = D.centerOf(el);
+    if (!(rect.width > 0 && rect.height > 0)) {
+      return { success: false, error: 'HIDDEN: the element is not displayed; nothing was clicked. If a menu reveals it, hover that menu first.' };
+    }
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
     const btnVal = _btn === 'left' ? 0 : _btn === 'right' ? 2 : 1;

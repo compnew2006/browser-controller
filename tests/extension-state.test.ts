@@ -23,7 +23,7 @@ const sessionStore = new Map<string, unknown>();
   alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
 };
 
-const { tabLocks, fallbackByTab, observationSnapshots, persistSessionState, loadSessionState, dropDocumentState, dropTabState } =
+const { tabLocks, fallbackByTab, observationSnapshots, persistSessionState, loadSessionState, dropDocumentState, dropTabState, adoptDaemonInstance } =
   await import('../extension/lib/state.js');
 
 describe('session persistence (MV3 lifetime)', () => {
@@ -47,6 +47,28 @@ describe('session persistence (MV3 lifetime)', () => {
     await loadSessionState();
     expect(tabLocks.owner(7)).toBe('agentA');
     expect(tabLocks.owner(8)).toBe('agentB');
+  });
+
+  it('keeps locks across a worker recycle with the same daemon, drops them for a restarted daemon', async () => {
+    expect(adoptDaemonInstance('run-1')).toEqual([]); // first daemon: nothing to drop
+    tabLocks.lock(7, 's1');
+    persistSessionState();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Worker recycle, then the same daemon says hello again: the lock stays.
+    tabLocks.unlockAll();
+    await loadSessionState();
+    expect(adoptDaemonInstance('run-1')).toEqual([]);
+    expect(tabLocks.owner(7)).toBe('s1');
+
+    // The daemon restarted: its "s1" is someone else, the old lock is stale.
+    expect(adoptDaemonInstance('run-2')).toEqual([7]);
+    expect(tabLocks.owner(7)).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 0));
+    tabLocks.unlockAll();
+    await loadSessionState();
+    expect(tabLocks.owner(7)).toBeUndefined();
+    expect(adoptDaemonInstance('run-2')).toEqual([]);
   });
 
   it('persists fallbacks and restores them per-tab', async () => {

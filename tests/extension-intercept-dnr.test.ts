@@ -21,6 +21,8 @@ const dynamicRules = new Map<number, DnrRule>();
         sessionRules.set(r.id, r);
       }
     },
+    // RE2: no lookarounds or backreferences.
+    isRegexSupported: async ({ regex }: { regex: string }) => (/\(\?[=!<]|\\\d/.test(regex) ? { isSupported: false, reason: "syntaxError" } : { isSupported: true }),
     getDynamicRules: async () => [...dynamicRules.values()],
     updateDynamicRules: async ({ removeRuleIds = [], addRules = [] }: { removeRuleIds?: number[]; addRules?: DnrRule[] }) => {
       for (const id of removeRuleIds) dynamicRules.delete(id);
@@ -49,9 +51,41 @@ describe("browser_intercept enforcement (stateful DNR)", () => {
     expect(rule.condition).toEqual({ regexFilter: "https://api\\.x\\.test/", tabIds: [15], resourceTypes: ["xmlhttprequest"] });
   });
 
+  it("a rule without a tab is refused: it would change every tab of the user's browser", async () => {
+    await expect(handleIntercept({ action: "set-rules", rules: [{ match: "ads\\.test", action: "block" }] })).rejects.toThrow(/tabId is required/);
+    expect(sessionRules.size).toBe(0);
+  });
+
+  it("a regex Chrome cannot use is refused by name, and the other rules keep working", async () => {
+    await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ id: "ok", match: "https://ads\\.test/", action: "block" }] });
+    await expect(handleIntercept({ action: "set-rules", tabId: 15, rules: [
+      { id: "ok", match: "https://ads\\.test/", action: "block" },
+      { id: "look", match: "/api/(?!public)", action: "block" },
+    ] })).rejects.toThrow(/rules\[1\] \(look\).*syntaxError.*Nothing was changed/);
+    expect([...sessionRules.values()].map((r) => r.condition.regexFilter)).toEqual(["https://ads\\.test/"]);
+    expect((await handleIntercept({ action: "list-rules", tabId: 15 })).rules.map((r: { id: string }) => r.id)).toEqual(["ok"]);
+  });
+
+  it("when Chrome rejects the update, the tab's previous rules stay and the call fails", async () => {
+    await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ id: "a", match: "https://a\\.test/", action: "block" }] });
+    const dnr = (globalThis as any).chrome.declarativeNetRequest;
+    const update = dnr.updateSessionRules;
+    let calls = 0;
+    dnr.updateSessionRules = async (args: unknown) => { if (calls++ === 0) throw new Error("quota"); return update(args); };
+    try {
+      const res = await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ id: "b", match: "https://b\\.test/", action: "block" }] });
+      expect(res).toMatchObject({ success: false });
+      expect(res.error).toMatch(/quota.*nothing was changed/);
+    } finally {
+      dnr.updateSessionRules = update;
+    }
+    expect((await handleIntercept({ action: "list-rules", tabId: 15 })).rules.map((r: { id: string }) => r.id)).toEqual(["a"]);
+    expect([...sessionRules.values()].map((r) => r.condition.regexFilter)).toEqual(["https://a\\.test/"]);
+  });
+
   it("clearing removes the rules from Chrome too (not just from the list)", async () => {
     await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ match: "https://ads\\.test/", action: "block" }] });
-    await handleIntercept({ action: "set-rules", rules: [{ match: "https://old\\.test/", action: "redirect", redirectUrl: "https://new.test/" }] });
+    await handleIntercept({ action: "set-rules", tabId: 16, rules: [{ match: "https://old\\.test/", action: "redirect", redirectUrl: "https://new.test/" }] });
     expect(sessionRules.size).toBe(2);
     await handleIntercept({ action: "clear-rules", tabId: 15 });
     expect([...sessionRules.values()].map((r) => r.condition.regexFilter)).toEqual(["https://old\\.test/"]);

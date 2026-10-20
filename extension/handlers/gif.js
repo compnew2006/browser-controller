@@ -41,7 +41,8 @@ export async function recordFrame(tabId, label, result) {
   if (rec.frames.length >= rec.maxFrames) { rec.skipped++; return; }
   try {
     const tab = await chrome.tabs.get(tabId);
-    // Hidden tabs don't paint; activating one flashes it for ~150 ms (like browser_screenshot).
+    // Hidden tabs don't paint. Showing one per frame (activate:true) hides the
+    // tab the user is on, so by default a background tab's frames are skipped.
     if (!tab.active && !rec.activate) { rec.skipped++; return; }
     const shot = await handleScreenshot({ tabId, format: 'jpeg', quality: 70, maxWidth: rec.width });
     if (!shot?.data) { rec.skipped++; return; }
@@ -103,14 +104,18 @@ export async function handleGif(params) {
         frames: [],
         width: Math.min(Math.max(Number(params.width) || 800, 200), 1600),
         maxFrames: Math.min(Math.max(Number(params.maxFrames) || 300, 1), MAX_FRAMES_CAP),
-        activate: params.activate !== false,
+        activate: params.activate === true,
         recording: true,
         skipped: 0,
         startedAt: Date.now(),
       };
       recordings.set(tabId, rec);
       await recordFrame(tabId, 'start', null); // the first frame: how the page looked
-      return { success: true, recording: true, frames: rec.frames.length, width: rec.width, maxFrames: rec.maxFrames };
+      const hidden = !rec.activate && !(await chrome.tabs.get(tabId)).active;
+      return {
+        success: true, recording: true, frames: rec.frames.length, width: rec.width, maxFrames: rec.maxFrames,
+        ...(hidden ? { note: 'The tab is in the background: frames are taken only while it is the visible tab of its window. Focus it (browser_tabs focus), or pass activate:true to show it briefly per frame (that hides the tab the user is on).' } : {}),
+      };
     }
     case 'frame': {
       const rec = recordings.get(tabId);

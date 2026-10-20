@@ -73,12 +73,20 @@ export function buildIpcWelcome(sessionId: string) {
   };
 }
 
-export function buildExtensionHello(appVersion: string) {
+export function buildExtensionHello(
+  appVersion: string,
+  extra: { maxMessageBytes?: number; instanceId?: string } = {},
+) {
   return {
     type: 'hello' as const,
     protocolVersion: PROTOCOL_VERSION,
     appVersion,
     capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
+    // The largest frame the daemon accepts: a bigger one closes the socket for
+    // every agent, so the extension answers with an error instead.
+    ...(extra.maxMessageBytes ? { maxMessageBytes: extra.maxMessageBytes } : {}),
+    // A new id per daemon run: tab locks taken under another run are stale.
+    ...(extra.instanceId ? { instanceId: extra.instanceId } : {}),
   };
 }
 

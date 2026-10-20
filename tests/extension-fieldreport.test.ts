@@ -8,14 +8,16 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
  *     Close/focus now bypass the mutex: closing a tab must ALWAYS work — it
  *     is the operator's escape hatch.
  *  2. handle_dialog must reach an ALREADY-OPEN dialog via CDP (out-of-band,
- *     no page JS) instead of only pre-arming window.alert overrides — the
- *     state the tool exists for was unreachable.
+ *     no page JS). The debugger session records the dialog when it opens;
+ *     nothing is pre-armed in the page (overrides used to answer every later
+ *     confirm() on their own).
  */
 
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const injections = vi.hoisted(() => [] as Array<{ world?: string; func: string }>);
 const cdpCommands = vi.hoisted(() => [] as string[]);
-const dialogCommandsFail = vi.hoisted(() => ({ flag: false }));
+const cdpEvents = vi.hoisted(() => [] as Array<(source: { tabId: number }, method: string, params: unknown) => void>);
+const emitCdp = (tabId: number, method: string, params: unknown = {}) => cdpEvents.forEach((fn) => fn({ tabId }, method, params));
 
 vi.mock('../extension/lib/connection.js', () => ({
   sendJson: (obj: Record<string, unknown>) => { sent.push(obj); },
@@ -48,11 +50,10 @@ const tabStore = new Map<number, { id: number; url: string }>();
     detach: async () => ({}),
     sendCommand: async (_t: unknown, method: string) => {
       cdpCommands.push(method);
-      if (dialogCommandsFail.flag && method === 'Page.handleJavaScriptDialog') {
-        throw new Error('No dialog is showing');
-      }
       return {};
     },
+    onEvent: { addListener: (fn: (source: { tabId: number }, method: string, params: unknown) => void) => { cdpEvents.push(fn); } },
+    onDetach: { addListener: () => {} },
   },
   action: { setBadgeBackgroundColor: () => {}, setBadgeText: () => {} },
   storage: { session: { get: async () => ({}), set: async () => {} }, local: { get: async () => ({}), set: async () => {} } },
@@ -99,11 +100,12 @@ describe('frozen-tab escape hatch (mutex bypass for close/focus/dialog)', () => 
 
   it('browser_handle_dialog also bypasses the pinned mutex', async () => {
     tabMutex.run(3, () => new Promise(() => {}));
+    emitCdp(3, 'Page.javascriptDialogOpening', { type: 'confirm', message: 'Sure?' });
 
     await handleMessage({ id: 'x-dialog', tool: 'browser_handle_dialog', params: { tabId: 3, action: 'dismiss' }, sessionId: 's1' });
     await flush(80);
 
-    expect(sent.find((f) => f.id === 'x-dialog')).toMatchObject({ success: true, result: { handled: 'open-dialog' } });
+    expect(sent.find((f) => f.id === 'x-dialog')).toMatchObject({ success: true, result: { action: 'dismiss', dialog: { type: 'confirm', message: 'Sure?' } } });
     expect(cdpCommands).toContain('Page.handleJavaScriptDialog');
   });
 
@@ -119,23 +121,32 @@ describe('handle_dialog reaches an ALREADY-OPEN dialog via CDP', () => {
   beforeEach(() => {
     cdpCommands.length = 0;
     injections.length = 0;
-    dialogCommandsFail.flag = false;
+    emitCdp(3, 'Page.javascriptDialogClosed');
   });
 
-  it('dismisses an open dialog out-of-band (no page JS needed)', async () => {
+  it('answers the open dialog out-of-band (no page JS needed)', async () => {
+    emitCdp(3, 'Page.javascriptDialogOpening', { type: 'alert', message: 'Saved' });
     const res = await handleDialog({ tabId: 3, action: 'dismiss' });
     expect(cdpCommands).toContain('Page.handleJavaScriptDialog');
-    expect(res).toMatchObject({ success: true, handled: 'open-dialog', action: 'dismiss' });
-    // The override path must NOT have run — CDP already handled it.
-    expect(injections.some((i) => i.func.includes('__mcpDialogOverrides'))).toBe(false);
+    expect(res).toMatchObject({ success: true, action: 'dismiss', dialog: { type: 'alert', message: 'Saved' } });
+    expect(injections).toHaveLength(0);
   });
 
-  it('falls back to arming overrides when no dialog is currently showing', async () => {
-    dialogCommandsFail.flag = true; // CDP says: no dialog open
+  it('says NO_DIALOG when none is open and arms nothing in the page', async () => {
     const res = await handleDialog({ tabId: 3, action: 'accept' });
-    expect(res.success).toBe(true);
-    const overrideInjection = injections.find((i) => i.func.includes('__mcpDialogOverrides'));
-    expect(overrideInjection, 'override pre-arm must run').toBeDefined();
-    expect(overrideInjection!.world).toBe('MAIN');
+    expect(res).toMatchObject({ success: false });
+    expect(res.error).toMatch(/NO_DIALOG/);
+    expect(cdpCommands).not.toContain('Page.handleJavaScriptDialog');
+    expect(injections).toHaveLength(0);
+  });
+
+  it('page tools fail fast with DIALOG_OPEN while a dialog blocks the page', async () => {
+    tabStore.set(4, { id: 4, url: 'https://legacy.example.com/form' }); // tab 3's mutex is pinned above
+    emitCdp(4, 'Page.javascriptDialogOpening', { type: 'confirm', message: 'Leave?' });
+    await handleMessage({ id: 'x-text', tool: 'browser_text', params: { tabId: 4 }, sessionId: 's1' });
+    await flush(80);
+    const frame = sent.find((f) => f.id === 'x-text');
+    expect(String(frame?.error)).toMatch(/DIALOG_OPEN.*Leave\?/);
+    expect(injections).toHaveLength(0);
   });
 });

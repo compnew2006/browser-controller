@@ -15,7 +15,7 @@ import {
   persistSessionState,
 } from "../lib/state.js";
 import { showLockShield, hideLockShield, setAgentCursorHidden, agentCursorEnabled } from "../lib/overlay.js";
-import { broadcastStatus } from "../lib/connection.js";
+import { broadcastStatus, resultBudgetBytes } from "../lib/connection.js";
 import { lockTabUi, releaseTabUi } from "../lib/lock-ops.js";
 import { withCdp, ensureViewport, subscribeCdpEvents, pinCdp, unpinCdp, isCdpPinned } from '../lib/cdp-session.js';
 import { collectBrowserLog, collectPageConsole } from '../lib/browser-log.js';
@@ -23,6 +23,8 @@ import { listView, typeMatcher } from '../lib/network-capture.js';
 import { createBodyCapture, MAX_BODIES } from '../lib/response-bodies.js';
 
 const CDP_CAPTURE_TIMEOUT_MS = 4000;
+// The Claude API rejects images with a side longer than this.
+const MAX_IMAGE_SIDE = 8000;
 
 function withTimeout(promise, ms, what) {
   let timer;
@@ -97,9 +99,13 @@ async function cdpScreenshot(tabId, { format, quality, scale, maxWidth, fullPage
     // reports equal device and CSS viewport widths), so ask the page.
     const dpr = await pageDpr(send, metrics, vv);
     if (maxWidth && width * s * dpr > maxWidth) s = maxWidth / (width * dpr);
+    // No side longer than a model accepts (a full page can be 16 000 px tall).
+    const longest = Math.max(width, height) * s * dpr;
+    if (longest > MAX_IMAGE_SIDE) s *= MAX_IMAGE_SIDE / longest;
+    let fmt = format;
     const capture = (clipScale) => withTimeout(send('Page.captureScreenshot', {
-      format,
-      ...(format === 'jpeg' ? { quality } : {}),
+      format: fmt,
+      ...(fmt === 'jpeg' ? { quality } : {}),
       captureBeyondViewport: !!fullPage && !region,
       clip: {
         x: fullPage && !region ? 0 : vv.pageX + originX,
@@ -116,6 +122,15 @@ async function cdpScreenshot(tabId, { format, quality, scale, maxWidth, fullPage
       ({ data } = await capture(s));
       size = imageSize(data);
     }
+    // Bigger than the daemon accepts (a long page as PNG): JPEG, then smaller,
+    // instead of a result that cannot be delivered.
+    const budget = resultBudgetBytes();
+    for (let i = 0; data.length > budget && i < 3; i++) {
+      if (fmt !== 'jpeg') fmt = 'jpeg';
+      else s *= Math.sqrt(budget / data.length) * 0.9;
+      ({ data } = await capture(s));
+      size = imageSize(data);
+    }
     // How image pixels map to the viewport coordinates click/hover/scroll take:
     // viewportX = origin[0] + imageX / scale (fullPage: page coordinates instead).
     // The real image size is the ground truth (it includes the device pixel
@@ -128,7 +143,7 @@ async function cdpScreenshot(tabId, { format, quality, scale, maxWidth, fullPage
       viewport: [Math.round(vv.clientWidth), Math.round(vv.clientHeight)],
       ...(fullPage && !region ? { page: true, scrollY: Math.round(vv.pageY) } : {}),
     };
-    return { data, width: imgW, height: imgH, frame };
+    return { data, width: imgW, height: imgH, frame, format: fmt };
   });
 }
 
@@ -190,7 +205,7 @@ async function captureScreenshot(params) {
     await hideLockShield(tabId);
     const opts = { format, quality, scale, maxWidth, fullPage, region };
     const done = (shot, via) => ({
-      success: true, format, via, width: shot.width, height: shot.height, frame: shot.frame,
+      success: true, format: shot.format || format, via, width: shot.width, height: shot.height, frame: shot.frame,
       ...(element ? { element: { clipped: element.clipped } } : {}),
       data: shot.data,
     });

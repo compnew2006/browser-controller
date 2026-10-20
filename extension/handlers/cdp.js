@@ -170,31 +170,26 @@ export async function handleUploadFile(params) {
   }
 
   // upload_file stays on CDP (DOM.setFileInputFiles is CDP-only).
-  let uploaded = false;
   try {
     const send = await ensureCdp(tab.id);
     // Find the marked node wherever it lives (open shadow roots, same-origin frames).
     const { result } = await send('Runtime.evaluate', { expression: findMarkedExpression(token) });
     if (!result || !result.objectId) throw new Error(`File input not found: ${what}`);
     await send('DOM.setFileInputFiles', { files: filePaths, objectId: result.objectId });
-    uploaded = true;
   } finally {
-    // Fire the events React/Vue file inputs listen for after a successful set,
-    // and always remove the one-shot marker (and the Observation V2 handoff marker).
+    // Remove the one-shot marker (and the Observation V2 handoff marker).
+    // DOM.setFileInputFiles already fires input + change, as a user's pick does:
+    // firing them again ran React/Vue onChange twice.
     try {
-      await execDom(tab.id, (_token, notify) => {
+      await execDom(tab.id, (_token) => {
         const D = globalThis.__bcDom;
         if (!D) return { __needDom: true };
         const el = (D.queryAll(`[data-bc-upload="${_token}"]`, true) || [])[0];
         if (!el) return null;
-        if (notify) {
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-        }
         el.removeAttribute('data-bc-upload');
         el.removeAttribute('data-bc-v2-upload');
         return null;
-      }, [token, uploaded]);
+      }, [token]);
     } catch { /* page changed — CDP outcome still determines the tool result */ }
   }
 

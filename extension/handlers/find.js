@@ -64,7 +64,7 @@ export async function handleFind(params) {
         for (const w of content) {
           const inName = name.includes(w);
           const inAttr = attrs.includes(w);
-          if (inName) score += new RegExp(`(^|[^\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')}([^\\p{L}\\p{N}]|$)`, 'u').test(name) ? 6 : 4;
+          if (inName) score += new RegExp(`(^|[^\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^\\p{L}\\p{N}]|$)`, 'u').test(name) ? 6 : 4;
           else if (inAttr) score += 3;
           if (inName || inAttr) covered++;
           else missing.push(w);

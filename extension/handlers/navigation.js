@@ -4,7 +4,19 @@
  */
 import { resolveTab, safeExec, replaceFrozenTab } from '../lib/page-exec.js';
 import { isHashOnlyChange } from '../utils/navigation.js';
+import { networkByTab } from '../lib/state.js';
 import { handleSnapshot } from './inspection.js';
+
+/** The tab's main-document request that ended at or after `since` (webRequest capture), if any. */
+function mainFrameSince(tabId, since) {
+  const buf = networkByTab.get(tabId) || [];
+  for (let i = buf.length - 1; i >= 0; i--) {
+    const e = buf[i];
+    if (e.timestamp < since) return null;
+    if (e.type === 'main_frame') return e;
+  }
+  return null;
+}
 
 /** Active-tab fallback, used ONLY by navigate when the caller omits tabId. */
 export async function getActiveTab() {
@@ -41,6 +53,7 @@ export async function handleNavigate(params, sessionId, _agentName, signal) {
   if (fresh) { replacedTabId = tab.id; tab = fresh; }
   const currentTab = await chrome.tabs.get(tab.id);
   const hashOnly = !historyStep && isHashOnlyChange(currentTab.url, url);
+  const navStart = Date.now();
 
   // A promise that rejects when this call is cancelled (client gone / timeout
   // forwarded from the bridge). Handlers that await long-running operations
@@ -64,6 +77,7 @@ export async function handleNavigate(params, sessionId, _agentName, signal) {
     const onUpdatedWait = new Promise((resolve, reject) => {
       let settled = false;
       let pollTimer = null;
+      let endTimer = null;
       // `navigated` gates the readyState probe so we never sample the OLD
       // document (which is already 'complete' and would resolve instantly
       // before the new page even commits).
@@ -73,8 +87,16 @@ export async function handleNavigate(params, sessionId, _agentName, signal) {
         settled = true;
         chrome.tabs.onUpdated.removeListener(listener);
         if (pollTimer) clearInterval(pollTimer);
+        clearInterval(endTimer);
         resolve();
       };
+      // A download or a 204 ends the request without a new page, so 'complete'
+      // never comes: stop once the request is over and the tab is idle again.
+      endTimer = setInterval(async () => {
+        if (!mainFrameSince(tab.id, navStart)) return;
+        const now = await chrome.tabs.get(tab.id).catch(() => null);
+        if (now && now.status === 'complete' && !now.pendingUrl) finish();
+      }, 250);
       // domcontentloaded resolves as soon as the HTML is parsed (readyState
       // reaches 'interactive') — strictly earlier than 'complete'. Chrome's
       // tabs.onUpdated only reports 'loading' and 'complete', never
@@ -99,6 +121,7 @@ export async function handleNavigate(params, sessionId, _agentName, signal) {
       go().catch((err) => {
         chrome.tabs.onUpdated.removeListener(listener);
         if (pollTimer) clearInterval(pollTimer);
+        clearInterval(endTimer);
         reject(err);
       });
       setTimeout(finish, 55000); // timeout — still proceed to settle + snapshot
@@ -123,11 +146,19 @@ export async function handleNavigate(params, sessionId, _agentName, signal) {
   // Return the snapshot inline ONLY if the caller asked for it (default true).
   // Skipping it (snapshot:false) saves a large chunk of tokens when the agent
   // intends to call browser_snapshot itself or doesn't need the tree yet.
-  // For back/forward report where we actually landed, not the keyword.
-  if (historyStep) url = (await chrome.tabs.get(tab.id)).url;
+  // Report where the tab landed (redirects, back/forward), and what the server said.
+  url = (await chrome.tabs.get(tab.id)).url || url;
+  const main = mainFrameSince(tab.id, navStart);
+  if (main?.error && !/ERR_ABORTED/.test(main.error)) {
+    return { success: false, error: `Navigation failed: ${main.error}`, url: main.url, tabId: tab.id };
+  }
+  if (main && url === currentTab.url && main.url !== currentTab.url) {
+    return { url, status: 'not-navigated', note: 'The server answered with a download or no content: the page did not change.', tabId: tab.id };
+  }
+  const httpStatus = main?.status >= 400 ? { httpStatus: main.status } : {};
 
   if (!wantSnapshot) {
-    return { url, status: 'navigated', tabId: tab.id, ...(replacedTabId ? { replacedTabId, note: `tab ${replacedTabId} was frozen and has been replaced by tab ${tab.id}` } : {}) };
+    return { url, status: 'navigated', ...httpStatus, tabId: tab.id, ...(replacedTabId ? { replacedTabId, note: `tab ${replacedTabId} was frozen and has been replaced by tab ${tab.id}` } : {}) };
   }
   try {
     const snap = await handleSnapshot({ tabId: tab.id, compact: true });
@@ -135,12 +166,13 @@ export async function handleNavigate(params, sessionId, _agentName, signal) {
     return {
       url,
       status: 'navigated',
+      ...httpStatus,
       tabId: tab.id,
       ...(replacedTabId ? { replacedTabId, note: `tab ${replacedTabId} was frozen and has been replaced by tab ${tab.id}` } : {}),
       snapshot: snapObj && snapObj.content ? snapObj.content : snapObj,
     };
   } catch {
     // snapshot failed (protected page / 401 / etc) — navigation still succeeded.
-    return { url, status: 'navigated', tabId: tab.id, ...(replacedTabId ? { replacedTabId } : {}) };
+    return { url, status: 'navigated', ...httpStatus, tabId: tab.id, ...(replacedTabId ? { replacedTabId } : {}) };
   }
 }

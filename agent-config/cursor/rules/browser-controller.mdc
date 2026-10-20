@@ -56,7 +56,7 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 - `browser_list_browsers` / `browser_select_browser` - Only when several Chrome profiles are connected. Params: `browserId` (select; `"auto"` = default). List tabs again after switching.
 
 ### Interaction (all require `tabId`)
-- `browser_click` - Real (trusted) click. Params: `tabId`, `ref` OR `selector` OR `x`+`y`, `button`, `clickCount` (1-3), `doubleClick`, `modifiers`, `trusted`
+- `browser_click` - Real (trusted) click; a hidden, disabled or covered target fails (HIDDEN/DISABLED/COVERED) and nothing is clicked. Params: `tabId`, `ref` OR `selector` OR `x`+`y`, `button`, `clickCount` (1-3), `doubleClick`, `modifiers`, `trusted`
 - `browser_click_text` - Click by visible text (works on portals/overlays missing from snapshots). Params: `tabId`, `text`, `index`, `exact`, `trusted`
 - `browser_type` - Real key presses; follow with `browser_press_key` Tab to commit. Params: `tabId`, `ref` OR `selector` (neither = focused field), `text`, `clear`, `trusted`
 - `browser_press_key` - Keyboard. Params: `tabId`, `key` (`"Enter"`, `"ctrl+a"`, `"ArrowDown ArrowDown Enter"`), `repeat`, `modifiers`, `ref`, `selector`, `trusted`
@@ -83,7 +83,7 @@ A `"Tool X disabled"` error means you must activate it via `browser_tools {actio
 ### JavaScript & Dialogs (all require `tabId`)
 - `browser_evaluate` - Execute JS like the DevTools console (CDP by default, not blocked by CSP). Params: `tabId`, `expression`, `timeout`, `mode` (`"cdp"` | `"scripting"`)
 - `browser_run_action` - Action object `{ execute(params) }` or a plain expression, always via CDP. Params: `tabId`, `code`, `actionParams`
-- `browser_handle_dialog` - Handle alert/confirm/prompt (works even on a frozen page). Params: `tabId`, `action`, `promptText`
+- `browser_handle_dialog` - Answer the open alert/confirm/prompt (an action that opens one returns `dialog`; page tools say `DIALOG_OPEN` until it is answered). Params: `tabId`, `action`, `promptText`
 
 ### WebMCP — the site's own tools (all require `tabId`)
 - `browser_webmcp_list` - Tools the page registers via WebMCP (`document.modelContext` / `<form toolname>`); `supported: false` when it has none. Params: `tabId`, `name`, `waitMs`

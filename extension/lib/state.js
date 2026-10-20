@@ -96,6 +96,26 @@ const SESSION_STATE_KEY = "bcSessionState";
  * swallowed — persistence is a best-effort durability upgrade, never a
  * correctness gate on the mutation itself.
  */
+/** The daemon run whose sessions own the tab locks (null: not known yet). */
+let lockDaemonInstance = null;
+
+/**
+ * The daemon introduced itself. Locks taken under an earlier daemon run belong
+ * to sessions that are gone, and the new run hands out the same session ids
+ * again, so they are dropped. Returns the tabs that lost their lock.
+ */
+export function adoptDaemonInstance(instanceId) {
+  if (lockDaemonInstance === instanceId) return [];
+  const stale = lockDaemonInstance ? tabLocks.snapshot().map((l) => l.tabId) : [];
+  if (stale.length) {
+    tabLocks.unlockAll();
+    for (const tabId of stale) tabControl.settle(tabId);
+  }
+  lockDaemonInstance = instanceId;
+  persistSessionState();
+  return stale;
+}
+
 export function persistSessionState() {
   try {
     const fallbacks = {};
@@ -105,6 +125,7 @@ export function persistSessionState() {
     chrome.storage.session.set({
       [SESSION_STATE_KEY]: {
         locks: tabLocks.snapshot(),
+        daemonInstance: lockDaemonInstance,
         fallbacks,
         observations: observationSnapshots.serialize(),
       },
@@ -122,6 +143,7 @@ export async function loadSessionState() {
     const stored = await chrome.storage.session.get(SESSION_STATE_KEY);
     const state = stored?.[SESSION_STATE_KEY];
     if (!state) return;
+    if (typeof state.daemonInstance === 'string') lockDaemonInstance = state.daemonInstance;
     if (Array.isArray(state.locks)) {
       for (const { tabId, sessionId } of state.locks) {
         // lock() refuses to steal: a stale entry for a tab another live session

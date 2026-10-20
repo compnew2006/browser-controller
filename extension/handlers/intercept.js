@@ -161,9 +161,28 @@ async function syncDnr() {
       reason: unsupported.length ? "some rules are ledger-only (see unsupported)" : undefined,
     };
   } catch (err) {
-    lastSync = { installed: new Map(), unsupported, reason: err?.message || String(err) };
+    lastSync = { installed: new Map(), unsupported, reason: err?.message || String(err), failed: true };
   }
   return lastSync;
+}
+
+const DNR_ACTIONS = new Set(["block", "redirect", "header"]);
+
+/**
+ * Chrome matches block/redirect/header rules with RE2, stricter than JS
+ * (no lookarounds or backreferences), and one regex it rejects fails the whole
+ * update: check each rule first so the error names it and nothing changes.
+ */
+async function assertEnforceable(rules) {
+  const dnr = globalThis.chrome?.declarativeNetRequest;
+  if (!dnr?.isRegexSupported) return;
+  for (const [i, r] of rules.entries()) {
+    if (r.enabled === false || !DNR_ACTIONS.has(r.action)) continue;
+    const { isSupported, reason } = await dnr.isRegexSupported({ regex: r.match });
+    if (!isSupported) {
+      throw new Error(`rules[${i}] (${r.id}): Chrome cannot use this regex (${reason}); lookarounds and backreferences are not supported. Nothing was changed.`);
+    }
+  }
 }
 
 const MOCK_PIN = "intercept-mock";
@@ -385,11 +404,23 @@ export async function handleIntercept(params) {
       const scope = scopeKey(
         withIds.flatMap((r) => r.tabIds ?? (tabId != null ? [tabId] : [])),
       );
+      if (withIds.length && scope === "global") {
+        throw new Error("tabId is required: rules apply to that tab only (a rule's tabIds can name several). A rule without a tab would change every tab in the user's browser.");
+      }
+      await assertEnforceable(withIds);
+      const previous = rulesByScope.get(scope);
       // Replacing a scope's rules replaces them (an empty set removes the scope).
       if (withIds.length) rulesByScope.set(scope, withIds);
       else rulesByScope.delete(scope);
       const touched = new Set(withIds.flatMap((r) => mockRuleTabs(scope, r) ?? []));
       const sync = await syncAll(touched);
+      if (sync.failed) {
+        // Chrome took none of the rules: put the scope back as it was.
+        if (previous) rulesByScope.set(scope, previous);
+        else rulesByScope.delete(scope);
+        await syncAll(touched);
+        return { success: false, error: `Chrome rejected the rules (${sync.reason}); nothing was changed.` };
+      }
       const unsupported = sync.unsupported.filter((u) => u.scope === scope);
       return {
         success: true,
@@ -415,19 +446,13 @@ export async function handleIntercept(params) {
       if (tabId != null) {
         let cleared = 0;
         for (const [scope, scopeRules] of [...rulesByScope]) {
-          if (scope === "global") continue;
-          if (scopeTabs(scope).includes(tabId)) {
+          if (scope !== "global" && scopeTabs(scope).includes(tabId)) {
             cleared += scopeRules.length;
             rulesByScope.delete(scope);
           }
         }
-        // Global rules stay (they are not tab-scoped); report honestly.
         await syncAll();
-        return {
-          success: true,
-          cleared,
-          note: "global rules retained; omit tabId to clear all",
-        };
+        return { success: true, cleared };
       }
       const cleared = allRules().length;
       rulesByScope.clear();

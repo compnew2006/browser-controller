@@ -23,7 +23,7 @@ export const interceptTool: ToolDefinition = {
   description:
     "Per-tab network rules: block, redirect, header (set request headers), mock (the page receives mockStatus/mockBody/headers; needs a tabId, uses the debugger) or log; plus captures and a redacted HAR. Check enforcement / enforced / unsupported in the result.",
   inputSchema: z.object({
-    tabId: tabIdParam.optional().describe("Without it rules are global (mocks need a tab)"),
+    tabId: tabIdParam.optional().describe("set-rules: required, the rules apply to this tab"),
     action: z
       .enum([
         "set-rules",

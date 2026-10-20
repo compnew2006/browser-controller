@@ -256,7 +256,8 @@ export async function handleSnapshot(params) {
       const node = { ref, role: r, ...extra };
       if (n) node.name = n;
       if (isNewCheck && prevSet && !prevSet.has(fp)) node.isNew = true;
-      if (el.value !== undefined && el.value !== '' && typeof el.value !== 'object') node.value = String(el.value).slice(0, 200);
+      // A password field shows only that it is filled (and how long), never its value.
+      if (el.value !== undefined && el.value !== '' && typeof el.value !== 'object') node.value = el.type === 'password' ? '•'.repeat(Math.min(String(el.value).length, 20)) : String(el.value).slice(0, 200);
       if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) node.checked = el.checked;
       else if (D.attr(el, 'aria-checked')) node.checked = D.attr(el, 'aria-checked') === 'true';
       if (D.attr(el, 'aria-expanded')) node.expanded = D.attr(el, 'aria-expanded') === 'true';

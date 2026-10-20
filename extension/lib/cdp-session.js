@@ -10,6 +10,10 @@
  * Every session also enables focus emulation: the page believes it has focus
  * even while its window is in the background, so focus/blur/focusin/focusout
  * fire as they would for a real user (legacy grids and lookups depend on them).
+ *
+ * And the Page domain, so a JavaScript dialog (alert/confirm/prompt) that opens
+ * while the session is attached is known: CDP can only answer dialogs that
+ * opened after Page.enable, and Page.enable itself hangs while one is open.
  */
 
 export const IDLE_MS = 30_000;
@@ -27,6 +31,27 @@ function bounded(promise, what) {
 /** tabId -> { ready: Promise<void>, timer } */
 const sessions = new Map();
 
+/** tabId -> { x, y }: where the agent's last mouse event was sent. */
+const lastMouse = new Map();
+
+/** The viewport point the agent's mouse is at in the tab, or null. */
+export function lastMousePoint(tabId) {
+  return lastMouse.get(tabId) || null;
+}
+
+/** tabId -> { type, message } of the JavaScript dialog open in the tab. */
+const openDialogs = new Map();
+
+/** The dialog open in the tab ({ type, message }), or null. */
+export function openDialog(tabId) {
+  return openDialogs.get(tabId) || null;
+}
+
+/** Forget the tab's dialog once it was answered (the close event may lag). */
+export function clearDialog(tabId) {
+  if (openDialogs.delete(tabId)) armIdle(tabId);
+}
+
 function armIdle(tabId) {
   const s = sessions.get(tabId);
   if (!s) return;
@@ -34,6 +59,7 @@ function armIdle(tabId) {
   if (s.busy > 0) return; // a long withCdp() call is still using the session
   if (s.emulation && Object.keys(s.emulation).length) return; // detaching would drop the overrides
   if (s.pins?.size) return; // a capture (response bodies…) is running on it
+  if (openDialogs.has(tabId)) return; // re-attaching could not answer it any more
   s.timer = setTimeout(() => { detachCdp(tabId); }, IDLE_MS);
 }
 
@@ -86,6 +112,7 @@ async function attach(tabId) {
     await bounded(chrome.debugger.sendCommand(target, 'Runtime.evaluate', { expression: '1' }), 'attach probe');
   }
   await bounded(chrome.debugger.sendCommand(target, 'Emulation.setFocusEmulationEnabled', { enabled: true }), 'focus emulation').catch(() => {});
+  await bounded(chrome.debugger.sendCommand(target, 'Page.enable'), 'page domain').catch(() => {});
   // Can fail while the page is still loading; locateTarget retries it.
   await ensureViewport(tabId).catch(() => {});
 }
@@ -128,7 +155,24 @@ export async function ensureCdp(tabId) {
     await s.ready;
   }
   armIdle(tabId);
-  return (method, params = {}) => chrome.debugger.sendCommand({ tabId }, method, params);
+  return (method, params = {}) => {
+    if (method === 'Input.dispatchMouseEvent' && Number.isFinite(params.x)) lastMouse.set(tabId, { x: params.x, y: params.y });
+    const sent = chrome.debugger.sendCommand({ tabId }, method, params);
+    return method.startsWith('Input.') ? untilDialog(tabId, sent) : sent;
+  };
+}
+
+/**
+ * An input event that opens a dialog is only acknowledged once the dialog
+ * closes: resolve it as soon as a dialog is open instead of hanging the tool.
+ */
+function untilDialog(tabId, sent) {
+  if (openDialogs.has(tabId)) return Promise.resolve({});
+  let unsubscribe;
+  const opened = new Promise((resolve) => {
+    unsubscribe = subscribeCdpEvents(tabId, (method) => { if (method === 'Page.javascriptDialogOpening') resolve({}); });
+  });
+  return Promise.race([sent, opened]).finally(unsubscribe);
 }
 
 /** Run fn(send) with the tab's session; no idle detach while fn runs. */
@@ -149,6 +193,7 @@ export async function detachCdp(tabId) {
   if (!s) return;
   clearTimeout(s.timer);
   sessions.delete(tabId);
+  openDialogs.delete(tabId);
   try { await chrome.debugger.detach({ tabId }); } catch { /* already gone */ }
 }
 
@@ -175,6 +220,12 @@ export function subscribeCdpEvents(tabId, fn) {
 
 if (typeof chrome !== 'undefined' && chrome.debugger?.onEvent) {
   chrome.debugger.onEvent.addListener((source, method, params) => {
+    if (method === 'Page.javascriptDialogOpening') {
+      openDialogs.set(source.tabId, { type: params.type, message: String(params.message ?? '').slice(0, 300) });
+      clearTimeout(sessions.get(source.tabId)?.timer);
+    } else if (method === 'Page.javascriptDialogClosed') {
+      clearDialog(source.tabId);
+    }
     const subs = eventSubscribers.get(source.tabId);
     let answered = false;
     if (subs) for (const fn of [...subs]) { try { if (fn(method, params) === true) answered = true; } catch { /* one bad subscriber must not starve the rest */ } }
@@ -193,12 +244,15 @@ if (typeof chrome !== 'undefined' && chrome.debugger?.onEvent) {
 // protected page: forget the session so the next call re-attaches cleanly.
 if (typeof chrome !== 'undefined' && chrome.debugger?.onDetach) {
   chrome.debugger.onDetach.addListener((source) => {
+    openDialogs.delete(source.tabId);
     const s = sessions.get(source.tabId);
     if (s) { clearTimeout(s.timer); sessions.delete(source.tabId); }
   });
 }
 if (typeof chrome !== 'undefined' && chrome.tabs?.onRemoved) {
   chrome.tabs.onRemoved.addListener((tabId) => {
+    openDialogs.delete(tabId);
+    lastMouse.delete(tabId);
     const s = sessions.get(tabId);
     if (s) { clearTimeout(s.timer); sessions.delete(tabId); }
   });

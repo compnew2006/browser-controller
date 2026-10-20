@@ -3,57 +3,32 @@
  * orchestration. Kept separate from the common pointer/keyboard handlers so
  * each module stays focused and reviewable.
  */
-import { resolveTab, safeExec, execDom, getFallback } from '../lib/page-exec.js';
-import { withCdp } from '../lib/cdp-session.js';
+import { resolveTab, execDom, getFallback, withTimeout } from '../lib/page-exec.js';
+import { withCdp, openDialog, clearDialog } from '../lib/cdp-session.js';
 import { openShield, releaseShield, cursorTo, sleep } from '../lib/trusted-input.js';
 
+/**
+ * Answer the JavaScript dialog open in the tab. The tab's debugger session
+ * (lib/cdp-session.js) records a dialog that opens while it is attached, which
+ * every agent action on the tab is; tool results then carry `dialog`.
+ */
 export async function handleDialog(params) {
   const { tabId, action = 'accept', promptText } = params;
   const tab = await resolveTab(tabId);
-
-  // An ALREADY-OPEN native dialog freezes the page's JS thread — overrides
-  // can't help in that state. CDP handles it out-of-band, so try it first.
-  try {
-    return await withCdp(tab.id, async (send) => {
-      await send('Page.enable');
-      await send('Page.handleJavaScriptDialog', {
-        accept: action === 'accept',
-        promptText: promptText || '',
-      });
-      return { success: true, handled: 'open-dialog', action };
-    });
-  } catch {
-    // No dialog showing (or debugger unavailable) — arm future overrides.
+  const dialog = openDialog(tab.id);
+  if (!dialog) {
+    return {
+      success: false,
+      error: 'NO_DIALOG: no dialog is open in this tab. A dialog that opened before the agent acted on the tab cannot be answered: reload the tab (browser_navigate) instead.',
+    };
   }
-
-  // MAIN world is required: the page must see the overridden dialog methods.
-  return safeExec(tabId, (_action, _promptText) => {
-    window.__mcpDialogLog = window.__mcpDialogLog || [];
-    window.__mcpDialogAction = _action;
-    window.__mcpDialogPromptText = _promptText || '';
-
-    if (!window.__mcpDialogOverrides) {
-      window.__mcpDialogOverrides = true;
-      window.alert = function (msg) {
-        window.__mcpDialogLog.push({ type: 'alert', message: String(msg), timestamp: Date.now(), handled: window.__mcpDialogAction });
-      };
-      window.confirm = function (msg) {
-        const accepted = window.__mcpDialogAction === 'accept';
-        window.__mcpDialogLog.push({ type: 'confirm', message: String(msg), timestamp: Date.now(), result: accepted });
-        return accepted;
-      };
-      window.prompt = function (msg, def) {
-        const accepted = window.__mcpDialogAction === 'accept';
-        const text = accepted ? (window.__mcpDialogPromptText || def || '') : null;
-        window.__mcpDialogLog.push({ type: 'prompt', message: String(msg), timestamp: Date.now(), result: text });
-        return accepted ? text : null;
-      };
-    }
-
-    const log = [...window.__mcpDialogLog];
-    window.__mcpDialogLog = [];
-    return { success: true, dialogs: log, message: log.length ? 'Retrieved dialog history' : 'Overrides configured' };
-  }, [action, promptText], { world: 'MAIN' });
+  await withCdp(tab.id, (send) => withTimeout(
+    send('Page.handleJavaScriptDialog', { accept: action === 'accept', ...(promptText != null ? { promptText } : {}) }),
+    3_000,
+    () => new Error('The dialog did not close (page not responding).'),
+  ));
+  clearDialog(tab.id);
+  return { success: true, action, dialog };
 }
 
 export async function handleDrag(params) {

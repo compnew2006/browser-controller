@@ -84,6 +84,7 @@ export class ExtensionBridge {
   private pingIntervalMs: number;
   private defaultTimeoutMs: number;
   private maxWsPayloadBytes: number;
+  private readonly instanceId = crypto.randomUUID();
   private handshakeGraceMs: number;
   /** Reason of the latest failed extension handshake, until some browser connects fine. */
   private handshakeError: string | null = null;
@@ -354,7 +355,7 @@ export class ExtensionBridge {
         // pre-handshake extension builds usable during a rolling local upgrade.
         setTimeout(() => {
           if (!this.conns.has(conn) || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(JSON.stringify(buildExtensionHello(APP_VERSION)));
+          ws.send(JSON.stringify(buildExtensionHello(APP_VERSION, { maxMessageBytes: this.maxWsPayloadBytes, instanceId: this.instanceId })));
           conn.handshakeTimer = setTimeout(() => {
             if (this.conns.has(conn) && conn.state === 'pending') {
               this.markExtensionReady(conn, 'legacy');

@@ -143,8 +143,8 @@ describe("browser_intercept mock rules (Fetch domain)", () => {
     expect(commands(15, "Fetch.fulfillRequest").map((p) => [p.requestId, p.responseCode])).toEqual([["pre", 204]]);
   });
 
-  it("a global mock never answers, even on a tab another mock attached", async () => {
-    await handleIntercept({ action: "set-rules", rules: [{ id: "g", match: "/api/user", action: "mock", mockStatus: 500, mockBody: "{}" }] });
+  it("a mock without a tab is refused; the tab's own mock answers", async () => {
+    await expect(handleIntercept({ action: "set-rules", rules: [{ id: "g", match: "/api/user", action: "mock", mockStatus: 500, mockBody: "{}" }] })).rejects.toThrow(/tabId is required/);
     await handleIntercept({ action: "set-rules", tabId: 15, rules: [{ id: "t", match: "/api/user", action: "mock", mockStatus: 200, mockBody: "{}" }] });
     await pause(15, "u", "https://app.test/api/user");
     expect(commands(15, "Fetch.fulfillRequest").map((p) => p.responseCode)).toEqual([200]);
@@ -171,11 +171,7 @@ describe("browser_intercept mock rules (Fetch domain)", () => {
     expect(commands(15, "Fetch.disable")).toEqual([]); // setting tab 16's rules leaves tab 15's mock alone
   });
 
-  it("global mocks and tabs without a debugger are reported, not claimed", async () => {
-    const global = await handleIntercept({ action: "set-rules", rules: [{ id: "g", match: "/api/", action: "mock", mockBody: "{}" }] });
-    expect(global).toMatchObject({ enforcement: "capture-only", enforced: 0 }); // nothing is applied
-    expect(global.unsupported).toEqual([expect.objectContaining({ id: "g", reason: expect.stringMatching(/need a tabId/) })]);
-
+  it("tabs without a debugger are reported, not claimed", async () => {
     attachFails = true;
     const denied = await handleIntercept({ action: "set-rules", tabId: 16, rules: [{ id: "d", match: "/api/", action: "mock", mockBody: "{}" }] });
     expect(denied).toMatchObject({ enforcement: "capture-only", enforced: 0 });

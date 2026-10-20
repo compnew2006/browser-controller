@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.8.0
+
+### Fixed
+- `browser_snapshot` printed the value of password fields (including ones the browser filled in). A filled password field now shows `••••`, and `browser_type` reports one the same way.
+- A full-page screenshot of a long page was bigger than the daemon accepts, which closed the extension's connection and failed every agent's call in flight. Screenshots now fit: no side over 8000 px, JPEG and smaller when needed. Any result over the limit is answered with `RESULT_TOO_LARGE`; the connection stays up.
+- `browser_handle_dialog` could not answer a dialog that was already open, and when called with none open it made the page answer every later `confirm()` on its own. The tab's debugger session now notices dialogs as they open: the action that opened one returns at once with `dialog: { type, message }` (it used to hang ~10 s), page tools fail fast with `DIALOG_OPEN`, and `browser_handle_dialog` answers it. With none open it says `NO_DIALOG` and prepares nothing.
+- `browser_find` returned nothing for any query with a hyphen (`sign-in`, `e-mail`, `SKU-150`).
+- `browser_navigate` reported the requested URL instead of where a redirect landed, called a 404 or a refused connection a success, and waited 55 s for a download or a `204`. It now returns the landed `url`, `httpStatus` for 4xx/5xx, fails on network errors, and returns at once with `status: "not-navigated"` for a download or `204`.
+- `browser_click` reported success on a hidden, disabled or covered element. It now fails with `HIDDEN`, `DISABLED` or `COVERED` and clicks nothing. A menu item shown by `browser_hover` now gets a real click instead of a synthetic one.
+- `browser_upload_file` fired `input` and `change` twice (React `onChange` ran twice).
+- After the daemon restarted, a tab lock of the old run stayed in the browser, kept its blue frame, blocked other agents for 30 s per call, and passed to the new agent that got the same session id. Locks of an earlier daemon run are now released when the extension reconnects.
+- `browser_gif` recording a background tab brought it to the front for every frame, hiding the tab the user was on. `activate` now defaults to `false`; `start` says when frames will be skipped.
+- `browser_intercept`: one regex Chrome cannot use (a lookahead) silently disabled every block/redirect/header rule. Each rule is now checked first and a bad one is refused by index and id; if Chrome rejects an update anyway, the call fails and the tab keeps its previous rules.
+
+### Changed
+- `browser_intercept set-rules` needs a `tabId` (or rules with `tabIds`). A rule without a tab applied to every tab in the user's browser; it is now refused.
+- The daemon's hello to the extension now carries its message size limit and a per-run id.
+
 ## 2.7.0
 
 ### Added

@@ -6,7 +6,7 @@ export const dialogTool: ToolDefinition = {
   name: "browser_handle_dialog",
   summary: "Handle or dismiss browser dialogs (alert/confirm/prompt)",
   description:
-    "Accept or dismiss an alert/confirm/prompt — works even while the dialog freezes the page.",
+    "Accept or dismiss the alert/confirm/prompt open in the tab. A tool call that leaves one open returns `dialog: {type, message}`; while it is open, page tools fail with DIALOG_OPEN.",
   inputSchema: z.object({
     tabId: requireTabId(),
     action: z
