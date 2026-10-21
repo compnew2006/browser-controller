@@ -22,7 +22,7 @@ export const BATCH_BUDGET_MS = 50_000;
 export const BATCH_MAX_DELAY_MS = 10_000;
 
 /** Tools that must not run inside a batch (recursion). */
-export const NOT_BATCHABLE = new Set(['browser_batch']);
+export const NOT_BATCHABLE = new Set(['browser_batch', 'browser_safety']);
 
 /**
  * Tools that must never receive the batch's default tabId: their tabId names

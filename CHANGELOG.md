@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `browser_click`, `browser_type` and `browser_fill` accept optional `expect` postconditions and `observe: "diff"`; each returns a structured action receipt while keeping its existing text output. `browser_batch` collects receipts for those steps.
+- `browser_safety` configures optional per-MCP-session allow/ask/block rules for recognized submit, delete and upload actions. `ask` uses client elicitation and fails closed if confirmation is unavailable.
+- Element targets accept `{ role, name, nth? }` alongside the existing string locators. Names match exactly, and `nth` is zero-based.
+
 ## 3.0.5
 
 ### Changed
@@ -24,6 +31,7 @@
   - A daemon that read the lock while the first one was still writing it took it as stale and removed it, so two daemons ran on one lock. A lock younger than 5 s that cannot be read now counts as held.
   - `daemon.log` larger than 5 MB moves to `daemon.log.1` before a daemon starts, from a client or from `npm run daemon:start`. One old copy is kept.
 - The popup's ✕ on an agent that is still running: the agent connects again, as a new session. Before, this happened the first time only.
+- A tab id that no longer named a tab failed `INTERNAL_ERROR: Tab 566237764 not found, call browser_tabs list first.`. A tab that `browser_navigate` replaced (a frozen tab) now fails `TAB_REPLACED` and names the new tab id; a tab that is gone fails `TAB_NOT_FOUND`. A tab that Chrome replaces (`chrome.tabs.onReplaced`: a discarded or prerendered tab) passes the session's lock and control to the new tab, as a frozen-tab replacement already did. The replacement map is in memory: after a worker restart an old id fails `TAB_NOT_FOUND`.
 
 ### Documented
 - The console list has the page's own console calls and errors. Messages that Chrome writes itself (`Failed to load resource`, CSP and deprecation warnings) are not in it; a failed load shows in the network list.

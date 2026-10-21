@@ -100,7 +100,9 @@ export function pageInspect(t, fb, properties, keyStyles) {
     }
   }
   const r = el.getBoundingClientRect();
-  const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const rawText = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+  const safeText = D.redactSensitiveText ? D.redactSensitiveText(rawText, el) : rawText;
+  const text = safeText.slice(0, 80);
   return {
     rebound: hit.via === 'fallback' ? t.ref : null,
     element: {

@@ -33,17 +33,17 @@ async function listedTools(): Promise<Array<{ name: string; description?: string
 }
 
 describe('Browser Controller 3.0 server surface', () => {
-  it('tools/list shows exactly the 17 contract tools, in order', async () => {
+  it('tools/list shows exactly the 18 contract tools, in order', async () => {
     const tools = await listedTools();
     expect(tools.map((t) => t.name)).toEqual(allTools.map((t) => t.name));
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(18);
   });
 
-  it('tools/list fits the token budget (all 17 definitions as the SDK sends them, <= 12 000 chars)', async () => {
+  it('tools/list fits the token budget (all 18 definitions as the SDK sends them, <= 18 000 chars)', async () => {
     const tools = await listedTools();
     const json = JSON.stringify(tools);
-    // chars / 4 is the rough o200k estimate: 12 000 chars is about 3 000 tokens.
-    expect(json.length, `tools/list is ${json.length} chars (~${Math.round(json.length / 4)} tokens)`).toBeLessThanOrEqual(12_000);
+    // chars / 4 is the rough o200k estimate: 18 000 chars is about 4 500 tokens.
+    expect(json.length, `tools/list is ${json.length} chars (~${Math.round(json.length / 4)} tokens)`).toBeLessThanOrEqual(18_000);
   });
 
   it('no listed tool description names a removed tool', async () => {
@@ -84,11 +84,15 @@ describe('Browser Controller 3.0 server surface', () => {
     }
   });
 
-  it('batch and every element tool take their element as one string target', async () => {
+  it('batch and every element tool list both string and structured targets', async () => {
     const tools = await listedTools();
     for (const tool of tools) {
-      const props = (tool.inputSchema as { properties?: Record<string, { type?: string }> }).properties ?? {};
-      if (props.target) expect(props.target.type, `${tool.name}.target`).toBe('string');
+      const props = (tool.inputSchema as { properties?: Record<string, { type?: string; anyOf?: Array<{ type?: string }> }> }).properties ?? {};
+      if (props.target) {
+        const variants = props.target.anyOf ?? [props.target];
+        expect(variants.some((variant) => variant.type === 'string'), `${tool.name}.target string`).toBe(true);
+        expect(variants.some((variant) => variant.type === 'object'), `${tool.name}.target object`).toBe(true);
+      }
     }
   });
 });

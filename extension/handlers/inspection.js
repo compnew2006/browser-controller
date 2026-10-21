@@ -9,7 +9,7 @@ import { requireSender, pointInfo, releaseShield } from '../lib/trusted-input.js
 import { withFrames } from '../lib/drag-input.js';
 import { fallbackByTab, persistSessionState } from '../lib/state.js';
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
-import { parseTarget } from '../lib/target.js';
+import { parseTarget, targetLabel } from '../lib/target.js';
 import { refErrorMessage, reboundNote } from '../lib/ref-errors.js';
 
 /** browser_snapshot: the default and the largest `maxChars`. */
@@ -84,7 +84,7 @@ export async function handleWait(params, _sessionId, _agentName, signal) {
   const fb = fallbackFor(tabId, parsed);
   const urlRe = parsed == null && url.includes('*') ? globSource(url) : null;
   const condition = parsed
-    ? `target ${target} ${gone ? 'gone' : 'visible'}`
+    ? `target ${targetLabel(target)} ${gone ? 'gone' : 'visible'}`
     : `url ${urlRe ? 'matching' : 'containing'} "${url}"`;
   let last = null;
   for (;;) {
@@ -379,6 +379,10 @@ function snapshotPage(_target, _fb, _query, _max) {
 
   /** Name for the line: landmarks and generic wrappers take an explicit label or their own text only. */
   function nameOf(el, r) {
+    if (el.isContentEditable && D.isSensitiveField?.(el)) {
+      const label = D.clean(D.attr(el, 'aria-label') || D.attr(el, 'title') || D.attr(el, 'placeholder'), 80);
+      return label || 'sensitive field';
+    }
     if (LANDMARKS.has(r) && r !== 'dialog') return D.clean(D.attr(el, 'aria-label') || D.attr(el, 'title'), 80);
     if (r === 'generic') return D.clean(D.attr(el, 'aria-label') || D.attr(el, 'title') || D.ownText(el), 80);
     return D.nameOf(el).slice(0, 80);
@@ -416,7 +420,7 @@ function snapshotPage(_target, _fb, _query, _max) {
 
   const valueOf = (el) => {
     const type = String(el.type || '').toLowerCase();
-    if (el.tagName === 'INPUT' && type === 'password') return el.value ? '••••' : undefined;
+    if (D.isSensitiveField?.(el)) return el.value ? '••••' : undefined;
     if (el.tagName === 'INPUT' && (isCheckable(el) || BUTTON_TYPES.includes(type))) return undefined;
     if (el.value !== undefined && el.value !== '' && typeof el.value !== 'object') return String(el.value).slice(0, 200);
     return undefined;
@@ -546,7 +550,9 @@ function snapshotPage(_target, _fb, _query, _max) {
   }
   if (truncated) out.push(`… truncated (${more} more chars): narrow with query or target`);
   else if (keep && indexes.length === 0) out.push(`(no element matches ${JSON.stringify(_query)})`);
-  return { success: true, url, title, text: out.join('\n'), truncated, refs, __fallbacks: fallbacks, rebound };
+  const output = out.join('\n');
+  const safeOutput = D.redactSensitiveText ? D.redactSensitiveText(output, root) : output;
+  return { success: true, url, title, text: safeOutput, truncated, refs, __fallbacks: fallbacks, rebound };
 }
 
 /**
@@ -582,6 +588,7 @@ function textPage(_t, _fb, _max) {
     if (!D.isVisible(root)) return { success: false, error: `ELEMENT_HIDDEN: ${D.describe(root)} is not displayed; it has no visible text` };
   }
   if (!root) return { success: false, error: 'NOT_FOUND: the page has no body' };
-  const full = D.flatText(root);
+  const rawText = D.flatText(root);
+  const full = D.redactSensitiveText ? D.redactSensitiveText(rawText, root) : rawText;
   return { success: true, url: location.href, title: document.title, text: full.slice(0, _max), total: full.length, length: full.length, rebound };
 }

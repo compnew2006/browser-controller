@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { tabIdParam, forwardHandler } from './types.js';
+import { tabIdParam, targetParam, forwardHandler } from './types.js';
 
 export const screenshotTool: ToolDefinition = {
   name: 'browser_screenshot',
@@ -8,7 +8,7 @@ export const screenshotTool: ToolDefinition = {
   description: 'JPEG of the viewport, of target (cropped to its box) or of region (CSS px). Longest side at most 1568 px.',
   inputSchema: z.object({
     tabId: tabIdParam,
-    target: z.string().optional(),
+    target: targetParam.optional(),
     region: z.object({
       x: z.number(),
       y: z.number(),

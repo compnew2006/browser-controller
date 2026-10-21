@@ -24,13 +24,13 @@ This is a multi-client server. **Never assume which tab your actions hit.** Targ
 1. `browser_tabs { action: "list" }` → pick a `tabId`. Lines look like `123 [own] "Title" host/path`; `[user, focused]` is the user's tab. Tabs of other sessions are not listed; a count line `+N tabs used by other agents` says how many there are.
 2. Pass that same `tabId` to every page tool.
 3. Refs (`e12`) are valid only for the tab and page that produced them. If the element was re-rendered, the result says so with a `note:` line. `REF_GONE` means take a new `browser_snapshot`.
-4. A tab that `browser_navigate` opens for you is yours until it closes. Another session's call on it fails with `TAB_LOCKED`. Do not act on tabs of other sessions.
+4. A tab that `browser_navigate` opens for you is yours until it closes. Another session's call on it fails with `TAB_LOCKED`. Do not act on tabs of other sessions. A tab id that fails `TAB_REPLACED` was replaced by the tab the message names: use that id, which keeps your lock.
 
 While a tool runs on a tab, the user sees a blue frame and their input on that tab is blocked. That is by design: it protects your workflow.
 
 ## Targets and errors
 
-- `target` (every element parameter): `e12` (a ref from `browser_snapshot`), `text=Sign in` (a visible element with that text; several matches fail `AMBIGUOUS`), `x,y` (viewport CSS px), or a CSS selector.
+- `target` (every element parameter): a locator string (`e12`, `text=Sign in`, `x,y`, or a CSS selector) or `{ role: "button", name: "Sign in" }`. Structured `name` matching is exact, case-insensitive, and whitespace-collapsed. Several matches fail `AMBIGUOUS`; use zero-based `nth` to choose one, such as `{ role: "button", name: "Save", nth: 1 }`.
 - Failures are `isError` results whose text is `CODE: message`. Act on the code; do not repeat a failing call unchanged.
 - Clicks, typing and keys are real input through the debugger. A yellow "being debugged" banner shows while it is attached.
 - `INPUT_BLOCKED`: the page got none of the input. A Chrome dialog over the tab takes it (the password-breach warning after a login, a permission prompt). Ask the user to close it, or go on in a new tab.
@@ -47,7 +47,7 @@ JavaScript, dialogs and network: `browser_evaluate` (`expression` over CDP: top-
 
 1. `browser_tabs { action: "list" }` → pick a `tabId`
 2. `browser_snapshot { tabId }` to see the page and get refs. Scope with `target` or `query` on large pages.
-3. Act with `{ tabId, target: "e5" }` (or `text=…`, or a CSS selector)
+3. Act with `{ tabId, target: "e5" }` (or `text=…`, a CSS selector, or `{ role: "button", name: "Sign in" }`)
 4. Re-snapshot after navigation. `REF_GONE` means take a new snapshot.
 5. Several steps you already know → one `browser_batch { tabId, actions: [{ tool, params }, …] }` call
 6. Before reading a result after an action, `browser_wait` for the element or URL you expect

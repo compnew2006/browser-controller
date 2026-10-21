@@ -12,6 +12,7 @@ import {
   persistSessionState,
   dropTabState,
   dropDocumentState,
+  followReplacedTab,
 } from "./lib/state.js";
 import { hideLockShield } from "./lib/overlay.js";
 import { createNetworkCapture, pushNetworkEntry } from "./lib/network-capture.js";
@@ -120,6 +121,12 @@ export function registerEventListeners() {
   chrome.tabs.onRemoved.addListener((tabId) => {
     dropTabState(tabId);
     persistSessionState();
+  });
+
+  // Chrome replaces a tab in place when it discards or prerenders one: the new tab takes over
+  // the old one's lock and control, as a frozen tab replaced by browser_navigate does.
+  chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
+    followReplacedTab(removedTabId, addedTabId);
   });
 
   watchOpenedTabs();

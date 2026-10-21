@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { allTools } from './tools/index.js';
 import { codedMessageOf, unknownParameterHint } from './tools/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from './tools/types.js';
+import { attachSafetyController } from './tools/action-support.js';
 
 const MAX_TOOL_ARGUMENT_BYTES = 1_000_000;
 const MAX_TOOL_STRING_CHARS = 200_000;
@@ -157,6 +158,23 @@ function wrapHandler(tool: ToolDefinition, host: ToolHost) {
  * listed, in order; a call is validated here before it reaches the host.
  */
 export function registerTools(server: McpServer, host: ToolHost): void {
+  attachSafetyController(host, {
+    async confirm(details) {
+      const capabilities = server.server.getClientCapabilities();
+      if (!capabilities?.elicitation?.form) return 'unavailable';
+      const target = details.target ? ` for target ${details.target}` : '';
+      const response = await server.server.elicitInput({
+        mode: 'form',
+        message: `Allow ${details.categories.join(', ')} via ${details.tool} on ${details.site}${target}?`,
+        requestedSchema: {
+          type: 'object',
+          properties: { confirm: { type: 'boolean', title: 'Allow this action' } },
+          required: ['confirm'],
+        },
+      });
+      return response.action === 'accept' && response.content?.confirm === true ? 'approved' : 'declined';
+    },
+  });
   const runs = new Map<string, (params: Record<string, unknown>) => Promise<ToolResult>>();
   for (const tool of allTools) {
     const run = wrapHandler(tool, host);

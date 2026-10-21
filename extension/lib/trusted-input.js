@@ -306,7 +306,7 @@ export async function pointInfo(tabId, x, y, effect = 'move', count = 1) {
 }
 
 /**
- * What a `target` string aims at: the parsed locator and, for a ref, its snapshot
+ * What a `target` locator aims at: the parsed locator and, for a ref, its snapshot
  * fallback (the descriptor the page re-finds a re-rendered element with). Throws
  * INVALID_ARGUMENT for a blank target.
  */
@@ -327,7 +327,7 @@ export function wordTargetRefMiss(tabId, parsed, loc) {
 }
 
 /**
- * Locate the element (or point) a tool acts on: `target` is the one locator string
+ * Locate the element (or point) a tool acts on: `target` is the shared locator contract
  * (contract principle 2). Without one, `mode` decides (the active or focused element).
  * Throws INVALID_ARGUMENT for a blank target.
  */

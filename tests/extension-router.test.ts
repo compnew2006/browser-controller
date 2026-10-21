@@ -309,8 +309,8 @@ describe('the router and a JavaScript dialog open on the tab', () => {
 });
 
 describe('dispatch registry ↔ MCP tool registry (drift guard)', () => {
-  // browser_batch is server-only: it runs other tools' handlers in the MCP process, so it has no extension handler.
-  const wireTools = allTools.filter((t) => t.name !== 'browser_batch');
+  // browser_batch and browser_safety are server-only; the classifier is an internal extension preflight.
+  const wireTools = allTools.filter((t) => !['browser_batch', 'browser_safety'].includes(t.name));
 
   it('every registered MCP tool has an extension handler', () => {
     for (const tool of wireTools) {

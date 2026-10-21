@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { tabIdParam, forwardHandler } from './types.js';
+import { tabIdParam, targetParam, forwardHandler } from './types.js';
 
 export const snapshotTool: ToolDefinition = {
   name: 'browser_snapshot',
@@ -8,7 +8,7 @@ export const snapshotTool: ToolDefinition = {
   description: 'Accessibility tree with element refs (e12). Scope with target or query. Cut at maxChars with a note. Passwords are masked.',
   inputSchema: z.object({
     tabId: tabIdParam,
-    target: z.string().optional(),
+    target: targetParam.optional(),
     query: z.string().optional(),
     maxChars: z.number().int().min(200).max(50_000).optional().describe('Default 8000'),
   }).strict(),

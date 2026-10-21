@@ -17,7 +17,7 @@ This is a **multi-client** server. Other agents may be working in other tabs rig
 1. `browser_tabs` with `action: "list"` → get a `tabId` for the tab you want to work in
 2. Pass that **same `tabId`** to EVERY page tool (`browser_snapshot`, `browser_click`, `browser_type`, …)
 3. Refs (`e12`) are **only valid for the tabId and page that produced them**. A ref from tab 10 never resolves on tab 20.
-4. A tab that `browser_navigate` opens for you is yours until it closes. Another session's call on it fails with `TAB_LOCKED`. Do not act on tabs of other sessions: `browser_tabs` only counts them (`+N tabs used by other agents`).
+4. A tab that `browser_navigate` opens for you is yours until it closes. Another session's call on it fails with `TAB_LOCKED`. A tab id that fails `TAB_REPLACED` was replaced by the tab the message names: use that id. Do not act on tabs of other sessions: `browser_tabs` only counts them (`+N tabs used by other agents`).
 
 If `tabId` is missing on a page tool, you get: *"tabId is required"*. Call `browser_tabs` with `action: "list"` first.
 
@@ -36,6 +36,8 @@ If `tabId` is missing on a page tool, you get: *"tabId is required"*. Call `brow
 ## Tools (17)
 
 Every page tool takes `tabId` (number, required) except `browser_navigate` (optional: without it the call opens a new background tab the session owns) and `browser_batch` (optional default).
+
+`target` accepts a locator string (`e12`, `text=…`, `x,y`, or CSS) or an accessible locator object such as `{role: "button", name: "Sign in"}`. The name matches exactly, case-insensitively; use zero-based `nth` if more than one element has that role and name.
 
 ### Navigation and tabs
 - `browser_navigate` - `url` (scheme optional), or `back` / `forward` / `reload` (these need `tabId`). Waits up to 15 s for the DOM to be ready, then for it to go quiet (200 ms without change, 1 s at most). `snapshot: true` appends a snapshot.

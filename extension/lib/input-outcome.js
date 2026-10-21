@@ -22,10 +22,10 @@ export function inputBlockedError(what) {
 }
 
 /**
- * Close the agent's input window; report the focused field's value for verification,
+ * Close the agent's input window; report ordinary field values and only booleans for sensitive fields,
  * (`missed`) a press that landed outside the element it aimed at, and (`pressSeen`,
  * `moveSeen`, `keysSeen`: false when none of it arrived) the input the page got. With
- * `typed`, what the text did to the aimed field: `changed`, `holdsTyped`, `full` (its maxlength).
+ * `typed`, what the text did to the aimed field: `changed`, `holdsTyped`, `matchesTyped`, `full` (its maxlength).
  */
 function pageRelease(typed) {
   window.__bcAgentInputUntil = 0;
@@ -45,16 +45,46 @@ function pageRelease(typed) {
   const target = located && located.isConnected !== false ? located : (focusedTag ? a : null);
   if (!target) return { value: null, ...outcome };
   const value = typeof target.value === 'string' ? target.value : target.isContentEditable ? target.textContent : null;
-  // Only the booleans leave the page: the value of a password is never compared outside it.
+  const D = globalThis.__bcDom;
+  let secret = target.type === 'password';
+  try { if (D && D.isSensitiveField) secret = secret || D.isSensitiveField(target); } catch { /* retain local field-hint checks */ }
+  if (!secret) {
+    let labels = '';
+    try { labels = Array.from(target.labels || []).map((label) => label.textContent || '').join(' '); } catch { /* non-native control */ }
+    const hints = [target.type, target.autocomplete, target.name, target.id, target.getAttribute?.('aria-label'), target.placeholder, target.title, labels].join(' ').toLowerCase();
+    secret = /passw|passwd|pwd|secret|credential|token|api[\s_-]*key|one[\s_-]*time|otp|2fa|mfa|verification[\s_-]*code|security[\s_-]*code|auth(?:entication)?[\s_-]*(?:code|token|key)|cc[\s_-]*(?:number|exp|csc|cvc|name)|(?:credit|debit)[\s_-]*card|card[\s_-]*(?:number|code|security)|cvv|cvc|iban|bank[\s_-]*account|routing[\s_-]*number/i.test(hints);
+  }
+  if (!secret && typeof value === 'string') {
+    const digits = value.replace(/[\s-]/g, '');
+    if (/^\d{13,19}$/.test(digits)) {
+      let sum = 0;
+      let double = false;
+      for (let i = digits.length - 1; i >= 0; i--) {
+        let digit = Number(digits[i]);
+        if (double) { digit *= 2; if (digit > 9) digit -= 9; }
+        sum += digit;
+        double = !double;
+      }
+      secret = sum % 10 === 0;
+    }
+  }
+  // Only booleans leave the page for sensitive fields; the raw value never enters the extension background.
   const effect = typeof typed === 'string' && target === located && typeof value === 'string' && typeof before === 'string'
     ? {
       changed: value !== before,
       holdsTyped: value.includes(typed.replace(/\r\n?/g, '\n')),
+      matchesTyped: value.slice(0, 100) === typed.replace(/\r\n?/g, '\n').slice(0, 100),
       ...(target.maxLength > 0 && value.length >= target.maxLength ? { full: target.maxLength } : {}),
     }
     : {};
-  // A password is reported as masked by the caller.
-  return { value: value == null ? null : value.slice(0, 100), secret: target.type === 'password', ...(focusedTag ? { focusedTag } : {}), ...outcome, ...effect };
+  return {
+    value: secret || value == null ? null : value.slice(0, 100),
+    secret,
+    ...(secret ? { hasValue: typeof value === 'string' && value.length > 0 } : {}),
+    ...(focusedTag ? { focusedTag } : {}),
+    ...outcome,
+    ...effect,
+  };
 
   /** What the watched input did (pageLocate watchInput): a missed press, and which kinds of it arrived. */
   function watchOutcome() {

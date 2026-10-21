@@ -7,6 +7,7 @@ import { resolveTab, execDom } from '../lib/page-exec.js';
 import { getOpenDialog, clearOpenDialog, sendAttached, settleWithin, TIMED_OUT } from '../lib/cdp-session.js';
 import { requireSender, locateTarget, focusByClick, selectFocused, releaseShield, cursorTo, cdpClickAt, cdpKeyPress, sleep, targetAim, wordTargetRefMiss, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
 import { reboundNote } from '../lib/ref-errors.js';
+import { targetLabel } from '../lib/target.js';
 
 /** One answer to a dialog. A page that never accepts it returns TIMEOUT instead of holding the tab. */
 const DIALOG_ANSWER_MS = 3_000;
@@ -197,14 +198,15 @@ const isAbsolutePath = (path) => path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(
 
 /** DOM.setFileInputFiles on a file input (the input's marker is found over CDP). Returns an error string or null. */
 async function setFiles(tabId, send, target, parsed, fb, paths) {
+  const label = targetLabel(target);
   const token = `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const mark = await execDom(tabId, pageMarkFile, [parsed, fb, token]);
   if (mark?.error) return wordTargetRefMiss(tabId, parsed, mark).error;
-  if (!mark || mark.notFile) return `INVALID_ARGUMENT: ${target} is not a file input`;
-  if (paths.length > 1 && !mark.multiple) return `INVALID_ARGUMENT: ${target} does not accept several files`;
+  if (!mark || mark.notFile) return `INVALID_ARGUMENT: ${label} is not a file input`;
+  if (paths.length > 1 && !mark.multiple) return `INVALID_ARGUMENT: ${label} does not accept several files`;
   try {
     const { result } = await send('Runtime.evaluate', { expression: findMarkedExpression(token) });
-    if (!result || !result.objectId) return `NOT_FOUND: ${target} is no longer on the page`;
+    if (!result || !result.objectId) return `NOT_FOUND: ${label} is no longer on the page`;
     // Chromium fires `input` and `change` itself on the file input.
     await send('DOM.setFileInputFiles', { files: paths, objectId: result.objectId });
     return null;
@@ -222,7 +224,7 @@ async function refuseMissingFiles(tabId, fields) {
   const missing = [];
   for (const field of fields) {
     if (!Array.isArray(field?.missingFiles) || field.missingFiles.length === 0) continue;
-    const { parsed, fb } = targetAim(tabId, String(field.target));
+    const { parsed, fb } = targetAim(tabId, field.target);
     const info = await execDom(tabId, pageFieldKind, [parsed, fb]);
     if (info?.kind === 'file') missing.push(...field.missingFiles.map(String));
   }
@@ -236,16 +238,17 @@ async function refuseMissingFiles(tabId, fields) {
  */
 async function fillField(tabId, input, field, rebound) {
   const target = field.target;
+  const label = targetLabel(target);
   const { parsed, fb } = targetAim(tabId, target);
   const info = await execDom(tabId, pageFieldKind, [parsed, fb]);
   if (info?.via === 'fallback') rebound.add(parsed.ref);
   if (info?.error) return wordTargetRefMiss(tabId, parsed, info).error;
-  if (!info || info.kind === 'none') return `INVALID_ARGUMENT: ${target} is not a form field`;
-  if (info.kind === 'other') return `INVALID_ARGUMENT: ${target} is a <${info.tag}${info.type ? ` type="${info.type}"` : ''}>, not a form field`;
+  if (!info || info.kind === 'none') return `INVALID_ARGUMENT: ${label} is not a form field`;
+  if (info.kind === 'other') return `INVALID_ARGUMENT: ${label} is a <${info.tag}${info.type ? ` type="${info.type}"` : ''}>, not a form field`;
   const value = typeof field.value === 'number' ? String(field.value) : field.value;
 
   if (info.kind === 'text') {
-    if (typeof value !== 'string') return `INVALID_ARGUMENT: ${target} takes a string`;
+    if (typeof value !== 'string') return `INVALID_ARGUMENT: ${label} takes a string`;
     const loc = await focusByClick(tabId, input, target, { edit: true });
     if (!loc.success) return loc.error;
     if (input.blocked) return null;
@@ -255,15 +258,17 @@ async function fillField(tabId, input, field, rebound) {
     if (input.blocked) return null;
     // Read back: a page that rejects input keeps its value, and is not "filled".
     // The value API reads CRLF back as LF, and the read back covers the first 100 characters.
-    const after = await releaseShield(tabId);
-    if (loc.clicked && after?.pressSeen === false) return inputBlockedError(`the click that focuses ${target}`);
-    const kept = after?.value ?? '';
-    if (after?.value !== value.replace(/\r\n?/g, '\n').slice(0, 100)) return `VALUE_NOT_SET: kept "${after?.secret && kept ? '••••' : kept}"`;
+    const after = await releaseShield(tabId, value);
+    if (loc.clicked && after?.pressSeen === false) return inputBlockedError(`the click that focuses ${label}`);
+    const kept = after?.secret ? (after?.hasValue ? '••••' : '') : after?.value ?? '';
+    const expected = value.replace(/\r\n?/g, '\n').slice(0, 100);
+    const accepted = after?.secret ? after?.matchesTyped === true : after?.value === expected;
+    if (!accepted) return `VALUE_NOT_SET: kept "${after?.secret && kept ? '••••' : kept}"`;
     return null;
   }
 
   if (info.kind === 'picker') {
-    if (typeof value !== 'string') return `INVALID_ARGUMENT: ${target} takes a string`;
+    if (typeof value !== 'string') return `INVALID_ARGUMENT: ${label} takes a string`;
     const res = await execDom(tabId, pageSetPicker, [parsed, fb, value]);
     if (res?.error) return wordTargetRefMiss(tabId, parsed, res).error;
     return res?.same === true ? null : `VALUE_NOT_SET: kept "${res?.kept ?? ''}"`;
@@ -271,15 +276,15 @@ async function fillField(tabId, input, field, rebound) {
 
   if (info.kind === 'select') {
     const wanted = Array.isArray(value) ? value : [value];
-    if (!wanted.every((v) => typeof v === 'string')) return `INVALID_ARGUMENT: ${target} takes a string or a string[]`;
-    if (!info.multiple && wanted.length !== 1) return `INVALID_ARGUMENT: ${target} is a single-choice select: give one value`;
+    if (!wanted.every((v) => typeof v === 'string')) return `INVALID_ARGUMENT: ${label} takes a string or a string[]`;
+    if (!info.multiple && wanted.length !== 1) return `INVALID_ARGUMENT: ${label} is a single-choice select: give one value`;
     const res = await execDom(tabId, pageChooseOptions, [parsed, fb, wanted, info.multiple]);
     return res?.error ? wordTargetRefMiss(tabId, parsed, res).error : null;
   }
 
   if (info.kind === 'checkbox' || info.kind === 'radio') {
-    if (typeof value !== 'boolean') return `INVALID_ARGUMENT: ${target} takes true or false`;
-    if (info.kind === 'radio' && !value) return `INVALID_ARGUMENT: ${target} is a radio button: it can only be set to true`;
+    if (typeof value !== 'boolean') return `INVALID_ARGUMENT: ${label} takes true or false`;
+    if (info.kind === 'radio' && !value) return `INVALID_ARGUMENT: ${label} is a radio button: it can only be set to true`;
     // Clicked only when the state differs (a click on a checked box would uncheck it).
     if (info.checked === value) return null;
     const loc = await locateTarget(tabId, { target, check: 'click' });
@@ -299,10 +304,10 @@ async function fillField(tabId, input, field, rebound) {
   // server's secret-file check never saw.
   const paths = Array.isArray(field.value) ? field.value : null;
   if (!paths || paths.length === 0 || !paths.every((p) => typeof p === 'string' && p)) {
-    return `INVALID_ARGUMENT: ${target} is a file input: give an array of absolute file paths`;
+    return `INVALID_ARGUMENT: ${label} is a file input: give an array of absolute file paths`;
   }
   if (!paths.every(isAbsolutePath)) {
-    return `INVALID_ARGUMENT: ${target} is a file input: give absolute file paths (got a relative path)`;
+    return `INVALID_ARGUMENT: ${label} is a file input: give absolute file paths (got a relative path)`;
   }
   return setFiles(tabId, input.raw, target, parsed, fb, paths);
 }
@@ -326,7 +331,7 @@ export async function handleFill(params, _sessionId, _agentName, signal) {
   let stopped = null;
   try {
     for (const field of fields) {
-      const target = String(field?.target ?? '(no target)');
+      const target = targetLabel(field?.target ?? '(no target)');
       if (stopped) { failed.push(`${target}: ${stopped}`); continue; }
       if (input.blocked) {
         stopped = 'DIALOG_OPEN: not filled, a dialog is open';

@@ -30,6 +30,16 @@ export const tabIdParam = z
   .number()
   .refine(Number.isInteger, "tabId must be an integer");
 
+/** Backward-compatible locator: the existing string grammar or an exact role/name match. */
+export const targetParam = z.union([
+  z.string(),
+  z.object({
+    role: z.string().min(1).max(80),
+    name: z.string().min(1).max(500),
+    nth: z.number().int().min(0).optional().describe("Zero-based index when several exact matches exist"),
+  }).strict(),
+]).describe("Locator string or exact accessible role/name object; name matching is case-insensitive and nth is zero-based.");
+
 export interface ToolDefinition {
   name: string;
   /** One-line summary (10-80 chars), kept with each definition for registry checks and docs. */

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { tabIdParam, forwardHandler } from './types.js';
+import { tabIdParam, targetParam, forwardHandler } from './types.js';
 
 export const textTool: ToolDefinition = {
   name: 'browser_text',
@@ -8,7 +8,7 @@ export const textTool: ToolDefinition = {
   description: 'Visible text of the page or of target; hidden text is left out. Cut at maxChars with a note.',
   inputSchema: z.object({
     tabId: tabIdParam,
-    target: z.string().optional(),
+    target: targetParam.optional(),
     maxChars: z.number().int().min(100).max(100_000).optional(),
   }).strict(),
   // Read-only: safe to retry on timeout. (Fixes prior wire-name drift — C1.)

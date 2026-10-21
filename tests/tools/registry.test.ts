@@ -8,18 +8,18 @@ import {
 } from "../../mcp-server/src/tools/index.js";
 
 describe("Tool Registry", () => {
-  // Browser Controller 3.0: exactly these 17 tools, in tools/list order.
+  // Browser Controller 3.0: exactly these 18 tools, in tools/list order.
   const expectedTools = [
     'browser_navigate', 'browser_tabs', 'browser_snapshot', 'browser_text',
     'browser_screenshot', 'browser_click', 'browser_type', 'browser_fill',
     'browser_scroll', 'browser_wait', 'browser_evaluate', 'browser_handle_dialog',
     'browser_batch', 'browser_emulate', 'browser_logs', 'browser_mock',
-    'browser_inspect_element',
+    'browser_inspect_element', 'browser_safety',
   ];
   // Runs entirely in the MCP process (it calls other tools' handlers): no wire name.
-  const localTools = new Set(['browser_batch']);
+  const localTools = new Set(['browser_batch', 'browser_safety']);
 
-  it("registers exactly the 17 tools, in contract order", () => {
+  it("registers exactly the 18 tools, in contract order", () => {
     expect(allTools.map((t) => t.name)).toEqual(expectedTools);
   });
 
@@ -70,12 +70,13 @@ describe("Tool Registry", () => {
     }
   });
 
-  // --- Target grammar: one string param for every element --------------------
-  it("every element parameter is a string target", () => {
+  // --- Target grammar: compatible strings and structured role/name locators ---
+  it("every element parameter accepts a string or structured target", () => {
     for (const tool of allTools) {
       const shape = tool.inputSchema.shape as Record<string, { safeParse: (v: unknown) => { success: boolean } }>;
       if (!("target" in shape)) continue;
       expect(shape.target!.safeParse("e12").success, `${tool.name} accepts a string target`).toBe(true);
+      expect(shape.target!.safeParse({ role: "button", name: "Sign in" }).success, `${tool.name} accepts a structured target`).toBe(true);
       expect(shape.target!.safeParse(12).success, `${tool.name} rejects a number target`).toBe(false);
     }
     // click, type, scroll, wait, text, snapshot, screenshot, inspect and fill all name elements by target.
@@ -85,6 +86,7 @@ describe("Tool Registry", () => {
     }
     const fieldSchema = (toolMap.get("browser_fill")!.inputSchema.shape.fields as unknown as { element: { shape: Record<string, { safeParse: (v: unknown) => { success: boolean } }> } }).element;
     expect(fieldSchema.shape.target!.safeParse("text=Sign in").success).toBe(true);
+    expect(fieldSchema.shape.target!.safeParse({ role: "textbox", name: "Email" }).success).toBe(true);
     expect(fieldSchema.shape.target!.safeParse(3).success).toBe(false);
   });
 

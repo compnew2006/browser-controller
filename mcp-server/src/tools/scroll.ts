@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { tabIdParam, forwardHandler } from './types.js';
+import { tabIdParam, targetParam, forwardHandler } from './types.js';
 
 export const scrollTool: ToolDefinition = {
   name: 'browser_scroll',
@@ -8,7 +8,7 @@ export const scrollTool: ToolDefinition = {
   description: 'Wheel scroll by dy / dx px at target or the page centre. With only target: scroll it into view. Nothing moved fails NOT_SCROLLABLE.',
   inputSchema: z.object({
     tabId: tabIdParam,
-    target: z.string().optional(),
+    target: targetParam.optional(),
     dy: z.number().optional(),
     dx: z.number().optional(),
   }).strict(),

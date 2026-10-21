@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { tabIdParam, forwardHandler } from './types.js';
+import { tabIdParam, targetParam, forwardHandler } from './types.js';
 
 export const inspectElementTool: ToolDefinition = {
   name: 'browser_inspect_element',
@@ -8,7 +8,7 @@ export const inspectElementTool: ToolDefinition = {
   description: 'Why an element looks or behaves as it does: computed styles that differ from defaults; properties picks some ("*" = all); rules and listeners use the debugger.',
   inputSchema: z.object({
     tabId: tabIdParam,
-    target: z.string(),
+    target: targetParam,
     properties: z.array(z.string().min(1).max(64)).max(100).optional(),
     rules: z.boolean().optional(),
     listeners: z.boolean().optional(),

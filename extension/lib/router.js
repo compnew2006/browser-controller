@@ -23,6 +23,7 @@ import { handleEmulate, clearEmulation } from '../handlers/emulate.js';
 import { handleLogs } from '../handlers/logs.js';
 import { handleMock, releaseMock } from '../handlers/mock.js';
 import { handleInspectElement } from '../handlers/inspect.js';
+import { handleClassifyAction } from '../handlers/action-safety.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -61,10 +62,11 @@ const HANDLERS = {
   browser_logs: handleLogs,
   browser_mock: handleMock,
   browser_inspect_element: handleInspectElement,
+  browser_classify_action: handleClassifyAction,
 };
 
-/** All tool names the router can dispatch (exported for the drift-guard test). */
-export const dispatchedTools = Object.freeze(Object.keys(HANDLERS));
+/** Public wire tools (exported for the drift-guard test); internal preflight stays private. */
+export const dispatchedTools = Object.freeze(Object.keys(HANDLERS).filter((name) => name !== 'browser_classify_action'));
 
 export async function dispatch(tool, params, sessionId, agentName, signal) {
   const handler = HANDLERS[tool];

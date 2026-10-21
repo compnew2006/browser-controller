@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { tabIdParam, forwardHandler } from './types.js';
+import { tabIdParam, targetParam, forwardHandler } from './types.js';
 
 export const waitTool: ToolDefinition = {
   name: 'browser_wait',
@@ -8,7 +8,7 @@ export const waitTool: ToolDefinition = {
   description: 'Wait for exactly one of: target visible (gone:true = hidden), url (substring or glob), ms (delay). Times out with TIMEOUT.',
   inputSchema: z.object({
     tabId: tabIdParam,
-    target: z.string().optional(),
+    target: targetParam.optional(),
     gone: z.boolean().optional(),
     url: z.string().optional(),
     ms: z.number().int().min(0).max(50_000).optional(),

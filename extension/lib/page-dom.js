@@ -9,13 +9,12 @@
  * "succeeded" on the wrong element. Selectors also acted on the first match
  * even when it was hidden, and nothing looked inside shadow roots.
  *
- * Resolution order: ref registry → selector (first VISIBLE match across the
- * composed tree: open/closed shadow roots + same-origin iframes) → verified
- * fallback (unique, or nth among exact role/tag/name matches). Anything
- * ambiguous is reported as gone instead of guessed.
+ * Each parsed locator kind uses its own matcher: refs, visible text, exact
+ * role/name, points and CSS selectors. Matches cover the composed tree (open/closed
+ * shadow roots + same-origin iframes); anything ambiguous is reported, never guessed.
  */
 
-export const PAGE_DOM_VERSION = 13;
+export const PAGE_DOM_VERSION = 15;
 
 /**
  * `refBase`: the highest ref number the tab's earlier documents showed (lib/state.js
@@ -376,6 +375,13 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     return (root && root.nodeType === 9 && root.defaultView && root.defaultView.frameElement) || null;
   }
 
+  function isAccessibilityHidden(el) {
+    for (let node = el; node; node = composedParent(node)) {
+      if (node.nodeType === 1 && (attr(node, 'aria-hidden').toLowerCase() === 'true' || node.inert === true)) return true;
+    }
+    return false;
+  }
+
   /**
    * `text=<words>` (lib/target.js): the visible elements whose accessible name or
    * text equals the words (case-insensitive, whitespace collapsed); when none
@@ -411,11 +417,27 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     return cands.filter((c) => !holdsOne.has(c));
   }
 
+  /** Exact accessible role and name match, optionally selecting a zero-based occurrence. */
+  function byRole(target) {
+    const role = clean(target.role, 80).toLowerCase();
+    const name = clean(target.name, 500).toLowerCase();
+    const hits = [];
+    for (const root of allRoots(true)) {
+      let els = [];
+      try { els = root.querySelectorAll('*'); } catch {}
+      for (const el of els) {
+        if (TEXT_SKIP.has(el.tagName) || isExtensionNode(el) || isAccessibilityHidden(el) || !isVisible(el)) continue;
+        if (clean(roleOf(el), 80).toLowerCase() === role && clean(nameOf(el), 500).toLowerCase() === name) hits.push(el);
+      }
+    }
+    return hits;
+  }
+
   /**
    * The one target resolver. `t` is the object lib/target.js parseTarget returns;
    * `fb` is the snapshot's fallback descriptor for a ref (as resolve() takes it), so
    * a re-rendered element is still re-found. Returns one of:
-   *   { el, via }                  an element (via: 'text' | 'ref' | 'selector')
+   *   { el, via }                  an element (via: 'text' | 'role' | 'ref' | 'selector')
    *   { point, el, via: 'point' }  a viewport point; `el` is the element under it, or null
    *   { error: 'CODE: message' }   text, selector and ambiguity failures
    *   { error: 'REF_GONE', ref, issued, earlier }  a ref miss: the bare code. `issued` says whether
@@ -437,6 +459,18 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
       // Each candidate gets its stable ref, so the agent can retry with one of them.
       const shown = hits.slice(0, 5).map((el) => `${refFor(el)} "${nameOf(el).slice(0, 60)}"`);
       return { error: `AMBIGUOUS: text=${t.text} matches ${hits.length} elements: ${shown.join(', ')}${hits.length > 5 ? ', …' : ''}` };
+    }
+    if (t.kind === 'role') {
+      const hits = byRole(t);
+      const label = `role=${t.role} name=${JSON.stringify(t.name)}`;
+      if (t.nth !== undefined) {
+        if (!hits[t.nth]) return { error: `NOT_FOUND: ${label} nth=${t.nth} has ${hits.length} exact match(es)` };
+        return { el: hits[t.nth], via: 'role' };
+      }
+      if (hits.length === 0) return { error: `NOT_FOUND: no visible ${label} element` };
+      if (hits.length === 1) return { el: hits[0], via: 'role' };
+      const shown = hits.slice(0, 5).map((el) => `${refFor(el)} "${nameOf(el).slice(0, 60)}"`);
+      return { error: `AMBIGUOUS: ${label} matches ${hits.length} elements: ${shown.join(', ')}${hits.length > 5 ? ', …' : ''}` };
     }
     if (t.kind === 'ref') {
       const hit = registry.get(t.ref);
@@ -822,6 +856,60 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     }
   }
 
+
+  const SENSITIVE_FIELD_HINT = /passw|passwd|pwd|secret|credential|token|api[\s_-]*key|(?:one[\s_-]*time|otp|2fa|mfa)|(?:verification|security|auth(?:entication)?)[\s_-]*(?:code|token|key)|(?:credit|debit)[\s_-]*card|(?:cc[\s_-]*(?:number|exp|csc|cvc))|card[\s_-]*(?:number|code|security)|cvv|cvc|iban|bank[\s_-]*account|routing[\s_-]*number/i;
+  const sensitiveFieldValue = (el) => {
+    if (typeof el?.value === 'string') return el.value;
+    return el?.isContentEditable ? String(el.textContent || '') : '';
+  };
+  function looksLikeCardNumber(value) {
+    const digits = String(value || '').replace(/[\s-]/g, '');
+    if (!/^\d{13,19}$/.test(digits)) return false;
+    let sum = 0;
+    let double = false;
+    for (let i = digits.length - 1; i >= 0; i--) {
+      let digit = Number(digits[i]);
+      if (double) { digit *= 2; if (digit > 9) digit -= 9; }
+      sum += digit;
+      double = !double;
+    }
+    return sum % 10 === 0;
+  }
+  function isSensitiveField(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const tag = el.tagName;
+    if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) && !el.isContentEditable && roleOf(el) !== 'textbox') return false;
+    const type = String(el.type || attr(el, 'type') || '').toLowerCase();
+    if (tag === 'INPUT' && type === 'password') return true;
+    const autocomplete = attr(el, 'autocomplete').toLowerCase().split(/\s+/).filter(Boolean);
+    if (autocomplete.some((part) => part.startsWith('cc-') || ['one-time-code', 'current-password', 'new-password'].includes(part))) return true;
+    const hints = [type, attr(el, 'name'), attr(el, 'id'), attr(el, 'aria-label'), attr(el, 'placeholder'), attr(el, 'title'), nameOf(el), ...labelsOf(el).map((label) => label.textContent || '')].join(' ');
+    if (SENSITIVE_FIELD_HINT.test(hints)) return true;
+    return looksLikeCardNumber(sensitiveFieldValue(el));
+  }
+  function redactSensitiveText(text, root = document) {
+    let output = String(text ?? '');
+    const fields = queryAll('input,textarea,select,[contenteditable],[role="textbox"]', true) || [];
+    if (root && root.nodeType === 1 && (root.matches?.('input,textarea,select,[contenteditable],[role="textbox"]'))) fields.push(root);
+    const values = new Set();
+    for (const field of fields) {
+      if ((root === document || root === field || composedContains(root, field)) && isSensitiveField(field)) {
+        const value = sensitiveFieldValue(field);
+        // A short substring can erase unrelated prose; whole-token matches are safer.
+        if (value.length >= 3) values.add(value);
+        else if (value && output.trim() === value) output = '••••';
+      }
+    }
+    for (const value of [...values].sort((a, b) => b.length - a.length)) {
+      const escaped = [...value].map((char) => '.^$*+?()[]{}|\\'.includes(char) ? '\\' + char : char).join('');
+      const pattern = value.length < 4
+        ? '(?<![\\p{L}\\p{N}])' + escaped + '(?![\\p{L}\\p{N}])'
+        : escaped;
+      output = output.replace(new RegExp(pattern, 'gu'), '••••');
+    }
+    return output;
+  }
+
   globalThis.__bcDom = Object.freeze({
     v: version,
     clean, attr, shadowOf, frameDoc, allRoots, queryAll, isVisible, flatChildren,
@@ -829,6 +917,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     composedContains, rowContextOf, describe, registry, flatText, styleOf, connected, cursor,
     isExtensionNode, clickBlocker, clickTarget, labelsOf, byText, resolveTarget,
     peekRef, refFor, refIssued, refIsEarlier, pruneRegistry, ownText,
+    isSensitiveField, redactSensitiveText,
   });
   return true;
 }

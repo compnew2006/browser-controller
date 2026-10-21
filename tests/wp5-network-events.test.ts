@@ -39,6 +39,7 @@ const onAdd = (name: string) => ({
   },
   tabs: {
     onRemoved: onAdd('onRemoved'),
+    onReplaced: onAdd('onReplaced'),
     onUpdated: onAdd('onUpdated'),
     onActivated: onAdd('onActivated'),
     update: async (id: number, props: Record<string, unknown>) => { updates.push([id, props]); return { id }; },
@@ -63,6 +64,14 @@ describe('events wiring', () => {
 
   it('listens for request bodies (requestBody extraInfoSpec)', () => {
     expect(registered.get('onBeforeRequest')![0].extra).toEqual(['requestBody']);
+  });
+
+  it('a tab Chrome replaces (discard, prerender) passes its lock to the new tab', () => {
+    tabLocks.lock(412, 'session-b', { agentName: 'agent-b', since: 5 });
+    (registered.get('onReplaced')![0].fn as (added: number, removed: number) => void)(413, 412);
+    expect(tabLocks.owner(413)).toBe('session-b');
+    expect(tabLocks.owner(412)).toBeUndefined();
+    tabLocks.release(413);
   });
 
   it('a failed request is buffered as a plain network entry, error included', () => {

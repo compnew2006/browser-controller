@@ -4,7 +4,8 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
-import { tabIdParam, forwardHandler, failureResult } from './types.js';
+import { tabIdParam, targetParam, forwardHandler, failureResult } from './types.js';
+import { actionHandler, actionOptionsShape, enforceActionSafety } from './action-support.js';
 
 /**
  * Local paths that are not readable regular files. The extension cannot stat
@@ -82,7 +83,7 @@ const handler = async (
   host: ToolHost,
   params: Record<string, unknown>,
 ): Promise<ToolResult> => {
-  const fields = (params.fields as Array<{ target: string; value: unknown }>) ?? [];
+  const fields = (params.fields as Array<{ target: unknown; value: unknown }>) ?? [];
   const resolved: Array<Record<string, unknown>> = [];
   for (const field of fields) {
     // A number (a range, a typed count) goes to the page as its string.
@@ -109,7 +110,10 @@ const handler = async (
       ...(missing.length > 0 ? { missingFiles: missing.map(nameOf) } : {}),
     });
   }
-  return forwardFill(host, { ...params, fields: resolved });
+  const safeParams = { ...params, fields: resolved };
+  const blocked = await enforceActionSafety(host, 'browser_fill', safeParams);
+  if (blocked) return blocked;
+  return forwardFill(host, safeParams);
 };
 // Registry drift guard: this custom handler still forwards to the same wire name.
 (handler as { toolName?: string }).toolName = 'browser_fill';
@@ -120,12 +124,13 @@ export const fillTool: ToolDefinition = {
   description: 'Fill up to 50 fields: text, date/time/color/range (value), select (value or label), checkbox, radio or switch (boolean), file input (absolute paths, checked before sending). Submits nothing.',
   inputSchema: z.object({
     tabId: tabIdParam,
+    ...actionOptionsShape,
     fields: z.array(z.object({
-      target: z.string(),
+      target: targetParam,
       value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
     }).strict()).min(1).max(50),
   }).strict(),
   // A file set can take a while; the extension's own cap is shorter.
   timeoutMs: 30_000,
-  handler,
+  handler: actionHandler('browser_fill', handler, { safety: false }),
 };

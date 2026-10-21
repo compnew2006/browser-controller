@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { tabIdParam, forwardHandler } from './types.js';
+import { tabIdParam, targetParam, forwardHandler } from './types.js';
+import { actionHandler, actionOptionsShape } from './action-support.js';
 
 export const typeTool: ToolDefinition = {
   name: 'browser_type',
@@ -8,7 +9,8 @@ export const typeTool: ToolDefinition = {
   description: 'Trusted typing into target, or the focused element. key sends one key or combo (Enter, Control+a), or several in order ("ArrowDown ArrowDown Enter"). clear first; submit presses Enter after.',
   inputSchema: z.object({
     tabId: tabIdParam,
-    target: z.string().optional(),
+    ...actionOptionsShape,
+    target: targetParam.optional(),
     text: z.string().optional(),
     key: z.string().optional(),
     clear: z.boolean().optional(),
@@ -21,5 +23,5 @@ export const typeTool: ToolDefinition = {
     }
   }),
   timeoutMs: 15_000,
-  handler: forwardHandler('browser_type'),
+  handler: actionHandler('browser_type', forwardHandler('browser_type')),
 };

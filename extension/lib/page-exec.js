@@ -2,7 +2,7 @@
  * Page-execution primitives (extracted from background.js): tab resolution,
  * the locator guard, and safeExec. Everything a handler needs to touch a page.
  */
-import { fallbackByTab, wedgedTabs, tabLocks, tabControl, persistSessionState, refBaseFor, noteRefsShown } from './state.js';
+import { fallbackByTab, wedgedTabs, tabLocks, refBaseFor, noteRefsShown, replacementOf, followReplacedTab } from './state.js';
 import { highestRefIn } from './ref-errors.js';
 import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from './page-dom.js';
 import { tabLockedMessage } from './tab-concurrency.js';
@@ -17,13 +17,19 @@ export async function resolveTab(tabId) {
   if (tabId == null || typeof tabId !== 'number') {
     throw new Error('tabId is required. Call browser_tabs list first to get a tabId.');
   }
-  try {
-    const tab = await chrome.tabs.get(tabId);
-    if (!tab) throw new Error(`Tab ${tabId} not found, call browser_tabs list first.`);
-    return tab;
-  } catch (err) {
-    throw new Error(`Tab ${tabId} not found, call browser_tabs list first. (${err.message || err})`, { cause: err });
-  }
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (tab) return tab;
+  throw tabGoneError(tabId);
+}
+
+/** A tab id that no longer names a tab: TAB_REPLACED with the tab that took its place, else TAB_NOT_FOUND. */
+function tabGoneError(tabId) {
+  const next = replacementOf(tabId);
+  const err = next === undefined
+    ? new Error(`TAB_NOT_FOUND: tab ${tabId} is closed or was never opened. Call browser_tabs list first.`)
+    : new Error(`TAB_REPLACED: tab ${tabId} was replaced by tab ${next}. Use tabId ${next}; browser_tabs list shows the open tabs.`);
+  err.code = next === undefined ? 'TAB_NOT_FOUND' : 'TAB_REPLACED';
+  return err;
 }
 
 /**
@@ -83,18 +89,9 @@ export async function replaceFrozenTab(tab, url, sessionId = null) {
   // Defence in depth (the router checks too): never replace another session's tab.
   const grant = tabLocks.grantOf(tab.id);
   if (grant && grant.sessionId !== sessionId) throw new Error(tabLockedMessage(tab.id, grant));
-  const owner = grant?.sessionId;
   const fresh = await chrome.tabs.create({ windowId: tab.windowId, index: tab.index, url: url || 'about:blank', active: !!tab.active });
-  wedgedTabs.delete(tab.id);
-  // The replacement keeps the caller's lock on the tab it is replacing.
-  if (owner) {
-    tabLocks.release(tab.id);
-    tabLocks.lock(fresh.id, owner);
-    persistSessionState();
-  }
-  // So does the agent's control (incl. this very call): the popup must not list
-  // the replacement it is navigating as "free".
-  tabControl.move(tab.id, fresh.id);
+  // The replacement keeps the caller's lock and control (incl. this very call), see followReplacedTab.
+  followReplacedTab(tab.id, fresh.id);
   chrome.tabs.remove(tab.id).catch(() => { /* already gone */ });
   return fresh;
 }

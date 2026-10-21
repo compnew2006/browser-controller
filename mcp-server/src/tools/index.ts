@@ -17,8 +17,9 @@ import { emulateTool } from './emulate.js';
 import { logsTool } from './logs.js';
 import { mockTool } from './mock.js';
 import { inspectElementTool } from './inspect-element.js';
+import { safetyTool } from './safety.js';
 
-/** The 17 tools, in the order tools/list shows them. Extension-backed ones forward by name; batch runs in the MCP process. */
+/** The tools, in the order tools/list shows them. Extension-backed ones forward by name; batch and safety settings run in the MCP process. */
 export const allTools: ToolDefinition[] = [
   navigateTool,
   tabsTool,
@@ -37,6 +38,7 @@ export const allTools: ToolDefinition[] = [
   logsTool,
   mockTool,
   inspectElementTool,
+  safetyTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

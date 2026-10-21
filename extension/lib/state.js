@@ -84,6 +84,42 @@ export const tabLocks = new TabLockMap({ nameOf: (sessionId) => sessionAgentName
 // may drop it harmlessly. Not exclusive — see TabControlMap.
 export const tabControl = new TabControlMap();
 
+/**
+ * Tabs replaced by another tab (Map<oldTabId, newTabId>): a frozen tab that browser_navigate
+ * swapped out, or a tab Chrome replaced (discard, prerender). A tab id is never reused, so an
+ * entry does not go stale. Kept to MAX_REPLACED_TABS entries; in memory, so a worker restart
+ * forgets them and the old id then fails TAB_NOT_FOUND.
+ */
+const replacedTabs = new Map();
+const MAX_REPLACED_TABS = 200;
+
+/**
+ * The tab that `tabId` was replaced by, following a chain (replaced twice: the last tab).
+ * Undefined when the tab was never replaced.
+ */
+export function replacementOf(tabId) {
+  let id = tabId;
+  for (let hops = 0; replacedTabs.has(id) && hops < MAX_REPLACED_TABS; hops++) id = replacedTabs.get(id);
+  return id === tabId ? undefined : id;
+}
+
+/**
+ * A tab was replaced by a new one in the same place. The new tab takes over the old one's lock,
+ * control and wedge mark, so the owning session keeps it and the popup does not list it as free.
+ */
+export function followReplacedTab(fromTabId, toTabId) {
+  replacedTabs.set(fromTabId, toTabId);
+  if (replacedTabs.size > MAX_REPLACED_TABS) replacedTabs.delete(replacedTabs.keys().next().value);
+  wedgedTabs.delete(fromTabId);
+  const grant = tabLocks.grantOf(fromTabId);
+  if (grant) {
+    tabLocks.release(fromTabId);
+    tabLocks.lock(toTabId, grant.sessionId, { agentName: grant.agentName, since: grant.since });
+  }
+  tabControl.move(fromTabId, toTabId);
+  persistSessionState();
+}
+
 // The daemon instance (hello.instanceId) this worker last adopted. Locks are
 // only valid for the daemon that granted them; connection.js
 // adoptDaemonInstance() compares against this and releases the stale ones.

@@ -15,7 +15,7 @@ import { wedgedTabs, windowCaptureMutex } from '../lib/state.js';
 import { hideLockShield, setAgentCursorHidden, agentCursorEnabled } from '../lib/overlay.js';
 import { withCdp, ensureViewport } from '../lib/cdp-session.js';
 import { locateTarget, releaseShield } from '../lib/trusted-input.js';
-import { parseTarget } from '../lib/target.js';
+import { parseTarget, targetLabel } from '../lib/target.js';
 
 const CDP_CAPTURE_TIMEOUT_MS = 4000;
 /**
@@ -326,12 +326,12 @@ async function elementBox(tabId, target, parsed) {
     loc = await locateTarget(tabId, { target });
     if (loc?.zeroViewport) throw coded('UNSUPPORTED', 'the tab has no layout (0x0 viewport), so the element cannot be measured.');
   }
-  if (!loc?.success) throw new Error(loc?.error || `NOT_FOUND: ${target.trim()} matches nothing.`);
-  if (!loc.visible) throw coded('ELEMENT_HIDDEN', `${target.trim()} has no visible box (hidden or zero-size).`);
+  if (!loc?.success) throw new Error(loc?.error || `NOT_FOUND: ${targetLabel(target)} matches nothing.`);
+  if (!loc.visible) throw coded('ELEMENT_HIDDEN', `${targetLabel(target)} has no visible box (hidden or zero-size).`);
   const fb = parsed.kind === 'ref' ? getFallback(tabId, parsed.ref) : null;
   const box = await execDom(tabId, pageBoxOf, [parsed, fb]);
   if (box?.error === 'REF_GONE') throw new Error(refErrorMessage(parsed.ref, fb));
-  if (!box || box.error) throw new Error(box?.error || `NOT_FOUND: ${target.trim()} matches nothing.`);
+  if (!box || box.error) throw new Error(box?.error || `NOT_FOUND: ${targetLabel(target)} matches nothing.`);
   return box.region;
 }
 
@@ -383,7 +383,7 @@ async function captureScreenshot(params) {
   try {
     const crop = target != null ? await elementBox(tabId, target, parsed) : region;
     const shot = await takeShot(tab, crop, protectedPage);
-    const label = target != null ? `element ${target.trim()}` : (region ? 'region' : 'viewport');
+    const label = target != null ? `element ${targetLabel(target)}` : (region ? 'region' : 'viewport');
     const notes = [
       ...(shot.clipped ? ['clipped to the viewport'] : []),
       ...(shot.edgeClamped ? [`scaled down to a ${MAX_IMAGE_EDGE} px longest side`] : []),

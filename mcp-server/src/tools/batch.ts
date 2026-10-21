@@ -72,7 +72,7 @@ function messageOf(result: ToolResult): string {
 export const batchTool: ToolDefinition = {
   name: 'browser_batch',
   summary: 'Run up to 50 browser actions in one call',
-  description: 'Up to 50 calls in order, each {tool, params}; stops at the first failure. tabId fills steps that omit it (not browser_tabs). Result: the last step.',
+  description: 'Up to 50 calls in order, each {tool, params}; stops at the first failure. tabId fills steps that omit it (not browser_tabs). Returns the last text result and structured receipts for click/type/fill steps.',
   inputSchema: z.object({
     tabId: tabIdParam.optional(),
     actions: z
@@ -92,10 +92,14 @@ export const batchTool: ToolDefinition = {
     let tabId = topTabId;
     const deadline = Date.now() + BATCH_BUDGET_MS;
     let last: ToolResult = textResult('');
+    const receipts: Array<Record<string, unknown>> = [];
+    const withReceipts = (result: ToolResult, success: boolean): ToolResult => receipts.length
+      ? { ...result, structuredContent: { success, steps: receipts } }
+      : result;
     for (const [i, step] of actions.entries()) {
       const label = `step ${i + 1}/${actions.length} ${step.tool}`;
       if (Date.now() >= deadline) {
-        return failureResult(`${label}: TIMEOUT: batch budget used; ${actions.length - i} skipped`);
+        return withReceipts(failureResult(`${label}: TIMEOUT: batch budget used; ${actions.length - i} skipped`), false);
       }
       const def = toolMap.get(step.tool);
       let result: ToolResult;
@@ -112,7 +116,7 @@ export const batchTool: ToolDefinition = {
           const parsed = parseToolParams(def, stepParams);
           const outcome = await untilDeadline(runStep(def, host, parsed, deadline), deadline);
           if (outcome === BUDGET_USED) {
-            return failureResult(`${label}: TIMEOUT: batch budget used; ${actions.length - i - 1} skipped`);
+            return withReceipts(failureResult(`${label}: TIMEOUT: batch budget used; ${actions.length - i - 1} skipped`), false);
           }
           result = outcome;
         } catch (err) {
@@ -124,12 +128,17 @@ export const batchTool: ToolDefinition = {
           if (typeof opened === 'number') tabId = opened;
         }
       }
+      const structured = result.structuredContent;
+      if (structured && typeof structured === 'object' && 'receipt' in structured) {
+        const receipt = (structured as Record<string, unknown>).receipt;
+        if (receipt && typeof receipt === 'object') receipts.push({ step: i + 1, tool: step.tool, ...(receipt as Record<string, unknown>) });
+      }
       if (result.isError) {
         // A message that ends its sentence loses the full stop: "…nothing was clicked; 0 skipped", not ".;".
-        return failureResult(`${label}: ${messageOf(result).replace(/\.$/, '')}; ${actions.length - i - 1} skipped`);
+        return withReceipts(failureResult(`${label}: ${messageOf(result).replace(/\.$/, '')}; ${actions.length - i - 1} skipped`), false);
       }
       last = result;
     }
-    return last;
+    return withReceipts(last, true);
   },
 };

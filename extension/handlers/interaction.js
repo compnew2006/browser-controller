@@ -2,14 +2,14 @@
  * Interaction handlers: browser_click (also hover and dragTo) and browser_type (text,
  * key, clear, submit). Pointer and keyboard input is trusted CDP input only: with no
  * debugger the call fails with DEBUGGER_UNAVAILABLE and nothing is dispatched. A `target`
- * is the one locator string (lib/target.js). Every dispatch goes through an input session
+ * uses the shared locator contract (lib/target.js). Every dispatch goes through an input session
  * (lib/trusted-input.js inputSession): a JS dialog the input opens settles the call with a
  * `dialog:` line, a cancelled call sends nothing new. browser_fill and browser_handle_dialog
  * are in interaction-advanced.js.
  */
 import { resolveTab } from '../lib/page-exec.js';
 import { getOpenDialog } from '../lib/cdp-session.js';
-import { parseTarget } from '../lib/target.js';
+import { parseTarget, targetLabel } from '../lib/target.js';
 import { requireSender, locateTarget, locatePointer, focusByClick, measureTarget, selectFocused, releaseShield, cdpClickAt, cdpKeyPress, keyDefinition, modifierBits, cursorTo, sleep, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
 import { reboundNote } from '../lib/ref-errors.js';
 import { clearSelection, withFrames, interceptDrags } from '../lib/drag-input.js';
@@ -128,7 +128,7 @@ function missedError(target, loc, hit, settled) {
     ...(settled?.navigated ? [`the page then navigated to ${settled.navigated}`] : []),
     ...(settled?.dialog ? [`it opened a ${dialogSummary(settled.dialog)}`] : []),
   ];
-  return `CLICK_MISSED: the click at ${x},${y} landed on ${hit}, not on ${target}: the target moved after it was measured${then.length ? `; ${then.join('; ')}` : ''}. Take a new snapshot before acting again.`;
+  return `CLICK_MISSED: the click at ${x},${y} landed on ${hit}, not on ${targetLabel(target)}: the target moved after it was measured${then.length ? `; ${then.join('; ')}` : ''}. Take a new snapshot before acting again.`;
 }
 
 /** Failed locate: release the input window and return the answer (nothing was sent). */
@@ -149,7 +149,7 @@ async function hoverTo(tabId, input, target) {
   const isPoint = parseTarget(target).kind === 'point';
   if (loc.visible === false && !isPoint) {
     await releaseShield(tabId);
-    return { success: false, error: `ELEMENT_HIDDEN: ${target} has no size on the page, so there is nothing to hover` };
+    return { success: false, error: `ELEMENT_HIDDEN: ${targetLabel(target)} has no size on the page, so there is nothing to hover` };
   }
   let after = {};
   try {
@@ -159,8 +159,8 @@ async function hoverTo(tabId, input, target) {
   }
   const settled = input.blocked ? await settle(tabId, urlBefore) : null;
   const { x, y } = pointOf(loc);
-  if (after.moveSeen === false) return { success: false, error: inputBlockedError(`the mouse move to ${x},${y} on ${target}`), at: { x, y } };
-  return inputResult([`hovered ${target}`, ...outsideLines(loc)], settled, { input: 'cdp', at: { x, y } }, reboundNotes(loc, [target]));
+  if (after.moveSeen === false) return { success: false, error: inputBlockedError(`the mouse move to ${x},${y} on ${targetLabel(target)}`), at: { x, y } };
+  return inputResult([`hovered ${targetLabel(target)}`, ...outsideLines(loc)], settled, { input: 'cdp', at: { x, y } }, reboundNotes(loc, [target]));
 }
 
 /**
@@ -245,7 +245,7 @@ async function dragBetween(tabId, input, from, to) {
     if (!input.blocked) await releaseShield(tabId);
   }
   const settled = await settle(tabId, urlBefore);
-  const lines = [`dragged ${from} → ${to}`, ...(html5 ? ['html5: the page started a drag; dragenter, dragover and drop were sent'] : [])];
+  const lines = [`dragged ${targetLabel(from)} → ${targetLabel(to)}`, ...(html5 ? ['html5: the page started a drag; dragenter, dragover and drop were sent'] : [])];
   return inputResult(lines, settled, { input: 'cdp', from: pointOf(a), to: pointOf(b), ...(html5 ? { html5: true } : {}) }, rebound);
 }
 
@@ -298,9 +298,9 @@ export async function handleClick(params, _sessionId, _agentName, signal) {
     // The page got no part of the click: something outside it took the input.
     if (after.pressSeen === false && !settled.navigated) {
       const { x, y } = pointOf(loc);
-      return { success: false, error: inputBlockedError(`the click at ${x},${y} on ${target}`), at: { x, y } };
+      return { success: false, error: inputBlockedError(`the click at ${x},${y} on ${targetLabel(target)}`), at: { x, y } };
     }
-    return inputResult([`clicked ${target}${loc.onLabel ? ' via label' : ''}`, ...outsideLines(loc), ...downloaded], settled, {
+    return inputResult([`clicked ${targetLabel(target)}${loc.onLabel ? ' via label' : ''}`, ...outsideLines(loc), ...downloaded], settled, {
       input: 'cdp', at: pointOf(loc), ...(main.facts.download ? { download: { url: main.facts.url, filename: main.facts.filename } } : {}),
     }, reboundNotes(loc, [target]));
   } finally {
@@ -335,7 +335,7 @@ export async function handleType(params, _sessionId, _agentName, signal) {
     }
     if (!loc.success) return refused(tabId, loc);
 
-    const where = target ?? 'focused element';
+    const where = target === undefined ? 'focused element' : targetLabel(target);
     const chars = text ? [...String(text)].length : 0;
     const lines = [];
     let typed = null;
@@ -361,11 +361,12 @@ export async function handleType(params, _sessionId, _agentName, signal) {
     const settled = combos || submit || input.blocked ? await settle(tabId, urlBefore) : null;
 
     const value = after?.value ?? null;
-    const shown = (v) => (after.secret && v ? '••••' : v);
+    const shown = (v) => (after?.secret && (after?.hasValue || v) ? '••••' : v);
+    const outputValue = after?.secret ? (after?.hasValue ? '••••' : null) : value;
     // The page got none of the input: a dialog of Chrome's own covers the tab.
     if (loc.clicked && after.pressSeen === false) {
       const { x, y } = pointOf(loc);
-      return { success: false, error: inputBlockedError(`the click that focuses ${target} at ${x},${y}`) };
+      return { success: false, error: inputBlockedError(`the click that focuses ${targetLabel(target)} at ${x},${y}`) };
     }
     if ((combos || submit) && after.keysSeen === false && !settled?.navigated) {
       return { success: false, error: inputBlockedError(`the keys (${[key, submit ? 'Enter' : null].filter(Boolean).join(' ')})`) };
@@ -376,13 +377,13 @@ export async function handleType(params, _sessionId, _agentName, signal) {
       const full = after.full ? `; the field is full: maxlength ${after.full}` : '';
       return { success: false, error: `VALUE_NOT_SET: typed ${typed} chars into ${where}, but its value did not change (kept "${shown(value ?? '')}"${full})` };
     }
-    if (value != null) lines.push(after.secret && value ? 'value: ••••' : `value: "${value}"`);
+    if (outputValue != null) lines.push(after.secret ? 'value: ••••' : 'value: "' + outputValue + '"');
     // The focusing click went to something else (the field moved): the input followed the focus.
-    if (after?.missed) lines.push(`warning: the click that focuses ${target} landed on ${after.missed}; the input went where the focus is`);
+    if (after?.missed) lines.push(`warning: the click that focuses ${targetLabel(target)} landed on ${after.missed}; the input went where the focus is`);
     return inputResult(lines, settled, {
       input: 'cdp',
       ...(typed != null ? { typed } : {}),
-      ...(value != null ? { value: shown(value) } : {}),
+      ...(outputValue != null ? { value: outputValue } : {}),
     }, target === undefined ? [] : reboundNotes(loc, [target]));
   } finally {
     input.close();

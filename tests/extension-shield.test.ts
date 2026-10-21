@@ -45,6 +45,7 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
     create: async () => ({}),
     captureVisibleTab: async () => 'data:image/png;base64,QUJD',
     onRemoved: { addListener: () => {} },
+    onReplaced: { addListener: () => {} },
     onUpdated: { addListener: (fn: (...args: unknown[]) => unknown) => { listeners.updated.push(fn); } },
     onActivated: { addListener: () => {} },
   },
