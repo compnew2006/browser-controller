@@ -10,8 +10,9 @@
 import { resolveTab } from '../lib/page-exec.js';
 import { getOpenDialog } from '../lib/cdp-session.js';
 import { parseTarget } from '../lib/target.js';
-import { requireSender, locateTarget, locatePointer, focusByClick, measureTarget, selectFocused, releaseShield, clearSelection, withFrames, cdpClickAt, cdpKeyPress, keyDefinition, modifierBits, cursorTo, sleep, assertInputReady, inputSession, dialogSummary } from '../lib/trusted-input.js';
+import { requireSender, locateTarget, locatePointer, focusByClick, measureTarget, selectFocused, releaseShield, cdpClickAt, cdpKeyPress, keyDefinition, modifierBits, cursorTo, sleep, assertInputReady, inputSession, dialogSummary } from '../lib/trusted-input.js';
 import { reboundNote } from '../lib/ref-errors.js';
+import { clearSelection, withFrames, interceptDrags } from '../lib/drag-input.js';
 
 const BUTTONS = new Set(['left', 'right', 'middle']);
 /** Modifier names a click or a drag takes ("Control" and "ctrl" both work) and their CDP names. */
@@ -151,7 +152,10 @@ async function hoverTo(tabId, input, target) {
  * drag is refused (TARGET_OFFSCREEN) with nothing pressed. A failure after the
  * press still releases the button, where the press is now. No text is selected at
  * the press (it would start Chrome's text drag), and the tab draws frames while
- * the drag runs (a background tab otherwise holds each move about a second).
+ * the drag runs (a background tab otherwise holds each move about a second). When
+ * the page starts an HTML5 drag (draggable=true, a link, an image), Chrome hands it
+ * over instead of starting its own (interceptDrags) and the rest of the gesture is
+ * dragenter / dragover / drop at the same points.
  */
 async function dragBetween(tabId, input, from, to) {
   const pair = async () => {
@@ -181,6 +185,10 @@ async function dragBetween(tabId, input, from, to) {
   let at = a;
   let pressed = false;
   let releasing = false;
+  // Set once the page starts an HTML5 drag: from then on the gesture is drag events.
+  let html5 = false;
+  const drag = await interceptDrags(tabId, input.raw);
+  const dragEvent = (type, p) => input.send('Input.dispatchDragEvent', { type, x: p.x, y: p.y, data: drag.data });
   try {
     await withFrames(tabId, input.raw, async () => {
       await input.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
@@ -191,23 +199,36 @@ async function dragBetween(tabId, input, from, to) {
       for (let i = 1; i <= DRAG_STEPS && !input.blocked; i++) {
         if (glideMs) await sleep(t0 + (glideMs * i) / DRAG_STEPS - Date.now());
         at = { x: Math.round(a.x + ((b.x - a.x) * i) / DRAG_STEPS), y: Math.round(a.y + ((b.y - a.y) * i) / DRAG_STEPS) };
-        await input.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y, button: 'left' });
+        if (html5) {
+          await dragEvent('dragOver', at);
+        } else {
+          await input.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y, button: 'left' });
+          if (drag.data) { html5 = true; await dragEvent('dragEnter', at); }
+        }
       }
       at = b;
+      // Chrome can hand the drag over after the last move's answer.
+      if (!html5 && !input.blocked && await drag.started()) { html5 = true; await dragEvent('dragEnter', b); }
       releasing = true;
-      await input.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+      if (html5) await dragEvent('drop', b);
+      else await input.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', clickCount: 1 });
     });
   } catch (err) {
-    // A failed drag must not leave the button down: release where the press is now.
+    // A failed drag must not leave the button down (or an HTML5 drag open): end it where the press is now.
     if (pressed && !releasing && err?.code !== 'TAB_WEDGED') {
-      await input.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1 }).catch(() => {});
+      const end = html5
+        ? input.send('Input.dispatchDragEvent', { type: 'cancel', x: at.x, y: at.y, data: drag.data })
+        : input.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1 });
+      await end.catch(() => {});
     }
     throw err;
   } finally {
+    await drag.stop();
     if (!input.blocked) await releaseShield(tabId);
   }
   const settled = await settle(tabId, urlBefore);
-  return inputResult([`dragged ${from} → ${to}`], settled, { input: 'cdp', from: pointOf(a), to: pointOf(b) }, rebound);
+  const lines = [`dragged ${from} → ${to}`, ...(html5 ? ['html5: the page started a drag; dragenter, dragover and drop were sent'] : [])];
+  return inputResult(lines, settled, { input: 'cdp', from: pointOf(a), to: pointOf(b), ...(html5 ? { html5: true } : {}) }, rebound);
 }
 
 /**

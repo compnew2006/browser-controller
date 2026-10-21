@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.0.1-blue?style=flat-square" alt="v3.0.1" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.0.2-blue?style=flat-square" alt="v3.0.2" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -458,7 +458,7 @@ With no flags the result is the computed styles that differ from browser default
 
 - `tabId`, `target` (required; a point `x,y` is allowed).
 - `button`: `left` (default), `right` or `middle`. `count`: 1–3. `modifiers`: any of `Alt`, `Control`, `Meta`, `Shift`.
-- `hover` (false): move the pointer only. `dragTo`: a second target; the press is at `target`, the release at `dragTo`, with 10 moves between. Any text selection is cleared before the press, and the tab keeps drawing frames while the drag runs, so a drag in a background tab takes about as long as in a visible one. `hover` and `dragTo` cannot be combined.
+- `hover` (false): move the pointer only. `dragTo`: a second target; the press is at `target`, the release at `dragTo`, with 10 moves between. Any text selection is cleared before the press, and the tab keeps drawing frames while the drag runs, so a drag in a background tab takes about as long as in a visible one. When the page starts an HTML5 drag (`draggable="true"`, a link, an image), Chrome hands it back instead of starting its own, and the rest of the gesture is sent as `dragenter`, `dragover` and `drop` at the same points; the result then has an `html5:` line. `hover` and `dragTo` cannot be combined.
 
 The target is checked first: hidden, disabled or covered elements fail (`ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED`) and nothing is clicked. The click is a trusted mouse event at the element's centre. Within 300 ms after the press the result reports `navigated: <url>` or `dialog: <type> "<message>"`, so a click that opens an alert never hangs the call. A point outside the viewport gets a warning line.
 
@@ -486,7 +486,7 @@ Each field is handled by its kind:
 
 - `tabId` (required); `target`; `dy` and `dx` (pixels).
 
-`target` alone brings the element into view, instantly, without a wheel. With `dy` or `dx` the call sends a real wheel at the target's centre (or the page centre), which needs the debugger (`DEBUGGER_UNAVAILABLE` otherwise). The result reports the scrolled position and whether it reached the end. If nothing moved, the call fails `NOT_SCROLLABLE` and says why: already at that edge, or nothing scrollable there.
+`target` alone brings the element into view, instantly, without a wheel. With `dy` or `dx` the call sends a real wheel (the tab keeps drawing frames until it settles, so a background tab answers as fast as a visible one) at the target's centre (or the page centre), which needs the debugger (`DEBUGGER_UNAVAILABLE` otherwise). The result reports the scrolled position and whether it reached the end. If nothing moved, the call fails `NOT_SCROLLABLE` and says why: already at that edge, or nothing scrollable there.
 
 ### `browser_wait`
 

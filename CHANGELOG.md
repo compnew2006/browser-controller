@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.2
+
+### Fixed
+- `browser_click` `dragTo` on an HTML5 drag source (`draggable="true"`, a link, an image). Chrome hands such a drag to the operating system's drag loop, which follows the real mouse and not the debugger's; on Windows and macOS it ended at once, with no drop. Drags are now intercepted: Chrome gives the drag's data back (`Input.setInterceptDrags`), and the rest of the gesture is sent as `dragenter`, `dragover` and `drop` at the same points. The source still gets `dragend`, a target that does not accept the drop gets none, and the result says `html5:`. A plain mouse drag is unchanged. Checked in a real Chrome, headless and with a window (Linux): a card dropped on a column, a sortable list, a link onto a drop zone, a refused drop, then a plain drag and a click. Windows and macOS were not available to test.
+- `browser_scroll` with `dy`/`dx` in a tab that had been in the background a few seconds said `NOT_SCROLLABLE: nothing moved` although the page did scroll (the wheel waited for the tab's next frame, about a second). The tab now draws frames while the wheel settles: 395 ms and the right position, in a tab hidden for 16 s.
+
 ## 3.0.1
 
 ### Fixed

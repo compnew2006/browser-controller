@@ -6,6 +6,7 @@
  */
 import { safeExec, execDom, resolveTab, getFallback } from '../lib/page-exec.js';
 import { requireSender, pointInfo, releaseShield } from '../lib/trusted-input.js';
+import { withFrames } from '../lib/drag-input.js';
 import { fallbackByTab, persistSessionState } from '../lib/state.js';
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
 import { parseTarget } from '../lib/target.js';
@@ -168,8 +169,11 @@ export async function handleScroll(params) {
   await pointInfo(tabId, aim.x, aim.y); // opens the agent's input window (lib/overlay.js) and glides the cursor
   let after;
   try {
-    await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: aim.x, y: aim.y, deltaX: dx, deltaY: dy });
-    after = await settleScroll(tabId, dx, dy);
+    // A background tab holds the wheel until it draws a frame: keep frames coming until the scroll settles.
+    after = await withFrames(tabId, send, async () => {
+      await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: aim.x, y: aim.y, deltaX: dx, deltaY: dy });
+      return settleScroll(tabId, dx, dy);
+    });
   } finally {
     await releaseShield(tabId);
   }

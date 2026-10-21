@@ -241,6 +241,53 @@ describe('browser_click', () => {
     expect(pressedAfterClear).toBe(true);
   });
 
+  /** Source and drop target 190 px apart, as in the drag tests above. */
+  function dragPair() {
+    const src = doc.el('div', { id: 'src', draggable: 'true' }, 'Card');
+    const dst = doc.el('div', { id: 'dst' }, 'Column');
+    (dst as any).getBoundingClientRect = () => ({ x: 200, y: 200, left: 200, top: 200, width: 100, height: 40, right: 300, bottom: 240 });
+    doc.body.append(src, dst);
+    (doc as any).elementsFromPoint = (x: number, y: number) => [src, dst].filter((el) => {
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height;
+    });
+  }
+
+  it('dragTo plays an HTML5 drag as drag events once Chrome hands it over: dragenter, dragover, then drop, no mouse release', async () => {
+    dragPair();
+    const data = { items: [{ mimeType: 'text/plain', data: 'card-1' }], dragOperationsMask: 1 };
+    let down = false;
+    let handed = false;
+    const before = cdpReply;
+    cdpReply = (method, params) => {
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed') down = true;
+      // The first move with the button down starts the page's drag: Chrome hands it over.
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved' && down && !handed) {
+        handed = true;
+        for (const fn of dialogListeners) fn({ tabId: 1 }, 'Input.dragIntercepted', { data });
+      }
+      return before(method, params);
+    };
+    const res = await handleClick({ tabId: 1, target: '#src', dragTo: '#dst' });
+    expect(res).toMatchObject({ success: true, html5: true });
+    expect(res.text).toMatch(/^dragged #src → #dst\nhtml5: /);
+    const steps = cdp.filter((c) => c.method === 'Input.dispatchMouseEvent' || c.method === 'Input.dispatchDragEvent')
+      .map((c) => (c.method === 'Input.dispatchDragEvent' ? `drag:${c.params.type}` : c.params.type));
+    expect(steps.filter((t) => t === 'mouseMoved')).toHaveLength(2); // to the press point, and the first step
+    expect(steps.slice(steps.indexOf('drag:dragEnter'))).toEqual(['drag:dragEnter', ...Array(9).fill('drag:dragOver'), 'drag:drop']);
+    expect(steps).not.toContain('mouseReleased');
+    const drop = cdp.find((c) => c.method === 'Input.dispatchDragEvent' && c.params.type === 'drop')!;
+    expect(drop.params).toMatchObject({ x: 250, y: 220, data });
+  });
+
+  it('dragTo switches drag interception on before the press and off after the drag', async () => {
+    dragPair();
+    await handleClick({ tabId: 1, target: '#src', dragTo: '#dst' });
+    const order = cdp.map((c) => (c.method === 'Input.dispatchMouseEvent' ? c.params.type : c.method === 'Input.setInterceptDrags' ? `intercept:${c.params.enabled}` : c.method));
+    expect(order.indexOf('intercept:true')).toBeLessThan(order.indexOf('mousePressed'));
+    expect(order.indexOf('intercept:false')).toBeGreaterThan(order.indexOf('mouseReleased'));
+  });
+
   it('a drop target that cannot share the viewport with the source is TARGET_OFFSCREEN, nothing pressed', async () => {
     const src = doc.el('div', { id: 'src' }, 'Card');
     const dst = doc.el('div', { id: 'dst' }, 'Far');

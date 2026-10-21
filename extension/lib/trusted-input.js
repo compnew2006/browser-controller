@@ -519,34 +519,6 @@ export async function selectFocused(tabId) {
   await safeExec(tabId, pageSelectFocused, []);
 }
 
-/**
- * Before a drag: no text selected. A press on selected text starts Chrome's own
- * text drag, and the page then never gets its mouseup (an earlier drag over text
- * leaves such a selection). Never throws: a page that refuses script has none to clear.
- */
-export async function clearSelection(tabId) {
-  try { await safeExec(tabId, () => { window.getSelection?.()?.removeAllRanges(); return {}; }, []); } catch { /* nothing to clear */ }
-}
-
-/**
- * A background tab draws no frames, and Chrome holds each mouse move for the next
- * frame: about 1 s per move once the tab has been hidden a few seconds, so a drag
- * took 7 s or timed out. A screencast keeps frames coming (the way a background
- * screenshot does) while `fn` runs; tiny frames, each acknowledged, nothing kept.
- */
-export async function withFrames(tabId, send, fn) {
-  const off = subscribeCdpEvents(tabId, (method, params) => {
-    if (method === 'Page.screencastFrame') send('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
-  });
-  const started = await send('Page.startScreencast', { format: 'jpeg', quality: 1, maxWidth: 32, maxHeight: 32 }).then(() => true, () => false);
-  try {
-    return await fn();
-  } finally {
-    off();
-    if (started) await send('Page.stopScreencast').catch(() => {});
-  }
-}
-
 function pageCursor(x, y, effect, count) {
   const D = globalThis.__bcDom;
   if (!D || !D.cursor) return { __needDom: true };

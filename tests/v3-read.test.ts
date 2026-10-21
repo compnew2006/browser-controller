@@ -512,6 +512,15 @@ describe('scroll', () => {
     expect(res.text).toBe('y: 500 atEnd: false');
   });
 
+  it('the tab draws frames while the wheel settles (a background tab holds the wheel for its next frame)', async () => {
+    const el = feed();
+    cdpState.onWheel = (p) => { el.scrollTop += p.deltaY; };
+    await handleScroll({ tabId: 1, dy: 500 });
+    const order = cdp.map((c) => (c.method === 'Input.dispatchMouseEvent' ? c.params.type : c.method));
+    expect(order.indexOf('Page.startScreencast')).toBeLessThan(order.indexOf('mouseWheel'));
+    expect(order.indexOf('Page.stopScreencast')).toBeGreaterThan(order.indexOf('mouseWheel'));
+  });
+
   it('dx adds the x position to the line', async () => {
     const el = feed();
     el.scrollWidth = 2000;
