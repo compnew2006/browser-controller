@@ -213,6 +213,24 @@ the extension reconnects to the same endpoint. The lifecycle wrapper reads the
 `daemon.json` PID and is safe to run repeatedly; a stale lock is removed only
 when its recorded PID is not alive.
 
+MCP clients reconnect after every drop of their daemon connection (a restart,
+a crash). Each try connects to the daemon that answers, or waits for one that
+is starting (its `daemon.lock` names a live PID), or, when none is alive,
+starts one (never with `BROWSER_CONTROLLER_DAEMON_MODE=connect`). Tries back
+off from 0.25 s to 5 s; after 8 failed tries the client waits for its next tool
+call to try again. A tool call made while the client reconnects waits up to
+10 s for it. A call that was running when the connection dropped fails
+`NOT_CONNECTED: daemon connection closed` and is not repeated: it may have run.
+A client starts a daemon at most 3 times a minute, so a daemon that cannot stay
+up is not restarted in a loop; calls then fail `NOT_CONNECTED: Not connected to
+daemon: …` with the reason and the path of `daemon.log`.
+
+When several clients start a daemon at the same moment, the first one takes
+`daemon.lock`. Each other one writes one line, `… lock is held by live process
+<pid>; this daemon exits and clients use that one`, and exits with code 0; its
+client connects to the first. A `daemon.log` larger than 5 MB is moved to
+`daemon.log.1` before the next daemon starts (one old copy is kept).
+
 ### Expected endpoints
 
 - **MCP endpoint:** stdio, launched as `node mcp-server/dist/index.js` (the
@@ -330,7 +348,7 @@ Failure codes:
 A fixed-height tabbed shell (the body never scrolls, only the lists do):
 
 - **Tabs** — every open tab with its owner.
-- **Agents** — each connected agent with its name, session id, uptime, and a ✕ to disconnect it immediately (clears a zombie the heartbeat hasn't reaped yet).
+- **Agents** — each connected agent with its name, session id, uptime, and a ✕ to disconnect it immediately (clears a zombie the heartbeat hasn't reaped yet). An agent that is still running connects again, as a new session.
 - **Settings** — WebSocket port, Auth Token, Enrollment Secret, and the optional agent cursor.
 - **Activity bar** — a collapsible strip at the bottom showing the latest tool activity; expand it for the rolling log.
 
@@ -627,13 +645,13 @@ The daemon keeps everything in `~/.browser-controller/` (Windows: `%USERPROFILE%
 | `token.json`      | Auth token the extension must present on every WebSocket connection (mode `0600`)    |
 | `daemon.sock`     | The IPC socket thin clients connect to (AF_UNIX on mac/linux; named pipe on Windows) |
 | `daemon.json`     | Daemon metadata (pid, port, start time) — used to detect a running daemon            |
-| `daemon.log`      | Daemon stdout/stderr when spawned by a client                                        |
+| `daemon.log`      | Daemon stdout/stderr when started by a client or `daemon:start`; past 5 MB it moves to `daemon.log.1` at the next start |
 
 To fully reset: stop your MCP clients, delete the folder, and the next run recreates it with fresh secrets.
 
 ### Reliability
 
-- The daemon is **auto-spawned** the first time any client runs and left running detached.
+- The daemon is **auto-spawned** the first time any client runs and left running detached. A client that loses it reconnects, and starts it again when none is alive (see [Runtime lifecycle](#runtime-lifecycle-authoritative-daemon)).
 - Connection drops use exponential backoff (1s → 30s), ping/pong health checks every 10s; a client that misses 3 pongs is evicted.
 - Per-session rate limit of 120 calls/min protects the daemon from a runaway agent loop. Each step of a batch counts as one call.
 - Per-tool timeouts (see [Timeouts and retries](#timeouts-and-retries)), co-located with each tool's definition so they can't drift from the registry.

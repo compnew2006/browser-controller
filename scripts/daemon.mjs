@@ -10,7 +10,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import net from 'node:net';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const entry = path.join(root, 'mcp-server', 'dist', 'daemon.js');
@@ -97,8 +97,9 @@ async function start() {
     console.log(`daemon already running (pid ${existing.pid}) on ${existing.host}:${existing.port}`);
     return;
   }
-  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  const log = fs.openSync(path.join(stateDir, 'daemon.log'), 'a', 0o600);
+  // The build's own helper (same BC_STATE_DIR) rotates a daemon.log past its size cap.
+  const { openDaemonLog } = await import(pathToFileURL(path.join(root, 'mcp-server', 'dist', 'daemon-config.js')).href);
+  const log = openDaemonLog();
   const child = spawn(process.execPath, [entry], { detached: true, stdio: ['ignore', log, log], env: process.env });
   child.unref();
   const info = await waitForStart();

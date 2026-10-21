@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.0.5
+
+### Fixed
+- An MCP client reconnected to the daemon once only. After a second `npm run daemon:restart`, every call of a client that had used its reconnect failed `NOT_CONNECTED: Not connected to daemon` until its MCP host restarted it (5 clients, 3 sessions back). A client now reconnects after every drop. Tries back off from 0.25 s to 5 s, up to 8 tries; then the next tool call tries again. A call made while the client reconnects waits up to 10 s for it, instead of failing at once. A client starts a daemon at most 3 times a minute: one that cannot stay up is not restarted in a loop, and calls then fail `NOT_CONNECTED: Not connected to daemon: the daemon was started 3 times in 60 s and did not stay up; see <path>/daemon.log`.
+- During a restart, each client that found no daemon started one, and each but the first died with `Fatal: Error: Browser Controller daemon lock is held by live process <pid>` and a full stack. `~/.browser-controller/daemon.log` reached 228 MB. Now:
+  - A client waits for a daemon whose `daemon.lock` names a live PID, instead of starting another.
+  - A daemon that loses the lock writes one line (`… lock is held by live process <pid>; this daemon exits and clients use that one`) and exits with code 0. Its client connects to the first daemon.
+  - A daemon that read the lock while the first one was still writing it took it as stale and removed it, so two daemons ran on one lock. A lock younger than 5 s that cannot be read now counts as held.
+  - `daemon.log` larger than 5 MB moves to `daemon.log.1` before a daemon starts, from a client or from `npm run daemon:start`. One old copy is kept.
+- The popup's ✕ on an agent that is still running: the agent connects again, as a new session. Before, this happened the first time only.
+
 ## 3.0.4
 
 ### Fixed

@@ -73,7 +73,45 @@ export const DAEMON_INFO_FILE = path.join(STATE_DIR, 'daemon.json');
 /** Daemon ownership lock; a live PID identifies the authoritative runtime. */
 export const DAEMON_LOCK_FILE = path.join(STATE_DIR, 'daemon.lock');
 
-/** Acquire the runtime lock, removing only a demonstrably stale lock. */
+/** A lock file younger than this that cannot be read is still being written by the daemon that created it. */
+const LOCK_WRITE_GRACE_MS = 5_000;
+
+/** Another daemon holds the runtime lock: this one lost the start race and must exit. */
+export class DaemonLockHeldError extends Error {
+  /** Pid of the holder; 0 when its lock file was still being written. */
+  readonly ownerPid: number;
+  constructor(ownerPid: number, options?: ErrorOptions) {
+    super(ownerPid > 0
+      ? `Browser Controller daemon lock is held by live process ${ownerPid}`
+      : 'Browser Controller daemon lock is being taken by another daemon', options);
+    this.name = 'DaemonLockHeldError';
+    this.ownerPid = ownerPid;
+  }
+}
+
+/**
+ * Who holds daemon.lock: the pid of a live holder, 0 for a lock another daemon
+ * is still writing (created, not yet filled), or null when the lock is free or
+ * stale. A thin client that sees a holder waits for that daemon instead of
+ * starting a competitor.
+ */
+export function daemonLockHolder(): number | null {
+  let raw: string;
+  try { raw = fs.readFileSync(DAEMON_LOCK_FILE, 'utf8'); } catch { return null; }
+  let ownerPid = 0;
+  try { ownerPid = JSON.parse(raw).pid ?? 0; } catch { /* empty or corrupt */ }
+  if (ownerPid > 0) {
+    try { process.kill(ownerPid, 0); return ownerPid; } catch { return null; }
+  }
+  // openSync('wx') creates the file before writeFileSync fills it: a daemon
+  // that reads it in between must not take a fresh lock for a stale one.
+  try { return Date.now() - fs.statSync(DAEMON_LOCK_FILE).mtimeMs < LOCK_WRITE_GRACE_MS ? 0 : null; } catch { return null; }
+}
+
+/**
+ * Acquire the runtime lock, removing only a demonstrably stale lock. Throws
+ * DaemonLockHeldError when another daemon holds it.
+ */
 export function acquireDaemonLock(): void {
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   for (;;) {
@@ -84,13 +122,8 @@ export function acquireDaemonLock(): void {
       return;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      let ownerPid = 0;
-      try { ownerPid = JSON.parse(fs.readFileSync(DAEMON_LOCK_FILE, 'utf8')).pid ?? 0; } catch { /* stale/corrupt */ }
-      let alive = false;
-      if (ownerPid > 0) {
-        try { process.kill(ownerPid, 0); alive = true; } catch { /* not running */ }
-      }
-      if (alive) throw new Error(`Browser Controller daemon lock is held by live process ${ownerPid}`, { cause: err });
+      const holder = daemonLockHolder();
+      if (holder !== null) throw new DaemonLockHeldError(holder, { cause: err });
       try { fs.unlinkSync(DAEMON_LOCK_FILE); } catch { /* raced with cleanup */ }
     }
   }
@@ -102,6 +135,25 @@ export function releaseDaemonLock(): void {
       fs.unlinkSync(DAEMON_LOCK_FILE);
     }
   } catch { /* already gone */ }
+}
+
+/** Daemon stdout/stderr when a thin client or `npm run daemon:start` starts it. */
+export const DAEMON_LOG_FILE = path.join(STATE_DIR, 'daemon.log');
+
+/** Past this size daemon.log is moved to daemon.log.1 before a daemon starts; one old copy is kept. */
+export const DAEMON_LOG_MAX_BYTES = 5_000_000;
+
+/**
+ * Open daemon.log for appending, as the stdout/stderr of a daemon about to
+ * start. A log past maxBytes is first rotated to `<file>.1`, so restarts and
+ * lost start races cannot grow it without bound.
+ */
+export function openDaemonLog(file = DAEMON_LOG_FILE, maxBytes = DAEMON_LOG_MAX_BYTES): number {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  try {
+    if (fs.statSync(file).size > maxBytes) fs.renameSync(file, `${file}.1`);
+  } catch { /* no log yet, or another client rotated it first */ }
+  return fs.openSync(file, 'a', 0o600);
 }
 
 /** Auth token file (3.1): both IPC clients and the extension must present it. */

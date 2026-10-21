@@ -28,6 +28,7 @@ import {
   DEFAULT_WS_HOST,
   DEFAULT_WS_PORT,
   DAEMON_INFO_FILE,
+  DaemonLockHeldError,
   acquireDaemonLock,
   releaseDaemonLock,
   ENROLLMENT_FILE,
@@ -527,6 +528,13 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  // Several thin clients that find no daemon each start one; all but the
+  // first lose the lock. That is the normal end of a start race, not a
+  // failure: one line, exit 0, and the clients connect to the winner.
+  if (err instanceof DaemonLockHeldError) {
+    console.error(`[${SERVER_NAME}] ${err.message}; this daemon exits and clients use that one`);
+    process.exit(0);
+  }
   console.error(`[${SERVER_NAME}] Fatal:`, err);
   process.exit(1);
 });

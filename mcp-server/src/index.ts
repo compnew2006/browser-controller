@@ -55,12 +55,15 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { buildIpcHello, OLDER_DAEMON_IPC_REASON, validateIpcHandshake } from './protocol.js';
 import { allTools } from './tools/index.js';
 import { registerTools } from './register-tools.js';
+import { Reconnector, type DaemonState } from './daemon-reconnect.js';
 import {
   APP_VERSION,
   DAEMON_INFO_FILE,
+  DAEMON_LOG_FILE,
   IPC_SOCKET_PATH,
-  STATE_DIR,
+  daemonLockHolder,
   loadOrCreateEnrollment,
+  openDaemonLog,
   readEnrollmentSecret,
   readToken,
 } from './daemon-config.js';
@@ -83,7 +86,8 @@ const SERVER_INSTRUCTIONS = [
 ].join('\n');
 const DAEMON_STARTUP_MS = 8_000;
 const CONNECT_RETRY_MS = 250;
-const MAX_CONNECT_TRIES = 32; // ~8s
+/** How long a tool call made while the daemon connection is down waits for the reconnect. */
+const CALL_RECONNECT_WAIT_MS = 10_000;
 const DAEMON_MODE = (process.env.BROWSER_CONTROLLER_DAEMON_MODE ?? 'spawn').trim().toLowerCase();
 const CONNECT_ONLY_DAEMON = DAEMON_MODE === 'connect' || DAEMON_MODE === 'managed';
 
@@ -100,8 +104,16 @@ class DaemonClient {
   get sessionId(): string | null { return this._sessionId; }
   private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; t: ReturnType<typeof setTimeout> }>();
   private daemonCallId = 0;
-  private connectResolvers: Array<() => void> = [];
+  /** Settles the pending connect() at welcome (no error) or at refusal, close or timeout. */
+  private welcomeWaiter: ((err?: Error) => void) | null = null;
+  /** The daemon welcomed this connection; false again once it closes. */
+  private welcomed = false;
   private closeHandlers: Array<() => void> = [];
+  /**
+   * Set by main(): a call made while disconnected waits through this for the
+   * reconnect. Resolves null once connected, otherwise why not.
+   */
+  awaitReconnect: ((timeoutMs: number) => Promise<string | null>) | null = null;
   /** Why the daemon's welcome was refused; set before the socket is dropped, so connect() reports it. */
   private refusal: string | null = null;
   private readonly ipcPath: string;
@@ -114,25 +126,33 @@ class DaemonClient {
     this.agentName = agentName;
   }
 
+  /** True while the daemon has welcomed this client and the socket is open. */
+  get connected(): boolean {
+    return this.welcomed && !!this.socket && !this.socket.destroyed;
+  }
+
   async connect(): Promise<void> {
     // A partial NDJSON line from the DEAD connection must not leak into the
     // new stream — it would corrupt framing and make the first message after
-    // respawn unparseable. connect() is also the one-shot respawn path.
+    // a reconnect unparseable. connect() is also the reconnect path.
     this.buf = '';
     this.refusal = null;
-    this.socket = net.createConnection(this.ipcPath);
+    this.welcomed = false;
+    const socket = net.createConnection(this.ipcPath);
+    this.socket = socket;
     await new Promise<void>((resolve, reject) => {
       const onErr = (err: Error) => reject(err);
-      this.socket!.once('connect', () => {
-        this.socket!.off('error', onErr);
+      socket.once('connect', () => {
+        socket.off('error', onErr);
         resolve();
       });
-      this.socket!.once('error', onErr);
+      socket.once('error', onErr);
     });
 
-    this.socket.setEncoding('utf8');
+    socket.setEncoding('utf8');
 
-    this.socket.on('data', (chunk: string) => {
+    socket.on('data', (chunk: string) => {
+      if (this.socket !== socket) return;
       this.buf += chunk;
       let nl: number;
       while ((nl = this.buf.indexOf('\n')) >= 0) {
@@ -147,32 +167,42 @@ class DaemonClient {
       }
     });
 
-    this.socket.on('close', () => {
+    socket.on('close', () => {
+      // Only the current connection counts: close() (shutdown) has cleared it,
+      // and a reconnect only replaces a socket that has already closed.
+      if (this.socket !== socket) return;
+      if (this.welcomed) console.error(`[${SERVER_NAME}] daemon connection lost; reconnecting`);
+      this.welcomed = false;
       this.failAll('NOT_CONNECTED: daemon connection closed');
+      this.welcomeWaiter?.(new Error(this.refusal ?? 'daemon closed before welcome'));
       this.closeHandlers.forEach(h => h());
     });
-    this.socket.on('error', (err: Error) => {
+    socket.on('error', (err: Error) => {
       console.error(`[${SERVER_NAME}] daemon socket error:`, err.message);
     });
 
     // authenticate
-    this.socket.write(JSON.stringify(buildIpcHello(this.token, this.agentName)) + '\n');
+    socket.write(JSON.stringify(buildIpcHello(this.token, this.agentName)) + '\n');
 
-    await this.waitForWelcome();
+    try {
+      await this.waitForWelcome();
+    } catch (err) {
+      // A connection the daemon never welcomed is not kept half-open.
+      socket.destroy();
+      throw err;
+    }
   }
 
   private waitForWelcome(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('daemon welcome timeout')), 5_000);
-      this.connectResolvers.push(() => {
+      const settle = (err?: Error) => {
         clearTimeout(timer);
-        resolve();
-      });
-      // also reject path captured via close
-      this.closeHandlers.push(() => {
-        clearTimeout(timer);
-        reject(new Error(this.refusal ?? 'daemon closed before welcome'));
-      });
+        this.welcomeWaiter = null;
+        if (err) reject(err);
+        else resolve();
+      };
+      const timer = setTimeout(() => settle(new Error('daemon welcome timeout')), 5_000);
+      this.welcomeWaiter = settle;
     });
   }
 
@@ -190,8 +220,8 @@ class DaemonClient {
           }
         }
         this._sessionId = msg.sessionId ?? null;
-        this.connectResolvers.forEach(r => r());
-        this.connectResolvers = [];
+        this.welcomed = true;
+        this.welcomeWaiter?.();
         console.error(`[${SERVER_NAME}] joined daemon as ${this.sessionId}`);
         break;
       case 'denied':
@@ -229,7 +259,13 @@ class DaemonClient {
     }
   }
 
-  callTool(tool: string, params: Record<string, unknown>): Promise<unknown> {
+  async callTool(tool: string, params: Record<string, unknown>): Promise<unknown> {
+    if (!this.connected && this.awaitReconnect) {
+      // A call made while the daemon connection is down (a daemon restart)
+      // waits briefly for the reconnect instead of failing at once.
+      const why = await this.awaitReconnect(CALL_RECONNECT_WAIT_MS);
+      if (why) throw new Error(`NOT_CONNECTED: Not connected to daemon: ${why}`);
+    }
     const id = String(++this.daemonCallId);
     return new Promise((resolve, reject) => {
       if (!this.socket || this.socket.destroyed) {
@@ -270,7 +306,7 @@ class DaemonClient {
     this.socket = null;
   }
 
-  /** Register a handler fired when the daemon socket closes (audit m3 respawn). */
+  /** Register a handler fired when the daemon socket closes (main() reconnects there). */
   onClose(handler: () => void): void {
     this.closeHandlers.push(handler);
   }
@@ -342,6 +378,12 @@ async function daemonLooksAlive(): Promise<boolean> {
   }
 }
 
+/** Whether a daemon answers, is starting (daemon.lock names a live pid), or neither. */
+async function daemonState(): Promise<DaemonState> {
+  if (await daemonLooksAlive()) return 'up';
+  return daemonLockHolder() === null ? 'down' : 'starting';
+}
+
 /**
  * Best-effort detection of which MCP client launched us, so the popup can show
  * "Cursor" / "Claude Desktop" instead of the opaque session id or the bare
@@ -383,10 +425,9 @@ function spawnDaemon(): void {
   console.error(`[${SERVER_NAME}] starting daemon (detached)…`);
   // Daemon log lives in STATE_DIR (~/.browser-controller) alongside the token
   // and daemon.json. (Previously this wrote to ~/.real-browser-mcp/ — the old
-  // product name — splitting state across two directories.)
-  const logPath = join(STATE_DIR, 'daemon.log');
-  fs.mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
-  const out = fs.openSync(logPath, 'a', 0o600);
+  // product name — splitting state across two directories.) A log past its
+  // size cap is rotated to daemon.log.1 first.
+  const out = openDaemonLog();
   const child = spawn(process.execPath, [daemonEntry], {
     detached: true,
     stdio: ['ignore', out, out],
@@ -395,8 +436,9 @@ function spawnDaemon(): void {
 }
 
 /** Wait until the IPC socket becomes connectable. */
-async function waitForDaemon(): Promise<void> {
-  for (let i = 0; i < MAX_CONNECT_TRIES; i++) {
+async function waitForDaemon(maxMs = DAEMON_STARTUP_MS): Promise<void> {
+  const end = Date.now() + maxMs;
+  do {
     // Probe the socket directly rather than gating on fs.existsSync: the IPC
     // socket path can exceed the kernel's AF_UNIX sun_path limit on macOS
     // (104 bytes), truncating the on-disk name so existsSync never sees it —
@@ -406,8 +448,8 @@ async function waitForDaemon(): Promise<void> {
     const ok = await connectProbe();
     if (ok) return;
     await new Promise(r => setTimeout(r, CONNECT_RETRY_MS));
-  }
-  throw new Error(`Daemon did not become reachable within ${DAEMON_STARTUP_MS / 1000}s`);
+  } while (Date.now() < end);
+  throw new Error(`Daemon did not become reachable within ${maxMs / 1000}s`);
 }
 
 async function main(): Promise<void> {
@@ -433,12 +475,15 @@ async function main(): Promise<void> {
   // spawning. Long-running supervisors (systemd, launchd, containers) can set
   // BROWSER_CONTROLLER_DAEMON_MODE=connect so this process never competes for
   // daemon lifecycle ownership.
-  if (!(await daemonLooksAlive())) {
+  const state = await daemonState();
+  if (state !== 'up') {
     if (CONNECT_ONLY_DAEMON) {
       console.error(`[${SERVER_NAME}] daemon mode=connect; waiting for managed daemon`);
       await waitForDaemon();
     } else {
-      spawnDaemon();
+      // A held lock means another client already started one: wait for it
+      // rather than start a competitor that only loses the lock.
+      if (state === 'down') spawnDaemon();
       await waitForDaemon();
     }
   }
@@ -457,34 +502,21 @@ async function main(): Promise<void> {
   const client = new DaemonClient(IPC_SOCKET_PATH, token, agentName);
   await client.connect();
 
-  // One-shot daemon respawn on disconnect (audit m3). If the daemon dies after
-  // startup, the thin client used to reject every subsequent call forever — the
-  // MCP host had to be restarted by its parent. Now we attempt exactly ONE
-  // respawn+reconnect before giving up. The `respawned` flag prevents infinite
-  // respawn loops if the daemon can't stay up.
-  let respawned = false;
-  client.onClose(() => {
-    if (respawned) return;
-    respawned = true;
-    void (async () => {
-      try {
-        if (await daemonLooksAlive()) {
-          console.error(`[${SERVER_NAME}] daemon connection lost — reconnecting to live daemon`);
-        } else if (CONNECT_ONLY_DAEMON) {
-          console.error(`[${SERVER_NAME}] daemon connection lost — waiting for managed daemon`);
-          await waitForDaemon();
-        } else {
-          console.error(`[${SERVER_NAME}] daemon connection lost — attempting one respawn`);
-          spawnDaemon();
-          await waitForDaemon();
-        }
-        await client.connect();
-        console.error(`[${SERVER_NAME}] reconnected to daemon`);
-      } catch (err) {
-        console.error(`[${SERVER_NAME}] reconnect failed:`, err);
-      }
-    })();
+  // Reconnect after every drop (a daemon restart, a crash, an eviction). The
+  // backoff, the wait for a daemon that is starting, and the cap on daemons
+  // started for one that cannot stay up are in daemon-reconnect.ts. A tool
+  // call made meanwhile waits for the reconnect (DaemonClient.callTool).
+  const reconnector = new Reconnector({
+    daemonState,
+    connect: () => client.connect(),
+    spawnDaemon,
+    waitForDaemon,
+    connectOnly: CONNECT_ONLY_DAEMON,
+    daemonLog: DAEMON_LOG_FILE,
+    log: (line) => console.error(`[${SERVER_NAME}] ${line}`),
   });
+  client.onClose(() => { void reconnector.reconnect(); });
+  client.awaitReconnect = (timeoutMs) => reconnector.waitFor(timeoutMs);
 
   // 4) wire MCP <-> daemon
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: SERVER_INSTRUCTIONS });
