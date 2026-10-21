@@ -47,10 +47,10 @@ Every page tool takes `tabId` (number, required) except `browser_navigate` (opti
 - `browser_text` - visible text of the page or of `target`. `maxChars` default 20000.
 - `browser_screenshot` - JPEG of the tab, of `target` (cropped to its box) or of `region` (CSS px). Longest side at most 1568 px.
 - `browser_inspect_element` - `target`; computed styles that differ from defaults; `properties` (`["*"]` = all); `rules: true` (matching CSS rules); `listeners: true` (event listeners). `rules` and `listeners` use the debugger.
-- `browser_logs` - `kind` (`console` or `network`; omitted = both), `filter`, `errors`, `limit` (default 50), `clear`, `requestId` (one request in full), `bodies` (response body with `requestId`).
+- `browser_logs` - `kind` (`console` or `network`; omitted = both), `filter`, `errors`, `limit` (default 50), `clear`, `since` (a request id: only later requests), `all` (requests of earlier pages too; by default only the current page), `requestId` (one request in full), `bodies` (response body with `requestId`).
 
 ### Interaction
-- `browser_click` - `target` (or `x,y`). `button`, `count` (1-3), `modifiers`, `hover: true` (move only), `dragTo` (second target). Result adds `navigated:` or `dialog:` lines.
+- `browser_click` - `target` (or `x,y`). `button`, `count` (1-3), `modifiers`, `hover: true` (move only), `dragTo` (second target). Result adds `navigated:`, `dialog:` or `download:` lines. `INPUT_BLOCKED` means the page got none of the input (a Chrome dialog over the tab): ask the user to close it, or use a new tab.
 - `browser_type` - `target` (optional; default the focused element), `text`, `key` (one key or combo, e.g. `Enter`, `Control+a`, or several in order: `ArrowDown ArrowDown Enter`), `clear`, `submit` (Enter after).
 - `browser_fill` - `fields` (1-50 of `{target, value}`): text, date/time/colour/range (string; number for range), select (value, else label), checkbox, radio or ARIA switch (boolean), file input (array of absolute paths). Submits nothing.
 - `browser_scroll` - `target` alone brings it into view; `dy` / `dx` wheel-scroll at `target` or the page centre (needs the debugger). Nothing moved fails `NOT_SCROLLABLE`.

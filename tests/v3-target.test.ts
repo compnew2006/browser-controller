@@ -116,6 +116,23 @@ describe('resolveTarget (page side)', () => {
     expect(resolve('text=Ghost')).toEqual({ error: 'NOT_FOUND: no visible element with text "Ghost"' });
   });
 
+  it('text: hidden text inside a visible element is not its text (a closed submenu in its menu)', () => {
+    const submenu = doc.el('ul', {}, doc.el('li', {}, doc.el('a', { href: '/pdf' }, 'PDF')));
+    submenu.hidden = true;
+    const item = doc.el('li', {}, doc.el('a', { href: '#' }, 'Downloads'), submenu);
+    doc.body.append(doc.el('ul', { id: 'menu' }, item));
+    expect(resolve('text=PDF')).toEqual({ error: 'NOT_FOUND: no visible element with text "PDF"' });
+    submenu.hidden = false;
+    expect((resolve('text=PDF')).el?.tagName).toBe('A');
+  });
+
+  it('text: a hidden caption does not make its visible figure match', () => {
+    const caption = doc.el('div', { class: 'figcaption' }, doc.el('h5', {}, 'name: user1'));
+    caption.hidden = true;
+    doc.body.append(doc.el('div', { class: 'figure' }, doc.el('img', { alt: 'User Avatar' }), caption));
+    expect(resolve('text=name: user1')).toEqual({ error: 'NOT_FOUND: no visible element with text "name: user1"' });
+  });
+
   it('text: no match is NOT_FOUND with the words', () => {
     doc.body.append(doc.el('p', {}, 'nothing here'));
     expect(resolve('text=Checkout')).toEqual({ error: 'NOT_FOUND: no visible element with text "Checkout"' });

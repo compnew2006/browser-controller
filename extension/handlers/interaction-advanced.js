@@ -5,7 +5,7 @@
  */
 import { resolveTab, execDom } from '../lib/page-exec.js';
 import { getOpenDialog, clearOpenDialog, sendAttached, settleWithin, TIMED_OUT } from '../lib/cdp-session.js';
-import { requireSender, locateTarget, focusByClick, selectFocused, releaseShield, cursorTo, cdpClickAt, cdpKeyPress, sleep, targetAim, wordTargetRefMiss, assertInputReady, inputSession, dialogSummary } from '../lib/trusted-input.js';
+import { requireSender, locateTarget, focusByClick, selectFocused, releaseShield, cursorTo, cdpClickAt, cdpKeyPress, sleep, targetAim, wordTargetRefMiss, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
 import { reboundNote } from '../lib/ref-errors.js';
 
 /** One answer to a dialog. A page that never accepts it returns TIMEOUT instead of holding the tab. */
@@ -246,17 +246,19 @@ async function fillField(tabId, input, field, rebound) {
 
   if (info.kind === 'text') {
     if (typeof value !== 'string') return `INVALID_ARGUMENT: ${target} takes a string`;
-    const loc = await focusByClick(tabId, input, target);
+    const loc = await focusByClick(tabId, input, target, { edit: true });
     if (!loc.success) return loc.error;
     if (input.blocked) return null;
     await selectFocused(tabId);
     if (value === '') await cdpKeyPress(input.send, 'Backspace');
     else await input.send('Input.insertText', { text: value });
     if (input.blocked) return null;
-    // Read back: a readonly field or a page that rejects input keeps its value, and is not "filled".
+    // Read back: a page that rejects input keeps its value, and is not "filled".
     // The value API reads CRLF back as LF, and the read back covers the first 100 characters.
     const after = await releaseShield(tabId);
-    if (after?.value !== value.replace(/\r\n?/g, '\n').slice(0, 100)) return `VALUE_NOT_SET: kept "${after?.secret ? '••••' : after?.value ?? ''}"`;
+    if (loc.clicked && after?.pressSeen === false) return inputBlockedError(`the click that focuses ${target}`);
+    const kept = after?.value ?? '';
+    if (after?.value !== value.replace(/\r\n?/g, '\n').slice(0, 100)) return `VALUE_NOT_SET: kept "${after?.secret && kept ? '••••' : kept}"`;
     return null;
   }
 

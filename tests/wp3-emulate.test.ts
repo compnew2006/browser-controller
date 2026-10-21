@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const env = vi.hoisted(() => ({
   url: 'https://example.test/',
   sent: [] as Array<[string, unknown]>,
+  permission: undefined as string | undefined,
   detachListeners: [] as Array<(source: { tabId: number }, reason?: string) => void>,
 }));
 
@@ -22,6 +23,7 @@ const env = vi.hoisted(() => ({
     detach: async () => { env.sent.push(['detach', null]); },
     sendCommand: async (_t: unknown, method: string, params: unknown) => {
       env.sent.push([method, params]);
+      if (method === 'Runtime.evaluate' && env.permission) return { result: { value: env.permission } };
       return { result: { value: 1 } };
     },
     onEvent: { addListener: () => {} },
@@ -142,5 +144,44 @@ describe('browser_emulate targets', () => {
     setNavigator({ userAgentData: realClientHints });
     await handleEmulate({ tabId: 5, userAgent: '' });
     expect(sentOf('Emulation.setUserAgentOverride')).toEqual([{ userAgent: '' }]);
+  });
+});
+
+describe('browser_emulate geolocation and the site permission', () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    env.url = 'https://example.test/';
+    env.permission = undefined;
+    await handleEmulate({ tabId: 6, reset: true });
+    env.sent.length = 0;
+  });
+  afterEach(() => { vi.useRealTimers(); env.permission = undefined; });
+
+  // Without the permission, a location request waits on Chrome's prompt or fails: the override alone does not reach the page.
+  it('says when the site has not been allowed to read the location yet', async () => {
+    env.permission = 'prompt';
+    const res = await handleEmulate({ tabId: 6, geolocation: { latitude: 30, longitude: 31 } }) as Record<string, unknown>;
+    expect(res).toMatchObject({ success: true, permission: 'prompt' });
+    expect(String(res.text)).toMatch(/^geolocation 30, 31\ngeolocation permission: not decided for this site/);
+    expect(String(res.text)).toMatch(/ask them to allow it/);
+  });
+
+  it('says when the site is blocked from reading the location', async () => {
+    env.permission = 'denied';
+    const res = await handleEmulate({ tabId: 6, geolocation: { latitude: 30, longitude: 31 } }) as Record<string, unknown>;
+    expect(res).toMatchObject({ success: true, permission: 'denied' });
+    expect(String(res.text)).toMatch(/geolocation permission: blocked for this site/);
+  });
+
+  it('adds nothing when the site may read the location, or when no location is set', async () => {
+    env.permission = 'granted';
+    const granted = await handleEmulate({ tabId: 6, geolocation: { latitude: 30, longitude: 31 } }) as Record<string, unknown>;
+    expect(granted.text).toBe('geolocation 30, 31');
+    expect(granted.permission).toBeUndefined();
+    env.permission = 'prompt';
+    env.sent.length = 0;
+    const other = await handleEmulate({ tabId: 6, colorScheme: 'dark' }) as Record<string, unknown>;
+    expect(String(other.text)).not.toMatch(/permission/);
+    expect(sentOf('Runtime.evaluate')).toEqual([]);
   });
 });

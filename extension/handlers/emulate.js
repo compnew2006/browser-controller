@@ -62,10 +62,34 @@ function activeLines(state) {
   return lines;
 }
 
+/**
+ * A geolocation override reaches the page only once the site may read the location. Before that,
+ * its first request waits on Chrome's permission prompt (for the user, not the agent) or fails.
+ */
+const GEOLOCATION_PERMISSION = {
+  prompt: 'geolocation permission: not decided for this site. Its first location request shows Chrome\'s permission prompt and waits for the user: ask them to allow it, or the page gets no position.',
+  denied: 'geolocation permission: blocked for this site. Its location requests fail with PERMISSION_DENIED whatever the override; the user can allow it in the site settings.',
+};
+
+/** The page's geolocation permission state ("granted", "prompt", "denied"), or undefined when the page cannot tell. */
+async function geolocationPermission(send) {
+  try {
+    const res = await send('Runtime.evaluate', {
+      expression: "navigator.permissions.query({ name: 'geolocation' }).then((s) => s.state)",
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    return res?.result?.value;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The result: `text` is what the agent reads; `active` and `lost` are data. */
-function report(active, lost, extra = {}) {
+function report(active, lost, extra = {}, notes = []) {
   const lines = activeLines(active);
   if (lines.length === 0) lines.push('no overrides');
+  lines.push(...notes);
   if (lost) lines.push(`lost: ${Object.keys(lost.state).join(', ')}. ${lostWarningOf(lost)}`);
   const lostReport = lost ? { lost: Object.keys(lost.state), warning: lostWarningOf(lost) } : {};
   return { success: true, text: lines.join('\n'), active, ...lostReport, ...extra };
@@ -121,16 +145,20 @@ export async function handleEmulate(params) {
   const lost = getLostEmulation(tabId);
   const userAgentMetadata = params.userAgent ? await realUserAgentMetadata() : undefined;
   const plan = emulationPlan(params, getCdpEmulation(tabId), { userAgentMetadata }); // validates before attaching
+  let permission;
   if (plan.commands.length) {
     await withCdp(tabId, async (send) => {
       for (const [method, args] of plan.commands) await send(method, args);
+      if (params.geolocation) permission = await geolocationPermission(send);
     });
     setCdpEmulation(tabId, plan.state);
   }
   if (lost) clearLostEmulation(tabId);
+  const blocked = GEOLOCATION_PERMISSION[permission];
   return report(plan.state, lost, {
     ...(plan.commands.length && Object.keys(plan.state).length
       ? { note: 'Active while the debugger session stays attached (yellow banner); reset:true clears everything.' }
       : {}),
-  });
+    ...(blocked ? { permission } : {}),
+  }, blocked ? [blocked] : []);
 }

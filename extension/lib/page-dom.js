@@ -15,7 +15,7 @@
  * ambiguous is reported as gone instead of guessed.
  */
 
-export const PAGE_DOM_VERSION = 12;
+export const PAGE_DOM_VERSION = 13;
 
 /**
  * `refBase`: the highest ref number the tab's earlier documents showed (lib/state.js
@@ -241,28 +241,38 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'CAPTION', 'UL', 'OL', 'DL', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'NAV',
     'ASIDE', 'MAIN', 'FIGCAPTION', 'BLOCKQUOTE', 'PRE', 'OPTION', 'FIELDSET', 'LEGEND', 'FORM']);
 
-  /** Composed text (includes shadow content) — innerText misses shadow roots. */
-  function composedText(el, max = 300) {
+  /**
+   * Composed text (includes shadow content) — innerText misses shadow roots. `shownOnly` leaves
+   * out what does not show: a display:none subtree, and the text of a visibility:hidden element.
+   */
+  function composedText(el, max = 300, shownOnly = false) {
     let out = '';
     let budget = max * 4; // raw chars incl. whitespace; stops long before a big container's full text
-    const walk = (n) => {
+    const walk = (n, unseen) => {
       if (budget <= 0) return;
-      if (n.nodeType === 3) { out += n.nodeValue; budget -= n.nodeValue.length; return; }
+      if (n.nodeType === 3) { if (!unseen) { out += n.nodeValue; budget -= n.nodeValue.length; } return; }
       if (n.nodeType === 1 && n.childNodes === undefined && !shadowOf(n)) {
         const t = String(n.textContent ?? n.innerText ?? ''); out += t; budget -= t.length; return; // minimal DOMs
       }
       if (n.nodeType !== 1 && n.nodeType !== 11) return;
       if (n.nodeType === 1 && (n.tagName === 'SCRIPT' || n.tagName === 'STYLE')) return;
+      let hidden = unseen;
+      if (shownOnly && n.nodeType === 1) {
+        const st = styleOf(n);
+        if (n.hidden || (st && st.display === 'none')) return;
+        if (st && st.visibility) hidden = st.visibility !== 'visible';
+      }
       const sep = n.nodeType === 1 && SEPARATED_TAGS.has(n.tagName) ? ' ' : '';
       out += sep;
-      for (const c of flatChildren(n)) walk(c);
+      for (const c of flatChildren(n)) walk(c, hidden);
       out += sep;
     };
-    walk(el);
+    walk(el, false);
     return clean(out, max);
   }
 
-  function nameOf(el) {
+  /** `shownOnly`: a name from the element's own text counts only the text that shows (composedText). */
+  function nameOf(el, shownOnly = false) {
     const labelledBy = attr(el, 'aria-labelledby');
     if (labelledBy) {
       let root = null;
@@ -287,7 +297,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     // Bounded composed text: CSS-independent (innerText applies text-transform:
     // uppercase), includes shadow content, and never materialises a huge
     // container's whole textContent.
-    return composedText(el, 200);
+    return composedText(el, 200, shownOnly);
   }
 
   /** Text the element holds itself: its direct text nodes, cleaned (descendants excluded). */
@@ -383,12 +393,13 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
       try { els = root.querySelectorAll('*'); } catch {}
       for (const el of els) {
         if (TEXT_SKIP.has(el.tagName)) continue;
-        const name = clean(nameOf(el), 500).toLowerCase();
-        const own = clean(composedText(el, 200), 500).toLowerCase();
-        const isEqual = name === want || own === want;
-        if (!isEqual && !name.includes(want) && !own.includes(want)) continue;
+        const holds = (name, own) => ({ equal: name === want || own === want, any: name.includes(want) || own.includes(want) });
+        // A cheap pass over all text first; then only the text that shows counts (a closed
+        // submenu's words are inside its visible menu's text).
+        if (!holds(clean(nameOf(el), 500).toLowerCase(), clean(composedText(el, 200), 500).toLowerCase()).any) continue;
         if (!isVisible(el) || isExtensionNode(el)) continue;
-        (isEqual ? equal : contained).push(el);
+        const shown = holds(clean(nameOf(el, true), 500).toLowerCase(), clean(composedText(el, 200, true), 500).toLowerCase());
+        if (shown.any) (shown.equal ? equal : contained).push(el);
       }
     }
     const pool = equal.length ? equal : contained;

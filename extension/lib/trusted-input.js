@@ -15,8 +15,10 @@ import { wedgedTabs } from './state.js';
 import { agentCursorEnabled } from './overlay.js';
 import { parseTarget } from './target.js';
 import { refErrorMessage } from './ref-errors.js';
+import { releaseShield, inputBlockedError } from './input-outcome.js';
 
 export { modifierBits, keyDefinition, cdpKeyPress } from './keys.js';
+export { releaseShield, inputBlockedError };
 
 export async function cdpClickAt(send, x, y, { button = 'left', clickCount = 1, modifiers = 0 } = {}) {
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers });
@@ -69,18 +71,29 @@ function pageLocate(fb, mode, cursor, check, target) {
     }
     return a;
   };
+  // Inputs that take no typed text (the rest are text-like, and readonly applies to them).
+  const NON_TEXT_INPUTS = ['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'image', 'range', 'color', 'hidden'];
+  // Modes whose input is keys: browser_type and the text fields of browser_fill.
+  const keyed = mode === 'keys' || mode === 'edit' || mode === 'active' || mode === 'focused' || mode === 'focused-clear';
   if (!el && !viewPoint && (mode === 'active' || mode === 'focused' || mode === 'focused-clear')) {
     el = deepActive();
     via = 'active';
     // Typing without a target needs a real field (text-like input, textarea, contenteditable),
     // not a button, a select or the page body. Keys without text need no field.
     const typable = !!el && (el.isContentEditable || el.tagName === 'TEXTAREA'
-      || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'image', 'range', 'color', 'hidden'].includes(el.type)));
+      || (el.tagName === 'INPUT' && !NON_TEXT_INPUTS.includes(el.type)));
     if (mode !== 'active' && !typable) {
       return { success: false, error: 'NO_FOCUS' };
     }
+    if (mode !== 'active' && readOnlyField(el)) {
+      return { success: false, error: `ELEMENT_READONLY: the focused field ${D.describe(el)} is read-only; nothing was typed.` };
+    }
   }
   if (!el && !viewPoint) return { success: false, error: 'REF_GONE', url: location.href };
+  // Text into a read-only field changes nothing: refused before anything is sent.
+  if (mode === 'edit' && readOnlyField(el)) {
+    return { success: false, error: `ELEMENT_READONLY: ${D.describe(el)} is read-only; nothing was typed.` };
+  }
 
   // The agent's trusted input passes the user-input block (see overlay.js).
   window.__bcAgentInputUntil = Date.now() + 8000;
@@ -90,6 +103,7 @@ function pageLocate(fb, mode, cursor, check, target) {
     // here means the point is inside the viewport.
     const inView = viewPoint.x >= 0 && viewPoint.y >= 0 && viewPoint.x <= window.innerWidth && viewPoint.y <= window.innerHeight;
     const cursorMs = cursor && inView && D.cursor ? D.cursor(viewPoint.x, viewPoint.y, cursor.effect, cursor.count) : 0;
+    if (check === 'click' || check === 'hover') watchInput(null, viewPoint, { press: check === 'click', move: check === 'hover' });
     return {
       success: true,
       x: viewPoint.x, y: viewPoint.y,
@@ -126,9 +140,10 @@ function pageLocate(fb, mode, cursor, check, target) {
   }
 
   const { x, y, rect } = D.centerOf(el);
-  // The field the caller aimed at (read back by pageRelease, see below).
-  window.__bcLocatedEl = el;
   const hasValue = 'value' in el && !el.isContentEditable && typeof el.value === 'string';
+  // The field the caller aimed at and its value now (read back by lib/input-outcome.js pageRelease).
+  window.__bcLocatedEl = el;
+  window.__bcLocatedValue = hasValue ? el.value : el.isContentEditable ? el.textContent : null;
   let fullySelected = false;
   try { fullySelected = el.selectionStart === 0 && el.selectionEnd === el.value.length; } catch { /* number/email inputs */ }
   // A click must reach its target: hidden, disabled or covered (lib/page-dom.js
@@ -147,8 +162,8 @@ function pageLocate(fb, mode, cursor, check, target) {
       reportVia = aim.via;
       onLabel = aim.via === 'label';
     }
-    watchPress(el);
   }
+  if (check === 'click' || check === 'hover' || keyed) watchInput(el, point, { press: check === 'click', move: check === 'hover', keys: keyed });
   const isFocused = () => {
     const a = deepActive();
     return a === el || D.composedContains(el, a);
@@ -156,7 +171,7 @@ function pageLocate(fb, mode, cursor, check, target) {
   // Focus for keys (browser_type): a click on these controls does more than focus them (it moves
   // a slider to the click point, toggles a box, opens a picker, presses a button, follows a link),
   // so they take the focus without one.
-  if (mode === 'keys' && !isFocused() && clickActs(el) && typeof el.focus === 'function') el.focus();
+  if ((mode === 'keys' || mode === 'edit') && !isFocused() && clickActs(el) && typeof el.focus === 'function') el.focus();
   const focused = isFocused();
   // Agent cursor (lib/page-dom.js): glide to the point the real input will hit.
   const cursorMs = cursor && box.width > 0 && box.height > 0 && D.cursor ? D.cursor(point.x, point.y, cursor.effect, cursor.count) : 0;
@@ -212,58 +227,42 @@ function pageLocate(fb, mode, cursor, check, target) {
     return ['BUTTON', 'SELECT', 'SUMMARY'].includes(node.tagName) || (node.tagName === 'A' && node.hasAttribute('href'));
   }
 
+  /** A text field that takes no typing: readonly applies to textareas and text-like inputs only. */
+  function readOnlyField(node) {
+    if (!node || node.readOnly !== true) return false;
+    return node.tagName === 'TEXTAREA' || (node.tagName === 'INPUT' && !NON_TEXT_INPUTS.includes(String(node.type || 'text').toLowerCase()));
+  }
+
   /**
-   * Record what the next trusted press lands on (pageRelease reads it): the target can still
-   * move between this measurement and the click. Watched in the top window and the target's own
-   * frame; a press inside another document is not seen, and is not judged.
+   * Record the trusted input this measurement is for as the page gets it (pageRelease reads
+   * it): whether any of it arrived (a Chrome dialog over the tab, such as a password-breach
+   * warning, takes all of it), and what a press landed on (the target can still move between
+   * this measurement and the click). Watched in the top window and the target's own frame.
+   * Input that goes into a cross-origin frame or a plugin never reaches them: `blind`, not judged.
    */
-  function watchPress(node) {
-    const wins = [window, node.ownerDocument && node.ownerDocument.defaultView]
+  function watchInput(node, at, { press = false, move = false, keys = false }) {
+    const opaque = (n) => !!n && ['IFRAME', 'FRAME', 'EMBED', 'OBJECT'].includes(n.tagName);
+    let under = null;
+    try { under = at ? D.elementAt(at.x, at.y) : null; } catch { /* detached mid-hit-test */ }
+    const doc = (node || under || document).ownerDocument || document;
+    const wins = [window, doc.defaultView]
       .filter((w, i, all) => w && typeof w.addEventListener === 'function' && all.indexOf(w) === i);
-    const watch = { el: node, hit: null, off: () => {} };
-    const record = (e) => { if (e.isTrusted && !watch.hit) watch.hit = (e.composedPath && e.composedPath()[0]) || e.target; };
-    for (const w of wins) w.addEventListener('mousedown', record, true);
-    watch.off = () => { for (const w of wins) w.removeEventListener('mousedown', record, true); };
+    const groups = { press: ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'], move: ['pointermove', 'mousemove', 'pointerover', 'mouseover'], keys: ['keydown', 'keyup'] };
+    const watched = Object.keys(groups).filter((g) => ({ press, move, keys })[g]);
+    const types = watched.flatMap((g) => groups[g]);
+    const watch = {
+      el: node, hoverEl: node || under, hit: null, watched, seen: new Set(),
+      blind: wins.length === 0 || opaque(node) || opaque(under) || (keys && !press && opaque(node || deepActive())),
+      off: () => {},
+    };
+    const record = (e) => {
+      if (!e.isTrusted) return;
+      watch.seen.add(watched.find((g) => groups[g].includes(e.type)));
+      if (press && !watch.hit && (e.type === 'pointerdown' || e.type === 'mousedown')) watch.hit = (e.composedPath && e.composedPath()[0]) || e.target;
+    };
+    for (const w of wins) for (const t of types) w.addEventListener(t, record, true);
+    watch.off = () => { for (const w of wins) for (const t of types) w.removeEventListener(t, record, true); };
     globalThis.__bcPressWatch = watch;
-  }
-}
-
-/**
- * Close the agent's input window; report the focused field's value for verification, and
- * (`missed`) a press that landed outside the element it aimed at.
- */
-function pageRelease() {
-  window.__bcAgentInputUntil = 0;
-  const missed = pressMissed();
-  let a = document.activeElement;
-  for (let i = 0; a && i < 10; i++) {
-    if (a.shadowRoot && a.shadowRoot.activeElement) { a = a.shadowRoot.activeElement; continue; }
-    if (a.tagName !== 'IFRAME') break;
-    try { a = a.contentDocument.activeElement; } catch { break; }
-  }
-  const focusedTag = a && a !== document.body ? a.tagName.toLowerCase() + (a.id ? `#${a.id}` : '') : undefined;
-  // The value is the field the caller aimed at: a Tab typed into it moves focus elsewhere.
-  const located = window.__bcLocatedEl || null;
-  window.__bcLocatedEl = null;
-  const target = located && located.isConnected !== false ? located : (focusedTag ? a : null);
-  if (!target) return { value: null, ...(missed ? { missed } : {}) };
-  const value = typeof target.value === 'string' ? target.value : target.isContentEditable ? target.textContent : null;
-  // A password is reported as masked by the caller; its value never leaves the page.
-  return { value: value == null ? null : value.slice(0, 100), secret: target.type === 'password', ...(focusedTag ? { focusedTag } : {}), ...(missed ? { missed } : {}) };
-
-  /** The element a watched press landed on instead of its target (pageLocate watchPress), or null. */
-  function pressMissed() {
-    const watch = globalThis.__bcPressWatch;
-    globalThis.__bcPressWatch = null;
-    if (!watch) return null;
-    watch.off();
-    const D = globalThis.__bcDom;
-    const { el, hit } = watch;
-    if (!hit || !D || hit === el || D.composedContains(el, hit) || D.labelsOf(el).some((l) => D.composedContains(l, hit))) return null;
-    // A press inside a closed shadow root is seen at its host: that is no miss.
-    for (let r = el.getRootNode(); r && r.host; r = r.host.getRootNode()) if (r.host === hit) return null;
-    const name = D.nameOf(hit).slice(0, 60);
-    return `${D.describe(hit)}${name ? ` "${name}"` : ''}`;
   }
 }
 
@@ -491,16 +490,17 @@ export function inputSession(tabId, send, signal) {
  * Focus a target the way a person does: a trusted click on it, unless it already
  * has focus. A control that a click would change (a slider, a checkbox, a picker,
  * a button, a link) is focused without one (pageLocate mode 'keys'). A failed
- * check (hidden, disabled, covered) comes back with nothing clicked.
+ * check (hidden, disabled, covered; with `edit`, read-only too) comes back with
+ * nothing clicked. `clicked` says the click went out.
  */
-export async function focusByClick(tabId, input, target) {
-  const loc = await locateTarget(tabId, { target, mode: 'keys', check: 'click' });
+export async function focusByClick(tabId, input, target, { edit = false } = {}) {
+  const loc = await locateTarget(tabId, { target, mode: edit ? 'edit' : 'keys', check: 'click' });
   // The check speaks of a click; for keys what matters is that nothing was typed.
   if (!loc.success) return { ...loc, error: String(loc.error).replace(/nothing was clicked\.$/, 'nothing was typed.') };
   if (loc.focused || input.blocked) return loc;
   await sleep(await cursorTo(tabId, loc.x, loc.y, 'click'));
   await cdpClickAt(input.send, loc.x, loc.y);
-  return loc;
+  return { ...loc, clicked: true };
 }
 
 /** Page-side: where a target is now. No scroll, no focus, no actionability check. */
@@ -563,9 +563,4 @@ function pageCursor(x, y, effect, count) {
 export async function cursorTo(tabId, x, y, effect = 'move', count = 1) {
   if (!(await agentCursorEnabled())) return 0;
   try { return (await execDom(tabId, pageCursor, [x, y, effect, count]))?.ms || 0; } catch { return 0; }
-}
-
-
-export async function releaseShield(tabId) {
-  try { return (await safeExec(tabId, pageRelease, [])) || {}; } catch { return {}; /* page navigated away */ }
 }

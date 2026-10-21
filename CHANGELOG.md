@@ -2,7 +2,21 @@
 
 ## 3.0.5
 
+### Changed
+- `browser_logs` lists the network requests of the current page only: the requests since the tab's last top-level load. Before, every call sent the tab's whole history again (up to 200 requests), although the agent already had what it read. Requests of earlier pages are counted in one line, `… N from earlier pages not shown (all: true lists them)`. Two new parameters:
+  - `since: "r42"` lists only the requests after `r42`, so a later call sends only what is new.
+  - `all: true` lists earlier pages too.
+
+  `since` and `all` apply to the network list only, and not with `requestId`.
+
 ### Fixed
+- A click, hover or key that the page never got was reported as done. Chrome shows its own dialog over a tab after a login with a password found in a data breach ("Change your password"). Permission prompts do the same. While it is open, the page gets none of the debugger's mouse and key input, but the input itself does not fail. Each input is now checked when it arrives, and one the page never got fails `INPUT_BLOCKED`, which says to close the dialog or use a new tab. Playwright does not meet this, because its fresh profile has no breach check.
+- `browser_type` and `browser_fill` into a read-only field said `typed`. They now fail `ELEMENT_READONLY`, and nothing is typed.
+- `browser_type` with text that left the field unchanged said `typed`. This happens when the page refuses the text, or the field is already at its `maxlength`. It now fails `VALUE_NOT_SET`, with the value the field kept, and its `maxlength` when it is full.
+- An empty password field read `value: ••••`, so it looked filled. It now reads `value: ""`. `browser_fill` shows `kept ""` the same way.
+- `text=` matched text that the page hides inside an element, for example a closed submenu or a `display: none` caption. Only text that is shown counts now. Open tabs get the new matching on their next call.
+- A click on a link to a file said only `clicked`. When the click starts a page load, the call now waits up to 2 s for its response. A file adds `download: true (file <name>); Chrome saves it to the Downloads folder, the tab did not navigate` and a `download` field. A navigation slower than the 300 ms check is reported as `navigated:`.
+- `browser_emulate` with `geolocation` said nothing when the site may not read the location, and the page's request then waited on Chrome's prompt or failed. The result now says `geolocation permission: not decided for this site` or `blocked for this site`, with a `permission` field. Only the user can allow it.
 - An MCP client reconnected to the daemon once only. After a second `npm run daemon:restart`, every call of a client that had used its reconnect failed `NOT_CONNECTED: Not connected to daemon` until its MCP host restarted it (5 clients, 3 sessions back). A client now reconnects after every drop. Tries back off from 0.25 s to 5 s, up to 8 tries; then the next tool call tries again. A call made while the client reconnects waits up to 10 s for it, instead of failing at once. A client starts a daemon at most 3 times a minute: one that cannot stay up is not restarted in a loop, and calls then fail `NOT_CONNECTED: Not connected to daemon: the daemon was started 3 times in 60 s and did not stay up; see <path>/daemon.log`.
 - During a restart, each client that found no daemon started one, and each but the first died with `Fatal: Error: Browser Controller daemon lock is held by live process <pid>` and a full stack. `~/.browser-controller/daemon.log` reached 228 MB. Now:
   - A client waits for a daemon whose `daemon.lock` names a live PID, instead of starting another.
@@ -10,6 +24,9 @@
   - A daemon that read the lock while the first one was still writing it took it as stale and removed it, so two daemons ran on one lock. A lock younger than 5 s that cannot be read now counts as held.
   - `daemon.log` larger than 5 MB moves to `daemon.log.1` before a daemon starts, from a client or from `npm run daemon:start`. One old copy is kept.
 - The popup's ✕ on an agent that is still running: the agent connects again, as a new session. Before, this happened the first time only.
+
+### Documented
+- The console list has the page's own console calls and errors. Messages that Chrome writes itself (`Failed to load resource`, CSP and deprecation warnings) are not in it; a failed load shows in the network list.
 
 ## 3.0.4
 

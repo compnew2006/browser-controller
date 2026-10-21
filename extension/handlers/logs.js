@@ -23,18 +23,27 @@ const ERROR_LEVELS = new Set(['error']);
 const TYPE_NAMES = { xmlhttprequest: 'xhr', main_frame: 'document', sub_frame: 'frame' };
 const FRAME = /^\s*at\s/;
 
-function checkParams({ kind, filter, limit, clear, bodies, requestId }) {
+const REQUEST_ID = /^r?\d+$/;
+
+function checkParams({ kind, filter, limit, clear, bodies, requestId, since, all }) {
   if (kind !== undefined && kind !== 'console' && kind !== 'network') throw new Error('INVALID_ARGUMENT: kind must be "console" or "network"');
   if (filter !== undefined && typeof filter !== 'string') throw new Error('INVALID_ARGUMENT: filter must be a string');
   if (limit !== undefined && limit !== null && !(Number.isInteger(limit) && limit >= 1 && limit <= MAX_LIMIT)) {
     throw new Error(`INVALID_ARGUMENT: limit must be an integer from 1 to ${MAX_LIMIT}`);
   }
   if (bodies !== undefined && typeof bodies !== 'boolean') throw new Error('INVALID_ARGUMENT: bodies must be true or false');
+  if (all !== undefined && typeof all !== 'boolean') throw new Error('INVALID_ARGUMENT: all must be true or false');
+  if (since !== undefined && !(typeof since === 'string' && REQUEST_ID.test(since))) {
+    throw new Error('INVALID_ARGUMENT: since is a request id from an earlier list, e.g. "r123"');
+  }
   if (requestId != null) {
     if (kind === 'console') throw new Error('INVALID_ARGUMENT: requestId reads one network request: leave kind out or use "network"');
     if (clear) throw new Error('INVALID_ARGUMENT: clear cannot be combined with requestId');
-  } else if (bodies !== undefined && kind === 'console') {
-    throw new Error('INVALID_ARGUMENT: bodies applies to network requests: leave kind out or use "network"');
+    if (since !== undefined || all !== undefined) throw new Error('INVALID_ARGUMENT: requestId reads one request: since and all do not apply');
+  } else if (kind === 'console') {
+    // The console replay is the current document's already: there is nothing older to widen to.
+    const misplaced = ['bodies', 'since', 'all'].find((name) => ({ bodies, since, all })[name] !== undefined);
+    if (misplaced) throw new Error(`INVALID_ARGUMENT: ${misplaced} applies to network requests: leave kind out or use "network"`);
   }
 }
 
@@ -143,6 +152,33 @@ function networkLine(r) {
 
 const isFailed = (r) => !!r.error || (typeof r.status === 'number' && r.status >= 400);
 
+/** When a request started (its entry is stored when it ends); an entry without a time counts as the newest. */
+const startOf = (r) => (typeof r.timestamp === 'number' ? r.timestamp - (typeof r.durationMs === 'number' ? r.durationMs : 0) : Infinity);
+
+/**
+ * Where the current page's requests begin in a tab's buffer: the start of its last document
+ * request (type main_frame), or -Infinity when the buffer holds none (cleared, or evicted).
+ * A request that started before it belongs to an earlier page, even when it ended later.
+ */
+function pageStartOf(buf) {
+  for (let i = buf.length - 1; i >= 0; i--) {
+    if (buf[i].type !== 'main_frame') continue;
+    const start = startOf(buf[i]);
+    return Number.isFinite(start) ? start : -Infinity;
+  }
+  return -Infinity;
+}
+
+/**
+ * The entries after request `since` (an id from an earlier list): later in the buffer, which is
+ * in the order requests ended. An id no longer kept falls back to the ids that came after it.
+ */
+function afterRequest(buf, since) {
+  const id = since.replace(/^r/, '');
+  const at = buf.findIndex((r) => r.id === id);
+  return at === -1 ? buf.filter((r) => Number(r.id) > Number(id)) : buf.slice(at + 1);
+}
+
 // --- one request in full ----------------------------------------------------
 
 const headerLine = (h) => `  ${h.name}: ${h.value}`;
@@ -201,17 +237,21 @@ async function requestDetail(tabId, requestId, bodies) {
 
 // --- the handler ------------------------------------------------------------
 
-/** One section: `console (N):` with N entries, then its lines, then a note when the limit cut older ones. */
-function section(name, rows, hidden, limit) {
+/**
+ * One section: `console (N):` with N entries, then its lines, then a note when the limit cut
+ * older ones and one for the matching requests of earlier pages (`earlier`, network only).
+ */
+function section(name, rows, hidden, limit, earlier = 0) {
   const lines = rows.flat();
   const note = hidden > 0 ? [`… ${hidden} older not shown (limit ${limit}; raise limit or narrow with filter)`] : [];
-  return [`${name} (${rows.length}):`, ...lines, ...note];
+  const past = earlier > 0 ? [`… ${earlier} from earlier pages not shown (all: true lists them)`] : [];
+  return [`${name} (${rows.length}):`, ...lines, ...note, ...past];
 }
 
 export async function handleLogs(params = {}) {
-  const { tabId, kind, filter = '', errors = false, clear = false, requestId, bodies } = params;
+  const { tabId, kind, filter = '', errors = false, clear = false, requestId, bodies, since, all } = params;
   const limit = params.limit ?? DEFAULT_LIMIT;
-  checkParams({ kind, filter, limit, clear, bodies, requestId });
+  checkParams({ kind, filter, limit, clear, bodies, requestId, since, all });
   await resolveTab(tabId);
   if (requestId != null) return requestDetail(tabId, requestId, bodies);
 
@@ -237,10 +277,14 @@ export async function handleLogs(params = {}) {
 
   if (want.network) {
     const capture = bodyCaptureByTab.get(tabId);
-    const matched = [...getTabBuffer(networkByTab, tabId)]
-      .filter((r) => (!needle || String(r.url).toLowerCase().includes(needle)) && (!errors || isFailed(r)));
+    // The current page by default: the agent already holds what earlier reads returned.
+    const buf = getTabBuffer(networkByTab, tabId);
+    const pageStart = all === true ? -Infinity : pageStartOf(buf);
+    const fits = (r) => (!needle || String(r.url).toLowerCase().includes(needle)) && (!errors || isFailed(r));
+    const candidates = (since === undefined ? [...buf] : afterRequest(buf, since)).filter(fits);
+    const matched = candidates.filter((r) => startOf(r) >= pageStart);
     const picked = matched.slice(-limit);
-    sections.push(section('network', picked.map((r) => [networkLine(r)]), matched.length - picked.length, limit));
+    sections.push(section('network', picked.map((r) => [networkLine(r)]), matched.length - picked.length, limit, candidates.length - matched.length));
     out.requests = picked.map((r) => {
       const hasBody = capture?.bodies.size ? capture.bodies.find(r)?.text !== undefined : false;
       return { ...listView(r, { fullUrls: true }), ...(hasBody ? { hasBody: true } : {}) };

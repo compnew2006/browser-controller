@@ -7,7 +7,8 @@
 import { resolveTab, safeExec, replaceFrozenTab } from '../lib/page-exec.js';
 import { sessionAgentNames } from '../lib/state.js';
 import { lockTabUi } from '../lib/lock-ops.js';
-import { isHashOnlyChange, normalizeNavigationUrl, classifyMainResponse } from '../utils/navigation.js';
+import { isHashOnlyChange, normalizeNavigationUrl } from '../utils/navigation.js';
+import { watchMainFrame } from '../lib/main-frame.js';
 import { handleSnapshot } from './inspection.js';
 
 /** How long a load may take before the call reports the page as it is then. */
@@ -40,46 +41,6 @@ export async function getActiveTab() {
   const tab = tabs[0];
   if (!tab) throw new Error('No active tab to open the new tab next to. Call browser_tabs list first.');
   return tab;
-}
-
-/**
- * Main-frame network facts for one tab while a navigation runs. webRequest is
- * the only source of the HTTP status (the manifest has no webNavigation).
- * `onSignal` fires at once for an outcome that ends the wait: a real network
- * error, a 204/205, or a download. None of those makes the tab report
- * `complete` for the new page, so waiting for it hung to the timeout.
- */
-function watchMainFrame(tabId, onSignal) {
-  const facts = { status: null, url: null, noContent: false, download: false, filename: null, error: null };
-  const wr = globalThis.chrome?.webRequest;
-  if (!wr?.onHeadersReceived?.addListener || !wr.onErrorOccurred?.addListener) {
-    return { facts, stop() {} };
-  }
-  const filter = { urls: ['<all_urls>'], types: ['main_frame'], tabId };
-  // Every redirect hop is a main-frame response: the last one seen is the final one.
-  const onHeaders = (d) => {
-    if (d.tabId !== tabId) return;
-    const kind = classifyMainResponse(d.statusCode, d.responseHeaders);
-    Object.assign(facts, {
-      status: d.statusCode, url: d.url, noContent: kind.noContent, download: kind.download, filename: kind.filename,
-    });
-    if (kind.noContent || kind.download) onSignal();
-  };
-  const onError = (d) => {
-    if (d.tabId !== tabId) return;
-    facts.error = d.error;
-    // ERR_ABORTED also follows a navigation the page superseded: only a real failure ends the wait.
-    if (d.error !== 'net::ERR_ABORTED') onSignal();
-  };
-  wr.onHeadersReceived.addListener(onHeaders, filter, ['responseHeaders']);
-  wr.onErrorOccurred.addListener(onError, filter);
-  return {
-    facts,
-    stop() {
-      wr.onHeadersReceived.removeListener(onHeaders);
-      wr.onErrorOccurred.removeListener(onError);
-    },
-  };
 }
 
 /**

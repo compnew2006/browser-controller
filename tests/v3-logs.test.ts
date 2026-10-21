@@ -176,6 +176,48 @@ describe('browser_logs network block', () => {
     expect(sent.some(([, m]) => m === 'Runtime.discardConsoleEntries')).toBe(false);
   });
 
+  it('lists the current page only: requests that started before its document request are counted in a note', async () => {
+    const t = 1_700_000_000_000;
+    push({ id: '1', method: 'GET', url: 'https://app.test/a', status: 200, type: 'main_frame', timestamp: t + 40, durationMs: 40 });
+    push({ id: '2', method: 'GET', url: 'https://app.test/a.js', status: 404, type: 'script', timestamp: t + 60, durationMs: 10 });
+    // Started on page a, ended after page b's document request started: it is page a's.
+    push({ id: '3', method: 'GET', url: 'https://api.test/slow', status: 200, type: 'xmlhttprequest', timestamp: t + 160, durationMs: 120 });
+    push({ id: '4', method: 'GET', url: 'https://app.test/b', status: 200, type: 'main_frame', timestamp: t + 150, durationMs: 50 });
+    push({ id: '5', method: 'GET', url: 'https://app.test/b.js', status: 200, type: 'script', timestamp: t + 170, durationMs: 10 });
+    const res = await handleLogs({ tabId: TAB, kind: 'network' }) as any;
+    expect(res.text).toBe([
+      'network (2):',
+      'r4 GET 200 document 50ms https://app.test/b',
+      'r5 GET 200 script 10ms https://app.test/b.js',
+      '… 3 from earlier pages not shown (all: true lists them)',
+    ].join('\n'));
+    expect((await handleLogs({ tabId: TAB, kind: 'network', all: true }) as any).requests.map((r: any) => r.id)).toEqual(['1', '2', '3', '4', '5']);
+    // The note counts only what the filters would have shown.
+    expect(lines((await handleLogs({ tabId: TAB, kind: 'network', errors: true }) as any).text)).toEqual([
+      'network (0):',
+      '… 1 from earlier pages not shown (all: true lists them)',
+    ]);
+  });
+
+  it('since lists what ended after that request, in the order requests ended; an id no longer kept falls back to later ids', async () => {
+    const t = 1_700_000_000_000;
+    push({ id: '10', method: 'GET', url: 'https://app.test/', status: 200, type: 'main_frame', timestamp: t + 10, durationMs: 10 });
+    push({ id: '12', method: 'GET', url: 'https://api.test/b', status: 200, type: 'xmlhttprequest', timestamp: t + 20, durationMs: 5 });
+    push({ id: '11', method: 'GET', url: 'https://api.test/a', status: 200, type: 'xmlhttprequest', timestamp: t + 30, durationMs: 15 });
+    push({ id: '13', method: 'GET', url: 'https://api.test/c', status: 200, type: 'xmlhttprequest', timestamp: t + 40, durationMs: 5 });
+    const after12 = await handleLogs({ tabId: TAB, kind: 'network', since: 'r12' }) as any;
+    expect(after12.requests.map((r: any) => r.id)).toEqual(['11', '13']);
+    expect((await handleLogs({ tabId: TAB, kind: 'network', since: '13' }) as any).text).toBe('network (0):');
+    expect((await handleLogs({ tabId: TAB, kind: 'network', since: 'r9' }) as any).requests.map((r: any) => r.id)).toEqual(['10', '12', '11', '13']);
+  });
+
+  it('since and all apply to network requests only, and not with requestId', async () => {
+    await expect(handleLogs({ tabId: TAB, kind: 'network', since: 'abc' })).rejects.toThrow(/^INVALID_ARGUMENT: since is a request id/);
+    await expect(handleLogs({ tabId: TAB, kind: 'console', since: 'r1' })).rejects.toThrow(/^INVALID_ARGUMENT: since applies to network requests/);
+    await expect(handleLogs({ tabId: TAB, kind: 'console', all: true })).rejects.toThrow(/^INVALID_ARGUMENT: all applies to network requests/);
+    await expect(handleLogs({ tabId: TAB, requestId: 'r1', since: 'r1' })).rejects.toThrow(/^INVALID_ARGUMENT: requestId reads one request/);
+  });
+
   it('kind left out with clear clears both blocks', async () => {
     replay = [['Runtime.consoleAPICalled', { type: 'log', timestamp: 1, args: [str('gone')] }]];
     push({ id: '1', method: 'GET', url: 'https://api.test/a', status: 200, type: 'xmlhttprequest' });

@@ -33,7 +33,7 @@ Every element parameter is one `target` string:
 | Form | Meaning |
 |---|---|
 | `e12` | A ref from `browser_snapshot`, valid for that tab and its page. A re-rendered element is found again, and the result says so |
-| `text=Sign in` | A visible element with that text. Several matches fail `AMBIGUOUS` (up to five candidates are listed) |
+| `text=Sign in` | A visible element with that text (text the page hides does not count). Several matches fail `AMBIGUOUS` (up to five candidates are listed) |
 | `x,y` | A viewport point in CSS px (read it off a `browser_screenshot`) |
 | anything else | A CSS selector |
 
@@ -55,8 +55,9 @@ browser_type  { tabId, target: "e5", text: "hello@example.com" }
 browser_type  { tabId, key: "Enter" }           // a key goes to whatever has focus
 ```
 
-- `browser_click` also takes `hover: true` (move only), `dragTo` (a second target), `button`, `count` (1-3) and `modifiers`. Within 300 ms after the press the result reports `navigated: <url>` or `dialog: …` when either happened.
-- `browser_type` types like a person. `change` fires when focus leaves the field, so follow typing with `browser_type { tabId, key: "Tab" }` to commit. `submit: true` presses Enter last. The result reports the field's `value`.
+- `browser_click` also takes `hover: true` (move only), `dragTo` (a second target), `button`, `count` (1-3) and `modifiers`. Within 300 ms after the press the result reports `navigated: <url>` or `dialog: …` when either happened. A click that starts a file download says `download: true (file …)`.
+- `browser_type` types like a person. `change` fires when focus leaves the field, so follow typing with `browser_type { tabId, key: "Tab" }` to commit. `submit: true` presses Enter last. The result reports the field's `value`. A read-only field fails `ELEMENT_READONLY`; text the field did not take (it is full, or the page refused it) fails `VALUE_NOT_SET`.
+- `INPUT_BLOCKED` means the page got none of the click, move or keys. A Chrome dialog over the tab takes them, such as the password-breach warning after a login. Ask the user to close it, or go on in a new tab; repeating the input does not help.
 - Keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, combos like `Control+a` or `Shift+Tab`, or several in order: `ArrowDown ArrowDown Enter`. Every name is checked first: an unknown name fails `UNKNOWN_KEY` and nothing is pressed.
 - Clicks hit the element's centre. A hidden, disabled or covered target fails (`ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED`) and nothing is clicked.
 
@@ -111,7 +112,8 @@ The top-level `tabId` applies to every step that does not set its own. A failure
 ## Debugging (per tab)
 
 - `browser_logs { tabId, kind: "console", errors: true }` - console errors and uncaught exceptions with stacks since the page loaded. `filter` is a substring; `limit` defaults to 50.
-- `browser_logs { tabId, kind: "network", errors: true }` - failed requests and 4xx/5xx. `filter` matches the URL. Each request has an id `r17`.
+- `browser_logs { tabId, kind: "network", errors: true }` - failed requests and 4xx/5xx of the current page. `filter` matches the URL. Each request has an id `r17`. `all: true` adds earlier pages of the tab.
+- `browser_logs { tabId, kind: "network", since: "r17" }` - only the requests after `r17`. You already have the ones you read: ask for the new ones only.
 - `browser_logs { tabId, requestId: "r17" }` - one request in full: headers (redacted), timing and the request payload preview.
 - To see what an API returned: `browser_logs { tabId, kind: "network", bodies: true }`, repeat the action, then `browser_logs { tabId, requestId }` also returns the response body.
 - `browser_inspect_element { tabId, target }` answers "why does this look or behave like that": computed styles that differ from defaults. `properties: ["z-index"]` picks some; `rules: true` lists the matching CSS rules (with file:line and what they overrode); `listeners: true` lists the event listeners. `rules` and `listeners` use the debugger.
@@ -125,6 +127,7 @@ The top-level `tabId` applies to every step that does not set its own. A failure
 
 - `browser_emulate { tabId, viewport: { width: 390, height: 844, mobile: true } }` sets a viewport for responsive checks without resizing the user's window.
 - `browser_emulate { tabId, network: "slow-3g", colorScheme: "dark" }` tests the page offline, throttled, in dark mode or elsewhere. `reset: true` clears all overrides.
+- `browser_emulate { tabId, geolocation: { latitude, longitude } }` reaches the page only when the site may read the location. The result says when it may not (`geolocation permission: not decided` or `blocked`): only the user can allow it.
 
 ## Dynamic content (SPAs, social media)
 

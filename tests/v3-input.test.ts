@@ -311,6 +311,66 @@ describe('browser_click', () => {
     expect(res.navigated).toBe('https://example.test/next');
   });
 
+  it('a click whose response is an attachment reports the download, even when the response comes after the settle window', async () => {
+    const hooks: Record<string, Array<(d: any) => void>> = {};
+    const event = (name: string) => ({
+      addListener: (fn: (d: any) => void) => { hooks[name] = [...(hooks[name] ?? []), fn]; },
+      removeListener: (fn: (d: any) => void) => { hooks[name] = (hooks[name] ?? []).filter((f) => f !== fn); },
+    });
+    (globalThis as any).chrome.webRequest = { onBeforeRequest: event('start'), onHeadersReceived: event('headers'), onErrorOccurred: event('error') };
+    try {
+      const link = doc.el('a', { id: 'file', href: '/download/x.pdf' }, 'x.pdf');
+      doc.body.append(link);
+      stackAt(link);
+      cdpReply = (method, params) => {
+        if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
+          for (const fn of hooks.start ?? []) fn({ tabId: 1 });
+          setTimeout(() => {
+            const headers = [{ name: 'Content-Disposition', value: 'attachment; filename="x.pdf"' }];
+            for (const fn of hooks.headers ?? []) fn({ tabId: 1, statusCode: 200, url: 'https://example.test/download/x.pdf', responseHeaders: headers });
+          }, 400);
+        }
+        return browserReply(method, params);
+      };
+      const res = await handleClick({ tabId: 1, target: '#file' });
+      expect(res.text).toBe('clicked #file\ndownload: true (file x.pdf); Chrome saves it to the Downloads folder, the tab did not navigate');
+      expect(res.download).toEqual({ url: 'https://example.test/download/x.pdf', filename: 'x.pdf' });
+      expect([...(hooks.start ?? []), ...(hooks.headers ?? []), ...(hooks.error ?? [])]).toEqual([]);
+    } finally {
+      delete (globalThis as any).chrome.webRequest;
+    }
+  });
+
+  it('a navigation whose response comes after the settle window is still reported as navigated', async () => {
+    const hooks: Record<string, Array<(d: any) => void>> = {};
+    const event = (name: string) => ({
+      addListener: (fn: (d: any) => void) => { hooks[name] = [...(hooks[name] ?? []), fn]; },
+      removeListener: (fn: (d: any) => void) => { hooks[name] = (hooks[name] ?? []).filter((f) => f !== fn); },
+    });
+    (globalThis as any).chrome.webRequest = { onBeforeRequest: event('start'), onHeadersReceived: event('headers'), onErrorOccurred: event('error') };
+    try {
+      const link = doc.el('a', { id: 'slow', href: '/slow' }, 'Slow');
+      doc.body.append(link);
+      stackAt(link);
+      cdpReply = (method, params) => {
+        if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
+          for (const fn of hooks.start ?? []) fn({ tabId: 1 });
+          setTimeout(() => {
+            urlNow = 'https://example.test/slow';
+            for (const fn of hooks.headers ?? []) fn({ tabId: 1, statusCode: 200, url: 'https://example.test/slow', responseHeaders: [] });
+          }, 400);
+        }
+        return browserReply(method, params);
+      };
+      const res = await handleClick({ tabId: 1, target: '#slow' });
+      expect(res.text).toBe('clicked #slow\nnavigated: https://example.test/slow');
+      expect(res.navigated).toBe('https://example.test/slow');
+      expect(res.download).toBeUndefined();
+    } finally {
+      delete (globalThis as any).chrome.webRequest;
+    }
+  });
+
   it('a JS dialog the click opened is reported as dialog: <type> "<message>" and never awaited', async () => {
     const btn = doc.el('button', { id: 'del' }, 'Delete');
     doc.body.append(btn);
@@ -745,13 +805,32 @@ describe('a drag that fails mid-way still releases the button', () => {
 describe('browser_fill reads a text value back before it reports the field filled', () => {
   it('a field that takes no input is VALUE_NOT_SET and the call is FILL_FAILED', async () => {
     const name = doc.el('input', { id: 'name' }, '');
-    name.readOnly = true;
     doc.body.append(name);
     stackAt(name);
     cdpReply = (method, params) => (method === 'Input.insertText' ? {} : browserReply(method, params));
     const res = await handleFill({ tabId: 1, fields: [{ target: '#name', value: 'Ada' }] });
     expect(res.success).toBe(false);
     expect(res.error).toBe('FILL_FAILED: 1 of 1 fields failed\n#name: VALUE_NOT_SET: kept ""');
+  });
+
+  it('an empty password field that takes no input reads kept "", not ••••', async () => {
+    const pin = doc.el('input', { id: 'code', type: 'password' }, '');
+    pin.value = '';
+    doc.body.append(pin);
+    stackAt(pin);
+    cdpReply = (method, params) => (method === 'Input.insertText' ? {} : browserReply(method, params));
+    const res = await handleFill({ tabId: 1, fields: [{ target: '#code', value: '477086' }] });
+    expect(res.error).toBe('FILL_FAILED: 1 of 1 fields failed\n#code: VALUE_NOT_SET: kept ""');
+  });
+
+  it('a read-only field is ELEMENT_READONLY and nothing is sent to it', async () => {
+    const name = doc.el('input', { id: 'name' }, '');
+    name.readOnly = true;
+    doc.body.append(name);
+    stackAt(name);
+    const res = await handleFill({ tabId: 1, fields: [{ target: '#name', value: 'Ada' }] });
+    expect(res.error).toBe('FILL_FAILED: 1 of 1 fields failed\n#name: ELEMENT_READONLY: input#name is read-only; nothing was typed.');
+    expect(inputs()).toEqual([]);
   });
 
   it('a field that takes the text reads back the same value: filled', async () => {
