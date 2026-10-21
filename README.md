@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.0.2-blue?style=flat-square" alt="v3.0.2" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.0.3-blue?style=flat-square" alt="v3.0.3" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -754,6 +754,7 @@ npm audit --omit=dev
 | `npm run test:coverage` | Run the suite with enforced 80% thresholds for the deterministic protocol/action/state core |
 | `npm run lint` | Lint the TypeScript server, extension, and tests with zero warnings allowed |
 | `npm run typecheck` | Type check without emitting |
+| `npm run smoke:real-chrome` | Against your own Chrome (extension enrolled, after `npm run build`): restarts the daemon, then checks snapshot, click, type, logs, upload and the five drags of [`scripts/pages/drag-and-drop.html`](scripts/pages/drag-and-drop.html). HTML5 drag and drop depends on the operating system, so run it on Windows, macOS and Linux. You can also open that page and drag by hand: it judges each drag itself. |
 | `npm audit --omit=dev` | Check the installed production dependency graph for known vulnerabilities |
 | `npm run setup:cursor` | Install Cursor rule + command |
 | `npm run setup:claude` | Install Claude Code `AGENTS.md` |

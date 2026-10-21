@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drag and drop check</title>
+<!--
+  Five drags that browser_click dragTo must get right, each judged by the page itself.
+  Drive it with an agent (npm run smoke:real-chrome does) or drag by hand. Results are in the
+  table, in #summary ("5 of 5 passed"), and in window.dndResults ({ name: 'PASS' | 'FAIL: why' | 'WAIT' }).
+-->
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 16px; color: #222; background: #fff; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { margin: 4px 0 10px; color: #555; }
+  .row { display: flex; gap: 12px; align-items: flex-start; margin: 12px 0; flex-wrap: wrap; }
+  .col { width: 150px; min-height: 84px; padding: 6px; background: #f1f3f5; border: 1px dashed #adb5bd; }
+  .col h2 { font-size: 13px; margin: 0 0 6px; }
+  .card { padding: 8px; margin-bottom: 4px; background: #a5d8ff; cursor: grab; }
+  ul { padding: 0; margin: 0; }
+  #list li { padding: 6px 8px; margin: 2px 0; background: #ffec99; list-style: none; cursor: grab; width: 120px; }
+  #zone { width: 200px; height: 56px; padding: 6px; background: #d3f9d8; border: 1px dashed #69db7c; }
+  #track { position: relative; width: 420px; height: 64px; background: #f8f9fa; border: 1px solid #dee2e6; }
+  #box { position: absolute; left: 6px; top: 14px; width: 70px; height: 34px; background: #4dabf7; color: #fff; display: flex; align-items: center; justify-content: center; cursor: move; }
+  #goal { position: absolute; right: 6px; top: 6px; width: 96px; height: 48px; border: 2px dashed #f59f00; }
+  table { border-collapse: collapse; margin-top: 14px; }
+  td, th { border: 1px solid #dee2e6; padding: 4px 8px; text-align: left; }
+  .PASS { color: #2b8a3e; font-weight: 600; }
+  .FAIL { color: #c92a2a; font-weight: 600; }
+  .WAIT { color: #868e96; }
+</style>
+</head>
+<body>
+<h1>Drag and drop check</h1>
+<p>Drag each item where its row in the table says. The page judges every drag by itself.</p>
+
+<div class="row">
+  <div class="col" id="todo"><h2>To do</h2><div class="card" id="card" draggable="true">Card A</div><div class="card" id="card2" draggable="true">Card B</div></div>
+  <div class="col" id="done"><h2>Done (accepts)</h2></div>
+  <div class="col" id="locked"><h2>Locked (refuses)</h2></div>
+</div>
+<div class="row">
+  <ul id="list"><li id="one" draggable="true">first</li><li id="two" draggable="true">second</li><li id="three" draggable="true">third</li></ul>
+  <a id="link" href="https://example.com/dropped-link">a link to drag</a>
+  <div id="zone">drop the link here</div>
+</div>
+<div class="row"><div id="track"><div id="box">box</div><div id="goal"></div></div></div>
+
+<table>
+  <thead><tr><th>Check</th><th>Drag</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>html5-drop</td><td>#card → #done</td><td id="r-html5-drop" class="WAIT">WAIT</td></tr>
+    <tr><td>html5-refused</td><td>#card2 → #locked</td><td id="r-html5-refused" class="WAIT">WAIT</td></tr>
+    <tr><td>html5-sort</td><td>#one → #three</td><td id="r-html5-sort" class="WAIT">WAIT</td></tr>
+    <tr><td>html5-link</td><td>#link → #zone</td><td id="r-html5-link" class="WAIT">WAIT</td></tr>
+    <tr><td>mouse-drag</td><td>#box → #goal</td><td id="r-mouse-drag" class="WAIT">WAIT</td></tr>
+  </tbody>
+</table>
+<p id="summary">0 of 5 passed</p>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const results = window.dndResults = { 'html5-drop': 'WAIT', 'html5-refused': 'WAIT', 'html5-sort': 'WAIT', 'html5-link': 'WAIT', 'mouse-drag': 'WAIT' };
+  function report(name, ok, why) {
+    results[name] = ok ? 'PASS' : `FAIL: ${why}`;
+    const cell = $(`r-${name}`);
+    cell.textContent = results[name];
+    cell.className = ok ? 'PASS' : 'FAIL';
+    const passed = Object.values(results).filter((r) => r === 'PASS').length;
+    $('summary').textContent = `${passed} of 5 passed`;
+  }
+
+  // 1. A card dropped on a column that accepts it: drop with the card's data, then dragend.
+  const card = $('card');
+  const done = $('done');
+  let dropped = false;
+  card.addEventListener('dragstart', (e) => { dropped = false; e.dataTransfer.setData('text/plain', 'card-a'); e.dataTransfer.effectAllowed = 'move'; });
+  done.addEventListener('dragenter', (e) => e.preventDefault());
+  done.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+  done.addEventListener('drop', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer.getData('text/plain') !== 'card-a') return;
+    dropped = true;
+    done.appendChild(card);
+  });
+  card.addEventListener('dragend', () => report('html5-drop', dropped && card.parentElement === done, dropped ? 'the card did not move' : 'no drop on Done'));
+
+  // 2. A column that does not accept the drop (no preventDefault on dragover): no drop, the card stays.
+  const card2 = $('card2');
+  const locked = $('locked');
+  let reachedLocked = false;
+  let lockedDrop = false;
+  card2.addEventListener('dragstart', (e) => { reachedLocked = false; lockedDrop = false; e.dataTransfer.setData('text/plain', 'card-b'); });
+  locked.addEventListener('dragenter', () => { reachedLocked = true; });
+  locked.addEventListener('drop', () => { lockedDrop = true; locked.appendChild(card2); });
+  card2.addEventListener('dragend', () => report('html5-refused', reachedLocked && !lockedDrop && card2.parentElement === $('todo'),
+    !reachedLocked ? 'the drag never reached Locked' : 'Locked got a drop it refused'));
+
+  // 3. A sortable list: the dragged item moves before the item under the pointer.
+  const list = $('list');
+  const startOrder = () => [...list.children].map((li) => li.id).join(',');
+  const initial = startOrder();
+  let dragged = null;
+  list.addEventListener('dragstart', (e) => { dragged = e.target.closest('li'); e.dataTransfer.setData('text/plain', dragged.id); });
+  list.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    const over = e.target.closest && e.target.closest('li');
+    if (dragged && over && over !== dragged) list.insertBefore(dragged, over);
+  });
+  list.addEventListener('drop', (e) => e.preventDefault());
+  list.addEventListener('dragend', () => { report('html5-sort', startOrder() !== initial, 'the order did not change'); dragged = null; });
+
+  // 4. A link dragged onto a drop zone hands over its address.
+  const link = $('link');
+  const zone = $('zone');
+  zone.addEventListener('dragover', (e) => e.preventDefault());
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const url = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+    report('html5-link', url.trim() === link.href, `got "${url}"`);
+  });
+  link.addEventListener('click', (e) => e.preventDefault());
+
+  // 5. A plain mouse drag (no HTML5): mousedown, mousemove, mouseup over the goal.
+  const box = $('box');
+  const goal = $('goal');
+  let grab = null;
+  box.addEventListener('mousedown', (e) => { grab = { dx: e.clientX - box.offsetLeft, dy: e.clientY - box.offsetTop, moves: 0 }; });
+  window.addEventListener('mousemove', (e) => {
+    if (!grab) return;
+    grab.moves++;
+    box.style.left = `${e.clientX - grab.dx}px`;
+    box.style.top = `${e.clientY - grab.dy}px`;
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (!grab) return;
+    const g = goal.getBoundingClientRect();
+    const inside = e.clientX >= g.left && e.clientX <= g.right && e.clientY >= g.top && e.clientY <= g.bottom;
+    report('mouse-drag', inside && grab.moves > 0, grab.moves ? 'released outside the goal' : 'no mouse moves arrived');
+    grab = null;
+  });
+})();
+</script>
+</body>
+</html>

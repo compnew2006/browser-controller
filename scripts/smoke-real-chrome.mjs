@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * Real-profile smoke test for extension reconnect and core tools.
+ * Real-profile smoke test for extension reconnect and core tools, and the five
+ * drags of scripts/pages/drag-and-drop.html (HTML5 drags behave differently on
+ * Windows, macOS and Linux, so run it on each).
  * Requires the unpacked extension enrolled in the user's normal Chrome profile.
  */
 import fs from 'node:fs';
@@ -13,11 +15,16 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const STATE = path.join(os.homedir(), '.browser-controller');
-const SOCKET = path.join(STATE, 'daemon.sock');
+// Same folder as STATE_DIR in mcp-server/src/daemon-config.ts.
+const STATE = process.env.BC_STATE_DIR || path.join(os.homedir(), '.browser-controller');
+// Same address as IPC_SOCKET_PATH in mcp-server/src/daemon-config.ts.
+const SOCKET = process.platform === 'win32' ? '\\\\.\\pipe\\browser-controller' : path.join(STATE, 'daemon.sock');
 const TOKEN = JSON.parse(fs.readFileSync(path.join(STATE, 'token.json'), 'utf8')).token;
 const DAEMON = path.join(ROOT, 'mcp-server', 'dist', 'daemon.js');
 const UPLOAD = path.join(STATE, 'smoke-upload.txt');
+const DRAG_PAGE = path.join(ROOT, 'scripts', 'pages', 'drag-and-drop.html');
+/** The page's five checks: [source, drop target]. */
+const DRAGS = [['#card', '#done'], ['#card2', '#locked'], ['#one', '#three'], ['#link', '#zone'], ['#box', '#goal']];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const execFileAsync = promisify(execFile);
 const SYSTEMD_SERVICE = 'browser-controller-daemon.service';
@@ -53,8 +60,11 @@ function daemonAlive() {
 }
 function startDaemon() {
   if (!fs.existsSync(DAEMON)) throw new Error(`Run npm run build first (missing ${DAEMON})`);
-  daemon = spawn(process.execPath, [DAEMON], { cwd: ROOT, stdio: 'ignore', detached: false });
+  // Its own process: a daemon this test restarts keeps running after the test exits
+  // (the test used to wait on it forever); one the test started is stopped at the end.
+  daemon = spawn(process.execPath, [DAEMON], { cwd: ROOT, stdio: 'ignore', detached: true, windowsHide: true });
   daemon.on('error', error => console.error('[daemon]', error.message));
+  daemon.unref();
 }
 async function waitForDaemon() {
   for (let i = 0; i < 300; i++) { if (await daemonAlive()) return; await sleep(100); }
@@ -144,6 +154,7 @@ async function main() {
   fs.writeFileSync(UPLOAD, 'browser-controller smoke upload\n');
   server = http.createServer((req, res) => {
     if (req.url.startsWith('/api')) { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":true}'); return; }
+    if (req.url.startsWith('/drag-and-drop')) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(fs.readFileSync(DRAG_PAGE)); return; }
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(`<!doctype html><title>Browser Controller Smoke</title><main><h1>Smoke page</h1><button id="click" onclick="document.querySelector('#result').textContent='clicked'">Click me</button><input id="text" aria-label="Smoke input"><input id="file" type="file"><p id="result">not clicked</p><script>console.log('SMOKE_CONSOLE_MARKER'); fetch('/api?smoke=1');</script></main>`);
   });
@@ -202,6 +213,13 @@ async function main() {
   const files = await call('browser_evaluate', { tabId, expression: 'document.querySelector("#file").files[0]?.name' });
   assert(textOf(files).includes('smoke-upload.txt'), `upload verification failed: ${textOf(files)}`);
   log('upload ok');
+  // The page judges each drag itself (window.dndResults): four HTML5 drags and a plain mouse drag.
+  await call('browser_navigate', { tabId, url: `${page}drag-and-drop` });
+  for (const [target, dragTo] of DRAGS) await call('browser_click', { tabId, target, dragTo });
+  const verdict = JSON.parse(textOf(await call('browser_evaluate', { tabId, expression: 'return JSON.stringify(window.dndResults)' })));
+  const failedDrags = Object.entries(verdict).filter(([, result]) => result !== 'PASS');
+  assert(!failedDrags.length, `drag and drop (${process.platform}): ${failedDrags.map(([name, result]) => `${name} ${result}`).join('; ')}`);
+  log(`drag and drop ok: 5 of 5 (${process.platform})`);
   await call('browser_tabs', { action: 'close', tabId }); tabId = undefined;
   log('PASS: real Chrome profile, reconnect, and all requested tools verified');
 }

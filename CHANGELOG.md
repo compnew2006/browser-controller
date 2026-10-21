@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.3
+
+### Added
+- `scripts/pages/drag-and-drop.html`: a page that judges five drags by itself (a card onto a column that accepts it, a card onto one that refuses it, a sortable list, a link onto a drop zone, a plain mouse drag). Results are in a table, in `5 of 5 passed`, and in `window.dndResults`. A wrong drag reads `FAIL: <why>`, so the page cannot pass a drag that did not happen.
+- `npm run smoke:real-chrome` runs those five drags in your own Chrome and names the platform (`drag and drop ok: 5 of 5 (win32)`). HTML5 drag and drop depends on the operating system: this is the check to run on Windows and macOS.
+
+### Fixed
+- `npm run smoke:real-chrome` on Windows: it looked for the daemon at a Unix socket path; it now uses the named pipe the daemon listens on (`\\.\pipe\browser-controller`). It also reads the daemon's folder from `BC_STATE_DIR` when that is set.
+- `npm run smoke:real-chrome` never exited after `PASS` when your daemon was already running: it restarted the daemon as its own child and waited on it (Ctrl+C then stopped the daemon too). The restarted daemon now runs on its own and keeps running after the test.
+
 ## 3.0.2
 
 ### Fixed
