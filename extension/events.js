@@ -122,6 +122,8 @@ export function registerEventListeners() {
     persistSessionState();
   });
 
+  watchOpenedTabs();
+
   // A loading tab drops its per-document state. No shield is re-injected after
   // a navigation: the shield exists only while a tool call runs, and that call
   // removes it when it ends.
@@ -130,5 +132,39 @@ export function registerEventListeners() {
       dropDocumentState(tabId);
       persistSessionState();
     }
+  });
+}
+
+/**
+ * A tab that an agent's own tab opens (a target=_blank link, window.open) is that agent's
+ * tab too, so browser_tabs lists it as [own]. Chrome makes such a tab the active one, which
+ * took the user away from the tab they were on: when that tab was not the source itself (the
+ * user was not looking at the agent's tab), it is made active again. The source comes from
+ * webNavigation: a tab's openerTabId is the window's active tab when the source is in the
+ * background, not the tab that opened it.
+ */
+function watchOpenedTabs() {
+  // The active tab of each window, and the one before it (the new tab is activated before it is reported).
+  const active = new Map();
+  // A worker that just started has seen no activation yet: it starts from the tabs active now.
+  chrome.tabs.query({ active: true }).then((tabs) => {
+    for (const t of tabs) if (!active.has(t.windowId)) active.set(t.windowId, { current: t.id, previous: null });
+  }).catch(() => {});
+  chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+    const was = active.get(windowId);
+    active.set(windowId, { current: tabId, previous: was?.current ?? null });
+  });
+  chrome.webNavigation.onCreatedNavigationTarget.addListener(async ({ sourceTabId, tabId }) => {
+    const owner = tabLocks.owner(sourceTabId);
+    if (owner === undefined) return;
+    try {
+      lockTabUi(tabId, owner, `Tab ${tabId} opened by tab ${sourceTabId}, locked to its owner`);
+    } catch {
+      return; // already another session's
+    }
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    const seen = tab && active.get(tab.windowId);
+    const userTab = seen && (seen.current === tabId ? seen.previous : seen.current);
+    if (tab?.active && userTab != null && userTab !== sourceTabId) chrome.tabs.update(userTab, { active: true }).catch(() => {});
   });
 }

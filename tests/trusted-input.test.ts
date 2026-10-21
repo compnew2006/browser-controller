@@ -83,18 +83,37 @@ describe('trusted input (CDP)', () => {
 
   it('Control+a and Meta+a carry the selectAll editing command (select-all in the field, on every OS)', async () => {
     const send = async (method: string, params: Record<string, unknown>) => { cdp.push({ method, params }); };
+    const keyA = () => cdp.find((c) => c.params.key === 'a' || c.params.key === 'A')!.params;
     await ti.cdpKeyPress(send, 'a', ['ctrl']);
-    expect(cdp[0].params).toMatchObject({ type: 'rawKeyDown', key: 'a', modifiers: 2, commands: ['selectAll'] });
+    expect(keyA()).toMatchObject({ type: 'rawKeyDown', key: 'a', modifiers: 2, commands: ['selectAll'] });
     cdp.length = 0;
     await ti.cdpKeyPress(send, 'a', ['meta']);
-    expect(cdp[0].params).toMatchObject({ type: 'rawKeyDown', key: 'a', modifiers: 4, commands: ['selectAll'] });
+    expect(keyA()).toMatchObject({ type: 'rawKeyDown', key: 'a', modifiers: 4, commands: ['selectAll'] });
     cdp.length = 0;
     // Other combos stay native: Control+Shift+a and a plain letter carry no editing command.
     await ti.cdpKeyPress(send, 'a', ['ctrl', 'shift']);
-    expect(cdp[0].params.commands).toBeUndefined();
+    expect(keyA().commands).toBeUndefined();
     cdp.length = 0;
     await ti.cdpKeyPress(send, 'a', []);
-    expect(cdp[0].params.commands).toBeUndefined();
+    expect(keyA().commands).toBeUndefined();
+  });
+
+  it('a modifier fires its own keydown before the key and its keyup after it (Shift+a types "A")', async () => {
+    const send = async (method: string, params: Record<string, unknown>) => { cdp.push({ method, params }); };
+    await ti.cdpKeyPress(send, 'a', ['ctrl', 'shift']);
+    expect(cdp.map((c) => [c.params.type, c.params.key, c.params.modifiers])).toEqual([
+      ['rawKeyDown', 'Control', 2], ['rawKeyDown', 'Shift', 10], ['rawKeyDown', 'A', 10], ['keyUp', 'A', 10],
+      ['keyUp', 'Shift', 2], ['keyUp', 'Control', 0],
+    ]);
+    cdp.length = 0;
+    await ti.cdpKeyPress(send, 'a', ['shift']);
+    expect(cdp.map((c) => [c.params.type, c.params.key, c.params.text])).toEqual([
+      ['rawKeyDown', 'Shift', undefined], ['keyDown', 'A', 'A'], ['keyUp', 'A', undefined], ['keyUp', 'Shift', undefined],
+    ]);
+    cdp.length = 0;
+    // "Control+Shift" presses Shift itself with Control held: Shift is not also held around it.
+    await ti.cdpKeyPress(send, 'Shift', ['ctrl', 'shift']);
+    expect(cdp.map((c) => c.params.key)).toEqual(['Control', 'Shift', 'Shift', 'Control']);
   });
 
   it('enables focus emulation once and reuses the session', async () => {
@@ -136,7 +155,10 @@ describe('trusted input (CDP)', () => {
     pageResults.push({ success: true, x: 0, y: 0, visible: true, focused: true });
     const res = await handleType({ tabId: 5, key: 'shift+Tab' });
     expect(res).toMatchObject({ success: true, input: 'cdp' });
-    expect(inputs()[0].params).toMatchObject({ key: 'Tab', modifiers: 8 });
+    // Shift goes down first, Tab is pressed with it held, Shift comes up last.
+    expect(inputs().map((c) => [c.params.type, c.params.key, c.params.modifiers])).toEqual([
+      ['rawKeyDown', 'Shift', 8], ['rawKeyDown', 'Tab', 8], ['keyUp', 'Tab', 8], ['keyUp', 'Shift', 0],
+    ]);
   });
 
   it('the agent cursor is off by default: no cursor work, no wait, one measurement', async () => {

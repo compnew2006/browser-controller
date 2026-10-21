@@ -24,6 +24,7 @@ function evaluateReply(res, via) {
   const lines = via === 'scripting' ? ['via: scripting'] : [];
   lines.push(full.slice(0, EVAL_TEXT_MAX_CHARS));
   if (total > EVAL_TEXT_MAX_CHARS) lines.push(`… truncated (${total - EVAL_TEXT_MAX_CHARS} more chars)`);
+  if (res.statements) lines.push('note: statements give a value only through `return` (e.g. `const x = 2; return x * 21`)');
   return { success: true, text: lines.join('\n'), result: value, via, ...(res.truncated ? { truncated: true } : {}) };
 }
 
@@ -99,9 +100,10 @@ function evalStep(op, token, code) {
       // does not cross the world boundary (crbug 1304272), so the value is parked, not returned.
       const expr = String(code).trim().replace(/;+\s*$/, '');
       let pending;
-      try { pending = (0, eval)(`(async () => (\n${expr}\n))()`); } catch { pending = (0, eval)(`(async () => {\n${code}\n})()`); }
+      let statements = false;
+      try { pending = (0, eval)(`(async () => (\n${expr}\n))()`); } catch { statements = true; pending = (0, eval)(`(async () => {\n${code}\n})()`); }
       const value = await pending;
-      out = { ok: true, json: JSON.stringify(value) };
+      out = { ok: true, json: JSON.stringify(value), ...(statements && value === undefined ? { statements } : {}) };
     } catch (err) {
       out = { ok: false, error: String(err && err.message || err).slice(0, 2000) };
     }
@@ -156,5 +158,5 @@ async function evaluateByScripting(tabId, expression, budget) {
   } catch {
     value = out.json;
   }
-  return evaluateReply({ result: value, type: out.json === undefined ? 'undefined' : undefined }, 'scripting');
+  return evaluateReply({ result: value, type: out.json === undefined ? 'undefined' : undefined, statements: out.statements === true }, 'scripting');
 }

@@ -5,7 +5,7 @@ import { tabIdParam, forwardHandler } from './types.js';
 export const evaluateTool: ToolDefinition = {
   name: 'browser_evaluate',
   summary: 'Run JavaScript in the page (top-level await)',
-  description: 'Run JavaScript in the tab (top-level await; the last expression is the result). Over CDP; via: scripting if the debugger cannot attach. Prefer click and type.',
+  description: 'Run JavaScript in the tab: one expression is the result; several statements need `return` (`const x = 2; return x * 21`). Top-level await works. Over CDP; via: scripting if the debugger cannot attach. Prefer click and type.',
   inputSchema: z.object({
     tabId: tabIdParam,
     expression: z.string(),

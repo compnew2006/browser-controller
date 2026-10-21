@@ -209,6 +209,35 @@ describe('resolveTarget (page side)', () => {
     expect(resolve('button.gone')).toEqual({ error: 'ELEMENT_HIDDEN: button.gone matches only hidden elements' });
   });
 
+  it('selector: a box its floated children collapse to 0 px high is visible when a child is', () => {
+    const list = doc.el('ul', {}, doc.el('li', {}, 'Home'), doc.el('li', {}, 'About'));
+    doc.body.append(list);
+    list.getBoundingClientRect = () => ({ x: 10, y: 10, left: 10, top: 10, width: 968, height: 0, right: 978, bottom: 10 }) as any;
+    const style = doc.defaultView.getComputedStyle;
+    const overflow = { value: 'visible' };
+    doc.defaultView.getComputedStyle = (el) => ({ ...style(el), overflowX: overflow.value, overflowY: overflow.value });
+    (globalThis as any).getComputedStyle = doc.defaultView.getComputedStyle;
+    expectHit(resolve('ul'), list, 'selector');
+    // A box that clips its overflow shows nothing at 0 px.
+    overflow.value = 'hidden';
+    expect(resolve('ul')).toEqual({ error: 'ELEMENT_HIDDEN: ul matches only hidden elements' });
+  });
+
+  it('selector: a column squeezed to 0 px wide is visible by the text that overflows it', () => {
+    const cell = doc.el('div', { id: 'sibling' }, '50.3');
+    doc.body.append(cell);
+    cell.getBoundingClientRect = () => ({ x: 10, y: 10, left: 10, top: 10, width: 0, height: 16, right: 10, bottom: 26 }) as any;
+    const style = doc.defaultView.getComputedStyle;
+    doc.defaultView.getComputedStyle = (el) => ({ ...style(el), overflowX: 'visible', overflowY: 'visible' });
+    (globalThis as any).getComputedStyle = doc.defaultView.getComputedStyle;
+    const text = { width: 30 };
+    (cell.childNodes[0] as any).ownerDocument = doc;
+    (doc as any).createRange = () => ({ selectNodeContents: () => {}, getBoundingClientRect: () => ({ width: text.width, height: 16 }) });
+    expectHit(resolve('#sibling'), cell, 'selector');
+    text.width = 0; // no text laid out: nothing shows
+    expect(resolve('#sibling')).toEqual({ error: 'ELEMENT_HIDDEN: #sibling matches only hidden elements' });
+  });
+
   it('selector: no match is NOT_FOUND', () => {
     doc.body.append(doc.el('button', {}, 'Save'));
     expect(resolve('.nope')).toEqual({ error: 'NOT_FOUND: .nope matches nothing' });

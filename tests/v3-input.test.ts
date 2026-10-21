@@ -387,7 +387,7 @@ describe('browser_type', () => {
     doc.activeElement = doc.el('input', { id: 'f' });
     const res = await handleType({ tabId: 1, key: 'Control+a' });
     expect(res.text).toBe('pressed Control+a');
-    expect(keysDown()[0].params).toMatchObject({ key: 'a', modifiers: 2 });
+    expect(keysDown().map((c) => c.params)).toMatchObject([{ key: 'Control', modifiers: 2 }, { key: 'a', modifiers: 2 }]);
   });
 
   it('submit presses Enter after the text', async () => {

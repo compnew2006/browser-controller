@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.0.4
+
+### Fixed
+- `browser_type` into a same-origin iframe editor (TinyMCE) said `typed` but nothing changed. A frame that does not have the focus still has an active element (its `<body>`), and that counted as focused, so no click focused the editor. Focus is now read from the top document. Real Chrome, `/tinymce` on the-internet: the text is in the editor.
+- `browser_click` on a target that moves:
+  - A target already in full view is no longer scrolled. A scroll runs the page's scroll handlers, and a menu that follows the scroll moved away from the point that had just been measured.
+  - After a scroll, or while a CSS animation or transition runs on the target or an element around it (a dialog that grows into place), the target is measured again until it holds still (up to 1 s).
+  - A press that lands on another element now fails `CLICK_MISSED` and names that element. Before, the result said `clicked`.
+  - Real Chrome: on `/floating_menu`, scroll 1500 px and click `News` now reaches `#news` (before: nothing happened). The `/entry_ad` dialog closes while its `popin` animation runs.
+- `browser_type` with a `target` that is a slider, checkbox, radio, select, button or link that does not have the focus: the click that focused it also changed it. It moved a slider to its centre and toggled a checkbox. Such controls are now focused without a click. Real Chrome: a slider at 4.5 takes `ArrowLeft` and reads 4; `Space` toggles a checkbox once.
+- `browser_evaluate` with several statements and no `return` gave `undefined` with no hint. The description now says statements need `return`, and such a result carries a `note:` that shows how.
+- `browser_navigate` with `snapshot: true` on a page of frames showed only the frame that loaded first. Navigation now waits up to 3 s for same-origin child frames to load. On `/nested_frames` the snapshot has LEFT, MIDDLE, RIGHT and BOTTOM.
+- `browser_scroll` with `dy` right after a navigation in a background tab could fail `NOT_SCROLLABLE`, because the wheel had not started yet. When the page has room to scroll, the scroll now waits up to 1.5 s for the wheel to start. This was seen once and not reproduced; the fix follows the code.
+- A tab that one of the agent's tabs opened (a `target="_blank"` link, `window.open`) was listed as `[user, focused]` and took the focus from the user. It now belongs to the agent (`[own]`), and the tab the user was on is made active again, unless the user was looking at the tab that opened it. The opener comes from `webNavigation`, because Chrome's `openerTabId` names the active tab when the opener is in the background. This adds the `webNavigation` permission. Chrome words its warning like the `tabs` permission already does ("Read your browsing history"), so no new prompt appears. Reload the unpacked extension at `chrome://extensions`.
+- Key combos sent only the main key. Each modifier now gets its own keydown and keyup, held around the key as a person holds it. On `/key_presses`, `Shift+a` reports `SHIFT` then `A`.
+- A target whose own box its content collapses failed `ELEMENT_HIDDEN`. Examples: a list of floats (0 px high), or a column squeezed to 0 px wide with its text overflowing it. A box that does not clip its overflow is now visible when a child element or its own text is. Real Chrome: `ul` on `/disappearing_elements`, `#sibling-50.3` on `/large`.
+- `ELEMENT_DISABLED` from `browser_type` said `nothing was clicked`. It now says `nothing was typed`. A failing `browser_batch` step no longer reads `.;` before `N skipped`.
+
 ## 3.0.3
 
 ### Added

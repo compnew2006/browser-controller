@@ -120,6 +120,16 @@ function reboundNotes(loc, targets) {
   return targets.map((t) => parseTarget(t)).filter((p) => p.kind === 'ref').map((p) => reboundNote(p.ref));
 }
 
+/** CLICK_MISSED: the press at `loc` landed on `hit` (pageRelease), not on `target`; what it then did is named. */
+function missedError(target, loc, hit, settled) {
+  const { x, y } = pointOf(loc);
+  const then = [
+    ...(settled?.navigated ? [`the page then navigated to ${settled.navigated}`] : []),
+    ...(settled?.dialog ? [`it opened a ${dialogSummary(settled.dialog)}`] : []),
+  ];
+  return `CLICK_MISSED: the click at ${x},${y} landed on ${hit}, not on ${target}: the target moved after it was measured${then.length ? `; ${then.join('; ')}` : ''}. Take a new snapshot before acting again.`;
+}
+
 /** Failed locate: release the input window and return the answer (nothing was sent). */
 async function refused(tabId, loc) {
   await releaseShield(tabId);
@@ -254,12 +264,15 @@ export async function handleClick(params, _sessionId, _agentName, signal) {
     const urlBefore = await tabUrl(tabId);
     const loc = await locatePointer(tabId, { target }, 'click', clickCount);
     if (!loc.success) return refused(tabId, loc);
+    let after = {};
     try {
       await cdpClickAt(input.send, loc.x, loc.y, { button, clickCount, modifiers: mods });
     } finally {
-      if (!input.blocked) await releaseShield(tabId);
+      if (!input.blocked) after = await releaseShield(tabId);
     }
     const settled = await settle(tabId, urlBefore);
+    // The target moved between its measurement and the press: the click went to something else.
+    if (after.missed) return { success: false, error: missedError(target, loc, after.missed, settled), at: pointOf(loc) };
     return inputResult([`clicked ${target}${loc.onLabel ? ' via label' : ''}`, ...outsideLines(loc)], settled, { input: 'cdp', at: pointOf(loc) }, reboundNotes(loc, [target]));
   } finally {
     input.close();
@@ -320,6 +333,8 @@ export async function handleType(params, _sessionId, _agentName, signal) {
 
     const value = after?.value ?? null;
     if (value != null) lines.push(after.secret ? 'value: ••••' : `value: "${value}"`);
+    // The focusing click went to something else (the field moved): the input followed the focus.
+    if (after?.missed) lines.push(`warning: the click that focuses ${target} landed on ${after.missed}; the input went where the focus is`);
     return inputResult(lines, settled, {
       input: 'cdp',
       ...(typed != null ? { typed } : {}),

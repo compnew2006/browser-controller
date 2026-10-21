@@ -214,7 +214,9 @@ export async function cdpEvaluateSource(send, source, { timeoutMs = BROWSER_EVAL
     if (run.dialog) return pausedReply(run.dialog);
     if (run.timedOut) return timedOut;
     if (run.exceptionDetails) return { success: false, error: `SCRIPT_ERROR: ${messageOf(run.exceptionDetails)}` };
-    return await resultOf(send, run.result || {});
+    const res = await resultOf(send, run.result || {});
+    // Statements give their `return` value: none came back (the reply says how to get one).
+    return fn === body && res.type === 'undefined' ? { ...res, statements: true } : res;
   } catch (err) {
     // A rejected CDP call is the debugger failing, not the page throwing (those come back as exceptionDetails).
     return { success: false, error: cdpFailure(err) };

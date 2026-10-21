@@ -521,6 +521,14 @@ describe('scroll', () => {
     expect(order.indexOf('Page.stopScreencast')).toBeGreaterThan(order.indexOf('mouseWheel'));
   });
 
+  it('a wheel the tab holds past the first reads still scrolls: no NOT_SCROLLABLE while the container has room', async () => {
+    const el = feed();
+    // A background tab holds the wheel until its next frame: the scroll shows up 700 ms later.
+    cdpState.onWheel = (p) => { setTimeout(() => { el.scrollTop += p.deltaY; }, 700); };
+    const res = await handleScroll({ tabId: 1, dy: 500 });
+    expect(res).toMatchObject({ success: true, moved: true, position: { x: 0, y: 500 } });
+  });
+
   it('dx adds the x position to the line', async () => {
     const el = feed();
     el.scrollWidth = 2000;
@@ -569,6 +577,13 @@ describe('evaluate', () => {
     // The parse checks come first (not awaited); the run is the one that awaits the value.
     const evaluated = cdp.find((c) => c.method === 'Runtime.evaluate' && c.params.awaitPromise === true && c.params.expression.includes('return a * 3'))!;
     expect(evaluated.params.expression.startsWith('(async () => {')).toBe(true);
+  });
+
+  it('statements with no return give undefined and a note on how to get a value', async () => {
+    const res = await handleEvaluate({ tabId: 1, expression: 'const x = 2; x * 21' });
+    expect(res.text).toBe('undefined\nnote: statements give a value only through `return` (e.g. `const x = 2; return x * 21`)');
+    // An expression that gives undefined is a value of its own: no note.
+    expect((await handleEvaluate({ tabId: 1, expression: 'void 0' })).text).toBe('undefined');
   });
 
   it('a throw is SCRIPT_ERROR with the message, on the first line only', async () => {

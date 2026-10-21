@@ -15,7 +15,7 @@
  * ambiguous is reported as gone instead of guessed.
  */
 
-export const PAGE_DOM_VERSION = 11;
+export const PAGE_DOM_VERSION = 12;
 
 /**
  * `refBase`: the highest ref number the tab's earlier documents showed (lib/state.js
@@ -164,14 +164,31 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     let r;
     try { r = el.getBoundingClientRect(); } catch { return false; }
     if (r.width > 0 && r.height > 0) return true;
-    // display:contents hosts / slots have no box of their own: visible if a child is.
+    // display:contents hosts / slots have no box of their own, and a box that does not clip can be
+    // collapsed by its own content (a list of floats is 0 px high, a squeezed column 0 px wide with
+    // its text overflowing it): visible if a child element or a text of its own is.
     try {
       const st = styleOf(el);
-      if (st && st.display === 'contents') {
-        for (const c of flatChildren(el)) if (c.nodeType === 1 && isVisible(c, { ignoreOpacity })) return true;
+      const unclipped = st && st.overflowX === 'visible' && st.overflowY === 'visible';
+      if (st && (st.display === 'contents' || unclipped)) {
+        for (const c of flatChildren(el)) {
+          if (c.nodeType === 1 && isVisible(c, { ignoreOpacity })) return true;
+          if (c.nodeType === 3 && textHasBox(c)) return true;
+        }
       }
     } catch {}
     return false;
+  }
+
+  /** Does a text node lay out a box of its own (it shows even when its element has none)? */
+  function textHasBox(node) {
+    if (!clean(node.textContent)) return false;
+    try {
+      const range = node.ownerDocument.createRange();
+      range.selectNodeContents(node);
+      const r = range.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    } catch { return false; }
   }
 
   /** Flat-tree children: shadow content replaces light children, slots show what is assigned. */

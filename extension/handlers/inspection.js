@@ -25,6 +25,8 @@ const WAIT_HARD_MAX_MS = 50_000;
 const SCROLL_FIRST_CHECK_MS = 150;
 const SCROLL_POLL_MS = 100;
 const SCROLL_SETTLE_MS = 1_500;
+/** A wheel aimed at a container with room to move: how long its first movement may take (a background tab holds the wheel for its next frame). */
+const SCROLL_START_MS = 1_500;
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -172,7 +174,7 @@ export async function handleScroll(params) {
     // A background tab holds the wheel until it draws a frame: keep frames coming until the scroll settles.
     after = await withFrames(tabId, send, async () => {
       await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: aim.x, y: aim.y, deltaX: dx, deltaY: dy });
-      return settleScroll(tabId, dx, dy);
+      return settleScroll(tabId, dx, dy, aim.room ? before : null);
     });
   } finally {
     await releaseShield(tabId);
@@ -193,10 +195,20 @@ export async function handleScroll(params) {
   };
 }
 
-/** Polls the scroll position until two reads in a row agree (a wheel scrolls smoothly), or the settle budget ends. */
-async function settleScroll(tabId, dx, dy) {
+/**
+ * Polls the scroll position until two reads in a row agree (a wheel scrolls smoothly), or the
+ * settle budget ends. With `before` (the container has room to move that way), a position that
+ * has not left `before` yet is no answer until SCROLL_START_MS: a background tab can hold the
+ * wheel until it draws its next frame, and two still reads before that are not "nothing moved".
+ */
+async function settleScroll(tabId, dx, dy, before = null) {
   await pause(SCROLL_FIRST_CHECK_MS);
   let last = await execDom(tabId, scrollStatePage, [dx, dy]);
+  const startBy = Date.now() + SCROLL_START_MS;
+  while (before && last.x === before.x && last.y === before.y && Date.now() < startBy) {
+    await pause(SCROLL_POLL_MS);
+    last = await execDom(tabId, scrollStatePage, [dx, dy]);
+  }
   let still = 0;
   const deadline = Date.now() + SCROLL_SETTLE_MS;
   while (Date.now() < deadline && still < 2) {
@@ -250,7 +262,11 @@ function scrollAimPage(_t, _fb, _dx, _dy) {
   const page = document.scrollingElement || document.documentElement;
   if (!scroller) scroller = page;
   globalThis.__bcScroller = scroller;
-  return { success: true, x, y, container: scroller === page ? 'page' : D.describe(scroller), rebound };
+  // Room to move that way: the page has it when its content runs past the viewport on that side.
+  const pageRoom = (_dy > 0 && page.scrollTop + page.clientHeight < page.scrollHeight - 1) || (_dy < 0 && page.scrollTop > 0)
+    || (_dx > 0 && page.scrollLeft + page.clientWidth < page.scrollWidth - 1) || (_dx < 0 && page.scrollLeft > 0);
+  const room = scroller !== page || pageRoom;
+  return { success: true, x, y, room, container: scroller === page ? 'page' : D.describe(scroller), rebound };
 }
 
 /** Page side: the scroll position of the container the last wheel aimed at, and whether it is at the edge it heads for. */

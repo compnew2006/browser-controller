@@ -137,7 +137,8 @@ describe('browser_type key: a sequence of keys, each token checked before anythi
     doc.activeElement = doc.el('input', { id: 'q' });
     const res = await handleType({ tabId: 1, key: 'Control+a Enter' });
     expect(res.text).toBe('pressed Control+a Enter');
-    expect(keyDowns().map((c) => [c.params.key, c.params.modifiers])).toEqual([['a', 2], ['Enter', 0]]);
+    // Control goes down first (its own keydown, as a person holds it), then a, then Enter.
+    expect(keyDowns().map((c) => [c.params.key, c.params.modifiers])).toEqual([['Control', 2], ['a', 2], ['Enter', 0]]);
   });
 
   it('a value of only whitespace is one key: " " is the Space key', async () => {

@@ -125,7 +125,8 @@ export const batchTool: ToolDefinition = {
         }
       }
       if (result.isError) {
-        return failureResult(`${label}: ${messageOf(result)}; ${actions.length - i - 1} skipped`);
+        // A message that ends its sentence loses the full stop: "…nothing was clicked; 0 skipped", not ".;".
+        return failureResult(`${label}: ${messageOf(result).replace(/\.$/, '')}; ${actions.length - i - 1} skipped`);
       }
       last = result;
     }

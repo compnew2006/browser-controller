@@ -55,6 +55,12 @@ describe('browser_batch', () => {
     expect(res.content).toEqual([{ type: 'text', text: 'step 2/3 browser_type: ELEMENT_HIDDEN: #a is hidden; 1 skipped' }]);
   });
 
+  it('a failure message that ends with a full stop is joined without it (no ".;")', async () => {
+    const { host } = fakeHost('browser_type', 'ELEMENT_DISABLED: input is disabled; nothing was typed.');
+    const res = await run(host, { tabId: 1, actions: [{ tool: 'browser_type', params: { target: '#a', text: 'x' } }] });
+    expect(textOf(res)).toBe('step 1/1 browser_type: ELEMENT_DISABLED: input is disabled; nothing was typed; 0 skipped');
+  });
+
   it('a failing last step reports zero skipped', async () => {
     const { host } = fakeHost('browser_click', 'NOT_FOUND: no element for #a');
     const res = await run(host, { tabId: 1, actions: [{ tool: 'browser_click', params: { target: '#a' } }] });

@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.0.3-blue?style=flat-square" alt="v3.0.3" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.0.4-blue?style=flat-square" alt="v3.0.4" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -232,7 +232,7 @@ the browser being controlled.
 
 ### Permission and trust boundary
 
-The unpacked extension deliberately requests Chrome's powerful `debugger`, `scripting`, `webRequest`, and `<all_urls>` permissions, plus `nativeMessaging`, which it uses only to ask the local pairing helper for the enrollment secret. Together they let a connected MCP agent read network metadata, run functions in the pages you select, drive trusted input and evaluate JavaScript through the debugger, and answer requests in a tab with mock responses. A connected MCP agent can therefore read and change sensitive pages in your signed-in browser. Install the extension only from source you trust, pair it only with a trusted local daemon, and do not expose the daemon port beyond localhost. Chrome-protected pages such as `chrome://`, the Web Store, and DevTools remain inaccessible.
+The unpacked extension deliberately requests Chrome's powerful `debugger`, `scripting`, `webRequest`, and `<all_urls>` permissions, plus `nativeMessaging`, which it uses only to ask the local pairing helper for the enrollment secret, and `webNavigation`, which it uses only to know which tab opened a new one. Together they let a connected MCP agent read network metadata, run functions in the pages you select, drive trusted input and evaluate JavaScript through the debugger, and answer requests in a tab with mock responses. A connected MCP agent can therefore read and change sensitive pages in your signed-in browser. Install the extension only from source you trust, pair it only with a trusted local daemon, and do not expose the daemon port beyond localhost. Chrome-protected pages such as `chrome://`, the Web Store, and DevTools remain inaccessible.
 
 ---
 
@@ -287,6 +287,7 @@ Failure codes:
 | `REF_GONE` | The ref's element is gone, or the ref is from an earlier page of the tab. | Take a new `browser_snapshot`. |
 | `REF_NOT_FOUND` | The ref was never issued in this tab. | Take a new `browser_snapshot`, and check the ref. |
 | `ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED` | The target cannot take the action. Nothing was done. | Wait, scroll, or pick another target. |
+| `CLICK_MISSED` | The target moved between its measurement and the press: the press landed on another element, which the message names. | Take a new snapshot, then click again. |
 | `NO_FOCUS` | `text` or `clear` has no focused field to act on. | Pass a `target`, or focus the field first. |
 | `DIALOG_OPEN` | A JavaScript dialog is open on the tab, so input, page reads and `browser_evaluate` are refused before anything is sent. | Answer it with `browser_handle_dialog`, then retry. |
 | `NO_DIALOG` | `browser_handle_dialog` finds no dialog, or the dialog opened before the debugger attached. | Look at the page again. A dialog that opened before the debugger attached cannot be answered. |
@@ -422,7 +423,7 @@ The call waits up to 15 s for the new page's DOM to be ready (it does not wait f
 - `tabId`: the tab to close or focus.
 - `browser`: `"auto"` (the default profile) or a browser id, selected for the session before the action runs.
 
-`list` prints one line per tab: `123 [own] "Title" host/path`. `[user, focused]` is the user's focused tab. Tabs that another session owns or drives are not listed: they are counted in one line, `+N tabs used by other agents`. Other user tabs are counted as `+N other tabs`. With several profiles connected, a first block lists them and marks the selected one. `close` closes a tab you may act on; `focus` activates the tab and brings its window forward. Another session's tab fails `TAB_LOCKED`.
+`list` prints one line per tab: `123 [own] "Title" host/path`. A tab that one of your tabs opens (a `target="_blank"` link, `window.open`) is yours too; Chrome makes it the active tab, and the tab the user was on is made active again (unless the user was looking at the tab that opened it). `[user, focused]` is the user's focused tab. Tabs that another session owns or drives are not listed: they are counted in one line, `+N tabs used by other agents`. Other user tabs are counted as `+N other tabs`. With several profiles connected, a first block lists them and marks the selected one. `close` closes a tab you may act on; `focus` activates the tab and brings its window forward. Another session's tab fails `TAB_LOCKED`.
 
 ### `browser_snapshot`
 
@@ -460,13 +461,13 @@ With no flags the result is the computed styles that differ from browser default
 - `button`: `left` (default), `right` or `middle`. `count`: 1–3. `modifiers`: any of `Alt`, `Control`, `Meta`, `Shift`.
 - `hover` (false): move the pointer only. `dragTo`: a second target; the press is at `target`, the release at `dragTo`, with 10 moves between. Any text selection is cleared before the press, and the tab keeps drawing frames while the drag runs, so a drag in a background tab takes about as long as in a visible one. When the page starts an HTML5 drag (`draggable="true"`, a link, an image), Chrome hands it back instead of starting its own, and the rest of the gesture is sent as `dragenter`, `dragover` and `drop` at the same points; the result then has an `html5:` line. `hover` and `dragTo` cannot be combined.
 
-The target is checked first: hidden, disabled or covered elements fail (`ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED`) and nothing is clicked. The click is a trusted mouse event at the element's centre. Within 300 ms after the press the result reports `navigated: <url>` or `dialog: <type> "<message>"`, so a click that opens an alert never hangs the call. A point outside the viewport gets a warning line.
+The target is checked first: hidden, disabled or covered elements fail (`ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED`) and nothing is clicked. A target already in full view is not scrolled. After a scroll, or while a CSS animation or transition runs on the target or an element around it, the target is measured again until it holds still (up to 1 s). The click is a trusted mouse event at the element's centre; a press that lands on another element (the target moved) fails `CLICK_MISSED`. Within 300 ms after the press the result reports `navigated: <url>` or `dialog: <type> "<message>"`, so a click that opens an alert never hangs the call. A point outside the viewport gets a warning line.
 
 ### `browser_type`
 
 - `tabId` (required); `target`; `text`; `key`; `clear` (false); `submit` (false). Give at least one of `text`, `key`, `clear` or `submit`.
 
-With `target`, the element is focused by a trusted click first if it is not focused yet. Without it, `text` and `clear` go to the focused field (`NO_FOCUS` if none is a field); a `key` alone goes to whatever has focus. `clear` selects all and deletes. `text` is inserted in one step. `key` is one key or a combo (`Enter`, `Tab`, `Escape`, `ArrowDown`, `Control+a`, `Shift+Tab`), or several separated by spaces, pressed in order (`ArrowDown ArrowDown Enter`). Every name is checked before anything is sent: an unknown name fails `UNKNOWN_KEY`. A dialog that a key opens ends the sequence, and the result reads `pressed N of M keys`. `Control+a` and `Meta+a` select all in the focused field on every OS. `submit` presses Enter last. A dialog that the input opens is reported in a `dialog:` line, and the call returns at once. The result gives `typed N chars into <target>` and `value: "…"` (the first 100 characters; password fields show `••••`).
+With `target`, the element is focused by a trusted click first if it is not focused yet. Controls a click would change (a slider, checkbox, radio, select, button or link) are focused without a click. Without it, `text` and `clear` go to the focused field (`NO_FOCUS` if none is a field); a `key` alone goes to whatever has focus. `clear` selects all and deletes. `text` is inserted in one step. `key` is one key or a combo (`Enter`, `Tab`, `Escape`, `ArrowDown`, `Control+a`, `Shift+Tab`), or several separated by spaces, pressed in order (`ArrowDown ArrowDown Enter`). Every name is checked before anything is sent: an unknown name fails `UNKNOWN_KEY`. A dialog that a key opens ends the sequence, and the result reads `pressed N of M keys`. In a combo the modifiers are held like a person holds them: each one's own keydown first, its keyup last. `Control+a` and `Meta+a` select all in the focused field on every OS. `submit` presses Enter last. A dialog that the input opens is reported in a `dialog:` line, and the call returns at once. The result gives `typed N chars into <target>` and `value: "…"` (the first 100 characters; password fields show `••••`).
 
 ### `browser_fill`
 

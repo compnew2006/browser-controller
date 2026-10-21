@@ -22,6 +22,8 @@ const QUIET_MS = 200;
 const QUIET_CAP_MS = 1_000;
 /** A history step that fires no load (same document, or a bfcache restore) is settled after this. */
 const HISTORY_IDLE_MS = 1_500;
+/** Same-origin frames still loading once the top document is ready are waited for up to this long. */
+const FRAMES_CAP_MS = 3_000;
 /** The snapshot appended when snapshot:true, in characters. */
 const SNAPSHOT_MAX_CHARS = 2_000;
 
@@ -276,6 +278,43 @@ async function settleDom(tabId) {
 }
 
 /**
+ * Runs in the page. How many same-origin frames (iframes and frameset frames, at any depth)
+ * are still loading: a document still 'loading', or still the empty document a frame starts
+ * with while its src loads. Cross-origin frames cannot be read and are not counted, nor are
+ * lazy frames, which load only once they are scrolled to.
+ */
+function loadingFrames() {
+  let pending = 0;
+  const visit = (doc, depth) => {
+    for (const frame of doc.querySelectorAll('iframe, frame')) {
+      let inner = null;
+      try { inner = frame.contentDocument; } catch { /* cross-origin */ }
+      if (!inner || frame.getAttribute('loading') === 'lazy') continue;
+      const src = (frame.getAttribute('src') || '').trim();
+      const startBlank = inner.URL === 'about:blank' && src !== '' && !/^(about|javascript):/i.test(src);
+      if (startBlank || inner.readyState === 'loading') pending += 1;
+      else if (depth < 5) visit(inner, depth + 1);
+    }
+  };
+  visit(document, 0);
+  return pending;
+}
+
+/**
+ * The top document is ready before its frames are: a frameset page (/nested_frames) shows
+ * only the frames that happened to load. Wait until no same-origin frame is loading, up to
+ * FRAMES_CAP_MS. A page that cannot run the probe, or does not answer, is left as it is.
+ */
+async function settleFrames(tabId) {
+  const deadline = Date.now() + FRAMES_CAP_MS;
+  for (;;) {
+    const pending = await pageRun(tabId, loadingFrames, [], PROBE_MS);
+    if (!(pending > 0) || Date.now() >= deadline) return;
+    await new Promise((r) => setTimeout(r, READY_POLL_MS));
+  }
+}
+
+/**
  * One step back or forward in the tab's own history, through the page's
  * history.go(). chrome.tabs.goBack skips entries the user did not interact with,
  * which made back fail with "Cannot find a next page" after plain navigations
@@ -360,8 +399,9 @@ function replacementFailure(err, { from, to }) {
 /**
  * browser_navigate. `url` is an address (the scheme is optional), or "back",
  * "forward" or "reload". Without tabId the call opens a new background tab that
- * this session owns. Waits for the new page's DOM to be ready (up to 15 s), then
- * for it to go quiet; a 204 or a download ends the wait at once. A network failure
+ * this session owns. Waits for the new page's DOM to be ready (up to 15 s), for its
+ * same-origin frames to load (up to 3 s), then for it to go quiet; a 204 or a download
+ * ends the wait at once. A network failure
  * fails with NAVIGATION_FAILED.
  */
 export async function handleNavigate(params, sessionId, _agentName, signal) {
@@ -450,6 +490,7 @@ async function navigateTab(params, sessionId, signal, state) {
     }
   }
 
+  if (!hashOnly) await settleFrames(tab.id);
   await settleDom(tab.id);
 
   // Report where the tab really landed (after redirects), not the address asked for.

@@ -29,7 +29,9 @@ let quietSource = '';
 /** What a 'read' of the mutation clock answers: ms since the DOM last changed. */
 let quietIdle = () => 10_000;
 /** Every in-page run the navigation makes: which one, and whether it asked to inject immediately. */
-const pageRuns: Array<{ kind: 'probe' | 'quiet'; injectImmediately: boolean }> = [];
+const pageRuns: Array<{ kind: 'probe' | 'quiet' | 'frames'; injectImmediately: boolean }> = [];
+/** What each run of the frames probe answers, in order: same-origin frames still loading (0 once the list runs out). */
+let framesLoading: number[] = [];
 /** In-page runs that never answer (a busy page): the navigation must go on without them. */
 const hung = { probe: false, quiet: false };
 /** When set, the quiet-DOM wait cannot run on the page (it throws, as on a page that refuses script). */
@@ -95,6 +97,10 @@ const setReady = (id: number, readyState: string) => { pages.get(id)!.readyState
       const tab = tabs.get(o.target.tabId);
       if (tab && /^(chrome|about):/.test(tab.url)) throw new Error('Cannot access a chrome:// URL');
       const src = o.func.toString();
+      if (src.includes('contentDocument')) {
+        pageRuns.push({ kind: 'frames', injectImmediately: o.injectImmediately === true });
+        return [{ result: framesLoading.length ? framesLoading.shift() : 0 }];
+      }
       if (src.includes('MutationObserver')) {
         pageRuns.push({ kind: 'quiet', injectImmediately: o.injectImmediately === true });
         quietCalls.push([...(o.args ?? [])]);
@@ -138,6 +144,7 @@ beforeEach(() => {
   quietCalls.length = 0;
   quietIdle = () => 10_000;
   pageRuns.length = 0;
+  framesLoading = [];
   hung.probe = false;
   hung.quiet = false;
   wedgedTabs.clear();
@@ -244,6 +251,41 @@ describe('the quiet-DOM wait replaces the fixed 500 ms sleep', () => {
     expect(res).toMatchObject({ success: true, url: start });
     expect(quietCalls).toEqual([['start'], ['read'], ['stop']]);
   });
+});
+
+describe('same-origin frames load before the page is reported (a frameset shows all its frames)', () => {
+  const completeAtOnce = (id: number, url: string) => {
+    emitUpdated(id, { status: 'loading' });
+    commit(id, url, 'complete');
+    emitUpdated(id, { status: 'complete' });
+  };
+
+  it('waits until no frame is loading, then runs the quiet-DOM wait', async () => {
+    framesLoading = [2, 1, 0];
+    reactTo = completeAtOnce;
+    const res = await handleNavigate({ url: 'https://example.com/nested_frames', tabId: 1, snapshot: false }, 's1') as any;
+    expect(res).toMatchObject({ success: true, url: 'https://example.com/nested_frames' });
+    const kinds = pageRuns.map((r) => r.kind).filter((k) => k !== 'probe');
+    expect(kinds).toEqual(['frames', 'frames', 'frames', 'quiet', 'quiet', 'quiet']);
+    expect(pageRuns.filter((r) => r.kind === 'frames').every((r) => r.injectImmediately)).toBe(true);
+  });
+
+  it('a page without frames costs one probe', async () => {
+    reactTo = completeAtOnce;
+    await handleNavigate({ url: 'https://example.com/plain', tabId: 1, snapshot: false }, 's1');
+    expect(pageRuns.filter((r) => r.kind === 'frames')).toHaveLength(1);
+  });
+
+  it('a frame that never finishes holds the navigation 3 s at most, and the navigation succeeds', async () => {
+    framesLoading = new Array(500).fill(1);
+    reactTo = completeAtOnce;
+    const t0 = Date.now();
+    const res = await handleNavigate({ url: 'https://example.com/stuck-frame', tabId: 1, snapshot: false }, 's1') as any;
+    const ms = Date.now() - t0;
+    expect(ms).toBeGreaterThanOrEqual(2_900);
+    expect(ms).toBeLessThan(4_000);
+    expect(res).toMatchObject({ success: true, url: 'https://example.com/stuck-frame' });
+  }, 10_000);
 });
 
 describe('the in-page probes ask to run at once and never wedge the tab', () => {

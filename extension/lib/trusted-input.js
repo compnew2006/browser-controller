@@ -16,95 +16,7 @@ import { agentCursorEnabled } from './overlay.js';
 import { parseTarget } from './target.js';
 import { refErrorMessage } from './ref-errors.js';
 
-const MOD_BITS = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
-
-export function modifierBits(mods = []) {
-  return mods.reduce((bits, m) => bits | (MOD_BITS[m] || 0), 0);
-}
-
-const NAMED_KEYS = {
-  Enter: { code: 'Enter', vk: 13, text: '\r' },
-  Tab: { code: 'Tab', vk: 9 },
-  Escape: { code: 'Escape', vk: 27 },
-  Backspace: { code: 'Backspace', vk: 8 },
-  Delete: { code: 'Delete', vk: 46 },
-  Insert: { code: 'Insert', vk: 45 },
-  ArrowUp: { code: 'ArrowUp', vk: 38 },
-  ArrowDown: { code: 'ArrowDown', vk: 40 },
-  ArrowLeft: { code: 'ArrowLeft', vk: 37 },
-  ArrowRight: { code: 'ArrowRight', vk: 39 },
-  Home: { code: 'Home', vk: 36 },
-  End: { code: 'End', vk: 35 },
-  PageUp: { code: 'PageUp', vk: 33 },
-  PageDown: { code: 'PageDown', vk: 34 },
-  ' ': { code: 'Space', vk: 32, text: ' ' },
-  Space: { code: 'Space', vk: 32, text: ' ', key: ' ' },
-  Shift: { code: 'ShiftLeft', vk: 16 },
-  Control: { code: 'ControlLeft', vk: 17 },
-  Alt: { code: 'AltLeft', vk: 18 },
-  Meta: { code: 'MetaLeft', vk: 91 },
-  CapsLock: { code: 'CapsLock', vk: 20 },
-  NumLock: { code: 'NumLock', vk: 144 },
-  ScrollLock: { code: 'ScrollLock', vk: 145 },
-  PrintScreen: { code: 'PrintScreen', vk: 44 },
-  Pause: { code: 'Pause', vk: 19 },
-  ContextMenu: { code: 'ContextMenu', vk: 93 },
-};
-for (let i = 1; i <= 12; i++) NAMED_KEYS[`F${i}`] = { code: `F${i}`, vk: 111 + i };
-// US-layout code + Windows virtual key code for printable punctuation.
-const PUNCTUATION = {
-  '.': ['Period', 190], '>': ['Period', 190], ',': ['Comma', 188], '<': ['Comma', 188],
-  '-': ['Minus', 189], '_': ['Minus', 189], '=': ['Equal', 187], '+': ['Equal', 187],
-  '/': ['Slash', 191], '?': ['Slash', 191], ';': ['Semicolon', 186], ':': ['Semicolon', 186],
-  "'": ['Quote', 222], '"': ['Quote', 222], '[': ['BracketLeft', 219], '{': ['BracketLeft', 219],
-  ']': ['BracketRight', 221], '}': ['BracketRight', 221], '\\': ['Backslash', 220], '|': ['Backslash', 220],
-  '`': ['Backquote', 192], '~': ['Backquote', 192],
-  '!': ['Digit1', 49], '@': ['Digit2', 50], '#': ['Digit3', 51], '$': ['Digit4', 52], '%': ['Digit5', 53],
-  '^': ['Digit6', 54], '&': ['Digit7', 55], '*': ['Digit8', 56], '(': ['Digit9', 57], ')': ['Digit0', 48],
-};
-const KEY_ALIASES = { Esc: 'Escape', Return: 'Enter', Del: 'Delete', Up: 'ArrowUp', Down: 'ArrowDown', Left: 'ArrowLeft', Right: 'ArrowRight' };
-
-/** CDP key definition for a key name ("Enter", "a", "7", "ب"). */
-export function keyDefinition(rawKey) {
-  const name = KEY_ALIASES[rawKey] || rawKey;
-  const named = NAMED_KEYS[name];
-  if (named) return { key: named.key || name, code: named.code, vk: named.vk, text: named.text };
-  if ([...name].length !== 1) throw new Error(`Unknown key "${rawKey}"`);
-  const ch = name;
-  const upper = ch.toUpperCase();
-  if (/^[a-z]$/i.test(ch)) return { key: ch, code: `Key${upper}`, vk: upper.charCodeAt(0), text: ch };
-  if (/^[0-9]$/.test(ch)) return { key: ch, code: `Digit${ch}`, vk: ch.charCodeAt(0), text: ch };
-  // Numeric/mask plugins filter on keyCode: a "." with keyCode 0 is dropped.
-  const punct = PUNCTUATION[ch];
-  if (punct) return { key: ch, code: punct[0], vk: punct[1], text: ch };
-  return { key: ch, code: '', vk: 0, text: ch };
-}
-
-/**
- * Control+a / Meta+a (no alt, no shift): select all in the focused field. macOS Chrome
- * binds Control+a to "line start" and reads select-all from the key event's `commands`
- * (the editing command Chrome itself sends for Cmd+A), so the command goes out with the
- * key on every OS.
- */
-function selectAllCombo(key, modifiers) {
-  const ctrlOrMeta = modifiers & (MOD_BITS.ctrl | MOD_BITS.meta);
-  return /^a$/i.test(key) && ctrlOrMeta !== 0 && !(modifiers & (MOD_BITS.alt | MOD_BITS.shift));
-}
-
-/** One full key press (keyDown[+char] / keyUp). With ctrl/alt/meta no text is produced. */
-export async function cdpKeyPress(send, rawKey, mods = []) {
-  const def = keyDefinition(rawKey);
-  const modifiers = modifierBits(mods);
-  const printable = def.text && !(modifiers & (MOD_BITS.ctrl | MOD_BITS.alt | MOD_BITS.meta));
-  const base = { key: def.key, code: def.code, windowsVirtualKeyCode: def.vk, nativeVirtualKeyCode: def.vk, modifiers };
-  await send('Input.dispatchKeyEvent', {
-    type: printable ? 'keyDown' : 'rawKeyDown',
-    ...base,
-    ...(printable ? { text: def.text, unmodifiedText: def.text } : {}),
-    ...(selectAllCombo(def.key, modifiers) ? { commands: ['selectAll'] } : {}),
-  });
-  await send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
-}
+export { modifierBits, keyDefinition, cdpKeyPress } from './keys.js';
 
 export async function cdpClickAt(send, x, y, { button = 'left', clickCount = 1, modifiers = 0 } = {}) {
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers });
@@ -118,8 +30,8 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Page-side: resolve `target` (the parsed lib/target.js object) through the shared DOM
- * runtime (D.resolveTarget), scroll it into view, optionally focus/select it, and
- * return its centre in TOP-level viewport coordinates (what CDP expects).
+ * runtime (D.resolveTarget), scroll it into view when it is not in full view, optionally
+ * focus/select it, and return its centre in TOP-level viewport coordinates (what CDP expects).
  * A point `target` is returned as it is: no scroll, no focus, no element checks.
  * Also opens the agent's input window (__bcAgentInputUntil, lib/overlay.js) for
  * a few seconds, so the user-input block lets its trusted events through. With
@@ -131,6 +43,8 @@ function pageLocate(fb, mode, cursor, check, target) {
   const D = globalThis.__bcDom;
   // An older runtime (installed before an extension update) has no cursor, clickTarget or resolveTarget.
   if (!D || !D.clickTarget || (cursor && !D.cursor) || (target && !D.resolveTarget)) return { __needDom: true };
+  // A press watch is this measurement's own (watchPress below): an earlier call's is dropped.
+  if (globalThis.__bcPressWatch) { globalThis.__bcPressWatch.off(); globalThis.__bcPressWatch = null; }
   let el = null;
   let via = 'ref';
   let viewPoint = null;
@@ -141,16 +55,22 @@ function pageLocate(fb, mode, cursor, check, target) {
     via = r.via;
     viewPoint = r.point || null;
   }
-  if (!el && !viewPoint && (mode === 'active' || mode === 'focused' || mode === 'focused-clear')) {
-    el = document.activeElement || document.body;
-    // Descend into focused shadow roots / same-origin frames.
-    for (let i = 0; el && i < 10; i++) {
-      const s = D.shadowOf(el);
-      if (s && s.activeElement) { el = s.activeElement; continue; }
-      const d = D.frameDoc(el);
-      if (d && d.activeElement) { el = d.activeElement; continue; }
+  // The element the keyboard reaches: from the top document down through focused shadow roots
+  // and same-origin frames. A frame without focus still has an activeElement (its body), so a
+  // frame's own activeElement says nothing about where keys go.
+  const deepActive = () => {
+    let a = document.activeElement || document.body;
+    for (let i = 0; a && i < 10; i++) {
+      const s = D.shadowOf(a);
+      if (s && s.activeElement) { a = s.activeElement; continue; }
+      const d = D.frameDoc(a);
+      if (d && d.activeElement) { a = d.activeElement; continue; }
       break;
     }
+    return a;
+  };
+  if (!el && !viewPoint && (mode === 'active' || mode === 'focused' || mode === 'focused-clear')) {
+    el = deepActive();
     via = 'active';
     // Typing without a target needs a real field (text-like input, textarea, contenteditable),
     // not a button, a select or the page body. Keys without text need no field.
@@ -183,7 +103,13 @@ function pageLocate(fb, mode, cursor, check, target) {
     };
   }
 
-  if (via !== 'active') el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+  // Scrolled only when it is not in full view: a scroll runs the page's scroll handlers, and
+  // those can move the target itself (a menu that follows the scroll animates away from the
+  // point measured here). `scrolled` tells the caller to measure again until it holds still.
+  const scrolled = via !== 'active' && !inFullView(D, el);
+  if (scrolled) el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+  // A target in a running animation or transition (a dialog that grows into place) is measured until still too.
+  const moving = !scrolled && animating(el);
   if (mode === 'focus' || mode === 'clear' || mode === 'focused-clear') {
     if (typeof el.focus === 'function') el.focus();
     if (mode === 'clear' || mode === 'focused-clear') {
@@ -202,12 +128,6 @@ function pageLocate(fb, mode, cursor, check, target) {
   const { x, y, rect } = D.centerOf(el);
   // The field the caller aimed at (read back by pageRelease, see below).
   window.__bcLocatedEl = el;
-  let focusedEl = el.ownerDocument.activeElement;
-  for (let i = 0; focusedEl && i < 10; i++) {
-    const s = D.shadowOf(focusedEl);
-    if (s && s.activeElement) focusedEl = s.activeElement; else break;
-  }
-  const focused = focusedEl === el || D.composedContains(el, focusedEl);
   const hasValue = 'value' in el && !el.isContentEditable && typeof el.value === 'string';
   let fullySelected = false;
   try { fullySelected = el.selectionStart === 0 && el.selectionEnd === el.value.length; } catch { /* number/email inputs */ }
@@ -227,7 +147,17 @@ function pageLocate(fb, mode, cursor, check, target) {
       reportVia = aim.via;
       onLabel = aim.via === 'label';
     }
+    watchPress(el);
   }
+  const isFocused = () => {
+    const a = deepActive();
+    return a === el || D.composedContains(el, a);
+  };
+  // Focus for keys (browser_type): a click on these controls does more than focus them (it moves
+  // a slider to the click point, toggles a box, opens a picker, presses a button, follows a link),
+  // so they take the focus without one.
+  if (mode === 'keys' && !isFocused() && clickActs(el) && typeof el.focus === 'function') el.focus();
+  const focused = isFocused();
   // Agent cursor (lib/page-dom.js): glide to the point the real input will hit.
   const cursorMs = cursor && box.width > 0 && box.height > 0 && D.cursor ? D.cursor(point.x, point.y, cursor.effect, cursor.count) : 0;
   return {
@@ -236,6 +166,8 @@ function pageLocate(fb, mode, cursor, check, target) {
     zeroViewport: window.innerWidth === 0 || window.innerHeight === 0,
     visible: box.width > 0 && box.height > 0,
     focused,
+    ...(scrolled ? { scrolled: true } : {}),
+    ...(moving ? { moving: true } : {}),
     // clear: a value that select() could not select still needs Ctrl+A.
     needsSelectAll: hasValue && el.value.length > 0 && !fullySelected,
     hasText: hasValue ? el.value.length > 0 : (el.textContent || '').length > 0,
@@ -245,11 +177,64 @@ function pageLocate(fb, mode, cursor, check, target) {
     // A fallback re-resolution says what it actually hit, so a wrong guess is visible.
     ...(via === 'fallback' ? { target: { role: D.roleOf(el), name: D.nameOf(el).slice(0, 60) } } : {}),
   };
+
+  /**
+   * Is `el` wholly inside the viewport (its own frame's and the top one), with nothing over its
+   * centre? A box larger than the viewport counts when its centre is inside. An element clipped
+   * by a scroll box, or under a sticky header, is not in full view.
+   */
+  function inFullView(dom, node) {
+    const r = node.getBoundingClientRect();
+    const own = (node.ownerDocument && node.ownerDocument.defaultView) || window;
+    const c = dom.centerOf(node);
+    const fits = (lo, size, max) => (size <= max ? lo >= 0 && lo + size <= max : lo + size / 2 >= 0 && lo + size / 2 <= max);
+    if (!fits(r.left, r.width, own.innerWidth) || !fits(r.top, r.height, own.innerHeight)) return false;
+    if (!fits(c.x - r.width / 2, r.width, window.innerWidth) || !fits(c.y - r.height / 2, r.height, window.innerHeight)) return false;
+    let hit = null;
+    try { hit = dom.elementAt(c.x, c.y); } catch { return false; }
+    return !!hit && (hit === node || dom.composedContains(node, hit) || dom.labelsOf(node).some((l) => dom.composedContains(l, hit)));
+  }
+
+  /** Does a CSS animation or transition run on `node` or on an element around it? */
+  function animating(node) {
+    let running;
+    try { running = typeof node.ownerDocument.getAnimations === 'function' ? node.ownerDocument.getAnimations() : []; } catch { return false; }
+    return running.some((a) => {
+      const t = a.playState === 'running' && a.effect && a.effect.target;
+      return !!t && (t === node || D.composedContains(t, node));
+    });
+  }
+
+  /** Controls whose click does more than focus them. */
+  function clickActs(node) {
+    const type = String(node.type || '').toLowerCase();
+    if (node.tagName === 'INPUT') return ['checkbox', 'radio', 'range', 'color', 'file', 'submit', 'reset', 'button', 'image'].includes(type);
+    return ['BUTTON', 'SELECT', 'SUMMARY'].includes(node.tagName) || (node.tagName === 'A' && node.hasAttribute('href'));
+  }
+
+  /**
+   * Record what the next trusted press lands on (pageRelease reads it): the target can still
+   * move between this measurement and the click. Watched in the top window and the target's own
+   * frame; a press inside another document is not seen, and is not judged.
+   */
+  function watchPress(node) {
+    const wins = [window, node.ownerDocument && node.ownerDocument.defaultView]
+      .filter((w, i, all) => w && typeof w.addEventListener === 'function' && all.indexOf(w) === i);
+    const watch = { el: node, hit: null, off: () => {} };
+    const record = (e) => { if (e.isTrusted && !watch.hit) watch.hit = (e.composedPath && e.composedPath()[0]) || e.target; };
+    for (const w of wins) w.addEventListener('mousedown', record, true);
+    watch.off = () => { for (const w of wins) w.removeEventListener('mousedown', record, true); };
+    globalThis.__bcPressWatch = watch;
+  }
 }
 
-/** Close the agent's input window; report the focused field's value for verification. */
+/**
+ * Close the agent's input window; report the focused field's value for verification, and
+ * (`missed`) a press that landed outside the element it aimed at.
+ */
 function pageRelease() {
   window.__bcAgentInputUntil = 0;
+  const missed = pressMissed();
   let a = document.activeElement;
   for (let i = 0; a && i < 10; i++) {
     if (a.shadowRoot && a.shadowRoot.activeElement) { a = a.shadowRoot.activeElement; continue; }
@@ -261,10 +246,25 @@ function pageRelease() {
   const located = window.__bcLocatedEl || null;
   window.__bcLocatedEl = null;
   const target = located && located.isConnected !== false ? located : (focusedTag ? a : null);
-  if (!target) return { value: null };
+  if (!target) return { value: null, ...(missed ? { missed } : {}) };
   const value = typeof target.value === 'string' ? target.value : target.isContentEditable ? target.textContent : null;
   // A password is reported as masked by the caller; its value never leaves the page.
-  return { value: value == null ? null : value.slice(0, 100), secret: target.type === 'password', ...(focusedTag ? { focusedTag } : {}) };
+  return { value: value == null ? null : value.slice(0, 100), secret: target.type === 'password', ...(focusedTag ? { focusedTag } : {}), ...(missed ? { missed } : {}) };
+
+  /** The element a watched press landed on instead of its target (pageLocate watchPress), or null. */
+  function pressMissed() {
+    const watch = globalThis.__bcPressWatch;
+    globalThis.__bcPressWatch = null;
+    if (!watch) return null;
+    watch.off();
+    const D = globalThis.__bcDom;
+    const { el, hit } = watch;
+    if (!hit || !D || hit === el || D.composedContains(el, hit) || D.labelsOf(el).some((l) => D.composedContains(l, hit))) return null;
+    // A press inside a closed shadow root is seen at its host: that is no miss.
+    for (let r = el.getRootNode(); r && r.host; r = r.host.getRootNode()) if (r.host === hit) return null;
+    const name = D.nameOf(hit).slice(0, 60);
+    return `${D.describe(hit)}${name ? ` "${name}"` : ''}`;
+  }
 }
 
 /**
@@ -346,7 +346,33 @@ export async function locateTarget(tabId, { target, mode = 'none', cursor = null
     loc = await run(cursor && { effect: 'track' });
     if (first.via === 'fallback' && loc?.success) loc = { ...loc, via: 'fallback' };
   }
+  if (loc?.success && (loc.scrolled || loc.moving)) loc = await untilStill(() => run(cursor && { effect: 'track' }), loc);
   return wordTargetRefMiss(tabId, parsed, loc);
+}
+
+/** After a scroll or while it animates, how long a target may take to hold still, and how often it is measured until then. */
+const STILL_BUDGET_MS = 1_000;
+const STILL_POLL_MS = 50;
+
+/**
+ * The scroll that brought a target into view ran the page's scroll handlers, which can move
+ * it (a menu that follows the scroll animates to its new place), and a running animation or
+ * transition moves it (a dialog that grows into place). Measure it again until two
+ * measurements agree, so the input goes where it is, not where it was. Past the budget the
+ * last measurement stands; a failed one (the target went or got covered) is the answer.
+ */
+async function untilStill(measure, first) {
+  let last = first;
+  const deadline = Date.now() + STILL_BUDGET_MS;
+  while (Date.now() < deadline) {
+    await sleep(STILL_POLL_MS);
+    const now = await measure();
+    if (!now?.success) return now;
+    const still = Math.abs(now.x - last.x) < 1 && Math.abs(now.y - last.y) < 1;
+    last = first.via === 'fallback' ? { ...now, via: 'fallback' } : now;
+    if (still) break;
+  }
+  return last;
 }
 
 /**
@@ -463,11 +489,15 @@ export function inputSession(tabId, send, signal) {
 
 /**
  * Focus a target the way a person does: a trusted click on it, unless it already
- * has focus. A failed check (hidden, disabled, covered) comes back with nothing clicked.
+ * has focus. A control that a click would change (a slider, a checkbox, a picker,
+ * a button, a link) is focused without one (pageLocate mode 'keys'). A failed
+ * check (hidden, disabled, covered) comes back with nothing clicked.
  */
 export async function focusByClick(tabId, input, target) {
-  const loc = await locateTarget(tabId, { target, check: 'click' });
-  if (!loc.success || loc.focused || input.blocked) return loc;
+  const loc = await locateTarget(tabId, { target, mode: 'keys', check: 'click' });
+  // The check speaks of a click; for keys what matters is that nothing was typed.
+  if (!loc.success) return { ...loc, error: String(loc.error).replace(/nothing was clicked\.$/, 'nothing was typed.') };
+  if (loc.focused || input.blocked) return loc;
   await sleep(await cursorTo(tabId, loc.x, loc.y, 'click'));
   await cdpClickAt(input.send, loc.x, loc.y);
   return loc;

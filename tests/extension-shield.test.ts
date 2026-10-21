@@ -46,7 +46,9 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
     captureVisibleTab: async () => 'data:image/png;base64,QUJD',
     onRemoved: { addListener: () => {} },
     onUpdated: { addListener: (fn: (...args: unknown[]) => unknown) => { listeners.updated.push(fn); } },
+    onActivated: { addListener: () => {} },
   },
+  webNavigation: { onCreatedNavigationTarget: { addListener: () => {} } },
   scripting: {
     executeScript: async (opts: { target: { tabId: number }; func: () => void; args?: unknown[] }) => {
       injections.push({ target: opts.target.tabId, func: opts.func.toString(), args: opts.args ?? [] });
