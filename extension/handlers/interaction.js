@@ -10,7 +10,7 @@
 import { resolveTab } from '../lib/page-exec.js';
 import { getOpenDialog } from '../lib/cdp-session.js';
 import { parseTarget } from '../lib/target.js';
-import { requireSender, locateTarget, locatePointer, focusByClick, measureTarget, selectFocused, releaseShield, cdpClickAt, cdpKeyPress, keyDefinition, modifierBits, cursorTo, sleep, assertInputReady, inputSession, dialogSummary } from '../lib/trusted-input.js';
+import { requireSender, locateTarget, locatePointer, focusByClick, measureTarget, selectFocused, releaseShield, clearSelection, withFrames, cdpClickAt, cdpKeyPress, keyDefinition, modifierBits, cursorTo, sleep, assertInputReady, inputSession, dialogSummary } from '../lib/trusted-input.js';
 import { reboundNote } from '../lib/ref-errors.js';
 
 const BUTTONS = new Set(['left', 'right', 'middle']);
@@ -149,7 +149,9 @@ async function hoverTo(tabId, input, target) {
  * measured after the last scroll: revealing one can move the other out of view,
  * so the two reveal orders are tried, and when neither keeps both in view the
  * drag is refused (TARGET_OFFSCREEN) with nothing pressed. A failure after the
- * press still releases the button, where the press is now.
+ * press still releases the button, where the press is now. No text is selected at
+ * the press (it would start Chrome's text drag), and the tab draws frames while
+ * the drag runs (a background tab otherwise holds each move about a second).
  */
 async function dragBetween(tabId, input, from, to) {
   const pair = async () => {
@@ -175,23 +177,26 @@ async function dragBetween(tabId, input, from, to) {
   }
   const { a, b } = points;
   const urlBefore = await tabUrl(tabId);
+  await clearSelection(tabId);
   let at = a;
   let pressed = false;
   let releasing = false;
   try {
-    await input.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
-    pressed = await input.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', clickCount: 1 });
-    // The agent cursor (when shown) carries the drag: moves are paced over its glide.
-    const glideMs = input.blocked ? 0 : await cursorTo(tabId, b.x, b.y, 'up');
-    const t0 = Date.now();
-    for (let i = 1; i <= DRAG_STEPS && !input.blocked; i++) {
-      if (glideMs) await sleep(t0 + (glideMs * i) / DRAG_STEPS - Date.now());
-      at = { x: Math.round(a.x + ((b.x - a.x) * i) / DRAG_STEPS), y: Math.round(a.y + ((b.y - a.y) * i) / DRAG_STEPS) };
-      await input.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y, button: 'left' });
-    }
-    at = b;
-    releasing = true;
-    await input.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+    await withFrames(tabId, input.raw, async () => {
+      await input.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: a.x, y: a.y });
+      pressed = await input.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: a.x, y: a.y, button: 'left', clickCount: 1 });
+      // The agent cursor (when shown) carries the drag: moves are paced over its glide.
+      const glideMs = input.blocked ? 0 : await cursorTo(tabId, b.x, b.y, 'up');
+      const t0 = Date.now();
+      for (let i = 1; i <= DRAG_STEPS && !input.blocked; i++) {
+        if (glideMs) await sleep(t0 + (glideMs * i) / DRAG_STEPS - Date.now());
+        at = { x: Math.round(a.x + ((b.x - a.x) * i) / DRAG_STEPS), y: Math.round(a.y + ((b.y - a.y) * i) / DRAG_STEPS) };
+        await input.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y, button: 'left' });
+      }
+      at = b;
+      releasing = true;
+      await input.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+    });
   } catch (err) {
     // A failed drag must not leave the button down: release where the press is now.
     if (pressed && !releasing && err?.code !== 'TAB_WEDGED') {

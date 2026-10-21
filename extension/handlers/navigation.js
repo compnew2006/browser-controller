@@ -136,28 +136,28 @@ function documentState() {
 }
 
 /**
- * Runs in the page. Resolves once no DOM mutation has landed for `quietMs`, or
- * at `capMs` at the latest, so a page that keeps changing (a clock, an animation)
- * costs only the cap. Arguments are passed in: a page function cannot read this module.
+ * Runs in the page. The page's side of the quiet-DOM wait: a MutationObserver
+ * that only records when the DOM last changed. `op` 'start' (re)starts it,
+ * 'read' gives the ms since the last change, 'stop' disconnects it. No page
+ * timers: in a background tab they fire at most once a second, which made
+ * every navigate there take a full second. Arguments are passed in: a page
+ * function cannot read this module.
  */
-function waitForQuietDom(quietMs, capMs) {
-  return new Promise((resolve) => {
-    let quietTimer = 0;
-    let capTimer = 0;
-    const finish = () => {
-      observer.disconnect();
-      clearTimeout(quietTimer);
-      clearTimeout(capTimer);
-      resolve();
-    };
-    const observer = new MutationObserver(() => {
-      clearTimeout(quietTimer);
-      quietTimer = setTimeout(finish, quietMs);
-    });
-    observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-    capTimer = setTimeout(finish, capMs);
-    quietTimer = setTimeout(finish, quietMs);
-  });
+function mutationClock(op) {
+  const g = globalThis;
+  if (op === 'stop') {
+    g.__bcMutationClock?.observer.disconnect();
+    delete g.__bcMutationClock;
+    return null;
+  }
+  if (op === 'start' || !g.__bcMutationClock) {
+    g.__bcMutationClock?.observer.disconnect();
+    const clock = { last: performance.now(), observer: null };
+    clock.observer = new MutationObserver(() => { clock.last = performance.now(); });
+    clock.observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+    g.__bcMutationClock = clock;
+  }
+  return performance.now() - g.__bcMutationClock.last;
 }
 
 /**
@@ -254,13 +254,25 @@ async function navigateAndWait(tab, startLoad, { cancelRace }) {
 }
 
 /**
- * The quiet-DOM wait that follows every load. A page that cannot run script
- * (protected, gone) skips it at once, and one that does not answer within the
- * budget is left as it is: the navigation itself has already succeeded, so this
- * never fails it, and never marks the tab wedged.
+ * The quiet-DOM wait that follows every load: done once the DOM has not changed
+ * for QUIET_MS, or at QUIET_CAP_MS on a page that keeps changing. The clock runs
+ * here; the page only says how long ago its DOM last changed (mutationClock). A
+ * page that cannot run script (protected, gone) skips it at once, and one that
+ * does not answer is left as it is: the navigation has already succeeded, so
+ * this never fails it, and never marks the tab wedged.
  */
 async function settleDom(tabId) {
-  await pageRun(tabId, waitForQuietDom, [QUIET_MS, QUIET_CAP_MS], QUIET_CAP_MS + 500);
+  const t0 = Date.now();
+  let idle = await pageRun(tabId, mutationClock, ['start'], PROBE_MS);
+  if (typeof idle !== 'number') return;
+  while (idle < QUIET_MS) {
+    const left = QUIET_CAP_MS - (Date.now() - t0);
+    if (left <= 0) break;
+    await new Promise((r) => setTimeout(r, Math.min(QUIET_MS - idle, left)));
+    idle = await pageRun(tabId, mutationClock, ['read'], PROBE_MS);
+    if (typeof idle !== 'number') return;
+  }
+  await pageRun(tabId, mutationClock, ['stop'], PROBE_MS);
 }
 
 /**

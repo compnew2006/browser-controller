@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 /**
  * browser_navigate readiness. A load ends when the NEW document is interactive
- * or complete (or the tab reports complete), then a quiet-DOM wait runs in the
- * page instead of a fixed 500 ms sleep. Chrome is faked: each tab holds its
+ * or complete (or the tab reports complete), then a quiet-DOM wait runs instead
+ * of a fixed 500 ms sleep: its clock runs in the extension, the page only says how
+ * long ago its DOM last changed (page timers fire once a second in a background tab). Chrome is faked: each tab holds its
  * current document (readyState, origin, href), and the page scripts are answered
  * from it. The old document reads 'complete' until the new one commits, which is
  * what a probe must not mistake for the new page.
@@ -21,8 +22,12 @@ const errorListeners = new Set<Fn>();
 const tabs = new Map<number, { id: number; url: string; windowId: number; index: number; active: boolean }>();
 /** The document each tab shows now, as a page script sees it. */
 const pages = new Map<number, Page>();
-/** Every run of the quiet-DOM wait, by the arguments it was given. */
+/** Every run of the page's mutation clock, by the arguments it was given ('start' / 'read' / 'stop'). */
 const quietCalls: unknown[][] = [];
+/** Source of the page function the quiet wait runs. */
+let quietSource = '';
+/** What a 'read' of the mutation clock answers: ms since the DOM last changed. */
+let quietIdle = () => 10_000;
 /** Every in-page run the navigation makes: which one, and whether it asked to inject immediately. */
 const pageRuns: Array<{ kind: 'probe' | 'quiet'; injectImmediately: boolean }> = [];
 /** In-page runs that never answer (a busy page): the navigation must go on without them. */
@@ -93,9 +98,11 @@ const setReady = (id: number, readyState: string) => { pages.get(id)!.readyState
       if (src.includes('MutationObserver')) {
         pageRuns.push({ kind: 'quiet', injectImmediately: o.injectImmediately === true });
         quietCalls.push([...(o.args ?? [])]);
+        quietSource = src;
         if (quietRefused) throw new Error('Cannot access contents of the page.');
         if (hung.quiet) return new Promise(() => {});
-        return [{ result: true }];
+        const op = o.args?.[0];
+        return [{ result: op === 'stop' ? null : op === 'start' ? 0 : quietIdle() }];
       }
       if (src.includes('readyState')) {
         pageRuns.push({ kind: 'probe', injectImmediately: o.injectImmediately === true });
@@ -129,6 +136,7 @@ beforeEach(() => {
   // The document the tab shows before any navigation: complete, with its own origin.
   pages.set(1, { readyState: 'complete', origin: 1, href: start });
   quietCalls.length = 0;
+  quietIdle = () => 10_000;
   pageRuns.length = 0;
   hung.probe = false;
   hung.quiet = false;
@@ -176,13 +184,34 @@ describe('the quiet-DOM wait replaces the fixed 500 ms sleep', () => {
     emitUpdated(id, { status: 'complete' });
   };
 
-  it('runs with 200 ms quiet and a 1 s cap, and does not sleep a fixed 500 ms', async () => {
+  it('waits 200 ms of quiet, read once, and does not sleep a fixed 500 ms', async () => {
     reactTo = completeAtOnce;
     const t0 = Date.now();
     const res = await handleNavigate({ url: 'https://example.com/a', tabId: 1, snapshot: false }, 's1') as any;
-    expect(Date.now() - t0).toBeLessThan(400);
+    const ms = Date.now() - t0;
+    expect(ms).toBeGreaterThanOrEqual(190);
+    expect(ms).toBeLessThan(400);
     expect(res).toMatchObject({ success: true, url: 'https://example.com/a' });
-    expect(quietCalls).toEqual([[200, 1000]]);
+    expect(quietCalls).toEqual([['start'], ['read'], ['stop']]);
+  });
+
+  it('keeps its clock in the extension: the page function sets no timer (a background tab runs them once a second)', async () => {
+    reactTo = completeAtOnce;
+    await handleNavigate({ url: 'https://example.com/clock', tabId: 1, snapshot: false }, 's1');
+    expect(quietSource).toMatch(/MutationObserver/);
+    expect(quietSource).not.toMatch(/setTimeout|setInterval|requestAnimationFrame/);
+  });
+
+  it('a page whose DOM keeps changing ends at the 1 s cap, and the navigation succeeds', async () => {
+    quietIdle = () => 20; // a change 20 ms ago, every time it is asked
+    reactTo = completeAtOnce;
+    const t0 = Date.now();
+    const res = await handleNavigate({ url: 'https://example.com/ticker', tabId: 1, snapshot: false }, 's1') as any;
+    const ms = Date.now() - t0;
+    expect(ms).toBeGreaterThanOrEqual(950);
+    expect(ms).toBeLessThan(1_500);
+    expect(res).toMatchObject({ success: true, url: 'https://example.com/ticker' });
+    expect(quietCalls.at(-1)).toEqual(['stop']);
   });
 
   it('is skipped at once when the page cannot run script, and the navigation still succeeds', async () => {
@@ -206,14 +235,14 @@ describe('the quiet-DOM wait replaces the fixed 500 ms sleep', () => {
   it('follows a hash-only change, which loads no document', async () => {
     const res = await handleNavigate({ url: `${start}#chapter-2`, tabId: 1, snapshot: false }, 's1') as any;
     expect(res).toMatchObject({ success: true, url: `${start}#chapter-2` });
-    expect(quietCalls).toHaveLength(1);
+    expect(quietCalls.filter((c) => c[0] === 'start')).toHaveLength(1);
   });
 
   it('follows a reload in place', async () => {
     reactTo = completeAtOnce;
     const res = await handleNavigate({ url: 'reload', tabId: 1, snapshot: false }, 's1') as any;
     expect(res).toMatchObject({ success: true, url: start });
-    expect(quietCalls).toEqual([[200, 1000]]);
+    expect(quietCalls).toEqual([['start'], ['read'], ['stop']]);
   });
 });
 
@@ -238,7 +267,7 @@ describe('the in-page probes ask to run at once and never wedge the tab', () => 
     expect(probes.length).toBeGreaterThan(0);
     expect(probes.every((r) => r.injectImmediately)).toBe(true);
     const quiet = pageRuns.filter((r) => r.kind === 'quiet');
-    expect(quiet).toHaveLength(1);
+    expect(quiet).toHaveLength(3); // start, read, stop
     expect(quiet.every((r) => r.injectImmediately)).toBe(true);
   });
 
@@ -258,8 +287,8 @@ describe('the in-page probes ask to run at once and never wedge the tab', () => 
     reactTo = completeAtOnce;
     const t0 = Date.now();
     const res = await handleNavigate({ url: 'https://example.com/busy', tabId: 1, snapshot: false }, 's1') as any;
-    // Its budget is the 1 s cap plus 500 ms.
-    expect(Date.now() - t0).toBeGreaterThanOrEqual(1_400);
+    // The clock's first run gets the probe budget (1 s) and reads as no answer.
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(900);
     expect(res).toMatchObject({ success: true, url: 'https://example.com/busy' });
     expect(wedgedTabs.has(1)).toBe(false);
   }, 10_000);

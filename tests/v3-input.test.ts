@@ -198,6 +198,49 @@ describe('browser_click', () => {
     expect(cdp.filter((c) => c.params.type === 'mouseReleased')[0].params).toMatchObject({ x: 250, y: 220 });
   });
 
+  it('dragTo keeps the tab drawing frames for the whole drag: a screencast from before the press to after the release', async () => {
+    const src = doc.el('div', { id: 'src' }, 'Card');
+    const dst = doc.el('div', { id: 'dst' }, 'Column');
+    (dst as any).getBoundingClientRect = () => ({ x: 200, y: 200, left: 200, top: 200, width: 100, height: 40, right: 300, bottom: 240 });
+    doc.body.append(src, dst);
+    (doc as any).elementsFromPoint = (x: number, y: number) => [src, dst].filter((el) => {
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height;
+    });
+    await handleClick({ tabId: 1, target: '#src', dragTo: '#dst' });
+    const order = cdp.map((c) => (c.method === 'Input.dispatchMouseEvent' ? c.params.type : c.method));
+    const start = order.indexOf('Page.startScreencast');
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(start).toBeLessThan(order.indexOf('mousePressed'));
+    expect(order.indexOf('Page.stopScreencast')).toBeGreaterThan(order.indexOf('mouseReleased'));
+  });
+
+  it('dragTo clears the text selection before the press (a press on selected text starts Chrome\'s own text drag)', async () => {
+    const src = doc.el('div', { id: 'src' }, 'Card');
+    const dst = doc.el('div', { id: 'dst' }, 'Column');
+    (dst as any).getBoundingClientRect = () => ({ x: 200, y: 200, left: 200, top: 200, width: 100, height: 40, right: 300, bottom: 240 });
+    doc.body.append(src, dst);
+    (doc as any).elementsFromPoint = (x: number, y: number) => [src, dst].filter((el) => {
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.left + r.width && y >= r.top && y <= r.top + r.height;
+    });
+    let cleared = 0;
+    let pressedAfterClear = false;
+    (globalThis as any).getSelection = () => ({ removeAllRanges: () => { cleared++; } });
+    const before = cdpReply;
+    cdpReply = (method, params) => {
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed') pressedAfterClear = cleared > 0;
+      return before(method, params);
+    };
+    try {
+      await handleClick({ tabId: 1, target: '#src', dragTo: '#dst' });
+    } finally {
+      delete (globalThis as any).getSelection;
+    }
+    expect(cleared).toBe(1);
+    expect(pressedAfterClear).toBe(true);
+  });
+
   it('a drop target that cannot share the viewport with the source is TARGET_OFFSCREEN, nothing pressed', async () => {
     const src = doc.el('div', { id: 'src' }, 'Card');
     const dst = doc.el('div', { id: 'dst' }, 'Far');

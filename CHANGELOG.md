@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.1
+
+### Fixed
+- `browser_navigate` in a background tab (every tab it opens without `tabId`) took about 1 s even for a small page. Chrome runs a hidden page's timers at most once a second, and the 200 ms quiet-DOM wait ran on a page timer. Its clock now runs in the extension; the page only records when its DOM last changed. In a real Chrome a small page in a background tab went from 1,000 ms to 240 ms, the same as in a visible tab.
+- `browser_click` `dragTo` in a background tab took 1.4 to 9.5 s and could fail `TIMEOUT` after the drag had run. Chrome holds each mouse move of a hidden tab until its next frame, about one a second once the tab has been hidden a few seconds. A small screencast now keeps the tab drawing frames while the drag runs: 0.5 s per drag in a tab hidden for 16 s, every move delivered.
+- `browser_click` `dragTo` said `dragged` when the page never got the mouse release. A drag over text leaves that text selected, and a press on selected text starts Chrome's own text drag, which ends without a `mouseup`. Any text selection is now cleared before the press.
+
 ## 3.0.0
 
 ### Breaking

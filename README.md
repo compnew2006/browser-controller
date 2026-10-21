@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.0.0-blue?style=flat-square" alt="v3.0.0" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.0.1-blue?style=flat-square" alt="v3.0.1" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -414,7 +414,7 @@ Each entry lists the parameters (required ones first; defaults in parentheses) a
 - `tabId`: without it the call opens a new background tab in the user's last focused window, owned by the session. `back`, `forward` and `reload` need `tabId`.
 - `snapshot` (false): append a compact snapshot of the new page (up to 2,000 characters).
 
-The call waits up to 15 s for the new page's DOM to be ready (it does not wait for images and other subresources), then until the DOM has had no change for 200 ms (1 s at most). A 204 or a download ends the wait at once. The result has `tabId: <id>`, `url: <final address>`, `status: <code>` and `title: …`, and `loading: true` if the page is still loading at 15 s. A network failure fails `NAVIGATION_FAILED`; with nothing to go back or forward to, `NO_HISTORY_ENTRY`. A frozen tab is replaced: the result has a `note:` line with the new `tabId`, and a failure after the replacement names the new tab too. A cancelled call fails `TIMEOUT`.
+The call waits up to 15 s for the new page's DOM to be ready (it does not wait for images and other subresources), then until the DOM has had no change for 200 ms (1 s at most), timed by the extension, so a background tab is as fast as a visible one. A 204 or a download ends the wait at once. The result has `tabId: <id>`, `url: <final address>`, `status: <code>` and `title: …`, and `loading: true` if the page is still loading at 15 s. A network failure fails `NAVIGATION_FAILED`; with nothing to go back or forward to, `NO_HISTORY_ENTRY`. A frozen tab is replaced: the result has a `note:` line with the new `tabId`, and a failure after the replacement names the new tab too. A cancelled call fails `TIMEOUT`.
 
 ### `browser_tabs`
 
@@ -458,7 +458,7 @@ With no flags the result is the computed styles that differ from browser default
 
 - `tabId`, `target` (required; a point `x,y` is allowed).
 - `button`: `left` (default), `right` or `middle`. `count`: 1–3. `modifiers`: any of `Alt`, `Control`, `Meta`, `Shift`.
-- `hover` (false): move the pointer only. `dragTo`: a second target; the press is at `target`, the release at `dragTo`. `hover` and `dragTo` cannot be combined.
+- `hover` (false): move the pointer only. `dragTo`: a second target; the press is at `target`, the release at `dragTo`, with 10 moves between. Any text selection is cleared before the press, and the tab keeps drawing frames while the drag runs, so a drag in a background tab takes about as long as in a visible one. `hover` and `dragTo` cannot be combined.
 
 The target is checked first: hidden, disabled or covered elements fail (`ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED`) and nothing is clicked. The click is a trusted mouse event at the element's centre. Within 300 ms after the press the result reports `navigated: <url>` or `dialog: <type> "<message>"`, so a click that opens an alert never hangs the call. A point outside the viewport gets a warning line.
 
