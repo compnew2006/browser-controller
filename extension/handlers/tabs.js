@@ -35,7 +35,7 @@ const titleOf = (tab) => `"${clip(String(tab.title || '').replace(/\s+/g, ' ').t
 /**
  * browser_tabs list. The session's own tabs first, then the user's focused tab.
  * Tabs another session owns or is driving are only counted: their titles and
- * addresses belong to that agent (L4). The other user tabs are counted too.
+ * addresses belong to that agent (L4). The other user tabs are listed as [other].
  * ALL windows are queried: "current window" is ill-defined in an MV3
  * service worker, and windowId disambiguates tabs across windows.
  */
@@ -48,7 +48,7 @@ async function listTabs(sessionId) {
   const own = [];
   const user = [];
   let otherAgents = 0;
-  let rest = 0;
+  const rest = [];
   for (const tab of tabs) {
     const owner = tabLocks.owner(tab.id);
     // Another session driving an unowned tab right now (or within the last 30s) counts as its tab.
@@ -56,15 +56,15 @@ async function listTabs(sessionId) {
     if (owner !== undefined && owner === sessionId) own.push(tab);
     else if (owner !== undefined || (driver && driver !== sessionId)) otherAgents += 1;
     else if (tab.id === focusedId) user.push(tab);
-    else rest += 1;
+    else rest.push(tab);
   }
   const line = (tab, role) => `${tab.id} [${role}] ${titleOf(tab)} ${addressOf(tab.url)}`;
   const lines = [
     ...own.map((t) => line(t, 'own')),
     ...user.map((t) => line(t, 'user, focused')),
+    ...rest.map((t) => line(t, 'other')),
   ];
   if (otherAgents) lines.push(`+${otherAgents} ${otherAgents === 1 ? 'tab' : 'tabs'} used by other agents`);
-  if (rest) lines.push(`+${rest} other ${rest === 1 ? 'tab' : 'tabs'}`);
   const roleOf = (role) => (tab) => ({ tabId: tab.id, role });
   return {
     success: true,

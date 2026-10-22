@@ -13,6 +13,10 @@ daemon.log
 Archive.zip
 .changes/
 
+# Playwright MCP / CLI scratch output (snapshots, console logs) — never commit
+.playwright-mcp/
+.playwright-cli/
+
 # Local agent skill checkouts (never submodules: CI checkout fails without .gitmodules)
 .agents/
 .native-host/

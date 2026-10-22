@@ -7,6 +7,9 @@
 - `browser_safety` configures optional per-MCP-session allow/ask/block rules for recognized submit, delete and upload actions. `ask` uses client elicitation and fails closed if confirmation is unavailable.
 - Element targets accept `{ role, name, nth? }` alongside the existing string locators. Names match exactly, and `nth` is zero-based.
 
+### Changed
+- `browser_tabs list` lists the user's other tabs (not focused, not owned by any session) as `[other]` lines with title and address. Before, they were counted as `+N other tabs`. Tabs that another session owns or drives are still only counted, in `+N tabs used by other agents`.
+
 ## 3.0.5
 
 ### Changed

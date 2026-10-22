@@ -269,7 +269,7 @@ describe('browser_navigate with tabId', () => {
 });
 
 describe('browser_tabs', () => {
-  it('lists own tabs first, then the focused user tab, then counts other agents\' tabs and the rest', async () => {
+  it('lists own tabs first, then the focused user tab, then the other user tabs, then counts other agents\' tabs', async () => {
     tabLocks.lock(3, 'session-a');
     tabLocks.lock(7, 'session-a');
     tabLocks.lock(4, 'session-b');
@@ -277,9 +277,10 @@ describe('browser_tabs', () => {
     const lines = String(res.text).split('\n');
     expect(lines[0]).toBe('3 [own] "Draft" app.example.com/new');
     expect(lines[2]).toBe('1 [user, focused] "Inbox" mail.example.com/inbox');
-    expect(lines[3]).toBe('+1 tab used by other agents'); // their title and address stay private (L4)
-    expect(lines[4]).toBe('+2 other tabs');
-    expect(lines).toHaveLength(5);
+    expect(lines[3]).toBe('2 [other] "Docs" docs.example.com/a');
+    expect(lines[4]).toBe('5 [other] "Elsewhere" else.example.com');
+    expect(lines[5]).toBe('+1 tab used by other agents'); // their title and address stay private (L4)
+    expect(lines).toHaveLength(6);
     expect(String(res.text)).not.toContain('Other agent tab');
   });
 

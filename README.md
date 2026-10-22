@@ -448,7 +448,7 @@ The call waits up to 15 s for the new page's DOM to be ready (it does not wait f
 - `tabId`: the tab to close or focus.
 - `browser`: `"auto"` (the default profile) or a browser id, selected for the session before the action runs.
 
-`list` prints one line per tab: `123 [own] "Title" host/path`. A tab that one of your tabs opens (a `target="_blank"` link, `window.open`) is yours too; Chrome makes it the active tab, and the tab the user was on is made active again (unless the user was looking at the tab that opened it). `[user, focused]` is the user's focused tab. Tabs that another session owns or drives are not listed: they are counted in one line, `+N tabs used by other agents`. Other user tabs are counted as `+N other tabs`. With several profiles connected, a first block lists them and marks the selected one. `close` closes a tab you may act on; `focus` activates the tab and brings its window forward. Another session's tab fails `TAB_LOCKED`.
+`list` prints one line per tab: `123 [own] "Title" host/path`. A tab that one of your tabs opens (a `target="_blank"` link, `window.open`) is yours too; Chrome makes it the active tab, and the tab the user was on is made active again (unless the user was looking at the tab that opened it). `[user, focused]` is the user's focused tab. Tabs that another session owns or drives are not listed: they are counted in one line, `+N tabs used by other agents`. Other user tabs are listed as `[other]`, with title and address. With several profiles connected, a first block lists them and marks the selected one. `close` closes a tab you may act on; `focus` activates the tab and brings its window forward. Another session's tab fails `TAB_LOCKED`.
 
 ### `browser_snapshot`
 
