@@ -14,7 +14,7 @@ This is a **multi-client** server: other agents may be using other tabs. Pass `t
 1. First call `browser_tabs` with `action: "list"` to discover tabs and get a `tabId`
 2. Pass that same `tabId` to `browser_snapshot`, `browser_click`, `browser_type`, etc.
 3. Refs (`e12`) are valid **only for the tab and page that produced them**. Never reuse a ref from tab 10 on tab 20.
-4. A tab that `browser_navigate` opens for you is yours until it closes. Another session's call on it fails with `TAB_LOCKED`.
+4. A tab that `browser_navigate` opens for you is yours until it closes. Another session's call on it fails with `TAB_LOCKED`. A tab id that fails `TAB_REPLACED` was replaced by the tab the message names: use that id.
 
 If `tabId` is missing you get: *"INVALID_ARGUMENT: tabId is required. Call browser_tabs {action:"list"} first."*
 
@@ -28,12 +28,13 @@ Input is real CDP input: a yellow "being debugged" banner shows while the debugg
 
 ## Targets
 
-Every element parameter is one `target` string:
+Every element parameter accepts a locator string or a structured accessible locator:
 
 | Form | Meaning |
 |---|---|
 | `e12` | A ref from `browser_snapshot`, valid for that tab and its page. A re-rendered element is found again, and the result says so |
 | `text=Sign in` | A visible element with that text (text the page hides does not count). Several matches fail `AMBIGUOUS` (up to five candidates are listed) |
+| `{ role: "button", name: "Sign in" }` | Exact accessible role and name (case-insensitive, whitespace collapsed). Several matches fail `AMBIGUOUS`; add zero-based `nth` to choose one |
 | `x,y` | A viewport point in CSS px (read it off a `browser_screenshot`) |
 | anything else | A CSS selector |
 
@@ -52,6 +53,7 @@ Every element parameter is one `target` string:
 ```
 browser_click { tabId, target: "e12" }
 browser_type  { tabId, target: "e5", text: "hello@example.com" }
+browser_click { tabId, target: { role: "button", name: "Sign in" } }
 browser_type  { tabId, key: "Enter" }           // a key goes to whatever has focus
 ```
 
