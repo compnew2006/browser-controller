@@ -84,6 +84,17 @@ describe('resolveTarget (page side)', () => {
     expectHit(resolve('text=save DRAFT'), draft, 'text');
   });
 
+  it('text: a substring of an icon button accessible name alone does not match (a send-like button)', () => {
+    doc.body.append(doc.el('button', { 'aria-label': 'Like, thumbs up' }));
+    expect(resolve('text=Like')).toEqual({ error: 'NOT_FOUND: no visible element with text "Like"' });
+  });
+
+  it('text: an accessible name equal to the words still matches', () => {
+    const like = doc.el('button', { 'aria-label': 'Like' });
+    doc.body.append(like);
+    expectHit(resolve('text=Like'), like, 'text');
+  });
+
   it('text: case-insensitive, whitespace collapsed on the page side too', () => {
     const btn = doc.el('button', {}, '  SIGN   in ');
     doc.body.append(btn);

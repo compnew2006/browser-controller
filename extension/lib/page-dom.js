@@ -385,7 +385,8 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
   /**
    * `text=<words>` (lib/target.js): the visible elements whose accessible name or
    * text equals the words (case-insensitive, whitespace collapsed); when none
-   * equals, the ones that contain them. Among those, the innermost interactive
+   * equals, the ones whose shown text contains them (not a substring of an
+   * accessible name alone). Among those, the innermost interactive
    * match, else the innermost element. Returns the distinct best matches (empty
    * when there are none).
    */
@@ -405,7 +406,11 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
         if (!holds(clean(nameOf(el), 500).toLowerCase(), clean(composedText(el, 200), 500).toLowerCase()).any) continue;
         if (!isVisible(el) || isExtensionNode(el)) continue;
         const shown = holds(clean(nameOf(el, true), 500).toLowerCase(), clean(composedText(el, 200, true), 500).toLowerCase());
-        if (shown.any) (shown.equal ? equal : contained).push(el);
+        if (shown.equal) equal.push(el);
+        // A containing match counts only in the text that shows. A substring of an accessible
+        // name (aria-label "Like, thumbs up" on a send-like button) must not match: clicking
+        // it sends a message.
+        else if (clean(composedText(el, 200, true), 500).toLowerCase().includes(want)) contained.push(el);
       }
     }
     const pool = equal.length ? equal : contained;

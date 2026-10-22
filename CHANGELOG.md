@@ -10,6 +10,11 @@
 ### Changed
 - `browser_tabs list` lists the user's other tabs (not focused, not owned by any session) as `[other]` lines with title and address. Before, they were counted as `+N other tabs`. Tabs that another session owns or drives are still only counted, in `+N tabs used by other agents`.
 
+## 3.0.6
+
+### Fixed
+- `text=` matched a substring of an accessible name (an aria-label such as `Like, thumbs up` on a send-like icon button) and clicked it, so a click could send a message. It now matches only shown text: a containing match needs the words in the text that shows, and an accessible name counts only when it equals the words. Extension reload needed.
+
 ## 3.0.5
 
 ### Changed
