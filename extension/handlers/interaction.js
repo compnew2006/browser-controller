@@ -362,7 +362,8 @@ export async function handleType(params, _sessionId, _agentName, signal) {
 
     const value = after?.value ?? null;
     const shown = (v) => (after?.secret && (after?.hasValue || v) ? '••••' : v);
-    const outputValue = after?.secret ? (after?.hasValue ? '••••' : null) : value;
+    // An empty secret field holds nothing to mask, so it reads "" (as browser_fill shows kept "").
+    const outputValue = after?.secret ? (after?.hasValue ? '••••' : '') : value;
     // The page got none of the input: a dialog of Chrome's own covers the tab.
     if (loc.clicked && after.pressSeen === false) {
       const { x, y } = pointOf(loc);
@@ -377,7 +378,7 @@ export async function handleType(params, _sessionId, _agentName, signal) {
       const full = after.full ? `; the field is full: maxlength ${after.full}` : '';
       return { success: false, error: `VALUE_NOT_SET: typed ${typed} chars into ${where}, but its value did not change (kept "${shown(value ?? '')}"${full})` };
     }
-    if (outputValue != null) lines.push(after.secret ? 'value: ••••' : 'value: "' + outputValue + '"');
+    if (outputValue != null) lines.push(after.secret && after.hasValue ? 'value: ••••' : 'value: "' + outputValue + '"');
     // The focusing click went to something else (the field moved): the input followed the focus.
     if (after?.missed) lines.push(`warning: the click that focuses ${targetLabel(target)} landed on ${after.missed}; the input went where the focus is`);
     return inputResult(lines, settled, {

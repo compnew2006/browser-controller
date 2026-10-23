@@ -229,13 +229,10 @@ export function actionHandler(
       return withReceipt(blocked, tool, { status: 'not_dispatched', summary: summaryOf(blocked) }, false);
     }
 
-    let result: ToolResult;
-    try {
-      result = await handler(host, actionParams);
-    } catch (error) {
-      const failed = failureResult(`ACTION_FAILED: ${error instanceof Error ? error.message : String(error)}`);
-      return withReceipt(failed, tool, { status: 'error', summary: summaryOf(failed) }, false);
-    }
+    // A dispatch error keeps its upstream coding (INTERNAL_ERROR for a message with no CODE:)
+    // and stays a throw, so browser_batch can resend a rate-limited step. A failed result
+    // (isError) still gets its receipt below.
+    const result = await handler(host, actionParams);
     const raw = rawResultOf(result) ?? {};
     let after: Snapshot | undefined;
     if (wantsObservation || wanted) {

@@ -36,7 +36,9 @@ export const targetParam = z.union([
   z.object({
     role: z.string().min(1).max(80),
     name: z.string().min(1).max(500),
-    nth: z.number().int().min(0).optional().describe("Zero-based index when several exact matches exist"),
+    // Integer checked by refine, not .int(), for the same reason as tabId above.
+    nth: z.number().refine(Number.isInteger, "nth must be an integer").min(0).optional()
+      .describe("Zero-based index when several exact matches exist"),
   }).strict(),
 ]).describe("Locator string or exact accessible role/name object; name matching is case-insensitive and nth is zero-based.");
 

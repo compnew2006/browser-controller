@@ -92,7 +92,9 @@ function describeIssue(issue: ZodIssue, params: unknown): string[] {
     });
   }
   const field = pathText(issue.path) || 'arguments';
-  if (issue.code === 'invalid_type' && valueAt(params, issue.path) === undefined) {
+  // A union (target: string | {role,name,nth}) reports a missing value as invalid_union and an
+  // enum as invalid_value, so the absent value — not the issue code — says "is required".
+  if (valueAt(params, issue.path) === undefined) {
     const hint = REQUIRED_HINTS[field];
     return [`${field} is required${hint ? `. ${hint}` : ''}`];
   }
