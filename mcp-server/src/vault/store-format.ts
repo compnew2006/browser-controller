@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
-import { VaultDataSchema, VaultEnvelopeSchema, VAULT_VERSION, type VaultCredential, type VaultData, type VaultEnvelope } from './types.js';
-import { VaultStorageError } from './store-errors.js';
+import { VaultDataSchema, VaultEnvelopeSchema, VAULT_VERSION, type VaultData, type VaultEnvelope } from './types.js';
+import { VaultStorageError, fileError } from './store-errors.js';
 
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
@@ -22,14 +22,6 @@ export interface RestoreJournal {
   stagedStore: string;
   previousKey: string;
   previousStore: string;
-}
-
-function fileError(code: string, message: string): VaultStorageError {
-  return new VaultStorageError(code, message);
-}
-
-export function randomId(prefix: string): string {
-  return `${prefix}_${crypto.randomBytes(16).toString('hex')}`;
 }
 
 export function envelopeFor(data: VaultData, namespace: string, key: Buffer): VaultEnvelope {

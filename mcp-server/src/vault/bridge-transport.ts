@@ -170,9 +170,7 @@ export class VaultBridgeTransport {
 
   private rejectAction(id: string, pending: PendingVaultAction, error: Error, notifyExtension: boolean): void {
     this.detachAction(id, pending);
-    if (notifyExtension) {
-      try { pending.conn.ws.send(JSON.stringify({ type: 'vaultActionCancel', id })); } catch { /* socket closing */ }
-    }
+    if (notifyExtension) this.send(pending.conn, { type: 'vaultActionCancel', id });
     pending.reject(error);
   }
 

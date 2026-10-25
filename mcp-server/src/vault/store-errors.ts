@@ -4,3 +4,8 @@ export class VaultStorageError extends Error {
     this.name = 'VaultStorageError';
   }
 }
+
+/** A storage failure whose message names no secret path or value. */
+export function fileError(code: string, message: string): VaultStorageError {
+  return new VaultStorageError(code, message);
+}

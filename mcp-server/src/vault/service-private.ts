@@ -1,7 +1,7 @@
 import { CredentialVaultStore, scopeForBrowser } from './store.js';
-import { canonicalizeOrigin, metadataOf, VaultCredentialSchema, type VaultCredential } from './types.js';
+import { canonicalizeOrigin, metadataOf, randomId, VaultCredentialSchema, type VaultCredential } from './types.js';
 import {
-  VaultServiceError, randomId, isRecord, publicError, requireStrictKeys, safeCode,
+  VaultServiceError, isRecord, publicError, requireStrictKeys, safeCode,
   type PrivateConnection, type InternalPending, type VaultBrowserContext, type VaultPrivateRequest,
 } from './service-common.js';
 import { VaultServiceCore } from './service-core.js';

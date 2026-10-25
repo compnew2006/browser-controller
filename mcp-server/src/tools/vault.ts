@@ -19,9 +19,8 @@ export const vaultTool: ToolDefinition = {
       if (params.handle !== undefined || params.label !== undefined || params.tabId !== undefined) fail('action', 'status accepts only an optional requestId');
       return;
     }
-    if (params.action === 'list' || params.action === 'fill' || params.action === 'save_login' || params.action === 'unlock') {
-      if (params.tabId === undefined) fail('tabId', `${params.action} requires tabId`);
-    }
+    // Every action except status works on a tab.
+    if (params.tabId === undefined) fail('tabId', `${params.action} requires tabId`);
     if (params.action === 'fill' && params.handle === undefined) fail('handle', 'fill requires a saved account handle');
     if (params.action !== 'fill' && params.handle !== undefined) fail('handle', 'handle is accepted only by fill');
     if (params.action !== 'save_login' && params.label !== undefined) fail('label', 'label is accepted only by save_login');

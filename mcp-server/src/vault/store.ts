@@ -2,9 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
-import { VaultDataSchema, VaultEnvelopeSchema, VAULT_MAX_AUDIT_EVENTS, VAULT_VERSION, type VaultCredential, type VaultData, type VaultEnvelope } from './types.js';
-import { VaultStorageError } from './store-errors.js';
-import { dataFromEnvelope, envelopeFor, parseBackup, parseJson, randomId, type BackupPackage, type RestoreJournal } from './store-format.js';
+import { VaultDataSchema, VaultEnvelopeSchema, VAULT_MAX_AUDIT_EVENTS, VAULT_VERSION, randomId, type VaultCredential, type VaultData, type VaultEnvelope } from './types.js';
+import { VaultStorageError, fileError } from './store-errors.js';
+import { dataFromEnvelope, envelopeFor, parseBackup, parseJson, type BackupPackage, type RestoreJournal } from './store-format.js';
 
 export { VaultStorageError } from './store-errors.js';
 
@@ -30,10 +30,6 @@ interface StoreOptions {
   beforeCommit?: (file: string) => void | Promise<void>;
   /** Narrow lock-initialization fault seam for verifying failed acquisitions release their file. */
   beforeLockSync?: () => void | Promise<void>;
-}
-
-function fileError(code: string, message: string): VaultStorageError {
-  return new VaultStorageError(code, message);
 }
 
 function currentUid(): number | undefined {

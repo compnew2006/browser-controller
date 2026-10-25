@@ -40,6 +40,16 @@ import {
   removeProtectedTab,
 } from "./lib/vault.js";
 
+/**
+ * The vault state a tab owned when it closed or was replaced: its private UI page and its
+ * protected documents. Both listeners below run this same teardown.
+ */
+async function releaseVaultTabState(tabId) {
+  if (forgetPrivateVaultTab(tabId)) sendVaultUiClosed();
+  const removal = await removeProtectedTab(tabId);
+  if (removal.documentIds.length || removal.unknownContextRemoved) sendVaultProtectionTabRemoved(removal);
+}
+
 export function registerEventListeners() {
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     // NOTE: do NOT `return true` unconditionally. Returning true tells Chrome the
@@ -146,10 +156,7 @@ export function registerEventListeners() {
   // inject would just throw (swallowed) and there is nothing to remove.
   chrome.tabs.onRemoved.addListener(async (tabId) => {
     dropTabState(tabId);
-    const privateUiClosed = forgetPrivateVaultTab(tabId);
-    if (privateUiClosed) sendVaultUiClosed();
-    const removal = await removeProtectedTab(tabId);
-    if (removal.documentIds.length || removal.unknownContextRemoved) sendVaultProtectionTabRemoved(removal);
+    await releaseVaultTabState(tabId);
     persistSessionState();
   });
 
@@ -157,11 +164,7 @@ export function registerEventListeners() {
   // the old one's lock and control, as a frozen tab replaced by browser_navigate does.
   chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
     followReplacedTab(removedTabId, addedTabId);
-    const privateUiClosed = forgetPrivateVaultTab(removedTabId);
-    if (privateUiClosed) sendVaultUiClosed();
-    removeProtectedTab(removedTabId).then((removal) => {
-      if (removal.documentIds.length || removal.unknownContextRemoved) sendVaultProtectionTabRemoved(removal);
-    });
+    releaseVaultTabState(removedTabId);
   });
 
   watchOpenedTabs();

@@ -1,5 +1,39 @@
 import crypto from 'node:crypto';
 
+/** Every shape a secret may take in page text: normalization forms and both line endings. */
+export function secretVariants(value: string): string[] {
+  const variants = new Set<string>([
+    value,
+    value.normalize('NFC'),
+    value.normalize('NFD'),
+    value.normalize('NFKC'),
+    value.normalize('NFKD'),
+    value.replace(/\r\n?/g, '\n'),
+    value.replace(/\n/g, '\r\n'),
+  ]);
+  return [...variants].filter(Boolean);
+}
+
+/** The characters a marker must avoid: every character of every value in scope. */
+export function charactersOf(variants: Iterable<string>): Set<string> {
+  const characters = new Set<string>();
+  for (const variant of variants) for (const character of variant) characters.add(character);
+  return characters;
+}
+
+const PRIVATE_USE_RANGES: ReadonlyArray<readonly [number, number]> = [[0xe000, 0xf8ff], [0xf0000, 0xffffd], [0x100000, 0x10fffd]];
+
+/** First private-use code point no value in scope contains; '' when every one is taken. */
+export function unusedPrivateUseCharacter(forbidden: ReadonlySet<string>): string {
+  for (const [start, end] of PRIVATE_USE_RANGES) {
+    for (let codePoint = start; codePoint <= end; codePoint++) {
+      const candidate = String.fromCodePoint(codePoint);
+      if (!forbidden.has(candidate)) return candidate;
+    }
+  }
+  return '';
+}
+
 interface SecretRecord {
   value: string;
   variants: string[];
@@ -74,7 +108,7 @@ export class VaultRedactionRegistry {
     }
     records.set(key, {
       value,
-      variants: this.variantsOf(value),
+      variants: secretVariants(value),
       documents: new Set([documentId]),
     });
   }
@@ -112,34 +146,14 @@ export class VaultRedactionRegistry {
     return this.sanitizeValue(value, records, replacement, new WeakSet<object>(), 0, context, []);
   }
 
-  private variantsOf(value: string): string[] {
-    const variants = new Set<string>([
-      value,
-      value.normalize('NFC'),
-      value.normalize('NFD'),
-      value.normalize('NFKC'),
-      value.normalize('NFKD'),
-      value.replace(/\r\n?/g, '\n'),
-      value.replace(/\n/g, '\r\n'),
-    ]);
-    return [...variants].filter(Boolean);
-  }
-
   private replacementFor(records: SecretRecord[]): string {
     // The marker must avoid every value currently in scope: a marker for a
     // later short secret must not reintroduce an earlier one. Private-use
     // code points are selected only when no registered secret contains them.
-    const forbidden = new Set<string>();
-    for (const record of records) for (const variant of record.variants) for (const character of variant) forbidden.add(character);
-    for (const [start, end] of [[0xe000, 0xf8ff], [0xf0000, 0xffffd], [0x100000, 0x10fffd]]) {
-      for (let codePoint = start; codePoint <= end; codePoint++) {
-        const candidate = String.fromCodePoint(codePoint);
-        if (!forbidden.has(candidate)) return candidate.repeat(3);
-      }
-    }
+    const marker = unusedPrivateUseCharacter(charactersOf(records.flatMap((record) => record.variants)));
     // A no-marker replacement is still safe when a pathological set uses all
     // private-use characters; dropping the text is preferable to echoing data.
-    return '';
+    return marker ? marker.repeat(3) : '';
   }
 
   private sanitizeValue(

@@ -1,5 +1,5 @@
-import crypto from 'node:crypto';
 import { metadataOf, type VaultCredential, type VaultGrant, type VaultPrivateRequest } from './types.js';
+import { charactersOf, secretVariants, unusedPrivateUseCharacter } from './redaction.js';
 
 export type { VaultCredential, VaultGrant, VaultPrivateRequest } from './types.js';
 
@@ -22,44 +22,20 @@ export function publicMetadataOf(entry: VaultCredential): Record<string, unknown
   return { ...metadata, handle: id };
 }
 
-export function credentialSecretVariants(password: string): string[] {
-  return [...new Set([
-    password,
-    password.normalize('NFC'),
-    password.normalize('NFD'),
-    password.normalize('NFKC'),
-    password.normalize('NFKD'),
-    password.replace(/\r\n?/g, '\n'),
-    password.replace(/\n/g, '\r\n'),
-  ].filter(Boolean))];
-}
-
 export function containsCredentialSecret(value: string, entries: VaultCredential[]): boolean {
-  return entries.some((entry) => credentialSecretVariants(entry.password).some((variant) => value.includes(variant)));
+  return entries.some((entry) => secretVariants(entry.password).some((variant) => value.includes(variant)));
 }
 
 export function metadataMarker(entries: VaultCredential[]): string {
-  const forbidden = new Set<string>();
-  for (const entry of entries) {
-    for (const variant of credentialSecretVariants(entry.password)) {
-      for (const character of variant) forbidden.add(character);
-    }
-  }
-  for (const [start, end] of [[0xe000, 0xf8ff], [0xf0000, 0xffffd], [0x100000, 0x10fffd]]) {
-    for (let codePoint = start; codePoint <= end; codePoint++) {
-      const marker = String.fromCodePoint(codePoint);
-      if (!forbidden.has(marker)) return marker;
-    }
-  }
-  // Vault password length is bounded far below the private-use ranges, so this
-  // branch is defensive. Empty metadata strings cannot echo a credential.
-  return '';
+  // Vault password length is bounded far below the private-use ranges, so a
+  // marker exists in practice. Empty metadata strings cannot echo a credential.
+  return unusedPrivateUseCharacter(charactersOf(entries.flatMap((entry) => secretVariants(entry.password))));
 }
 
 export function safePublicMetadataOf(entry: VaultCredential, marker: string): Record<string, unknown> {
   const metadata = publicMetadataOf(entry);
   for (const [key, value] of Object.entries(metadata)) {
-    if (typeof value === 'string' && credentialSecretVariants(entry.password).some((variant) => value.includes(variant))) {
+    if (typeof value === 'string' && secretVariants(entry.password).some((variant) => value.includes(variant))) {
       metadata[key] = marker;
     }
   }
@@ -142,10 +118,6 @@ export class VaultServiceError extends Error {
     super(`${code}: ${message}`);
     this.name = 'VaultServiceError';
   }
-}
-
-export function randomId(prefix: string): string {
-  return `${prefix}_${crypto.randomBytes(16).toString('hex')}`;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

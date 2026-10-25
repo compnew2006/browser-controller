@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
 import { CredentialVaultStore, VaultStorageError, scopeForBrowser } from './store.js';
 import { VaultRedactionRegistry } from './redaction.js';
-import { canonicalizeOrigin, metadataOf, VaultCredentialSchema, type VaultCredential, type VaultGrant, type VaultPrivateRequest } from './types.js';
+import { canonicalizeOrigin, metadataOf, randomId, VaultCredentialSchema, type VaultCredential, type VaultGrant, type VaultPrivateRequest } from './types.js';
 import {
   TERMINAL_RETENTION_MS, VAULT_FILL_OPERATION_TIMEOUT_MS, VAULT_PENDING_TTL_MS,
-  VaultServiceError, randomId, isRecord, publicError, safeCode, safeMessage, type VaultBrowserContext,
+  VaultServiceError, isRecord, publicError, safeCode, safeMessage, type VaultBrowserContext,
   type VaultInspection, type VaultTransport, type ProtectedDocument, type InternalPending,
   type PrivateConnection, type LiveGrant, type PendingOperation,
 } from './service-common.js';
@@ -241,9 +241,9 @@ export abstract class VaultServiceCore {
     return this.operations.get(pending.request.requestId)?.controller.signal;
   }
 
-  protected async waitForOperations(scope: string): Promise<void> {
-    const operations = [...this.operations.values()].filter((operation) => operation.scope === scope);
-    await Promise.all(operations.map((operation) => operation.done));
+  /** Aborts in-flight work now; a caller that needs completion also awaits a waitForOperations call. */
+  protected abortOperationsMatching(predicate: (operation: PendingOperation) => boolean): void {
+    for (const operation of this.operations.values()) if (predicate(operation)) operation.controller.abort();
   }
 
   /** Cancels matching live private requests and aborts the work bound to them. */
@@ -258,20 +258,21 @@ export abstract class VaultServiceCore {
 
   protected async cancelScopeOperations(scope: string): Promise<void> {
     this.cancelRequests((pending) => pending.request.browserScope === scope);
-    for (const operation of this.operations.values()) if (operation.scope === scope) operation.controller.abort();
-    await this.waitForOperations(scope);
+    const inScope = (operation: PendingOperation) => operation.scope === scope;
+    this.abortOperationsMatching(inScope);
+    await this.waitForOperationsMatching(inScope);
   }
 
   protected async cancelCredentialOperations(scope: string, credentialId: string): Promise<void> {
-    for (const operation of this.operations.values()) {
-      if (operation.scope === scope && operation.credentialId === credentialId) operation.controller.abort();
-    }
-    await this.waitForOperationsMatching((operation) => operation.scope === scope && operation.credentialId === credentialId);
+    const matching = (operation: PendingOperation) => operation.scope === scope && operation.credentialId === credentialId;
+    this.abortOperationsMatching(matching);
+    await this.waitForOperationsMatching(matching);
   }
 
   protected async cancelGrantOperations(grantId: string): Promise<void> {
-    for (const operation of this.operations.values()) if (operation.grantId === grantId) operation.controller.abort();
-    await this.waitForOperationsMatching((operation) => operation.grantId === grantId);
+    const matching = (operation: PendingOperation) => operation.grantId === grantId;
+    this.abortOperationsMatching(matching);
+    await this.waitForOperationsMatching(matching);
   }
 
   protected async waitForOperationsMatching(predicate: (operation: PendingOperation) => boolean): Promise<void> {

@@ -53,6 +53,15 @@ class RedactionRemovalQueue {
   }
 }
 
+/** Navigation output after protection was lost or is uncertain: keep the outcome, drop every page payload. */
+function navigationSummary(value: unknown): unknown {
+  if (!isRecord(value)) return 'Navigation finished; inspect the page privately to continue.';
+  return {
+    ...(typeof value.success === 'boolean' ? { success: value.success } : { success: false }),
+    ...(Number.isInteger(value.tabId) ? { tabId: value.tabId } : {}),
+  };
+}
+
 export abstract class VaultServiceProtection extends VaultServicePrivate {
   private readonly redactionRemovals = new RedactionRemovalQueue(
     (scope, documentId) => this.redaction.removeDocument(scope, documentId),
@@ -103,21 +112,11 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
     const scope = scopeForBrowser(browserId);
     const documents = this.protectedDocuments.get(scope);
     if (this.protectionUnknownScopes.has(scope)) {
-      if (toolName === 'browser_navigate' && !isRecord(value)) return 'Navigation finished; inspect the page privately to continue.';
-      if (toolName === 'browser_navigate' && isRecord(value)) {
-        return {
-          ...(typeof value.success === 'boolean' ? { success: value.success } : { success: false }),
-          ...(Number.isInteger(value.tabId) ? { tabId: value.tabId } : {}),
-        };
-      }
+      if (toolName === 'browser_navigate') return navigationSummary(value);
       return publicError('VAULT_RECOVERY_REQUIRED');
     }
     if (toolName === 'browser_navigate' && [...(documents?.values() ?? [])].some((document) => document.state === 'recovery_required')) {
-      if (!isRecord(value)) return 'Navigation finished; inspect the page privately to continue.';
-      return {
-        ...(typeof value.success === 'boolean' ? { success: value.success } : { success: false }),
-        ...(Number.isInteger(value.tabId) ? { tabId: value.tabId } : {}),
-      };
+      return navigationSummary(value);
     }
     if (toolName && PROFILE_WIDE_DENIED_TOOLS.has(toolName) && (documents?.size ?? 0) > 0) {
       return publicError('VAULT_CONTEXT_PROTECTED');
@@ -170,7 +169,6 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
   }
 
   /** Full state from an authenticated extension connection; no secret values are accepted. */
-
   noteProtectionState(
     browserId: string,
     connectionId: string,
@@ -219,7 +217,6 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
   }
 
   /** Only an authenticated, explicit tab-destruction event may clear taint. */
-
   discardProtectedTab(browserId: string, connectionId: string, tabId: number, documentIds: unknown): void {
     if (!connectionId || !Number.isInteger(tabId) || !Array.isArray(documentIds)) return;
     const scope = scopeForBrowser(browserId);
@@ -247,24 +244,20 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
       if (pending.terminalAt && this.now() - pending.terminalAt > TERMINAL_RETENTION_MS) this.requests.delete(id);
     }
     for (const [id, grant] of this.grants) if (grant.sessionId === sessionId) this.grants.delete(id);
-    for (const operation of this.operations.values()) if (operation.sessionId === sessionId) operation.controller.abort();
+    this.abortOperationsMatching((operation) => operation.sessionId === sessionId);
   }
 
   /** A reconnect is a new authority epoch even when the copied profile ID matches. */
-
   revokeConnection(browserId: string, connectionId: string): void {
     const scope = scopeForBrowser(browserId);
     for (const [id, grant] of this.grants) {
       if (grant.browserScope === scope && grant.connectionId === connectionId) this.grants.delete(id);
     }
     this.cancelRequests((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId);
-    for (const operation of this.operations.values()) {
-      if (operation.scope === scope && operation.connectionId === connectionId) operation.controller.abort();
-    }
+    this.abortOperationsMatching((operation) => operation.scope === scope && operation.connectionId === connectionId);
   }
 
   /** Closing the authenticated private vault page cancels its waiting approvals. */
-
   cancelPrivateUiRequests(browserId: string, connectionId: string): void {
     const scope = scopeForBrowser(browserId);
     this.cancelRequests((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId);
@@ -273,7 +266,7 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
   lockAll(): void {
     for (const grantId of this.grants.keys()) this.grants.delete(grantId);
     this.cancelRequests();
-    for (const operation of this.operations.values()) operation.controller.abort();
+    this.abortOperationsMatching(() => true);
     for (const store of this.stores.values()) store.lock();
   }
 }

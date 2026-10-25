@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 
 export const VAULT_VERSION = 1 as const;
@@ -116,4 +117,9 @@ export type VaultMetadata = z.infer<typeof VaultMetadataSchema>;
 export function metadataOf(entry: VaultCredential): VaultMetadata {
   const { password: _password, ...metadata } = entry;
   return metadata;
+}
+
+/** Opaque identifiers keep the shape their schemas above require: `<prefix>_<32 hex>`. */
+export function randomId(prefix: string): string {
+  return `${prefix}_${crypto.randomBytes(16).toString('hex')}`;
 }

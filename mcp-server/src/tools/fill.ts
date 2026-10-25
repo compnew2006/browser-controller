@@ -58,12 +58,14 @@ function isSecretPath(path: string): boolean {
   return (parts[parts.length - 1] || '').startsWith('.') || parts.some((part) => SECRET_SEGMENTS.has(part));
 }
 
-/** Checked as typed and as the file it resolves to, so a symlink into ~/.ssh is refused too. */
-async function isRefusedFile(path: string): Promise<boolean> {
-  if (isSecretPath(path)) return true;
-  if (await isCredentialVaultPath(path)) return true;
-  const real = await realpath(path).catch(() => path);
-  return isSecretPath(real) || await isCredentialVaultPath(real);
+/** Why an upload path is refused, if it is: the vault tree is named apart from hidden files. */
+async function refusalReason(candidate: string): Promise<'vault' | 'hidden' | null> {
+  // Checked as typed and as the file it resolves to, so a symlink into ~/.ssh is refused too.
+  if (await isCredentialVaultPath(candidate)) return 'vault';
+  if (isSecretPath(candidate)) return 'hidden';
+  const real = await realpath(candidate).catch(() => candidate);
+  if (isSecretPath(real)) return 'hidden';
+  return (await isCredentialVaultPath(real)) ? 'vault' : null;
 }
 
 const forwardFill = forwardHandler('browser_fill');
@@ -102,10 +104,11 @@ const handler = async (
     for (const item of items) {
       if (!mayBeFile(item)) continue;
       const expanded = expandHome(item);
-      if (await isCredentialVaultPath(expanded)) {
+      const refusal = await refusalReason(expanded);
+      if (refusal === 'vault') {
         return failureResult('FILE_NOT_ALLOWED: credential vault files are private and cannot be uploaded.');
       }
-      if (await isRefusedFile(expanded)) {
+      if (refusal === 'hidden') {
         return failureResult(`FILE_NOT_ALLOWED: ${nameOf(expanded)} is a hidden or credential file; upload only files the user chose.`);
       }
     }

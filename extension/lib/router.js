@@ -168,48 +168,64 @@ function extractTabId(_tool, params) {
  */
 const canDrawShield = (tabId) => !wedgedTabs.has(tabId) && !getOpenDialog(tabId);
 
-export async function handleMessage(msg) {
+const VAULT_TAB_ACTIONS = new Set(['inspect', 'fill']);
+const vaultPermissionDenied = () => ({ success: false, code: 'VAULT_PERMISSION_DENIED' });
+
+/** A malformed vault call is dropped before any work starts. */
+function isVaultActionMessage(msg) {
+  return typeof msg.id === 'string' && /^v\d+$/.test(msg.id) && typeof msg.action === 'string'
+    && !!msg.params && typeof msg.params === 'object' && !Array.isArray(msg.params)
+    && typeof msg.sessionId === 'string' && !!msg.sessionId;
+}
+
+function vaultErrorCode(error) {
+  const message = error instanceof Error ? error.message : '';
+  return /^VAULT_[A-Z_]+/.exec(message)?.[0] || 'VAULT_PERMISSION_DENIED';
+}
+
+/** A tab-bound vault action holds that tab's lock and shows it busy, like any other call. */
+function runVaultActionInTab(params, sessionId, agentName, controller, action) {
+  return runOnTabLib(tabLocks, tabMutex, params.tabId, sessionId, async () => {
+    if (controller.signal.aborted) return vaultPermissionDenied();
+    const call = tabControl.begin(params.tabId, sessionId, typeof agentName === 'string' ? agentName : 'Credential vault');
+    try {
+      setCurrentActivity('credential vault');
+      updateBadge('active');
+      return await action();
+    } finally {
+      setCurrentActivity(null);
+      updateBadge(isWsConnected() ? 'connected' : 'disconnected');
+      tabControl.end(call);
+    }
+  });
+}
+
+async function handleVaultMessage(msg) {
   if (msg.type === 'vaultActionCancel') {
     if (typeof msg.id === 'string') activeVaultActions.get(msg.id)?.abort();
     return;
   }
-  if (msg.type === 'vaultAction') {
-    if (typeof msg.id !== 'string' || !/^v\d+$/.test(msg.id) || typeof msg.action !== 'string'
-      || !msg.params || typeof msg.params !== 'object' || Array.isArray(msg.params)
-      || typeof msg.sessionId !== 'string' || !msg.sessionId) return;
-    const controller = new AbortController();
-    activeVaultActions.set(msg.id, controller);
-    try {
-      const execute = async () => {
-        if (controller.signal.aborted) return { success: false, code: 'VAULT_PERMISSION_DENIED' };
-        return handleVaultAction(msg.action, msg.params, controller.signal);
-      };
-      let result;
-      if (['inspect', 'fill'].includes(msg.action) && Number.isInteger(msg.params.tabId)) {
-        result = await runOnTabLib(tabLocks, tabMutex, msg.params.tabId, msg.sessionId, async () => {
-          if (controller.signal.aborted) return { success: false, code: 'VAULT_PERMISSION_DENIED' };
-          const call = tabControl.begin(msg.params.tabId, msg.sessionId, typeof msg.agentName === 'string' ? msg.agentName : 'Credential vault');
-          try {
-            setCurrentActivity('credential vault');
-            updateBadge('active');
-            return await execute();
-          } finally {
-            setCurrentActivity(null);
-            updateBadge(isWsConnected() ? 'connected' : 'disconnected');
-            tabControl.end(call);
-          }
-        });
-      } else {
-        result = await execute();
-      }
-      sendJson({ type: 'vaultActionResponse', id: msg.id, success: true, result });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      const code = /^VAULT_[A-Z_]+/.exec(message)?.[0] || 'VAULT_PERMISSION_DENIED';
-      sendJson({ type: 'vaultActionResponse', id: msg.id, success: true, result: { success: false, code } });
-    } finally {
-      activeVaultActions.delete(msg.id);
-    }
+  if (!isVaultActionMessage(msg)) return;
+  const controller = new AbortController();
+  activeVaultActions.set(msg.id, controller);
+  const action = async () => (controller.signal.aborted
+    ? vaultPermissionDenied()
+    : handleVaultAction(msg.action, msg.params, controller.signal));
+  try {
+    const result = VAULT_TAB_ACTIONS.has(msg.action) && Number.isInteger(msg.params.tabId)
+      ? await runVaultActionInTab(msg.params, msg.sessionId, msg.agentName, controller, action)
+      : await action();
+    sendJson({ type: 'vaultActionResponse', id: msg.id, success: true, result });
+  } catch (error) {
+    sendJson({ type: 'vaultActionResponse', id: msg.id, success: true, result: { success: false, code: vaultErrorCode(error) } });
+  } finally {
+    activeVaultActions.delete(msg.id);
+  }
+}
+
+export async function handleMessage(msg) {
+  if (msg.type === 'vaultAction' || msg.type === 'vaultActionCancel') {
+    await handleVaultMessage(msg);
     return;
   }
   // Control messages (non-tool) from the daemon. These carry a `type` and no
