@@ -208,7 +208,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
         const current = await this.assertInitiator(connection, sessionId!);
         const initial = await this.inspect(pending.request.tabId!, sessionId!);
         if (initial.origin !== origin || initial.documentId !== pending.request.documentId) throw new VaultServiceError('VAULT_DOCUMENT_CHANGED', 'the page changed while the private form was open');
-        const result = await this.fillGranted(current, sessionId!, pending.request.tabId!, initial, entry.data.id, this.operations.signalFor(pending.request.requestId), grant.grantId);
+        const result = await this.fill.run(current, sessionId!, pending.request.tabId!, initial, entry.data.id, this.operations.signalFor(pending.request.requestId), grant.grantId);
         if (pending.request.state === 'processing') pending.request = { ...pending.request, state: isRecord(result) && result.status === 'filled' ? 'accepted' : 'failed' };
         pending.terminalAt = this.now();
         return { success: pending.request.state === 'accepted', status: pending.request.state, requestId: pending.request.requestId, grantId: grant.grantId };
@@ -249,7 +249,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       if (pending.request.state !== 'processing' || !this.requests.revalidate(pending)) return this.requestState(pending);
       const grant = this.grants.create(connection, pending.request.sessionId, pending.request.origin!, purpose, handle, purpose === 'fill');
       await store.audit(this.auditEvent('grant', pending.request.browserScope, pending.request.sessionId, pending.request.origin, 'success', handle));
-      const result = await this.fillGranted(current, pending.request.sessionId, pending.request.tabId!, initial, handle!, this.operations.signalFor(pending.request.requestId), grant.grantId);
+      const result = await this.fill.run(current, pending.request.sessionId, pending.request.tabId!, initial, handle!, this.operations.signalFor(pending.request.requestId), grant.grantId);
       if (pending.request.state === 'processing') pending.request = { ...pending.request, state: isRecord(result) && result.status === 'filled' ? 'accepted' : 'failed' };
       pending.terminalAt = this.now();
       return { ...result, requestId: pending.request.requestId, grantId: grant.grantId };

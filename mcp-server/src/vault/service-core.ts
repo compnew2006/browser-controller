@@ -5,6 +5,7 @@ import { canonicalizeOrigin, randomId, type VaultPrivateRequest } from './types.
 import { OperationRegistry } from './operations.js';
 import { GrantRegistry } from './grants.js';
 import { RequestJournal } from './requests.js';
+import { FillWorkflow } from './fill.js';
 import {
   VaultServiceError, isRecord, publicError, safeCode, safeMessage, type VaultBrowserContext,
   type VaultInspection, type VaultTransport, type ProtectedDocument, type InternalPending,
@@ -25,6 +26,24 @@ export abstract class VaultServiceCore {
     openUi: async (requestId, sessionId, agentName) => {
       await this.transport.callVaultAction('openUi', { requestId }, sessionId, undefined, agentName);
     },
+  });
+  /**
+   * The fill is a strategy rather than an abstract method: nothing in this file
+   * needs to know how a password reaches a page, and the branch table in
+   * fill.ts is testable without a browser (ADR-02).
+   */
+  protected readonly fill = new FillWorkflow({
+    grants: this.grants,
+    operations: this.operations,
+    storeFor: (browserId) => this.storeFor(browserId),
+    inspectPage: (tabId, sessionId, signal) => this.inspect(tabId, sessionId, signal),
+    browserContext: (sessionId) => this.transport.getBrowserContext(sessionId),
+    fillPage: (params, sessionId, signal, agentName) => this.transport.callVaultAction('fill', params, sessionId, signal, agentName),
+    registerSecret: (scope, secret, documentId) => this.redaction.register(scope, secret, documentId),
+    markProtected: (scope, document) => this.markProtected(scope, document),
+    auditFill: (store, credentialId, sessionId, origin, result) => this.writeAudit(store, 'fill', credentialId, sessionId, origin, result),
+    now: () => this.now(),
+    isSessionLive: (sessionId) => this.isSessionLive(sessionId),
   });
   protected readonly protectedDocuments = new Map<string, Map<string, ProtectedDocument>>();
   protected readonly protectionSequences = new Map<string, number>();
@@ -198,6 +217,4 @@ export abstract class VaultServiceCore {
     if (!store.isUnlocked) return;
     await store.audit(this.auditEvent(action, store.namespace, sessionId, origin, result, credentialId));
   }
-
-  protected abstract fillGranted(context: VaultBrowserContext, sessionId: string, tabId: number, initial: VaultInspection, handle: string, signal?: AbortSignal, grantId?: string): Promise<Record<string, unknown>>;
 }
