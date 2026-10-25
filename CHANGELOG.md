@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+## 3.0.7
+
 ### Added
+- `browser_vault` gets private credential help for the current site. A call carries only an action (`status`, `list`, `fill`, `save_login`, `unlock`), a tab id and an opaque account handle: passwords are typed in the extension's **Open vault** page and never reach the tool call, its result or the daemon's log. A `fill` writes one saved password once and never submits the page.
+- Accounts are kept per browser in an AES-256-GCM encrypted store whose key is a separate file with owner-only permissions. The Open vault page covers unlock, review, replacing and removing accounts, session grants, protected local recovery snapshots and restore. A recovery snapshot holds both the encrypted accounts and the key, so anyone with a copy can recover the accounts; keep that folder private. This is local app access, not encryption against another process running as the same OS user.
+- A document that took a fill stays marked as protected after it, across worker and daemon reconnects, until the vault is locked or the tab is closed. While a protected or uncertain recovery state is live, profile-wide evaluation, mocks, raw logs and screenshots are blocked, and text and interaction results are redacted. A fill that cannot be proven safe fails `VAULT_OUTCOME_UNKNOWN` and leaves the document marked for recovery instead of guessing.
+- No browser tool can read, click in or navigate the private vault page, and its tab is not listed as an ordinary tab. Extension reload needed.
 - `browser_click`, `browser_type` and `browser_fill` accept optional `expect` postconditions and `observe: "diff"`; each returns a structured action receipt while keeping its existing text output. `browser_batch` collects receipts for those steps.
 - `browser_safety` configures optional per-MCP-session allow/ask/block rules for recognized submit, delete and upload actions. `ask` uses client elicitation and fails closed if confirmation is unavailable.
 - Element targets accept `{ role, name, nth? }` alongside the existing string locators. Names match exactly, and `nth` is zero-based.
