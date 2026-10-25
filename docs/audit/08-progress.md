@@ -198,3 +198,78 @@ Cost if this was the wrong call: revert `3fb027e`; nothing else depends on it ye
 89 files / 1138 tests, extractor `parseFailures 0`, `0 unresolved`, `0 cycles`, and the smoke passes
 with the same 20/20 fixtures, the same booleans, fill p50 20.75 ms / p95 24.53 ms.
 
+### Step 2 — `GrantRegistry` — done, `8c03803`
+
+`vault/grants.ts` owns the grant map, the `find` predicate and every way a grant dies
+(`revoke`, `revokeScope`, `revokeCredential`, `revokeSession`, `revokeConnection`, `clear`); six
+scattered delete loops became one named call each. The one-shot `claimOneShot` / `consumeOneShot`
+pair moved out of `fillGranted` too, keeping the object reference so a grant revoked mid-fill still
+closes out. The clock is a closure (`() => this.now()`), not an initialisation-order dependency.
+
+`tests/vault-grants.test.ts` (8 tests) exercises the predicate with no store, transport or request.
+Writing it corrected the reading of the rule: a grant that names an account does **not** cover an
+unspecified account — only a grant with no credential does.
+
+### Step 3 — `RequestJournal` — done, `b9a5c15`
+
+`vault/requests.ts` owns the request map and its lifecycle: `begin` (record + open the private page,
+failed if it never opens), `claim` (processing + bind an operation), `settle`, `expire`,
+`pruneTerminal`, `cancelMatching`, `revalidate`, `get`, `forConnection`, `activeFor`,
+`abortWorkMatching`. Four dependencies in one options object: clock, `isSessionLive`, the
+`OperationRegistry`, and an `openUi` callback. No store, no transport.
+
+**Where the plan was reshaped:** `requestRequired` and `requestState` stay on the facade. Both only
+shape a response envelope (`{success, code, status, requestId}`); a journal that formats API replies
+would own the wrong thing.
+
+Two loops stopped iterating a map that is no longer theirs: `privateState` lists through
+`activeFor(scope, connectionId)`, and `privateRevoke` aborts through `abortWorkMatching`, which
+leaves the recorded state alone on purpose — revoking a grant does not end the request.
+
+31 call sites renamed (7 settle, 8 revalidate, 5 forConnection, 5 cancel, 3 claim, 2 expire, 1 begin)
+plus two structural rewrites. `tests/vault-requests.test.ts` (9 tests) pins expiry, retention,
+claim-binds-an-operation, cancellation aborting it, and that `activeFor` groups by connection, not by
+session — a distinction I got wrong on the first draft and the test caught.
+
+### Step 4 — the fill becomes a strategy — done, `198523c`
+
+`FillWorkflow` in `vault/fill.ts` owns `fillGranted` and `grantStillUsable` verbatim. The facade
+constructs it from eleven one-line closures, so the workflow imports the store and transport *types*
+but never holds either. The `abstract fillGranted` member is gone: `service.ts` now exists only for
+the public action surface, 175 → 78 lines.
+
+`tests/vault-fill.test.ts` (8 tests) covers the branches the smoke cannot force on demand: page
+origin changed under the fill, a fill reported as partial, a fill that throws, a locked vault, an
+already-aborted signal, a revoked grant, and a one-shot grant that must not fill twice. Two of them
+pin the taint order — `active` first, `recovery_required` last — because a document that ends on the
+wrong one of those two is a fail-open.
+
+### Measured after P3.1–P3.4
+
+```
+service-core.ts  360 -> 220      service-private.ts  327 -> 321
+service-protection.ts 272 -> 268 service.ts          182 ->  78
+new: operations.ts 81 · grants.ts 117 · requests.ts 147 · fill.ts 133
+tests 92 files / 1163 (was 89 / 1138); cycles 0; parseFailures 0; unresolved 0
+smoke:vault-isolated passes at every step: 20/20 accounts and fills, same booleans
+```
+
+One thing the extraction surfaced and did **not** change: `settle()` overwrites `terminalAt` on every
+call, so "a request ends once, with the time it ended" is maintained by its callers' state guards,
+not by the method. Every current caller checks the state first, so making `settle` idempotent would
+be a behaviour change, not a cleanup. Left as an observation for whoever revisits it.
+
+### Step 5 — fold the files by responsibility — not done, deliberately
+
+`06` makes this conditional on 1–4 being green, which they are, and asks for the three subclass files
+to be "folded into files named by responsibility instead of by subclass level".
+
+It cannot be done as written: `tests/architecture-maintenance.test.ts` fails any production module
+over 600 lines, and the four vault classes total 912. A single responsibility-named file is therefore
+impossible without adding an exception to `OVERSIZED_EXCEPTIONS` — relaxing the very gate P1 spent a
+commit respecting.
+
+What is left is either a pure rename (`service-private.ts` → `private.ts`, and so on) with no
+structural change, or a real composition rewrite that turns the chain into independent collaborators
+rather than renaming the levels. The first is churn; the second is a project, not a step. Recommend
+stopping here and letting the next phase decide with the vault no longer blocking anything.
