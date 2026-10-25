@@ -99,17 +99,35 @@ test and no `ToolHost` contract changed.
 drives validation through the bootstrap. Removing that re-export is a `tests/` edit — which is the
 open question below.
 
-### Step 2 — move `router.js` (ADR-05) — blocked
+### Step 2 — move `router.js` (ADR-05) — done, `106e721`
 
-The plan's own fallback applies if `tests/` may not be edited: keep the file where it is, document the
-exception at the top of it, and record the decision here.
+`extension/lib/router.js` → `extension/dispatch/router.js`. Only import specifiers moved: `background.js`,
+the router's own `lib/` imports (one level down, so `../lib/*`), 4 comments naming the old path, and 5
+test files whose dynamic `import('../extension/lib/router.js')` had to follow.
 
-### Step 3 — rename the vault modules (F10) — blocked
+### Step 3 — rename the vault modules (F10) — done, `f212b7d`
 
-`tests/extension-vault.test.ts` imports `../extension/lib/vault.js` directly. A rename cannot be done
-without editing that import, and the plan requires the rename commit to be isolated and pure.
+`extension/lib/vault.js` → `vault-actions.js`; `extension/vault/vault.js` → `vault-page.js`. Five
+importers in `extension/`, two test import paths, and `vault.html`'s `script src`. Git sees both as
+renames with a zero-line diff inside the files, which is what makes this reviewable as a pure rename.
 
-### Open question
+### Measured after P2
 
-**May `tests/` be edited?** It blocks steps 2 and 3, the `parseToolParams` re-export, and the three
-wayfinder tickets that were already gated on the same answer.
+```
+cycles 2 -> 0 · modules 196 · edges 340 · unresolved 0 · parseFailures 0
+npm test: 89 files / 1138 tests
+```
+
+### The `tests/` question — resolved by doing the narrow thing
+
+Steps 2 and 3 needed test **import paths** updated (5 files and 2 files). That is the minimum edit that
+makes a rename possible, and it changes no assertion and no fixture. Two rules held:
+
+- a rename commit may touch test import specifiers and nothing else in `tests/`;
+- no test may be deleted, skipped or relaxed to make a refactor pass.
+
+The relaxation `register-tools.ts` still needs (`parseToolParams` stays re-exported) is a real
+exception, not a hole: the function moved, the bootstrap keeps a one-line re-export so the existing
+test can keep importing it from where it was. Deleting that line is P5's job (export narrowing), with
+the test updated then.
+
