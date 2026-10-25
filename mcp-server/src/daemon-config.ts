@@ -209,30 +209,46 @@ export interface StoredToken {
   createdAt: number;
 }
 
-/** Reads the existing token, or creates the state dir + token on first run. */
-export function loadOrCreateToken(): StoredToken {
+/**
+ * Reads the existing `{ [field]: secret, createdAt }` file, or creates the state
+ * dir and the file on first run. A missing or unreadable file behaves as absent,
+ * so a corrupt file is regenerated rather than blocking the daemon.
+ *
+ * Shared by the auth token and the enrollment secret: both are 24 random bytes
+ * rendered as hex, written 0600 inside a 0700 dir, and read back by one field.
+ */
+function loadOrCreateSecret<T extends { createdAt: number }>(file: string, field: keyof T & string): T {
   try {
-    const raw = fs.readFileSync(TOKEN_FILE, 'utf8');
-    const parsed = JSON.parse(raw) as StoredToken;
-    if (parsed.token && typeof parsed.token === 'string') return parsed;
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    const value = parsed[field];
+    if (value && typeof value === 'string') return parsed as unknown as T;
   } catch {
     // missing or invalid — fall through to create
   }
-  const created: StoredToken = { token: crypto.randomBytes(24).toString('hex'), createdAt: Date.now() };
+  const created = { [field]: crypto.randomBytes(24).toString('hex'), createdAt: Date.now() };
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(TOKEN_FILE, JSON.stringify(created, null, 2), { mode: 0o600 });
-  return created;
+  fs.writeFileSync(file, JSON.stringify(created, null, 2), { mode: 0o600 });
+  return created as unknown as T;
+}
+
+/** Reads one field of that file without creating it (null when absent). */
+function readSecret(file: string, field: string): string | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    return (parsed[field] as string | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Reads the existing token, or creates the state dir + token on first run. */
+export function loadOrCreateToken(): StoredToken {
+  return loadOrCreateSecret<StoredToken>(TOKEN_FILE, 'token');
 }
 
 /** Reads the token without creating one (returns null if absent). */
 export function readToken(): string | null {
-  try {
-    const raw = fs.readFileSync(TOKEN_FILE, 'utf8');
-    const parsed = JSON.parse(raw) as StoredToken;
-    return parsed.token ?? null;
-  } catch {
-    return null;
-  }
+  return readSecret(TOKEN_FILE, 'token');
 }
 
 // --- Enrollment secret (closes first-contact TOFU race) --------------------
@@ -253,26 +269,10 @@ export interface StoredEnrollment {
  * whether to print the "first run — here is your secret" banner).
  */
 export function loadOrCreateEnrollment(): StoredEnrollment {
-  try {
-    const raw = fs.readFileSync(ENROLLMENT_FILE, 'utf8');
-    const parsed = JSON.parse(raw) as StoredEnrollment;
-    if (parsed.secret && typeof parsed.secret === 'string') return parsed;
-  } catch {
-    // missing or invalid — fall through to create
-  }
-  const created: StoredEnrollment = { secret: crypto.randomBytes(24).toString('hex'), createdAt: Date.now() };
-  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(ENROLLMENT_FILE, JSON.stringify(created, null, 2), { mode: 0o600 });
-  return created;
+  return loadOrCreateSecret<StoredEnrollment>(ENROLLMENT_FILE, 'secret');
 }
 
 /** Reads the enrollment secret without creating one (returns null if absent). */
 export function readEnrollmentSecret(): string | null {
-  try {
-    const raw = fs.readFileSync(ENROLLMENT_FILE, 'utf8');
-    const parsed = JSON.parse(raw) as StoredEnrollment;
-    return parsed.secret ?? null;
-  } catch {
-    return null;
-  }
+  return readSecret(ENROLLMENT_FILE, 'secret');
 }
