@@ -111,7 +111,7 @@ const tabOf = (id: number) => {
   },
 };
 
-const { handleMessage } = await import('../extension/lib/router.js');
+const { handleMessage } = await import('../extension/dispatch/router.js');
 const { handleNavigate } = await import('../extension/handlers/navigation.js');
 const { handleTabs } = await import('../extension/handlers/tabs.js');
 const { handleEmulate } = await import('../extension/handlers/emulate.js');

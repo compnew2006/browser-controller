@@ -3,7 +3,7 @@
  * the tabs handler (close) and the popup event wiring (pin / unpin): the
  * lock → persist → broadcast and release → persist → broadcast sequences live
  * here once. The input shield is not drawn here: it is shown only while a tool
- * call runs on the tab (lib/router.js).
+ * call runs on the tab (dispatch/router.js).
  * Note the asymmetry these helpers encode: lockTabUi throws on a foreign
  * owner (TabLockMap.lock refuses to steal); releaseTabUi releases
  * unconditionally (used when the caller has already established the right to

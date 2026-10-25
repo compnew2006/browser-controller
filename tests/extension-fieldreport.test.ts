@@ -61,7 +61,7 @@ const tabStore = new Map<number, { id: number; url: string }>();
   webRequest: { onCompleted: { addListener: () => {} } },
 };
 
-const { handleMessage } = await import('../extension/lib/router.js');
+const { handleMessage } = await import('../extension/dispatch/router.js');
 const { handleDialog } = await import('../extension/handlers/interaction-advanced.js');
 const { tabMutex } = await import('../extension/lib/state.js');
 

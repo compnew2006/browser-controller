@@ -86,7 +86,7 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
   async convertToBlob(opts: { type: string }) { return new Blob([new Uint8Array(8)], { type: opts.type }); }
 };
 
-const { handleMessage } = await import('../extension/lib/router.js');
+const { handleMessage } = await import('../extension/dispatch/router.js');
 const { handleScreenshot } = await import('../extension/handlers/screenshot.js');
 const { tabLocks, tabControl } = await import('../extension/lib/state.js');
 const { lockTabUi } = await import('../extension/lib/lock-ops.js');

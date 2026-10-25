@@ -65,7 +65,7 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
   },
 };
 
-const { handleMessage } = await import('../extension/lib/router.js');
+const { handleMessage } = await import('../extension/dispatch/router.js');
 const { tabLocks, tabControl, bodyCaptureByTab, mockByTab, claimTabSetting, tabSettingOwner } =
   await import('../extension/lib/state.js');
 const { handleMock } = await import('../extension/handlers/mock.js');

@@ -7,7 +7,7 @@
  *                           persistence (MV3 lifetime: locks + fallbacks
  *                           survive service-worker recycles)
  *   - lib/connection.js     daemon WS lifecycle, badge, status broadcast
- *   - lib/router.js         tool dispatch through the per-tab mutex + locks
+ *   - dispatch/router.js    tool dispatch through the per-tab mutex + locks
  *   - lib/page-exec.js      resolveTab / safeExec / locator guard
  *   - lib/overlay.js        lock shield (shown only during a tool call) + agent cursor
  *   - handlers/*.js         the 24 tool implementations, grouped by concern
@@ -20,7 +20,7 @@
  * stays acyclic and every module except this one is importable in tests.
  */
 import { setMessageHandler, initConnection } from './lib/connection.js';
-import { handleMessage } from './lib/router.js';
+import { handleMessage } from './dispatch/router.js';
 import { registerEventListeners } from './events.js';
 
 setMessageHandler(handleMessage);

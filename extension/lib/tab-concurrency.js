@@ -8,7 +8,7 @@
  *     session fails at once with TAB_LOCKED: an owned tab is not something to
  *     queue behind for half a minute. (2.2)
  *
- * router.js wires these together via runOnTab(); the vitest suites in
+ * dispatch/router.js wires these together via runOnTab(); the vitest suites in
  * tests/tab-concurrency.test.ts and tests/wp6-tab-lock-fail-fast.test.ts prove
  * the ordering and refusal guarantees.
  */
@@ -317,7 +317,7 @@ export class TabControlMap {
 }
 
 /**
- * Convenience wrapper combining lock + mutex, matching runOnTab in router.js.
+ * Convenience wrapper combining lock + mutex, matching runOnTab in dispatch/router.js.
  *
  * The lock is checked before the call joins the per-tab queue, and again INSIDE
  * the mutex task: checking only before joining left a window (TOCTOU) where

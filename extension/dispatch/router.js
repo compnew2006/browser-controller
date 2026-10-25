@@ -4,14 +4,14 @@
  * controllers. The handler registry is a module-level constant — the old
  * dispatch() rebuilt the tool map on every call.
  */
-import { runOnTab as runOnTabLib, tabLockedMessage } from './tab-concurrency.js';
+import { runOnTab as runOnTabLib, tabLockedMessage } from '../lib/tab-concurrency.js';
 import {
   tabLocks, tabMutex, tabControl, persistSessionState, wedgedTabs, sessionAgentNames,
   releaseSessionSettings, claimTabSetting, releaseBodyCapture,
-} from './state.js';
-import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from './connection.js';
-import { showLockShield, hideLockShield } from './overlay.js';
-import { getOpenDialog, dialogLabel } from './cdp-session.js';
+} from '../lib/state.js';
+import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from '../lib/connection.js';
+import { showLockShield, hideLockShield } from '../lib/overlay.js';
+import { getOpenDialog, dialogLabel } from '../lib/cdp-session.js';
 import { handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType } from '../handlers/interaction.js';
 import { handleFill, handleDialog } from '../handlers/interaction-advanced.js';
@@ -24,7 +24,7 @@ import { handleLogs } from '../handlers/logs.js';
 import { handleMock, releaseMock } from '../handlers/mock.js';
 import { handleInspectElement } from '../handlers/inspect.js';
 import { handleClassifyAction } from '../handlers/action-safety.js';
-import { handleVaultAction, isPrivateVaultTab } from './vault.js';
+import { handleVaultAction, isPrivateVaultTab } from '../lib/vault.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the

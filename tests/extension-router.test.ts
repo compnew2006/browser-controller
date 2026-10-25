@@ -70,7 +70,7 @@ const dialogListeners: Array<(source: { tabId: number }, method: string, params?
   },
 };
 
-const { handleMessage, dispatchedTools } = await import('../extension/lib/router.js');
+const { handleMessage, dispatchedTools } = await import('../extension/dispatch/router.js');
 const { tabLocks, tabMutex, tabControl, wedgedTabs } = await import('../extension/lib/state.js');
 const { allTools } = await import('../mcp-server/src/tools/index.js');
 const overlay = await import('../extension/lib/overlay.js');
