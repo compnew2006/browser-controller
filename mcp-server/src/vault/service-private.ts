@@ -54,10 +54,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       }
     } catch (error) {
       const pending = requestId ? this.pendingForConnection(connection, requestId) : undefined;
-      if (pending?.request.state === 'processing') {
-        pending.request = { ...pending.request, state: 'failed' };
-        pending.terminalAt = this.now();
-      }
+      if (pending?.request.state === 'processing') this.settle(pending, 'failed');
       const code = safeCode(error);
       return publicError(code);
     } finally {
@@ -131,8 +128,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     if (pending && !['unlock', 'fill', 'save', 'approve'].includes(pending.request.purpose)) return publicError('VAULT_PERMISSION_DENIED');
     if (pending?.request.purpose === 'unlock' && !this.claimPending(pending)) return this.requestState(pending);
     if (pending && pending.request.purpose !== 'unlock' && !this.revalidatePending(pending)) {
-      pending.request = { ...pending.request, state: 'cancelled' };
-      pending.terminalAt = this.now();
+      this.settle(pending, 'cancelled');
       return this.requestState(pending);
     }
     if (pending && pending.request.purpose !== 'unlock' && pending.request.state !== 'pending') return this.requestState(pending);
@@ -144,13 +140,11 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const audit = this.auditEvent('unlock', scope, pending?.request.sessionId, pending?.request.origin, 'success');
     await store.audit(audit);
     if (pending?.request.purpose === 'unlock') {
-      pending.request = { ...pending.request, state: 'accepted' };
-      pending.terminalAt = this.now();
+      this.settle(pending, 'accepted');
       return this.requestState(pending);
     }
     if (pending && !this.revalidatePending(pending)) {
-      pending.request = { ...pending.request, state: 'cancelled' };
-      pending.terminalAt = this.now();
+      this.settle(pending, 'cancelled');
       return this.requestState(pending);
     }
     if (pending) return { success: true, status: 'unlocked', requestId: pending.request.requestId };
@@ -224,8 +218,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       }
     }
     if (pending && pending.request.state === 'processing') {
-      pending.request = { ...pending.request, state: 'accepted' };
-      pending.terminalAt = this.now();
+      this.settle(pending, 'accepted');
     }
     if (pending && pending.request.state !== 'accepted') return this.requestState(pending);
     return { success: true, status: 'saved', handle: entry.data.id, origin };
@@ -269,8 +262,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const grant = this.createGrant(connection, pending.request.sessionId, pending.request.origin!, purpose, handle, purpose === 'fill');
     await store.audit(this.auditEvent('grant', pending.request.browserScope, pending.request.sessionId, pending.request.origin, 'success', handle));
     if (pending.request.state !== 'processing') return this.requestState(pending);
-    pending.request = { ...pending.request, state: 'accepted' };
-    pending.terminalAt = this.now();
+    this.settle(pending, 'accepted');
     return { success: true, status: 'approved', requestId: pending.request.requestId, grantId: grant.grantId };
   }
 
@@ -279,8 +271,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     if (!pending) return publicError('VAULT_PERMISSION_DENIED');
     if (pending.request.state === 'processing') this.operations.get(pending.request.requestId)?.controller.abort();
     if (!['pending', 'processing'].includes(pending.request.state)) return this.requestState(pending);
-    pending.request = { ...pending.request, state };
-    pending.terminalAt = this.now();
+    this.settle(pending, state);
     return this.requestState(pending);
   }
 

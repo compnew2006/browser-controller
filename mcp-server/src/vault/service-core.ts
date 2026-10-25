@@ -135,8 +135,7 @@ export abstract class VaultServiceCore {
     try {
       await this.transport.callVaultAction('openUi', { requestId: request.requestId }, input.sessionId, undefined, context.agentName);
     } catch {
-      pending.request = { ...pending.request, state: 'failed' };
-      pending.terminalAt = this.now();
+      this.settle(pending, 'failed');
     }
     return pending;
   }
@@ -189,8 +188,7 @@ export abstract class VaultServiceCore {
 
   protected claimPending(pending: InternalPending): boolean {
     if (pending.request.state !== 'pending' || pending.request.expiresAt <= this.now()) {
-      if (pending.request.state === 'pending') pending.request = { ...pending.request, state: 'expired' };
-      pending.terminalAt = this.now();
+      this.settle(pending, pending.request.state === 'pending' ? 'expired' : pending.request.state);
       return false;
     }
     pending.request = { ...pending.request, state: 'processing' };
@@ -201,6 +199,12 @@ export abstract class VaultServiceCore {
       sessionId: pending.request.sessionId,
     }, undefined, { done, resolveDone });
     return true;
+  }
+
+  /** Ends a private request: its final state is recorded once, with the time it ended. */
+  protected settle(pending: InternalPending, state: VaultPrivateRequest['state']): void {
+    pending.request = { ...pending.request, state };
+    pending.terminalAt = this.now();
   }
 
   protected trackOperation(
@@ -250,8 +254,7 @@ export abstract class VaultServiceCore {
   protected cancelRequests(matching: (pending: InternalPending) => boolean = () => true): void {
     for (const pending of this.requests.values()) {
       if (!matching(pending) || !['pending', 'processing'].includes(pending.request.state)) continue;
-      pending.request = { ...pending.request, state: 'cancelled' };
-      pending.terminalAt = this.now();
+      this.settle(pending, 'cancelled');
       this.operations.get(pending.request.requestId)?.controller.abort();
     }
   }
