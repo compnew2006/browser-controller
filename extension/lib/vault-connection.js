@@ -2,7 +2,7 @@ import {
   acknowledgeVaultProtection,
   acknowledgeVaultRemoval,
   getVaultProtectionSnapshot,
-} from './vault.js';
+} from './vault-actions.js';
 
 /** Owns the optional vault protocol state layered on the base WS connection. */
 export class VaultConnectionChannel {

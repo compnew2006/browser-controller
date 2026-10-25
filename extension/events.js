@@ -38,7 +38,7 @@ import {
   openPrivateVault,
   registerPrivateVaultTab,
   removeProtectedTab,
-} from "./lib/vault.js";
+} from "./lib/vault-actions.js";
 
 /**
  * The vault state a tab owned when it closed or was replaced: its private UI page and its

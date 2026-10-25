@@ -135,7 +135,7 @@ describe("extension router (handleMessage)", () => {
   });
 
   it('releases the vault tab mutex when a frozen fill is cancelled after dispatch', async () => {
-    const vault = await import('../extension/lib/vault.js');
+    const vault = await import('../extension/lib/vault-actions.js');
     await vault.restoreVaultRuntimeState();
     let didStart = false;
     let fillStarted!: () => void;

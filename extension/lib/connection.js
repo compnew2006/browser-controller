@@ -15,7 +15,7 @@ import {
 } from './state.js';
 import { hideLockShield } from './overlay.js';
 import { buildExtensionHelloAck, OLDER_DAEMON_REASON, validateDaemonHello } from './protocol.js';
-import { restoreVaultRuntimeState } from './vault.js';
+import { restoreVaultRuntimeState } from './vault-actions.js';
 import { VaultConnectionChannel } from './vault-connection.js';
 import {
   DEFAULT_WS_PORT,

@@ -7,7 +7,7 @@ import { resolveTab } from '../lib/page-exec.js';
 import { tabLocks, tabControl } from '../lib/state.js';
 import { releaseTabUi } from '../lib/lock-ops.js';
 import { tabLockedMessage } from '../lib/tab-concurrency.js';
-import { isPrivateVaultTab, isPrivateVaultUrl } from '../lib/vault.js';
+import { isPrivateVaultTab, isPrivateVaultUrl } from '../lib/vault-actions.js';
 
 /**
  * A locked tab belongs to its owner session: closing or focusing it from another session

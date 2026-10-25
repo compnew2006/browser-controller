@@ -53,7 +53,7 @@ const executeScriptStub = async (request: Record<string, any>) => {
   },
 };
 
-const vault = await import('../extension/lib/vault.js');
+const vault = await import('../extension/lib/vault-actions.js');
 
 class FixtureInput {
   type = 'password';

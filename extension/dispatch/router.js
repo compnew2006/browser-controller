@@ -24,7 +24,7 @@ import { handleLogs } from '../handlers/logs.js';
 import { handleMock, releaseMock } from '../handlers/mock.js';
 import { handleInspectElement } from '../handlers/inspect.js';
 import { handleClassifyAction } from '../handlers/action-safety.js';
-import { handleVaultAction, isPrivateVaultTab } from '../lib/vault.js';
+import { handleVaultAction, isPrivateVaultTab } from '../lib/vault-actions.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
