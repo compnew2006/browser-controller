@@ -106,6 +106,7 @@ async function startDaemon(): Promise<void> {
 interface Client {
   socket: net.Socket;
   sessionId: string;
+  call(tool: string, params: Record<string, unknown>): Promise<any>;
 }
 
 /** Connect a raw IPC client and complete the hello/welcome handshake. */
@@ -113,6 +114,8 @@ function connectClient(name: string, opts?: { replyToPing?: boolean }): Promise<
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(SOCK);
     socket.setEncoding('utf8');
+    const pending = new Map<string, { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+    let callSequence = 0;
     let buf = '';
     let resolved = false;
     const timer = setTimeout(() => {
@@ -130,13 +133,36 @@ function connectClient(name: string, opts?: { replyToPing?: boolean }): Promise<
         if (msg.kind === 'welcome' && !resolved) {
           resolved = true;
           clearTimeout(timer);
-          resolve({ socket, sessionId: msg.sessionId });
+          resolve({
+            socket,
+            sessionId: msg.sessionId,
+            call(tool, params) {
+              const id = `test-${++callSequence}`;
+              return new Promise((callResolve, callReject) => {
+                const callTimer = setTimeout(() => {
+                  pending.delete(id);
+                  callReject(new Error('IPC call timed out'));
+                }, 5_000);
+                pending.set(id, { resolve: callResolve, reject: callReject, timer: callTimer });
+                socket.write(JSON.stringify({ kind: 'call', id, tool, params }) + '\n');
+              });
+            },
+          });
           continue;
         }
         // heartbeat probe — reply unless the caller explicitly wants silence
         // (used by the eviction test to simulate a dead client).
         if (msg.kind === 'ping' && opts?.replyToPing !== false) {
           try { socket.write(JSON.stringify({ kind: 'pong' }) + '\n'); } catch {}
+          continue;
+        }
+        if (msg.kind === 'result' && typeof msg.id === 'string') {
+          const call = pending.get(msg.id);
+          if (call) {
+            pending.delete(msg.id);
+            clearTimeout(call.timer);
+            call.resolve(msg);
+          }
         }
       }
     });
@@ -189,6 +215,15 @@ describe('daemon client lifecycle', { timeout: 30_000 }, () => {
     // s-<8-char daemon instance id>-<counter>: unique across daemon restarts.
     expect(sessionId).toMatch(/^s-[0-9a-z]{8}-\d+$/);
     socket.destroy();
+  });
+
+  it('refuses private vault actions through IPC with the coded denial and matching call id', async () => {
+    const client = await connectClient('VaultIpcBoundary');
+    const response = await client.call('browser_vault_internal_fill', {});
+    expect(response.id).toBe('test-1');
+    expect(response.success).toBe(false);
+    expect(response.error).toMatch(/^VAULT_PERMISSION_DENIED: /);
+    client.socket.destroy();
   });
 
   it('rejects oversized IPC lines before parsing or routing them', async () => {

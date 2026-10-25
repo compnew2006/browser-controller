@@ -24,7 +24,21 @@ import {
   applyPort,
   applyToken,
   applyEnrollment,
+  requestVaultUi,
+  sendVaultUiClosed,
+  sendJson,
+  sendVaultProtectionTabRemoved,
 } from "./lib/connection.js";
+import {
+  forgetPrivateVaultTab,
+  getVaultProtectionSnapshot,
+  isPrivateVaultSender,
+  isPrivateVaultUrl,
+  markDocumentCurrent,
+  openPrivateVault,
+  registerPrivateVaultTab,
+  removeProtectedTab,
+} from "./lib/vault.js";
 
 export function registerEventListeners() {
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
@@ -59,6 +73,18 @@ export function registerEventListeners() {
         respond({ success: true });
       });
       return true; // async response — respond() fires from the .then()
+    }
+    if (msg.type === "vaultUiRequest") {
+      if (!isPrivateVaultSender(sender) || !msg.payload || typeof msg.payload !== "object" || Array.isArray(msg.payload)) return false;
+      requestVaultUi(msg.payload).then(respond).catch(() => {
+        respond({ success: false, code: "VAULT_STORAGE_INVALID", message: "The vault could not complete that action." });
+      });
+      return true;
+    }
+    if (msg.type === "openVault") {
+      if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("popup/popup.html")) return false;
+      openPrivateVault().then(() => respond({ success: true })).catch(() => respond({ success: false }));
+      return true;
     }
     if (msg.type === "unlockAll") {
       // Snapshot BEFORE unlockAll() — unlockAll clears the map, so reading after
@@ -118,8 +144,12 @@ export function registerEventListeners() {
   // A tab closing should release its lock and drop its buffers.
   // NOTE: no hideLockShield here — the tab/page is already gone, so a shield
   // inject would just throw (swallowed) and there is nothing to remove.
-  chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.tabs.onRemoved.addListener(async (tabId) => {
     dropTabState(tabId);
+    const privateUiClosed = forgetPrivateVaultTab(tabId);
+    if (privateUiClosed) sendVaultUiClosed();
+    const removal = await removeProtectedTab(tabId);
+    if (removal.documentIds.length || removal.unknownContextRemoved) sendVaultProtectionTabRemoved(removal);
     persistSessionState();
   });
 
@@ -127,6 +157,11 @@ export function registerEventListeners() {
   // the old one's lock and control, as a frozen tab replaced by browser_navigate does.
   chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
     followReplacedTab(removedTabId, addedTabId);
+    const privateUiClosed = forgetPrivateVaultTab(removedTabId);
+    if (privateUiClosed) sendVaultUiClosed();
+    removeProtectedTab(removedTabId).then((removal) => {
+      if (removal.documentIds.length || removal.unknownContextRemoved) sendVaultProtectionTabRemoved(removal);
+    });
   });
 
   watchOpenedTabs();
@@ -135,10 +170,19 @@ export function registerEventListeners() {
   // a navigation: the shield exists only while a tool call runs, and that call
   // removes it when it ends.
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (isPrivateVaultUrl(changeInfo.url || "")) registerPrivateVaultTab(tabId);
     if (changeInfo.status === "loading") {
       dropDocumentState(tabId);
       persistSessionState();
     }
+  });
+
+  chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, documentId }) => {
+    if (frameId !== 0 || typeof documentId !== "string") return;
+    markDocumentCurrent(tabId, documentId).then(async () => {
+      const snapshot = await getVaultProtectionSnapshot();
+      sendJson(snapshot);
+    });
   });
 }
 

@@ -49,7 +49,10 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
     onUpdated: { addListener: (fn: (...args: unknown[]) => unknown) => { listeners.updated.push(fn); } },
     onActivated: { addListener: () => {} },
   },
-  webNavigation: { onCreatedNavigationTarget: { addListener: () => {} } },
+  webNavigation: {
+    onCreatedNavigationTarget: { addListener: () => {} },
+    onCommitted: { addListener: () => {} },
+  },
   scripting: {
     executeScript: async (opts: { target: { tabId: number }; func: () => void; args?: unknown[] }) => {
       injections.push({ target: opts.target.tabId, func: opts.func.toString(), args: opts.args ?? [] });

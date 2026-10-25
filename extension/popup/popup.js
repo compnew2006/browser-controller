@@ -4,6 +4,7 @@
 // layout (getStatus / setPort / setToken / setEnrollment / lockTab / unlockTab
 // / unlockAll + daemon /pair /status /kill).
 import { escapeHtml, agentLabelFor, controlBadgeParts, openTabsSignature, renderOpenTabRows } from './open-tabs-view.js';
+import { bindVaultOpenButton } from './popup-vault.js';
 
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -98,6 +99,7 @@ function addLog(text, level) {
   logBarText.textContent = text;
   logBarText.className = `logbar-text ${level || ''}`;
 }
+bindVaultOpenButton(addLog);
 
 // ── Daemon HTTP (auto-pair, agents, disconnect) ────────────────────────────
 // The popup talks to the daemon's HTTP endpoints (same port as the WS) to

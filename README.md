@@ -28,7 +28,7 @@ It already has your browser open right there. It just can't see it.
 
 **Now it can.** Browser Controller gives any MCP-compatible AI agent (Cursor, Claude Desktop, Windsurf, …) direct control of the **browser you already have open** — your real sessions, your logins, your cookies. No headless browser, no fresh profile, no re-authentication.
 
-Version 3.0 is a breaking release: 18 tools, one `target` locator, and text results with structured receipts for actions. See [Migrating from 2.x](#migrating-from-2x).
+Version 3.0 is a breaking release: 19 tools, one `target` locator, and text results with structured receipts for actions. See [Migrating from 2.x](#migrating-from-2x).
 
 ## Key capabilities
 
@@ -373,7 +373,7 @@ A fixed-height tabbed shell (the body never scrolls, only the lists do):
 
 ## Teach Your Agent
 
-The agent can use all 18 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
+The agent can use all 19 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
 
 ```bash
 npm run setup:cursor   # or: node mcp-server/dist/index.js --setup cursor
@@ -403,7 +403,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-18 tools. Every page tool takes a **`tabId`**; `browser_navigate` makes it optional (without it, the call opens a new background tab for the session), and `browser_batch` takes an optional default. The full parameters and behavior of each tool are in the [Tool reference](#tool-reference) below.
+19 tools. Every page tool takes a **`tabId`**; `browser_navigate` makes it optional (without it, the call opens a new background tab for the session), and `browser_batch` takes an optional default. The full parameters and behavior of each tool are in the [Tool reference](#tool-reference) below.
 
 | Tool | What it does |
 |------|-------------|
@@ -414,6 +414,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 | [`browser_screenshot`](#browser_screenshot) | JPEG of a tab, an element or a region; longest side at most 1568 px |
 | [`browser_inspect_element`](#browser_inspect_element) | Why an element looks or behaves as it does: computed styles, matching CSS rules, event listeners |
 | [`browser_safety`](#browser_safety) | Optional per-session rules to allow, ask or block submit, delete and upload actions by site |
+| [`browser_vault`](#browser_vault) | Request a private, extension-owned save, list, unlock or one-shot login fill |
 | [`browser_logs`](#browser_logs) | A tab's console messages (with uncaught errors and stacks) and network requests; one request in full; response bodies on request |
 | [`browser_click`](#browser_click) | Trusted click on a target or at `x,y`; `hover`, `dragTo`, `button`, `count`, `modifiers` |
 | [`browser_type`](#browser_type) | Type text into a target or the focused field; one key, a combo or several keys in order; `clear`, `submit` |
@@ -425,6 +426,12 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 | [`browser_mock`](#browser_mock) | Block, or answer with a fake status, body and headers, the requests of one tab |
 | [`browser_emulate`](#browser_emulate) | A viewport (without resizing the window), offline or slow network, CPU throttling, geolocation, colour scheme, user agent |
 | [`browser_batch`](#browser_batch) | Up to 50 tool calls in one round trip; stops at the first failing step |
+
+### `browser_vault`
+
+The credential vault keeps local login records in a per-browser AES-256-GCM encrypted store. The public tool accepts only an action, tab ID and opaque account handle; the password field is available only in the masked Browser Controller extension page. Use `save_login` on a signed-in page to ask the user to save the current account, `list` to request approval for matching accounts, and `fill` with a returned handle for a one-shot current-password fill. `status` reports whether the selected browser's vault is ready or locked. Use the extension's **Open vault** page for unlock, review, replacement/removal, session grants, protected local recovery snapshots and explicit restore.
+
+The local key is stored separately with owner-only file permissions. The app's lock button controls application access; it does not claim to encrypt against another process running as the same OS user. Recovery snapshots include the encrypted account store and the decryption key; anyone with a copy can recover the accounts, so keep the vault directory private. A saved fill never submits the page, though a site's input handlers may submit automatically. Protected documents keep output protections after lock/delete. While a protected or uncertain recovery context is live, profile-wide evaluation, mocks, raw logs and screenshots are blocked; ordinary text and interaction tools can continue with exact-value redaction as defense in depth. V1 can inspect same-origin frames and open shadow roots. It ignores unrelated cross-origin widgets, but refuses to target a password field inside a cross-origin frame.
 
 The tool definitions are kept compact; Version 2.x sent about 7,100 tokens for 35 tools.
 

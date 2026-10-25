@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { forwardHandler } from "../../mcp-server/src/tools/types.js";
 import type { ToolHost, ToolResult } from "../../mcp-server/src/tools/types.js";
+import { VaultRedactionRegistry } from '../../mcp-server/src/vault/redaction.js';
+import { scopeForBrowser } from '../../mcp-server/src/vault/store.js';
 
 /**
  * forwardHandler wire format (contract 3.0):
@@ -63,6 +65,56 @@ describe("forwardHandler", () => {
       { type: "image", data: "AAAA", mimeType: "image/jpeg" },
       { type: "text", text: "1280x800 jpeg, viewport" },
     ]);
+  });
+
+  it('keeps the raw screenshot wire image through sanitization and MCP outcome conversion', async () => {
+    const registry = new VaultRedactionRegistry();
+    const scope = scopeForBrowser('profile-fixture');
+    registry.register(scope, 'x', 'protected-document');
+    const bytes = Buffer.from('synthetic jpeg bytes').toString('base64');
+    const wire = registry.sanitize(scope, {
+      success: true,
+      text: 'x screenshot caption',
+      image: { data: bytes, mimeType: 'image/jpeg' },
+      width: 32,
+      height: 24,
+      via: 'cdp',
+    }, { toolName: 'browser_screenshot' });
+    const result = await forwardHandler('browser_screenshot')(hostWith(async () => wire), { tabId: 3 });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]).toEqual({ type: 'image', data: bytes, mimeType: 'image/jpeg' });
+    expect(textOf(result)).not.toContain('x screenshot');
+  });
+
+  it('keeps a vault refusal code and error channel intact after collision-safe redaction', async () => {
+    const registry = new VaultRedactionRegistry();
+    const scope = scopeForBrowser('profile-fixture');
+    registry.register(scope, 'filled', 'protected-document');
+    const wire = registry.sanitize(scope, {
+      success: false,
+      status: 'filled',
+      code: 'VAULT_PERMISSION_DENIED',
+      message: 'filled access is no longer authorized',
+      error: 'VAULT_PERMISSION_DENIED: filled access is no longer authorized',
+    }, { toolName: 'browser_vault' });
+    const result = await forwardHandler('browser_vault')(hostWith(async () => wire), {});
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/^VAULT_PERMISSION_DENIED: /);
+    expect(textOf(result)).not.toContain('filled access');
+  });
+
+  it('preserves fixed fill result semantics when the password is a root field name', async () => {
+    const registry = new VaultRedactionRegistry();
+    const scope = scopeForBrowser('profile-fixture');
+    registry.register(scope, 'filled', 'protected-document');
+    const wire = registry.sanitize(scope, {
+      success: true,
+      text: 'filled 1 field',
+      filled: 1,
+    }, { toolName: 'browser_fill' });
+    const result = await forwardHandler('browser_fill')(hostWith(async () => wire), { tabId: 3 });
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).not.toContain('filled');
   });
 
   it("keeps the image out of the JSON fallback", async () => {

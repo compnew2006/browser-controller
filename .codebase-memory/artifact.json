@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "c010471a39c658828f13e32fadd38ae5b4d372b2",
-    "indexed_at": "2026-10-22T23:51:48Z",
+    "commit": "9a6562dd00dbb3451db9ee7bae892ef1cb73d15b",
+    "indexed_at": "2026-10-25T20:45:20Z",
     "project": "Users-noiemany-.zcode-workspace-default-real-browser-mcp",
-    "nodes": 3557,
-    "edges": 10416,
-    "original_size": 16711680,
-    "compressed_size": 3024351,
+    "nodes": 4153,
+    "edges": 12835,
+    "original_size": 19333120,
+    "compressed_size": 3450409,
     "compression_level": 3
 }

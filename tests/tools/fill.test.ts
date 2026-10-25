@@ -97,6 +97,34 @@ describe("browser_fill: file inputs are checked before anything is sent", () => 
     expect(sent).toHaveLength(0);
   });
 
+  it('refuses the configured non-hidden vault store and backup through direct fill calls and symlink aliases', async () => {
+    const { host, sent } = recordingHost();
+    const stateDir = join(dir, 'non-hidden-state');
+    const vaultDir = join(stateDir, 'vault', 'profile-scope');
+    mkdirSync(vaultDir, { recursive: true });
+    const key = join(vaultDir, 'key.bin');
+    const backup = join(vaultDir, 'backup-2030.json');
+    const keyLink = join(dir, 'ordinary-looking-key.dat');
+    const backupLink = join(dir, 'ordinary-looking-backup.json');
+    writeFileSync(key, 'fixture-only');
+    writeFileSync(backup, 'fixture-only');
+    symlinkSync(key, keyLink);
+    symlinkSync(backup, backupLink);
+    const originalStateDir = process.env.BC_STATE_DIR;
+    process.env.BC_STATE_DIR = stateDir;
+    try {
+      for (const file of [key, backup, keyLink, backupLink]) {
+        const result = await fillTool.handler(host, { tabId: 3, fields: [{ target: 'input[type=file]', value: [file] }] });
+        expect(result.isError).toBe(true);
+        expect(textOf(result)).toBe('FILE_NOT_ALLOWED: credential vault files are private and cannot be uploaded.');
+      }
+    } finally {
+      if (originalStateDir === undefined) delete process.env.BC_STATE_DIR;
+      else process.env.BC_STATE_DIR = originalStateDir;
+    }
+    expect(sent).toHaveLength(0);
+  });
+
   it("a relative path into a credential folder is refused before anything is sent (no leading slash needed)", async () => {
     const { host, sent } = recordingHost();
     const res = await fillTool.handler(host, { tabId: 3, fields: [{ target: "input[type=file]", value: ["../.ssh/id_rsa"] }] });

@@ -46,7 +46,10 @@ const onAdd = (name: string) => ({
     get: async (id: number) => ({ id, url: 'https://x.test/', windowId: 1, active: false, ...tabFields.get(id) }),
     query: async (q: { active?: boolean }) => (q.active ? activeNow : []),
   },
-  webNavigation: { onCreatedNavigationTarget: onAdd('onCreatedNavigationTarget') },
+  webNavigation: {
+    onCreatedNavigationTarget: onAdd('onCreatedNavigationTarget'),
+    onCommitted: onAdd('onCommitted'),
+  },
   storage: { session: { get: async () => ({}), set: async () => {} } },
   scripting: { executeScript: async () => [{ result: null }] },
 };

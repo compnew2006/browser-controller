@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en" dir="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Credential vault · Browser Controller</title>
+  <link rel="stylesheet" href="vault.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div class="brand-mark" aria-hidden="true">B</div>
+      <div class="heading">
+        <h1>Credential vault</h1>
+      </div>
+      <span class="vault-state" id="vaultState">Connecting…</span>
+    </header>
+
+    <p class="profile-line" id="profileLine">Checking this browser profile…</p>
+    <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
+    <p class="warning"><strong>Private page.</strong> Passwords are sent only to this browser’s local daemon. A site can submit its own form after input events; the vault never clicks Submit.</p>
+
+    <section class="section" aria-labelledby="requestsTitle">
+      <div class="section-heading"><h2 id="requestsTitle">Agent requests</h2><span class="count" id="requestCount">0</span></div>
+      <div class="request-list" id="requests"><p class="empty">No pending requests.</p></div>
+    </section>
+
+    <section class="section" aria-labelledby="accountsTitle">
+      <div class="section-heading"><h2 id="accountsTitle">Accounts</h2></div>
+      <div class="account-list" id="accounts"><p class="empty">Unlock the vault to view saved accounts.</p></div>
+      <form class="entry-form" id="entryForm" hidden>
+        <div class="form-heading"><h3 id="entryTitle">Add an account</h3><button class="text-button" id="cancelEdit" type="button">Cancel</button></div>
+        <label>Site origin<input name="origin" type="url" required placeholder="https://example.com" maxlength="2048" autocomplete="url"></label>
+        <label>Account name<input name="label" type="text" required maxlength="120" autocomplete="off"></label>
+        <label>Username or email<input name="identifier" type="text" required maxlength="320" autocomplete="off"></label>
+        <label>Password<input name="password" type="password" required maxlength="4096" autocomplete="new-password"></label>
+        <button class="button primary" type="submit">Save account</button>
+      </form>
+      <button class="button secondary add-button" id="addEntry" type="button" hidden>Add account</button>
+    </section>
+
+    <section class="section" aria-labelledby="accessTitle">
+      <div class="section-heading"><h2 id="accessTitle">Vault settings</h2></div>
+      <div class="access-row" id="accessActions"></div>
+      <div class="backup-list" id="backups"></div>
+    </section>
+  </main>
+  <script type="module" src="vault.js"></script>
+</body>
+</html>

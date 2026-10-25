@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { tabIdParam, targetParam, forwardHandler, failureResult } from './types.js';
 import { actionHandler, actionOptionsShape, enforceActionSafety } from './action-support.js';
+import { isCredentialVaultPath } from '../vault/protected-paths.js';
 
 /**
  * Local paths that are not readable regular files. The extension cannot stat
@@ -60,8 +61,9 @@ function isSecretPath(path: string): boolean {
 /** Checked as typed and as the file it resolves to, so a symlink into ~/.ssh is refused too. */
 async function isRefusedFile(path: string): Promise<boolean> {
   if (isSecretPath(path)) return true;
+  if (await isCredentialVaultPath(path)) return true;
   const real = await realpath(path).catch(() => path);
-  return isSecretPath(real);
+  return isSecretPath(real) || await isCredentialVaultPath(real);
 }
 
 const forwardFill = forwardHandler('browser_fill');
@@ -98,8 +100,13 @@ const handler = async (
     // value as typed (and on what a symlink resolves to); the extension refuses relative
     // paths for a file input as well.
     for (const item of items) {
-      if (mayBeFile(item) && await isRefusedFile(expandHome(item))) {
-        return failureResult(`FILE_NOT_ALLOWED: ${nameOf(expandHome(item))} is a hidden or credential file; upload only files the user chose.`);
+      if (!mayBeFile(item)) continue;
+      const expanded = expandHome(item);
+      if (await isCredentialVaultPath(expanded)) {
+        return failureResult('FILE_NOT_ALLOWED: credential vault files are private and cannot be uploaded.');
+      }
+      if (await isRefusedFile(expanded)) {
+        return failureResult(`FILE_NOT_ALLOWED: ${nameOf(expanded)} is a hidden or credential file; upload only files the user chose.`);
       }
     }
     const absolute = items.map(expandHome);

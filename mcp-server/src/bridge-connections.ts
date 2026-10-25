@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import crypto from 'node:crypto';
 
 /**
  * One connected extension = one browser (profile). Several can be connected
@@ -7,8 +8,11 @@ import { WebSocket } from 'ws';
  */
 export interface ExtensionConnection {
   ws: WebSocket;
+  /** Per-socket authority epoch; never accepted from extension or MCP payloads. */
+  connectionId: string;
   browserId: string;
   label: string;
+  capabilities: string[];
   state: 'pending' | 'ready' | 'incompatible';
   handshakeTimer: ReturnType<typeof setTimeout> | null;
   missedPongs: number;
@@ -17,7 +21,8 @@ export interface ExtensionConnection {
 
 export function newConnection(ws: WebSocket): ExtensionConnection {
   return {
-    ws, browserId: 'default', label: 'default', state: 'pending',
+    ws, connectionId: crypto.randomBytes(16).toString('hex'), browserId: 'default', label: 'default',
+    capabilities: [], state: 'pending',
     handshakeTimer: null, missedPongs: 0, connectedAt: Date.now(),
   };
 }
@@ -67,6 +72,19 @@ export class ExtensionConnections {
   identify(conn: ExtensionConnection, browserId: string): void {
     conn.browserId = browserId;
     if (!this.firstSeen.has(browserId)) this.firstSeen.set(browserId, Date.now());
+  }
+
+  markReady(conn: ExtensionConnection, info?: { browserId?: unknown; browserLabel?: unknown; capabilities?: unknown }): void {
+    if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
+    conn.handshakeTimer = null;
+    conn.state = 'ready';
+    conn.missedPongs = 0;
+    const { browserId, label } = identityOf(info);
+    conn.label = label;
+    conn.capabilities = Array.isArray(info?.capabilities)
+      ? info.capabilities.filter((item): item is string => typeof item === 'string')
+      : [];
+    this.identify(conn, browserId);
   }
 
   /**

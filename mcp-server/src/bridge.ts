@@ -18,12 +18,12 @@ import {
 } from './bridge-security.js';
 import {
   ExtensionConnections,
-  identityOf,
   newConnection,
   type ExtensionConnection,
 } from './bridge-connections.js';
 import { MAX_WS_MESSAGE_BYTES, WS_HARD_MAX_PAYLOAD_BYTES, rejectOversizedFrame } from './bridge-frames.js';
 import { tabsAcrossBrowsers } from './bridge-tabs.js';
+import { VaultBridgeTransport } from './vault/bridge-transport.js';
 
 export { isDaemonResponsiveOnPort } from './bridge-security.js';
 export { MAX_WS_MESSAGE_BYTES } from './bridge-frames.js';
@@ -73,6 +73,7 @@ export class ExtensionBridge {
   private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
   private conns = new ExtensionConnections();
+  readonly vaultTransport = new VaultBridgeTransport(this.conns);
   private pendingRequests = new Map<string, PendingRequest>();
   private requestId = 0;
   private port: number;
@@ -112,14 +113,8 @@ export class ExtensionBridge {
     this.handshakeGraceMs = options.handshakeGraceMs ?? 3_000;
   }
 
-  private markExtensionReady(conn: ExtensionConnection, info?: { browserId?: unknown; browserLabel?: unknown }): void {
-    if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
-    conn.handshakeTimer = null;
-    conn.state = 'ready';
-    conn.missedPongs = 0;
-    const { browserId, label } = identityOf(info);
-    conn.label = label;
-    this.conns.identify(conn, browserId);
+  private markExtensionReady(conn: ExtensionConnection, info?: { browserId?: unknown; browserLabel?: unknown; capabilities?: unknown }): void {
+    this.conns.markReady(conn, info);
     // A reconnect of the same browser replaces its old socket.
     for (const other of this.conns.siblingsOf(conn)) {
       this.dropConn(other, 'Extension reconnected');
@@ -150,6 +145,7 @@ export class ExtensionBridge {
   private dropConn(conn: ExtensionConnection, reason: string): void {
     if (!this.conns.has(conn)) return;
     this.conns.delete(conn);
+    this.vaultTransport.connectionDropped(conn, reason);
     if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
     conn.handshakeTimer = null;
     this.rejectAllPending(reason, conn);
@@ -328,6 +324,7 @@ export class ExtensionBridge {
               conn.missedPongs = 0;
               return;
             }
+            if (this.vaultTransport.handleMessage(msg, conn)) return;
             this.handleResponse(msg, conn);
           } catch (err) {
             console.error('[Bridge] Parse error:', err);
@@ -574,6 +571,7 @@ export class ExtensionBridge {
       pending.reject(new Error(`NOT_CONNECTED: ${reason}; the call may still have run, so check the page before repeating it`));
       this.pendingRequests.delete(id);
     }
+    this.vaultTransport.rejectPending(reason, onlyConn);
   }
 
   stop(): void {

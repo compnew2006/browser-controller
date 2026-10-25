@@ -18,6 +18,7 @@ import { logsTool } from './logs.js';
 import { mockTool } from './mock.js';
 import { inspectElementTool } from './inspect-element.js';
 import { safetyTool } from './safety.js';
+import { vaultTool } from './vault.js';
 
 /** The tools, in the order tools/list shows them. Extension-backed ones forward by name; batch and safety settings run in the MCP process. */
 export const allTools: ToolDefinition[] = [
@@ -39,6 +40,7 @@ export const allTools: ToolDefinition[] = [
   mockTool,
   inspectElementTool,
   safetyTool,
+  vaultTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

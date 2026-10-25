@@ -24,6 +24,7 @@ import { handleLogs } from '../handlers/logs.js';
 import { handleMock, releaseMock } from '../handlers/mock.js';
 import { handleInspectElement } from '../handlers/inspect.js';
 import { handleClassifyAction } from '../handlers/action-safety.js';
+import { handleVaultAction, isPrivateVaultTab } from './vault.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -41,6 +42,7 @@ import { handleClassifyAction } from '../handlers/action-safety.js';
  * handleMessage's try/finally so it can't leak.
  */
 const activeControllers = new Map();
+const activeVaultActions = new Map();
 
 // Static registry: built once at module load. Legacy wire-name aliases are gone:
 // the tool files send their canonical .name, so aliases would only mask future drift
@@ -167,6 +169,49 @@ function extractTabId(_tool, params) {
 const canDrawShield = (tabId) => !wedgedTabs.has(tabId) && !getOpenDialog(tabId);
 
 export async function handleMessage(msg) {
+  if (msg.type === 'vaultActionCancel') {
+    if (typeof msg.id === 'string') activeVaultActions.get(msg.id)?.abort();
+    return;
+  }
+  if (msg.type === 'vaultAction') {
+    if (typeof msg.id !== 'string' || !/^v\d+$/.test(msg.id) || typeof msg.action !== 'string'
+      || !msg.params || typeof msg.params !== 'object' || Array.isArray(msg.params)
+      || typeof msg.sessionId !== 'string' || !msg.sessionId) return;
+    const controller = new AbortController();
+    activeVaultActions.set(msg.id, controller);
+    try {
+      const execute = async () => {
+        if (controller.signal.aborted) return { success: false, code: 'VAULT_PERMISSION_DENIED' };
+        return handleVaultAction(msg.action, msg.params, controller.signal);
+      };
+      let result;
+      if (['inspect', 'fill'].includes(msg.action) && Number.isInteger(msg.params.tabId)) {
+        result = await runOnTabLib(tabLocks, tabMutex, msg.params.tabId, msg.sessionId, async () => {
+          if (controller.signal.aborted) return { success: false, code: 'VAULT_PERMISSION_DENIED' };
+          const call = tabControl.begin(msg.params.tabId, msg.sessionId, typeof msg.agentName === 'string' ? msg.agentName : 'Credential vault');
+          try {
+            setCurrentActivity('credential vault');
+            updateBadge('active');
+            return await execute();
+          } finally {
+            setCurrentActivity(null);
+            updateBadge(isWsConnected() ? 'connected' : 'disconnected');
+            tabControl.end(call);
+          }
+        });
+      } else {
+        result = await execute();
+      }
+      sendJson({ type: 'vaultActionResponse', id: msg.id, success: true, result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      const code = /^VAULT_[A-Z_]+/.exec(message)?.[0] || 'VAULT_PERMISSION_DENIED';
+      sendJson({ type: 'vaultActionResponse', id: msg.id, success: true, result: { success: false, code } });
+    } finally {
+      activeVaultActions.delete(msg.id);
+    }
+    return;
+  }
   // Control messages (non-tool) from the daemon. These carry a `type` and no
   // `tool`; handle them here before the tool-dispatch path assumes a tool call.
   if (msg.type === "releaseSession") {
@@ -233,6 +278,11 @@ export async function handleMessage(msg) {
   // raw-WS clients only; the daemon always sends ids.
   if (id === undefined || id === null) {
     sendResponse(null, { success: false, error: 'tool call is missing id — no response can be correlated' });
+    return;
+  }
+
+  if (Number.isInteger(tabId) && isPrivateVaultTab(tabId)) {
+    sendResponse(id, { success: false, error: 'VAULT_CONTEXT_PROTECTED: The private credential vault page is unavailable to browser tools.' });
     return;
   }
 

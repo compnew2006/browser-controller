@@ -24,6 +24,7 @@ export function buildSessionId(instanceId: string, seq: number): string {
 
 /** The 3.0 tool contract. A peer without it is a 2.x build. */
 export const TOOLS_V3_CAPABILITY = 'tools-v3';
+export const CREDENTIAL_VAULT_CAPABILITY = 'credential-vault-v1';
 
 /**
  * IPC (thin client <-> daemon). The socket had no version before 3.0 and both sides
@@ -44,6 +45,7 @@ export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   'cancellation',
   'tab-locks',
   'tools-v3',
+  CREDENTIAL_VAULT_CAPABILITY,
 ]);
 
 /** What the daemon needs from the extension's helloAck. */

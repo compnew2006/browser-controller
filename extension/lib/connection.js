@@ -15,17 +15,18 @@ import {
 } from './state.js';
 import { hideLockShield } from './overlay.js';
 import { buildExtensionHelloAck, OLDER_DAEMON_REASON, validateDaemonHello } from './protocol.js';
-
-const DEFAULT_WS_PORT = 7225;
-const RECONNECT_BASE_MS = 1000;
-const RECONNECT_MAX_MS = 30000;
-// After this many reconnect attempts (≈ a few minutes of backoff), the daemon
-// is genuinely down, not just recycling — surface a real 'error' badge so the
-// user knows it's not a silent failure. Below this threshold, the badge stays
-// grey (disconnected) to avoid crying-wolf on every transient restart.
-const RECONNECT_GIVEUP_ATTEMPTS = 10;
-const KEEPALIVE_ALARM = 'keepalive';
-const KEEPALIVE_INTERVAL_MIN = 0.4; // ~24s, under Chrome's 30s limit
+import { restoreVaultRuntimeState } from './vault.js';
+import { VaultConnectionChannel } from './vault-connection.js';
+import {
+  DEFAULT_WS_PORT,
+  RECONNECT_BASE_MS,
+  RECONNECT_MAX_MS,
+  RECONNECT_GIVEUP_ATTEMPTS,
+  KEEPALIVE_ALARM,
+  KEEPALIVE_INTERVAL_MIN,
+  HANDSHAKE_TIMEOUT_MS,
+  PROBE_TIMEOUT_MS,
+} from './connection-policy.js';
 
 let wsPort = DEFAULT_WS_PORT;
 let wsToken = ''; // auth token (3.1); offered only in the WS subprotocol, never in the URL
@@ -50,6 +51,7 @@ let nativePairAt = 0;
 let lastPairingNote = '';
 let ws = null;
 let connected = false;
+const vaultChannel = new VaultConnectionChannel({ getSocket: () => ws, isConnected: () => connected });
 let reconnectAttempts = 0;
 let reconnectTimeout = null;
 let nextRetryMs = 0;
@@ -57,12 +59,6 @@ let connectedSince = null;
 let lastError = null;
 let currentActivity = null; // tool currently running (single overlay label source)
 let handshakeTimeout = null;
-// How long a daemon may take to send its hello after the socket opens. Silence past this
-// is a pre-3.0 daemon: it is refused, not treated as connected.
-const HANDSHAKE_TIMEOUT_MS = 3_000;
-// How long the port probe waits for any HTTP answer before the daemon counts as down.
-const PROBE_TIMEOUT_MS = 2_000;
-
 /** The router's handleMessage — injected by background.js at wiring time. */
 let messageHandler = null;
 
@@ -83,6 +79,18 @@ export function sendJson(obj) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(obj));
   }
+}
+
+export function sendVaultProtectionTabRemoved(removal) {
+  vaultChannel.sendProtectionTabRemoved(removal);
+}
+
+export function sendVaultUiClosed() {
+  vaultChannel.sendUiClosed();
+}
+
+export function requestVaultUi(payload) {
+  return vaultChannel.requestUi(payload);
 }
 
 /**
@@ -192,6 +200,7 @@ function defaultBrowserLabel(id) {
 }
 
 export async function initConnection() {
+  await restoreVaultRuntimeState();
   try {
     const stored = await chrome.storage.local.get(['wsPort', 'wsToken', 'enrollmentSecret', 'bcBrowserId', 'bcBrowserLabel']);
     if (stored.wsPort) { wsPort = stored.wsPort; portFromUser = true; }
@@ -346,6 +355,8 @@ export async function connect() {
       // closed before open = the daemon destroyed the upgrade (bad/no token)
       if (!opened) lastWasHandshakeClose = true;
       connected = false;
+      vaultChannel.setSupported(false);
+      vaultChannel.failUiRequests();
       clearTimeout(handshakeTimeout);
       handshakeTimeout = null;
       connectedSince = null;
@@ -388,6 +399,7 @@ export async function connect() {
           }
           // Before the ack and before any tool call: stale locks of a previous daemon go now.
           adoptDaemonInstance(msg.instanceId);
+          vaultChannel.setSupported(Array.isArray(msg.capabilities) && msg.capabilities.includes('credential-vault-v1'));
           socket.send(JSON.stringify(buildExtensionHelloAck(chrome.runtime.getManifest().version, browserIdentity)));
           clearTimeout(handshakeTimeout);
           handshakeTimeout = null;
@@ -397,12 +409,14 @@ export async function connect() {
           lastError = null;
           updateBadge('connected');
           broadcastStatus('Connected');
+          vaultChannel.sendProtectionState();
           return;
         }
         if (msg.type === 'ping') {
           socket.send(JSON.stringify({ type: 'pong' }));
           return;
         }
+        if (vaultChannel.handleMessage(msg)) return;
         if (messageHandler) await messageHandler(msg);
       } catch (err) {
         console.error('[BrowserController] Message error:', err);

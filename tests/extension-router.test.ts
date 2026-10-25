@@ -47,10 +47,14 @@ const dialogListeners: Array<(source: { tabId: number }, method: string, params?
     create: async () => ({}),
   },
   scripting: { executeScript: async () => [{ result: null }] },
+  webNavigation: {
+    getFrame: async () => ({ frameId: 0, documentId: 'doc-router', url: 'https://example.com/page' }),
+    getAllFrames: async () => [{ frameId: 0, documentId: 'doc-router', url: 'https://example.com/page' }],
+  },
   action: { setBadgeBackgroundColor: () => {}, setBadgeText: () => {} },
   storage: {
     session: { get: async () => ({}), set: async () => {} },
-    local: { get: async () => ({}), set: async () => {} },
+    local: { get: async () => ({}), set: async () => {}, remove: async () => {} },
   },
   runtime: {
     sendMessage: async () => {},
@@ -67,7 +71,7 @@ const dialogListeners: Array<(source: { tabId: number }, method: string, params?
 };
 
 const { handleMessage, dispatchedTools } = await import('../extension/lib/router.js');
-const { tabLocks, tabControl, wedgedTabs } = await import('../extension/lib/state.js');
+const { tabLocks, tabMutex, tabControl, wedgedTabs } = await import('../extension/lib/state.js');
 const { allTools } = await import('../mcp-server/src/tools/index.js');
 const overlay = await import('../extension/lib/overlay.js');
 
@@ -128,6 +132,50 @@ describe("extension router (handleMessage)", () => {
     expect(removed).toEqual([]);
     expect(tabLocks.owner(3)).toBe('session-a');
     wedgedTabs.clear();
+  });
+
+  it('releases the vault tab mutex when a frozen fill is cancelled after dispatch', async () => {
+    const vault = await import('../extension/lib/vault.js');
+    await vault.restoreVaultRuntimeState();
+    let didStart = false;
+    let fillStarted!: () => void;
+    const started = new Promise<void>((resolve) => { fillStarted = resolve; });
+    let releaseFrozenScript!: (value: unknown[]) => void;
+    (globalThis as any).chrome.scripting.executeScript = async (request: Record<string, any>) => {
+      if (request.func.name === 'inspectPasswordField') {
+        return [{ frameId: 0, documentId: 'doc-router', result: {
+          candidateCount: 1, suitable: true, documentOrigin: 'https://example.com',
+        } }];
+      }
+      if (request.func.name === 'fillInspectedPassword') {
+        didStart = true;
+        fillStarted();
+        return await new Promise((resolve) => { releaseFrozenScript = resolve; });
+      }
+      return [{ frameId: 0, documentId: 'doc-router', result: true }];
+    };
+    const inspection = await vault.handleVaultAction('inspect', { tabId: 3 }) as any;
+    const fillFrame = {
+      type: 'vaultAction', id: 'v887', action: 'fill', sessionId: 'session-vault',
+      params: {
+        tabId: 3, origin: 'https://example.com', documentId: 'doc-router',
+        targetDocumentId: 'doc-router', frameId: 0, nonce: inspection.nonce, password: 'fixture-only-secret',
+      },
+    };
+    void handleMessage(fillFrame);
+    await flush(100);
+    expect(didStart).toBe(true);
+    await started;
+    await handleMessage({ type: 'vaultActionCancel', id: 'v887' });
+    await flush(80);
+    expect(lastFrame()).toMatchObject({ type: 'vaultActionResponse', id: 'v887', result: { success: false, code: 'VAULT_OUTCOME_UNKNOWN' } });
+    expect(tabMutex.isIdle(3)).toBe(true);
+    // A frozen browser call may settle after cancellation, but it cannot hold
+    // the router mutex or produce another response when it eventually returns.
+    releaseFrozenScript([{ frameId: 0, documentId: 'doc-router', result: { success: true, retained: true, filled_fields: 1 } }]);
+    await flush(20);
+    expect(sent.filter((frame) => frame.type === 'vaultActionResponse' && frame.id === 'v887')).toHaveLength(1);
+    expect(tabMutex.isIdle(3)).toBe(true);
   });
 
   it('a dialog answer from a non-owner is refused with TAB_LOCKED (it skips the queue, not the lock)', async () => {
@@ -309,16 +357,24 @@ describe('the router and a JavaScript dialog open on the tab', () => {
 });
 
 describe('dispatch registry ↔ MCP tool registry (drift guard)', () => {
-  // browser_batch and browser_safety are server-only; the classifier is an internal extension preflight.
+  // browser_batch and browser_safety are server-only; browser_vault is daemon-owned
+  // and uses private internal frames rather than the generic extension tool dispatcher.
   const wireTools = allTools.filter((t) => !['browser_batch', 'browser_safety'].includes(t.name));
+  const extensionTools = wireTools.filter((t) => t.name !== 'browser_vault');
 
   it('every registered MCP tool has an extension handler', () => {
-    for (const tool of wireTools) {
+    for (const tool of extensionTools) {
       expect(dispatchedTools, `${tool.name} has no extension handler`).toContain(tool.name);
     }
   });
 
   it('dispatches exactly the known tool set (no stray handlers)', () => {
-    expect(dispatchedTools.length).toBe(wireTools.length);
+    expect(dispatchedTools).toEqual(extensionTools.map((tool) => tool.name));
+  });
+
+  it('keeps the daemon-owned vault tool and internal vault actions out of the extension registry', () => {
+    expect(wireTools.map((tool) => tool.name).filter((name) => name === 'browser_vault')).toEqual(['browser_vault']);
+    expect(dispatchedTools).not.toContain('browser_vault');
+    expect(allTools.map((tool) => tool.name).some((name) => name.startsWith('browser_vault_internal_'))).toBe(false);
   });
 });

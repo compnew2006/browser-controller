@@ -7,6 +7,7 @@ import { resolveTab } from '../lib/page-exec.js';
 import { tabLocks, tabControl } from '../lib/state.js';
 import { releaseTabUi } from '../lib/lock-ops.js';
 import { tabLockedMessage } from '../lib/tab-concurrency.js';
+import { isPrivateVaultTab, isPrivateVaultUrl } from '../lib/vault.js';
 
 /**
  * A locked tab belongs to its owner session: closing or focusing it from another session
@@ -50,6 +51,7 @@ async function listTabs(sessionId) {
   let otherAgents = 0;
   const rest = [];
   for (const tab of tabs) {
+    if (isPrivateVaultTab(tab.id) || isPrivateVaultUrl(tab.url)) continue;
     const owner = tabLocks.owner(tab.id);
     // Another session driving an unowned tab right now (or within the last 30s) counts as its tab.
     const driver = tabControl.controller(tab.id)?.sessionId ?? null;

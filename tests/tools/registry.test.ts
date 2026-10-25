@@ -8,18 +8,18 @@ import {
 } from "../../mcp-server/src/tools/index.js";
 
 describe("Tool Registry", () => {
-  // Browser Controller 3.0: exactly these 18 tools, in tools/list order.
+  // Browser Controller 3.0: the public tools, in tools/list order.
   const expectedTools = [
     'browser_navigate', 'browser_tabs', 'browser_snapshot', 'browser_text',
     'browser_screenshot', 'browser_click', 'browser_type', 'browser_fill',
     'browser_scroll', 'browser_wait', 'browser_evaluate', 'browser_handle_dialog',
     'browser_batch', 'browser_emulate', 'browser_logs', 'browser_mock',
-    'browser_inspect_element', 'browser_safety',
+    'browser_inspect_element', 'browser_safety', 'browser_vault',
   ];
   // Runs entirely in the MCP process (it calls other tools' handlers): no wire name.
   const localTools = new Set(['browser_batch', 'browser_safety']);
 
-  it("registers exactly the 18 tools, in contract order", () => {
+  it("registers the public tools, in contract order", () => {
     expect(allTools.map((t) => t.name)).toEqual(expectedTools);
   });
 
@@ -97,6 +97,15 @@ describe("Tool Registry", () => {
     expect(click.inputSchema.safeParse({ tabId: 1.5, target: 'a' }).success).toBe(false);
     expect(click.inputSchema.safeParse({ tabId: 15, target: 'a' }).success).toBe(true);
     expect(JSON.stringify(toolManifest.map((t) => t.inputSchema))).not.toContain('9007199254740991');
+  });
+
+  it('browser_vault accepts opaque handles only and rejects secret-bearing fields', () => {
+    const vault = toolMap.get('browser_vault')!;
+    expect(vault.inputSchema.safeParse({ action: 'fill', tabId: 1, handle: 'cred_0123456789abcdef0123456789abcdef' }).success).toBe(true);
+    expect(vault.inputSchema.safeParse({ action: 'save_login', tabId: 1, password: 'fixture-only-secret' }).success).toBe(false);
+    expect(vault.inputSchema.safeParse({ action: 'fill', tabId: 1, handle: 'x', identifier: 'user' }).success).toBe(false);
+    expect(vault.inputSchema.safeParse({ action: 'grant', tabId: 1, grantId: 'x' }).success).toBe(false);
+    expect(vault.inputSchema.safeParse({ action: 'save_login' }).success).toBe(false);
   });
 
   // --- Idempotency classification -------------------------------------------

@@ -49,6 +49,8 @@ import {
   validateIpcHandshake,
 } from './protocol.js';
 import { ExtensionBridge } from './bridge.js';
+import { VaultService, type VaultTransport } from './vault/service.js';
+import { routeVaultAwareCall } from './vault/daemon-routing.js';
 
 const SERVER_NAME = 'browser-controller-daemon';
 
@@ -91,6 +93,7 @@ export const MAX_IPC_LINE_BYTES = envInt('BC_MAX_IPC_LINE_BYTES', 1_000_000, 102
 
 class Daemon {
   private bridge: ExtensionBridge;
+  private vaultService: VaultService;
   private ipcServer: net.Server | null = null;
   private clients = new Map<net.Socket, IpcClient>();
   /** daemon-global call id counter -> { client, clientId } to route the reply. */
@@ -123,6 +126,16 @@ class Daemon {
       token: this.token,
       enrollmentSecret: this.enrollmentSecret,
     });
+    const vaultTransport: VaultTransport = {
+      getBrowserContext: async (sessionId) => this.bridge.vaultTransport.getBrowserContext(sessionId),
+      callVaultAction: (action, params, sessionId, signal, agentName) => this.bridge.vaultTransport.callAction(action, params, sessionId, signal, agentName),
+    };
+    this.vaultService = new VaultService(STATE_DIR, vaultTransport, (sessionId) => this.isSessionLive(sessionId));
+    this.bridge.vaultTransport.setService(this.vaultService);
+  }
+
+  private isSessionLive(sessionId: string): boolean {
+    return [...this.clients.values()].some((client) => client.sessionId === sessionId && !client.socket.destroyed);
   }
 
   async start(): Promise<void> {
@@ -315,6 +328,7 @@ class Daemon {
           sessionId: client.sessionId,
           agentName: client.agentName,
         });
+        this.vaultService.endSession(client.sessionId);
         this.clients.delete(socket);
       }
     });
@@ -404,22 +418,22 @@ class Daemon {
     // into params. The daemon stays a pure {tool, params} multiplexer; the
     // extension's tab-lock layer reads msg.sessionId, never params.__sessionId.
     try {
-      const result = await this.bridge.callTool(msg.tool, msg.params, client.sessionId, controller.signal, client.agentName);
-      this.sendToClient(client, { kind: 'result', id: msg.id, success: true, result });
+      const outcome = await routeVaultAwareCall({
+        bridge: this.bridge,
+        vaultService: this.vaultService,
+        sessionId: client.sessionId,
+        agentName: client.agentName,
+        tool: msg.tool,
+        params: msg.params,
+        signal: controller.signal,
+      });
+      this.sendToClient(client, { kind: 'result', id: msg.id, ...outcome });
     } catch (err) {
-      // Truncate the message: a page-side SyntaxError can embed the ENTIRE
-      // 2MB expression in its message (seen in the stress audit) — errors must
-      // never echo unbounded payloads back over IPC/WS.
-      const error = String(err instanceof Error ? err.message : err).slice(0, 2000);
-      // Unified error channel: a payload-carrying rejection (in-band tool
-      // failure) must reach the thin client intact, not just its message.
-      const payload = (err as { result?: unknown })?.result;
       this.sendToClient(client, {
         kind: 'result',
         id: msg.id,
         success: false,
-        error,
-        ...(payload !== undefined ? { result: payload } : {}),
+        error: 'VAULT_PERMISSION_DENIED: the result could not be safely returned',
       });
     } finally {
       client.pending.delete(msg.id);
@@ -504,6 +518,7 @@ class Daemon {
   }
 
   stop(): void {
+    this.vaultService.lockAll();
     this.bridge.stop();
     this.ipcServer?.close();
     if (this.heartbeatTimer) {
