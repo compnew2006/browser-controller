@@ -26,7 +26,7 @@ export class VaultService extends VaultServiceProtection {
     if (action === 'list') {
       const inspection = await this.inspectSupportedSite(tabId, sessionId, signal);
       const store = this.storeFor(context.browserId);
-      const grant = this.findGrant(context, sessionId, inspection.origin, 'list');
+      const grant = this.grants.find(context, sessionId, inspection.origin, 'list');
       if (!grant) return this.requestForInspection(context, sessionId, tabId, inspection, 'approve');
       if (!store.isUnlocked) return this.requestForInspection(context, sessionId, tabId, inspection, 'unlock');
       const entries = await store.list();
@@ -43,7 +43,7 @@ export class VaultService extends VaultServiceProtection {
     if (action === 'fill') {
       if (typeof params.handle !== 'string') throw new VaultServiceError('INVALID_ARGUMENT', 'account handle is required');
       const inspection = await this.inspectSupportedSite(tabId, sessionId, signal);
-      const grant = this.findGrant(context, sessionId, inspection.origin, 'fill', params.handle);
+      const grant = this.grants.find(context, sessionId, inspection.origin, 'fill', params.handle);
       if (!grant) return this.requestForInspection(context, sessionId, tabId, inspection, 'fill', { credentialId: params.handle });
       return this.fillGranted(context, sessionId, tabId, inspection, params.handle, signal, grant.grantId);
     }
@@ -90,10 +90,7 @@ export class VaultService extends VaultServiceProtection {
     const store = this.storeFor(context.browserId);
     const operationId = randomId('fillop');
     const oneShotGrant = grantId ? this.grants.get(grantId) : undefined;
-    if (oneShotGrant?.oneShot) {
-      if (oneShotGrant.consumed || oneShotGrant.claimedBy) return publicError('VAULT_PERMISSION_DENIED');
-      oneShotGrant.claimedBy = operationId;
-    }
+    if (!this.grants.claimOneShot(oneShotGrant, operationId)) return publicError('VAULT_PERMISSION_DENIED');
     const operation = this.operations.track(operationId, {
       scope,
       sessionId,
@@ -147,11 +144,7 @@ export class VaultService extends VaultServiceProtection {
       return publicError('VAULT_OUTCOME_UNKNOWN', { origin: initial.origin });
     } finally {
       clearTimeout(operationTimeout);
-      if (oneShotGrant?.oneShot) {
-        oneShotGrant.consumed = true;
-        oneShotGrant.claimedBy = undefined;
-        this.grants.delete(oneShotGrant.grantId);
-      }
+      this.grants.consumeOneShot(oneShotGrant);
       this.operations.complete(operationId);
     }
   }

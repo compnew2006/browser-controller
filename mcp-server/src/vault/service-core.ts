@@ -3,6 +3,7 @@ import { CredentialVaultStore, VaultStorageError, scopeForBrowser } from './stor
 import { VaultRedactionRegistry } from './redaction.js';
 import { canonicalizeOrigin, metadataOf, randomId, VaultCredentialSchema, type VaultCredential, type VaultGrant, type VaultPrivateRequest } from './types.js';
 import { OperationRegistry } from './operations.js';
+import { GrantRegistry } from './grants.js';
 import {
   TERMINAL_RETENTION_MS, VAULT_FILL_OPERATION_TIMEOUT_MS, VAULT_PENDING_TTL_MS,
   VaultServiceError, isRecord, publicError, safeCode, safeMessage, type VaultBrowserContext,
@@ -15,7 +16,7 @@ export abstract class VaultServiceCore {
   readonly redaction = new VaultRedactionRegistry();
   protected readonly auditPseudonymKey = crypto.randomBytes(32);
   protected readonly stores = new Map<string, CredentialVaultStore>();
-  protected readonly grants = new Map<string, LiveGrant>();
+  protected readonly grants = new GrantRegistry(() => this.now());
   protected readonly requests = new Map<string, InternalPending>();
   protected readonly protectedDocuments = new Map<string, Map<string, ProtectedDocument>>();
   protected readonly operations = new OperationRegistry();
@@ -163,14 +164,6 @@ export abstract class VaultServiceCore {
     }
   }
 
-  protected findGrant(context: VaultBrowserContext, sessionId: string, origin: string, purpose: 'list' | 'fill', credentialId?: string): LiveGrant | undefined {
-    const scope = scopeForBrowser(context.browserId);
-    return [...this.grants.values()].find((grant) => !grant.revoked && !grant.consumed && grant.expiresAt > this.now()
-      && grant.sessionId === sessionId && grant.browserScope === scope && grant.connectionId === context.connectionId && grant.origin === origin
-      && (grant.purpose === purpose || (purpose === 'list' && grant.purpose === 'fill' && !grant.oneShot))
-      && (purpose === 'list' || !grant.credentialId || grant.credentialId === credentialId));
-  }
-
   protected markProtected(scope: string, document: ProtectedDocument): void {
     let docs = this.protectedDocuments.get(scope);
     if (!docs) {
@@ -250,31 +243,6 @@ export abstract class VaultServiceCore {
     if (inspection.origin !== pending.request.origin || inspection.documentId !== pending.request.documentId) {
       throw new VaultServiceError('VAULT_DOCUMENT_CHANGED', 'the page changed while the private request was open');
     }
-  }
-
-  protected createGrant(
-    context: PrivateConnection,
-    sessionId: string,
-    origin: string,
-    purpose: 'list' | 'fill',
-    credentialId?: string,
-    oneShot = false,
-  ): LiveGrant {
-    const grant: LiveGrant = {
-      grantId: randomId('grant'),
-      sessionId,
-      browserScope: scopeForBrowser(context.browserId),
-      connectionId: context.connectionId,
-      origin,
-      ...(credentialId ? { credentialId } : {}),
-      purpose,
-      ...(oneShot ? { oneShot: true } : {}),
-      createdAt: this.now(),
-      expiresAt: Number.MAX_SAFE_INTEGER,
-      revoked: false,
-    };
-    this.grants.set(grant.grantId, grant);
-    return grant;
   }
 
   protected requestState(pending: InternalPending): Record<string, unknown> {

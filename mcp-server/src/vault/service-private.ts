@@ -90,7 +90,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       browserLabel: connection.browserLabel,
       entries: entries.map(metadataOf),
       requests,
-      grants: [...this.grants.values()].filter((grant) => grant.browserScope === scope && grant.connectionId === connection.connectionId && !grant.revoked).map((grant) => ({
+      grants: this.grants.activeFor(scope, connection.connectionId).map((grant) => ({
         grantId: grant.grantId,
         sessionLabel: `${this.sessionAgentNames.get(grant.sessionId) ?? 'Connected session'} · session ${grant.sessionId.slice(-7)}`,
         origin: grant.origin,
@@ -153,7 +153,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
 
   private async privateLock(connection: PrivateConnection): Promise<Record<string, unknown>> {
     const scope = scopeForBrowser(connection.browserId);
-    for (const [id, grant] of this.grants) if (grant.browserScope === scope) this.grants.delete(id);
+    this.grants.revokeScope(scope);
     await this.cancelScopeOperations(scope);
     const store = this.storeFor(connection.browserId);
     if (store.isUnlocked) void this.writeAudit(store, 'lock', undefined, undefined, undefined, 'success').catch(() => {});
@@ -203,7 +203,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     await this.writeAudit(store, existing ? 'update' : 'create', entry.data.id, sessionId, origin, 'success');
     if (pending && pending.request.state !== 'processing') return this.requestState(pending);
     if (allowSession || saveAndFill) {
-      const grant = this.createGrant(connection, sessionId!, origin, 'fill', entry.data.id);
+      const grant = this.grants.create(connection, sessionId!, origin, 'fill', entry.data.id);
       await store.audit(this.auditEvent('grant', scopeForBrowser(connection.browserId), sessionId, origin, 'success', entry.data.id));
       if (pending) pending.metadata = { label: entry.data.label, identifier: entry.data.identifier };
       if (saveAndFill && pending) {
@@ -250,7 +250,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       if (initial.origin !== pending.request.origin || initial.documentId !== pending.request.documentId) throw new VaultServiceError('VAULT_DOCUMENT_CHANGED', 'the page changed while the private request was open');
       const current = await this.assertInitiator(connection, pending.request.sessionId);
       if (pending.request.state !== 'processing' || !this.revalidatePending(pending)) return this.requestState(pending);
-      const grant = this.createGrant(connection, pending.request.sessionId, pending.request.origin!, purpose, handle, purpose === 'fill');
+      const grant = this.grants.create(connection, pending.request.sessionId, pending.request.origin!, purpose, handle, purpose === 'fill');
       await store.audit(this.auditEvent('grant', pending.request.browserScope, pending.request.sessionId, pending.request.origin, 'success', handle));
       const result = await this.fillGranted(current, pending.request.sessionId, pending.request.tabId!, initial, handle!, this.operations.signalFor(pending.request.requestId), grant.grantId);
       if (pending.request.state === 'processing') pending.request = { ...pending.request, state: isRecord(result) && result.status === 'filled' ? 'accepted' : 'failed' };
@@ -259,7 +259,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     }
     if (pending.request.state !== 'processing' || !this.revalidatePending(pending)) return this.requestState(pending);
     const current = await this.assertInitiator(connection, pending.request.sessionId);
-    const grant = this.createGrant(connection, pending.request.sessionId, pending.request.origin!, purpose, handle, purpose === 'fill');
+    const grant = this.grants.create(connection, pending.request.sessionId, pending.request.origin!, purpose, handle, purpose === 'fill');
     await store.audit(this.auditEvent('grant', pending.request.browserScope, pending.request.sessionId, pending.request.origin, 'success', handle));
     if (pending.request.state !== 'processing') return this.requestState(pending);
     this.settle(pending, 'accepted');
@@ -281,7 +281,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const store = this.storeFor(connection.browserId);
     if (!store.isUnlocked) return publicError('VAULT_LOCKED');
     const removed = await store.remove(handle);
-    for (const [id, grant] of this.grants) if (grant.browserScope === scopeForBrowser(connection.browserId) && grant.credentialId === handle) this.grants.delete(id);
+    this.grants.revokeCredential(scopeForBrowser(connection.browserId), handle);
     if (removed) await this.writeAudit(store, 'delete', handle, undefined, undefined, 'success');
     return { success: true, status: removed ? 'deleted' : 'not_found' };
   }
@@ -290,7 +290,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     if (typeof grantId !== 'string') return publicError('INVALID_ARGUMENT');
     const grant = this.grants.get(grantId);
     if (!grant || grant.browserScope !== scopeForBrowser(connection.browserId) || grant.connectionId !== connection.connectionId) return publicError('VAULT_PERMISSION_DENIED');
-    this.grants.delete(grantId);
+    this.grants.revoke(grantId);
     await this.cancelGrantOperations(grantId);
     for (const pending of this.requests.values()) {
       if (pending.request.sessionId === grant.sessionId && pending.request.credentialId === grant.credentialId
@@ -319,7 +319,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     if (typeof backupId !== 'string') return publicError('INVALID_ARGUMENT');
     const scope = scopeForBrowser(connection.browserId);
     await this.cancelScopeOperations(scope);
-    for (const [id, grant] of this.grants) if (grant.browserScope === scope) this.grants.delete(id);
+    this.grants.revokeScope(scope);
     const store = this.storeFor(connection.browserId);
     await store.restoreBackup(backupId, this.now());
     return { success: true, status: 'restored' };

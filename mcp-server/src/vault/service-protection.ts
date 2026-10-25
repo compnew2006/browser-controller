@@ -243,16 +243,14 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
     for (const [id, pending] of this.requests) {
       if (pending.terminalAt && this.now() - pending.terminalAt > TERMINAL_RETENTION_MS) this.requests.delete(id);
     }
-    for (const [id, grant] of this.grants) if (grant.sessionId === sessionId) this.grants.delete(id);
+    this.grants.revokeSession(sessionId);
     this.operations.abortMatching((operation) => operation.sessionId === sessionId);
   }
 
   /** A reconnect is a new authority epoch even when the copied profile ID matches. */
   revokeConnection(browserId: string, connectionId: string): void {
     const scope = scopeForBrowser(browserId);
-    for (const [id, grant] of this.grants) {
-      if (grant.browserScope === scope && grant.connectionId === connectionId) this.grants.delete(id);
-    }
+    this.grants.revokeConnection(scope, connectionId);
     this.cancelRequests((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId);
     this.operations.abortMatching((operation) => operation.scope === scope && operation.connectionId === connectionId);
   }
@@ -264,7 +262,7 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
   }
 
   lockAll(): void {
-    for (const grantId of this.grants.keys()) this.grants.delete(grantId);
+    this.grants.clear();
     this.cancelRequests();
     this.operations.abortMatching(() => true);
     for (const store of this.stores.values()) store.lock();
