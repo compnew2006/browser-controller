@@ -10,7 +10,8 @@
 import { resolveTab } from '../lib/page-exec.js';
 import { getOpenDialog } from '../lib/cdp-session.js';
 import { parseTarget, targetLabel } from '../lib/target.js';
-import { requireSender, locateTarget, locatePointer, focusByClick, measureTarget, selectFocused, releaseShield, cdpClickAt, cdpKeyPress, keyDefinition, modifierBits, cursorTo, sleep, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
+import { requireSender, locateTarget, locatePointer, focusByClick, measureTarget, selectFocused, releaseShield, cdpClickAt, cdpKeyPress, keyDefinition, modifierBits, cursorTo, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
+import { sleep } from '../lib/timing.js';
 import { reboundNote } from '../lib/ref-errors.js';
 import { clearSelection, withFrames, interceptDrags } from '../lib/drag-input.js';
 import { watchMainFrame, untilResponse, downloadLine } from '../lib/main-frame.js';

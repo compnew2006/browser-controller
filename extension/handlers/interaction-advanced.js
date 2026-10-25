@@ -4,8 +4,9 @@
  * Page functions below are serialized into the page: each one is self-contained.
  */
 import { resolveTab, execDom } from '../lib/page-exec.js';
-import { getOpenDialog, clearOpenDialog, sendAttached, settleWithin, TIMED_OUT } from '../lib/cdp-session.js';
-import { requireSender, locateTarget, focusByClick, selectFocused, releaseShield, cursorTo, cdpClickAt, cdpKeyPress, sleep, targetAim, wordTargetRefMiss, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
+import { getOpenDialog, clearOpenDialog, sendAttached } from '../lib/cdp-session.js';
+import { requireSender, locateTarget, focusByClick, selectFocused, releaseShield, cursorTo, cdpClickAt, cdpKeyPress, targetAim, wordTargetRefMiss, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
+import { settleWithin, TIMED_OUT, sleep } from '../lib/timing.js';
 import { reboundNote } from '../lib/ref-errors.js';
 import { targetLabel } from '../lib/target.js';
 

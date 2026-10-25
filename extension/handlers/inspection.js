@@ -7,6 +7,7 @@
 import { safeExec, execDom, resolveTab, getFallback } from '../lib/page-exec.js';
 import { requireSender, pointInfo, releaseShield } from '../lib/trusted-input.js';
 import { withFrames } from '../lib/drag-input.js';
+import { sleep } from '../lib/timing.js';
 import { fallbackByTab, persistSessionState } from '../lib/state.js';
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
 import { parseTarget, targetLabel } from '../lib/target.js';
@@ -27,8 +28,6 @@ const SCROLL_POLL_MS = 100;
 const SCROLL_SETTLE_MS = 1_500;
 /** A wheel aimed at a container with room to move: how long its first movement may take (a background tab holds the wheel for its next frame). */
 const SCROLL_START_MS = 1_500;
-
-const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** An integer option within [lo, hi]; `fallback` when it is missing. */
 function intOption(value, lo, hi, fallback) {
@@ -75,7 +74,7 @@ export async function handleWait(params, _sessionId, _agentName, signal) {
   if (ms != null) {
     if (!(ms >= 0)) throw new Error('INVALID_ARGUMENT: ms must be a number of milliseconds');
     if (ms > timeout) throw new Error(`INVALID_ARGUMENT: ms (${ms}) is longer than timeout (${timeout}); raise timeout or lower ms`);
-    await pause(ms);
+    await sleep(ms);
     return ok();
   }
 
@@ -97,7 +96,7 @@ export async function handleWait(params, _sessionId, _agentName, signal) {
     if (poll) last = poll;
     if (poll && poll.met) return ok(poll.rebound ? [reboundNote(poll.rebound)] : []);
     if (elapsed() >= timeout) break;
-    await pause(Math.min(200, Math.max(0, timeout - elapsed())));
+    await sleep(Math.min(200, Math.max(0, timeout - elapsed())));
   }
   // The last look found the ref's element gone: say so, so the agent takes a new snapshot instead of waiting again.
   const refGone = last?.refGone && parsed ? ` (ref ${parsed.ref} is no longer on the page)` : '';
@@ -202,17 +201,17 @@ export async function handleScroll(params) {
  * wheel until it draws its next frame, and two still reads before that are not "nothing moved".
  */
 async function settleScroll(tabId, dx, dy, before = null) {
-  await pause(SCROLL_FIRST_CHECK_MS);
+  await sleep(SCROLL_FIRST_CHECK_MS);
   let last = await execDom(tabId, scrollStatePage, [dx, dy]);
   const startBy = Date.now() + SCROLL_START_MS;
   while (before && last.x === before.x && last.y === before.y && Date.now() < startBy) {
-    await pause(SCROLL_POLL_MS);
+    await sleep(SCROLL_POLL_MS);
     last = await execDom(tabId, scrollStatePage, [dx, dy]);
   }
   let still = 0;
   const deadline = Date.now() + SCROLL_SETTLE_MS;
   while (Date.now() < deadline && still < 2) {
-    await pause(SCROLL_POLL_MS);
+    await sleep(SCROLL_POLL_MS);
     const now = await execDom(tabId, scrollStatePage, [dx, dy]);
     still = now.x === last.x && now.y === last.y ? still + 1 : 0;
     last = now;

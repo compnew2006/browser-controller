@@ -6,13 +6,12 @@
  */
 import { resolveTab, assertResponsive } from '../lib/page-exec.js';
 import { MAX_RESULT_CHARS } from '../lib/state.js';
-import { withCdp, settleWithin, TIMED_OUT } from '../lib/cdp-session.js';
+import { withCdp } from '../lib/cdp-session.js';
+import { settleWithin, TIMED_OUT, sleep } from '../lib/timing.js';
 import { cdpEvaluateSource, cdpFailure, BROWSER_EVALUATE_DEFAULT_MS, BROWSER_EVALUATE_MAX_MS } from '../lib/cdp-evaluate.js';
 
 /** browser_evaluate: the longest value shown as text. */
 const EVAL_TEXT_MAX_CHARS = 20_000;
-
-const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The `text` of an evaluate reply: the value as compact JSON, strings unquoted; cut at EVAL_TEXT_MAX_CHARS. */
 function evaluateReply(res, via) {
@@ -144,7 +143,7 @@ async function evaluateByScripting(tabId, expression, budget) {
     if (read === TIMED_OUT) return giveUp();
     out = read?.[0]?.result ?? null;
     if (out) break;
-    await pause(40);
+    await sleep(40);
   }
   if (!out) return giveUp();
   if (out.ok === false) return { success: false, via: 'scripting', error: `SCRIPT_ERROR: ${out.error}` };

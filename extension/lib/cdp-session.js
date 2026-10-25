@@ -16,32 +16,14 @@
  * dialog only to a session that had Page enabled before it opened.
  */
 
+import { raceReject } from './timing.js';
+
 export const IDLE_MS = 30_000;
 /** A CDP command on a frozen renderer never answers: bound the setup probes. */
 const SETUP_MS = 5_000;
 
 function bounded(promise, what) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`CDP ${what} timed out (page not responding)`)), SETUP_MS); }),
-  ]).finally(() => clearTimeout(timer));
-}
-
-/** settleWithin() result when the time ran out (the pending call is left to settle on its own). */
-export const TIMED_OUT = Symbol('timed out');
-
-/**
- * Resolve with `promise`'s outcome, or with TIMED_OUT after `ms`. A CDP or
- * chrome.scripting call into a frozen page never answers, so a handler races every
- * such call against its own budget and returns on time, releasing its tab.
- */
-export function settleWithin(promise, ms) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((resolve) => { timer = setTimeout(() => resolve(TIMED_OUT), ms); }),
-  ]).finally(() => clearTimeout(timer));
+  return raceReject(promise, SETUP_MS, `CDP ${what} timed out (page not responding)`);
 }
 
 /** tabId -> { ready: Promise<void>, timer, busy, emulation } */

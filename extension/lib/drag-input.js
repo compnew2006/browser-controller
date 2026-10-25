@@ -6,7 +6,7 @@
  */
 import { subscribeCdpEvents } from './cdp-session.js';
 import { safeExec } from './page-exec.js';
-import { sleep } from './trusted-input.js';
+import { sleep } from './timing.js';
 
 /**
  * Before a drag: no text selected. A press on selected text starts Chrome's own

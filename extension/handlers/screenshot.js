@@ -14,6 +14,7 @@ import { refErrorMessage } from '../lib/ref-errors.js';
 import { wedgedTabs, windowCaptureMutex } from '../lib/state.js';
 import { hideLockShield, setAgentCursorHidden, agentCursorEnabled } from '../lib/overlay.js';
 import { withCdp, ensureViewport } from '../lib/cdp-session.js';
+import { raceReject } from '../lib/timing.js';
 import { locateTarget, releaseShield } from '../lib/trusted-input.js';
 import { parseTarget, targetLabel } from '../lib/target.js';
 
@@ -36,14 +37,6 @@ const MIN_SCALE = 0.05;
 /** Removed in 3.0 and changing WHAT is captured: a call that sends one is refused, never answered with another picture. */
 const REFUSED_OPTIONS = ['fullPage', 'scale', 'ref', 'selector'];
 
-function withTimeout(promise, ms, what) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} timed out`)), ms); }),
-  ]).finally(() => clearTimeout(timer));
-}
-
 function coded(code, message, cause) {
   const err = new Error(`${code}: ${message}`, cause ? { cause } : undefined);
   err.code = code;
@@ -57,7 +50,7 @@ function coded(code, message, cause) {
  * The steps swallow their own errors, so a rejection here is the timeout.
  */
 function shieldStep(tabId, step) {
-  return withTimeout(step(), PAGE_EXEC_TIMEOUT_MS, 'shield step').catch(() => {
+  return raceReject(step(), PAGE_EXEC_TIMEOUT_MS, 'shield step timed out').catch(() => {
     wedgedTabs.set(tabId, Date.now());
     throw wedgedError(tabId, PAGE_EXEC_TIMEOUT_MS);
   });
@@ -135,7 +128,7 @@ async function blobToB64(blob) {
 /** Device pixels per CSS pixel: window.devicePixelRatio, else the layout-metrics ratio. */
 async function pageDpr(send, metrics, vv) {
   try {
-    const r = await withTimeout(send('Runtime.evaluate', { expression: 'window.devicePixelRatio', returnByValue: true }), 1500, 'devicePixelRatio');
+    const r = await raceReject(send('Runtime.evaluate', { expression: 'window.devicePixelRatio', returnByValue: true }), 1500, 'devicePixelRatio timed out');
     const v = Number(r?.result?.value);
     if (v > 0 && v < 16) return v;
   } catch { /* frozen or restricted page: fall back */ }
@@ -199,11 +192,11 @@ async function cdpCapture(tabId, crop, timeoutMs) {
     const dpr = await pageDpr(send, metrics, vv);
     const plan = planScale({ cssW: view.width, cssH: view.height, dpr, scale: 1 });
     const once = async ({ quality, scale }) => {
-      const { data } = await withTimeout(send('Page.captureScreenshot', {
+      const { data } = await raceReject(send('Page.captureScreenshot', {
         format: 'jpeg',
         quality,
         clip: { x: vv.pageX + view.originX, y: vv.pageY + view.originY, width: view.width, height: view.height, scale },
-      }), timeoutMs, 'Page.captureScreenshot');
+      }), timeoutMs, 'Page.captureScreenshot timed out');
       const size = imageSize(data) || { width: Math.round(view.width * scale * dpr), height: Math.round(view.height * scale * dpr) };
       return { data, quality, scale, width: size.width, height: size.height };
     };

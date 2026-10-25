@@ -15,6 +15,7 @@ import { wedgedTabs } from './state.js';
 import { agentCursorEnabled } from './overlay.js';
 import { parseTarget } from './target.js';
 import { refErrorMessage } from './ref-errors.js';
+import { sleep } from './timing.js';
 import { releaseShield, inputBlockedError } from './input-outcome.js';
 
 export { modifierBits, keyDefinition, cdpKeyPress } from './keys.js';
@@ -27,8 +28,6 @@ export async function cdpClickAt(send, x, y, { button = 'left', clickCount = 1, 
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, clickCount: n, modifiers });
   }
 }
-
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Page-side: resolve `target` (the parsed lib/target.js object) through the shared DOM
