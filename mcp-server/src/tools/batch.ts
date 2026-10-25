@@ -1,9 +1,20 @@
 import { z } from 'zod';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { tabIdParam, textResult, failureResult, rawResultOf, codedMessageOf } from './types.js';
-import { toolMap } from './index.js';
 import { parseToolParams } from './params.js';
 import { BATCH_BUDGET_MS, BATCH_MAX_DELAY_MS, BATCH_MAX_STEPS, NOT_BATCHABLE, NO_DEFAULT_TAB } from './batch-limits.js';
+
+/**
+ * Resolve a sibling tool by name. tools/registry.ts installs the map at load;
+ * importing the barrel from here instead is what made index <-> batch an import
+ * cycle. Unwired, a step fails as 'unknown tool' rather than running anything.
+ */
+let resolveTool: (name: string) => ToolDefinition | undefined = () => undefined;
+
+/** Called once, by tools/registry.ts. */
+export function useToolRegistry(resolve: (name: string) => ToolDefinition | undefined): void {
+  resolveTool = resolve;
+}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const RATE_LIMITED = /Rate limit exceeded.*Retry in ~(\d+)s/;
@@ -101,7 +112,7 @@ export const batchTool: ToolDefinition = {
       if (Date.now() >= deadline) {
         return withReceipts(failureResult(`${label}: TIMEOUT: batch budget used; ${actions.length - i} skipped`), false);
       }
-      const def = toolMap.get(step.tool);
+      const def = resolveTool(step.tool);
       let result: ToolResult;
       if (!def) {
         result = failureResult(`INVALID_ARGUMENT: unknown tool ${step.tool}`);
