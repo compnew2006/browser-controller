@@ -1,14 +1,14 @@
 import crypto from 'node:crypto';
 import { CredentialVaultStore, VaultStorageError, scopeForBrowser } from './store.js';
 import { VaultRedactionRegistry } from './redaction.js';
-import { canonicalizeOrigin, metadataOf, randomId, VaultCredentialSchema, type VaultCredential, type VaultGrant, type VaultPrivateRequest } from './types.js';
+import { canonicalizeOrigin, randomId, type VaultPrivateRequest } from './types.js';
 import { OperationRegistry } from './operations.js';
 import { GrantRegistry } from './grants.js';
+import { RequestJournal } from './requests.js';
 import {
-  TERMINAL_RETENTION_MS, VAULT_FILL_OPERATION_TIMEOUT_MS, VAULT_PENDING_TTL_MS,
   VaultServiceError, isRecord, publicError, safeCode, safeMessage, type VaultBrowserContext,
   type VaultInspection, type VaultTransport, type ProtectedDocument, type InternalPending,
-  type PrivateConnection, type LiveGrant, type PendingOperation,
+  type PrivateConnection, type PendingOperation,
 } from './service-common.js';
 
 export abstract class VaultServiceCore {
@@ -17,9 +17,16 @@ export abstract class VaultServiceCore {
   protected readonly auditPseudonymKey = crypto.randomBytes(32);
   protected readonly stores = new Map<string, CredentialVaultStore>();
   protected readonly grants = new GrantRegistry(() => this.now());
-  protected readonly requests = new Map<string, InternalPending>();
-  protected readonly protectedDocuments = new Map<string, Map<string, ProtectedDocument>>();
   protected readonly operations = new OperationRegistry();
+  protected readonly requests = new RequestJournal({
+    now: () => this.now(),
+    isSessionLive: (sessionId) => this.isSessionLive(sessionId),
+    operations: this.operations,
+    openUi: async (requestId, sessionId, agentName) => {
+      await this.transport.callVaultAction('openUi', { requestId }, sessionId, undefined, agentName);
+    },
+  });
+  protected readonly protectedDocuments = new Map<string, Map<string, ProtectedDocument>>();
   protected readonly protectionSequences = new Map<string, number>();
   protected readonly protectionConnections = new Map<string, string>();
   protected readonly protectionUnknownScopes = new Set<string>();
@@ -108,40 +115,6 @@ export abstract class VaultServiceCore {
     catch { throw new VaultServiceError('VAULT_ORIGIN_MISMATCH', 'the current site is unsupported'); }
   }
 
-  protected async beginRequest(
-    context: VaultBrowserContext,
-    input: Pick<VaultPrivateRequest, 'purpose' | 'sessionId' | 'tabId' | 'documentId' | 'origin' | 'credentialId'> & { label?: string },
-  ): Promise<InternalPending> {
-    const createdAt = this.now();
-    const request: VaultPrivateRequest = {
-      requestId: randomId('req'),
-      purpose: input.purpose,
-      sessionId: input.sessionId,
-      browserScope: scopeForBrowser(context.browserId),
-      ...(input.tabId !== undefined ? { tabId: input.tabId } : {}),
-      ...(input.documentId ? { documentId: input.documentId } : {}),
-      ...(input.origin ? { origin: input.origin } : {}),
-      ...(input.credentialId ? { credentialId: input.credentialId } : {}),
-      createdAt,
-      expiresAt: createdAt + VAULT_PENDING_TTL_MS,
-      state: 'pending',
-    };
-    const pending: InternalPending = {
-      request,
-      browserId: context.browserId,
-      browserLabel: context.browserLabel,
-      connectionId: context.connectionId,
-      agentName: context.agentName || 'Connected session',
-    };
-    this.requests.set(request.requestId, pending);
-    try {
-      await this.transport.callVaultAction('openUi', { requestId: request.requestId }, input.sessionId, undefined, context.agentName);
-    } catch {
-      this.settle(pending, 'failed');
-    }
-    return pending;
-  }
-
   protected requestRequired(pending: InternalPending, origin?: string): Record<string, unknown> {
     return {
       success: true,
@@ -154,16 +127,6 @@ export abstract class VaultServiceCore {
     };
   }
 
-  protected expireRequests(): void {
-    const now = this.now();
-    for (const [id, pending] of this.requests) {
-      if (pending.request.state === 'pending' && pending.request.expiresAt <= now) {
-        pending.request = { ...pending.request, state: 'expired' };
-        pending.terminalAt = now;
-      } else if (pending.terminalAt && now - pending.terminalAt > TERMINAL_RETENTION_MS) this.requests.delete(id);
-    }
-  }
-
   protected markProtected(scope: string, document: ProtectedDocument): void {
     let docs = this.protectedDocuments.get(scope);
     if (!docs) {
@@ -173,45 +136,8 @@ export abstract class VaultServiceCore {
     docs.set(document.documentId, document);
   }
 
-  protected pendingForConnection(connection: PrivateConnection, requestId: unknown): InternalPending | undefined {
-    if (typeof requestId !== 'string') return undefined;
-    const pending = this.requests.get(requestId);
-    if (!pending || pending.request.browserScope !== scopeForBrowser(connection.browserId) || pending.connectionId !== connection.connectionId) return undefined;
-    return pending;
-  }
-
-  protected claimPending(pending: InternalPending): boolean {
-    if (pending.request.state !== 'pending' || pending.request.expiresAt <= this.now()) {
-      this.settle(pending, pending.request.state === 'pending' ? 'expired' : pending.request.state);
-      return false;
-    }
-    pending.request = { ...pending.request, state: 'processing' };
-    let resolveDone!: () => void;
-    const done = new Promise<void>((resolve) => { resolveDone = resolve; });
-    this.operations.track(pending.request.requestId, {
-      scope: pending.request.browserScope,
-      sessionId: pending.request.sessionId,
-    }, undefined, { done, resolveDone });
-    return true;
-  }
-
-  /** Ends a private request: its final state is recorded once, with the time it ended. */
-  protected settle(pending: InternalPending, state: VaultPrivateRequest['state']): void {
-    pending.request = { ...pending.request, state };
-    pending.terminalAt = this.now();
-  }
-
-  /** Cancels matching live private requests and aborts the work bound to them. */
-  protected cancelRequests(matching: (pending: InternalPending) => boolean = () => true): void {
-    for (const pending of this.requests.values()) {
-      if (!matching(pending) || !['pending', 'processing'].includes(pending.request.state)) continue;
-      this.settle(pending, 'cancelled');
-      this.operations.abort(pending.request.requestId);
-    }
-  }
-
   protected async cancelScopeOperations(scope: string): Promise<void> {
-    this.cancelRequests((pending) => pending.request.browserScope === scope);
+    this.requests.cancelMatching((pending) => pending.request.browserScope === scope);
     const inScope = (operation: PendingOperation) => operation.scope === scope;
     this.operations.abortMatching(inScope);
     await this.operations.waitForMatching(inScope);
@@ -227,10 +153,6 @@ export abstract class VaultServiceCore {
     const matching = (operation: PendingOperation) => operation.grantId === grantId;
     this.operations.abortMatching(matching);
     await this.operations.waitForMatching(matching);
-  }
-
-  protected revalidatePending(pending: InternalPending): boolean {
-    return pending.request.expiresAt > this.now() && this.isSessionLive(pending.request.sessionId);
   }
 
   protected async revalidateDocument(pending: InternalPending, connection: PrivateConnection): Promise<void> {

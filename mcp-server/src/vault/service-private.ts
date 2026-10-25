@@ -8,7 +8,7 @@ import { VaultServiceCore } from './service-core.js';
 
 export abstract class VaultServicePrivate extends VaultServiceCore {
   async handlePrivateUi(connection: PrivateConnection, payload: unknown): Promise<Record<string, unknown>> {
-    this.expireRequests();
+    this.requests.expire();
     if (!isRecord(payload) || typeof payload.operation !== 'string') return publicError('INVALID_ARGUMENT');
     const operation = payload.operation;
     const requestId = typeof payload.requestId === 'string' ? payload.requestId : undefined;
@@ -53,8 +53,8 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
           return publicError('INVALID_ARGUMENT');
       }
     } catch (error) {
-      const pending = requestId ? this.pendingForConnection(connection, requestId) : undefined;
-      if (pending?.request.state === 'processing') this.settle(pending, 'failed');
+      const pending = requestId ? this.requests.forConnection(connection, requestId) : undefined;
+      if (pending?.request.state === 'processing') this.requests.settle(pending, 'failed');
       const code = safeCode(error);
       return publicError(code);
     } finally {
@@ -77,10 +77,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const storeState = await store.status();
     const unlocked = store.isUnlocked;
     const entries = unlocked ? await store.list() : [];
-    const requests = [...this.requests.values()]
-      .filter((item) => item.request.browserScope === scope && item.connectionId === connection.connectionId
-        && ['pending', 'processing'].includes(item.request.state))
-      .sort((left, right) => left.request.createdAt - right.request.createdAt)
+    const requests = this.requests.activeFor(scope, connection.connectionId)
       .map((item) => this.safeRequestView(item, entries));
     const request = typeof requestId === 'string' ? this.requests.get(requestId) : undefined;
     if (request && (request.request.browserScope !== scope || request.connectionId !== connection.connectionId)) return publicError('VAULT_PERMISSION_DENIED');
@@ -123,12 +120,12 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
 
   private async privateUnlock(connection: PrivateConnection, requestId: unknown): Promise<Record<string, unknown>> {
     const scope = scopeForBrowser(connection.browserId);
-    const pending = requestId === undefined ? undefined : this.pendingForConnection(connection, requestId);
+    const pending = requestId === undefined ? undefined : this.requests.forConnection(connection, requestId);
     if (requestId !== undefined && !pending) return publicError('VAULT_PERMISSION_DENIED');
     if (pending && !['unlock', 'fill', 'save', 'approve'].includes(pending.request.purpose)) return publicError('VAULT_PERMISSION_DENIED');
-    if (pending?.request.purpose === 'unlock' && !this.claimPending(pending)) return this.requestState(pending);
-    if (pending && pending.request.purpose !== 'unlock' && !this.revalidatePending(pending)) {
-      this.settle(pending, 'cancelled');
+    if (pending?.request.purpose === 'unlock' && !this.requests.claim(pending)) return this.requestState(pending);
+    if (pending && pending.request.purpose !== 'unlock' && !this.requests.revalidate(pending)) {
+      this.requests.settle(pending, 'cancelled');
       return this.requestState(pending);
     }
     if (pending && pending.request.purpose !== 'unlock' && pending.request.state !== 'pending') return this.requestState(pending);
@@ -140,11 +137,11 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const audit = this.auditEvent('unlock', scope, pending?.request.sessionId, pending?.request.origin, 'success');
     await store.audit(audit);
     if (pending?.request.purpose === 'unlock') {
-      this.settle(pending, 'accepted');
+      this.requests.settle(pending, 'accepted');
       return this.requestState(pending);
     }
-    if (pending && !this.revalidatePending(pending)) {
-      this.settle(pending, 'cancelled');
+    if (pending && !this.requests.revalidate(pending)) {
+      this.requests.settle(pending, 'cancelled');
       return this.requestState(pending);
     }
     if (pending) return { success: true, status: 'unlocked', requestId: pending.request.requestId };
@@ -162,10 +159,10 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
   }
 
   private async privateSave(connection: PrivateConnection, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const pending = payload.requestId === undefined ? undefined : this.pendingForConnection(connection, payload.requestId);
+    const pending = payload.requestId === undefined ? undefined : this.requests.forConnection(connection, payload.requestId);
     if (payload.requestId !== undefined && !pending) return publicError('VAULT_PERMISSION_DENIED');
     if (pending && pending.request.purpose !== 'save') return publicError('VAULT_PERMISSION_DENIED');
-    if (pending && !this.claimPending(pending)) return this.requestState(pending);
+    if (pending && !this.requests.claim(pending)) return this.requestState(pending);
     const store = this.storeFor(connection.browserId);
     await this.ensureUiUnlocked(store);
     if (pending && pending.request.state !== 'processing') return this.requestState(pending);
@@ -194,10 +191,10 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const saveAndFill = payload.saveAndFill === true;
     if (saveAndFill && !allowSession) throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'Save and fill requires explicit session access consent');
     if ((allowSession || saveAndFill) && (!pending || !sessionId)) throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'session grants require a live private request');
-    if (pending && !this.revalidatePending(pending)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
+    if (pending && !this.requests.revalidate(pending)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
     if (pending) await this.revalidateDocument(pending, connection);
     if (pending && pending.request.state !== 'processing') return this.requestState(pending);
-    if (pending && !this.revalidatePending(pending)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
+    if (pending && !this.requests.revalidate(pending)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
     await store.upsert(entry.data);
     if (pending && pending.request.state !== 'processing') return this.requestState(pending);
     await this.writeAudit(store, existing ? 'update' : 'create', entry.data.id, sessionId, origin, 'success');
@@ -218,17 +215,17 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       }
     }
     if (pending && pending.request.state === 'processing') {
-      this.settle(pending, 'accepted');
+      this.requests.settle(pending, 'accepted');
     }
     if (pending && pending.request.state !== 'accepted') return this.requestState(pending);
     return { success: true, status: 'saved', handle: entry.data.id, origin };
   }
 
   private async privateApprove(connection: PrivateConnection, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const pending = this.pendingForConnection(connection, payload.requestId);
+    const pending = this.requests.forConnection(connection, payload.requestId);
     if (!pending || pending.request.purpose !== 'approve' && pending.request.purpose !== 'fill') return publicError('VAULT_PERMISSION_DENIED');
-    if (!this.claimPending(pending)) return this.requestState(pending);
-    if (!this.revalidatePending(pending)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
+    if (!this.requests.claim(pending)) return this.requestState(pending);
+    if (!this.requests.revalidate(pending)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
     await this.revalidateDocument(pending, connection);
     const store = this.storeFor(connection.browserId);
     await this.ensureUiUnlocked(store);
@@ -244,12 +241,12 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     }
     const entry = handle ? await store.get(handle) : null;
     if (handle && (!entry || entry.origin !== pending.request.origin)) throw new VaultServiceError('VAULT_ORIGIN_MISMATCH', 'the selected account does not match this site');
-    if (pending.request.state !== 'processing' || !this.revalidatePending(pending)) return this.requestState(pending);
+    if (pending.request.state !== 'processing' || !this.requests.revalidate(pending)) return this.requestState(pending);
     if (pending.request.purpose === 'fill') {
       const initial = await this.inspect(pending.request.tabId!, pending.request.sessionId);
       if (initial.origin !== pending.request.origin || initial.documentId !== pending.request.documentId) throw new VaultServiceError('VAULT_DOCUMENT_CHANGED', 'the page changed while the private request was open');
       const current = await this.assertInitiator(connection, pending.request.sessionId);
-      if (pending.request.state !== 'processing' || !this.revalidatePending(pending)) return this.requestState(pending);
+      if (pending.request.state !== 'processing' || !this.requests.revalidate(pending)) return this.requestState(pending);
       const grant = this.grants.create(connection, pending.request.sessionId, pending.request.origin!, purpose, handle, purpose === 'fill');
       await store.audit(this.auditEvent('grant', pending.request.browserScope, pending.request.sessionId, pending.request.origin, 'success', handle));
       const result = await this.fillGranted(current, pending.request.sessionId, pending.request.tabId!, initial, handle!, this.operations.signalFor(pending.request.requestId), grant.grantId);
@@ -257,21 +254,21 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       pending.terminalAt = this.now();
       return { ...result, requestId: pending.request.requestId, grantId: grant.grantId };
     }
-    if (pending.request.state !== 'processing' || !this.revalidatePending(pending)) return this.requestState(pending);
+    if (pending.request.state !== 'processing' || !this.requests.revalidate(pending)) return this.requestState(pending);
     const current = await this.assertInitiator(connection, pending.request.sessionId);
     const grant = this.grants.create(connection, pending.request.sessionId, pending.request.origin!, purpose, handle, purpose === 'fill');
     await store.audit(this.auditEvent('grant', pending.request.browserScope, pending.request.sessionId, pending.request.origin, 'success', handle));
     if (pending.request.state !== 'processing') return this.requestState(pending);
-    this.settle(pending, 'accepted');
+    this.requests.settle(pending, 'accepted');
     return { success: true, status: 'approved', requestId: pending.request.requestId, grantId: grant.grantId };
   }
 
   private finishRequest(connection: PrivateConnection, requestId: unknown, state: 'declined' | 'cancelled'): Record<string, unknown> {
-    const pending = this.pendingForConnection(connection, requestId);
+    const pending = this.requests.forConnection(connection, requestId);
     if (!pending) return publicError('VAULT_PERMISSION_DENIED');
     if (pending.request.state === 'processing') this.operations.abort(pending.request.requestId);
     if (!['pending', 'processing'].includes(pending.request.state)) return this.requestState(pending);
-    this.settle(pending, state);
+    this.requests.settle(pending, state);
     return this.requestState(pending);
   }
 
@@ -292,12 +289,9 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     if (!grant || grant.browserScope !== scopeForBrowser(connection.browserId) || grant.connectionId !== connection.connectionId) return publicError('VAULT_PERMISSION_DENIED');
     this.grants.revoke(grantId);
     await this.cancelGrantOperations(grantId);
-    for (const pending of this.requests.values()) {
-      if (pending.request.sessionId === grant.sessionId && pending.request.credentialId === grant.credentialId
-        && pending.request.browserScope === grant.browserScope && pending.request.state === 'processing') {
-        this.operations.abort(pending.request.requestId);
-      }
-    }
+    this.requests.abortWorkMatching((pending) => pending.request.sessionId === grant.sessionId
+      && pending.request.credentialId === grant.credentialId
+      && pending.request.browserScope === grant.browserScope && pending.request.state === 'processing');
     const store = this.storeFor(connection.browserId);
     if (store.isUnlocked) await store.audit(this.auditEvent('revoke', grant.browserScope, grant.sessionId, grant.origin, 'success', grant.credentialId));
     return { success: true, status: 'revoked' };

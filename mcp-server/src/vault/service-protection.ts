@@ -1,6 +1,6 @@
 import { scopeForBrowser } from './store.js';
 import { canonicalizeOrigin } from './types.js';
-import { PROFILE_WIDE_DENIED_TOOLS, PROTECTED_ALLOWED_TOOLS, TERMINAL_RETENTION_MS, VaultServiceError, isRecord, publicError } from './service-common.js';
+import { PROFILE_WIDE_DENIED_TOOLS, PROTECTED_ALLOWED_TOOLS, VaultServiceError, isRecord, publicError } from './service-common.js';
 import { VaultServicePrivate } from './service-private.js';
 
 /**
@@ -239,10 +239,8 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
   }
 
   revokeSession(sessionId: string): void {
-    this.cancelRequests((pending) => pending.request.sessionId === sessionId);
-    for (const [id, pending] of this.requests) {
-      if (pending.terminalAt && this.now() - pending.terminalAt > TERMINAL_RETENTION_MS) this.requests.delete(id);
-    }
+    this.requests.cancelMatching((pending) => pending.request.sessionId === sessionId);
+    this.requests.pruneTerminal();
     this.grants.revokeSession(sessionId);
     this.operations.abortMatching((operation) => operation.sessionId === sessionId);
   }
@@ -251,19 +249,19 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
   revokeConnection(browserId: string, connectionId: string): void {
     const scope = scopeForBrowser(browserId);
     this.grants.revokeConnection(scope, connectionId);
-    this.cancelRequests((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId);
+    this.requests.cancelMatching((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId);
     this.operations.abortMatching((operation) => operation.scope === scope && operation.connectionId === connectionId);
   }
 
   /** Closing the authenticated private vault page cancels its waiting approvals. */
   cancelPrivateUiRequests(browserId: string, connectionId: string): void {
     const scope = scopeForBrowser(browserId);
-    this.cancelRequests((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId);
+    this.requests.cancelMatching((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId);
   }
 
   lockAll(): void {
     this.grants.clear();
-    this.cancelRequests();
+    this.requests.cancelMatching();
     this.operations.abortMatching(() => true);
     for (const store of this.stores.values()) store.lock();
   }

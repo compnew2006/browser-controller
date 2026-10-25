@@ -7,7 +7,7 @@ export * from './service-common.js';
 
 export class VaultService extends VaultServiceProtection {
   async handlePublic(sessionId: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    this.expireRequests();
+    this.requests.expire();
     const action = params.action;
     if (action === 'status') return this.publicStatus(sessionId, params);
     const requestedTab = params.tabId;
@@ -66,7 +66,7 @@ export class VaultService extends VaultServiceProtection {
     purpose: VaultPrivateRequest['purpose'],
     extra: { credentialId?: string; label?: string } = {},
   ): Promise<Record<string, unknown>> {
-    const request = await this.beginRequest(context, {
+    const request = await this.requests.begin(context, {
       purpose,
       sessionId,
       tabId,
