@@ -33,6 +33,8 @@ export function isPrivateVaultUrl(raw) {
 function safeFailure(code) {
   const messages = {
     VAULT_TARGET_UNSAFE: 'The page does not have one verified editable password field.',
+    VAULT_ORIGIN_UNSUPPORTED: 'This page is not a supported vault target: fills work only on HTTPS sites and on loopback HTTP.',
+    VAULT_PAGE_UNRESPONSIVE: 'The page did not respond before the vault action timed out.',
     VAULT_ORIGIN_MISMATCH: 'The page origin changed before the fill.',
     VAULT_DOCUMENT_CHANGED: 'The page changed before the fill.',
     VAULT_PERMISSION_DENIED: 'The private browser action is no longer valid.',
@@ -46,11 +48,11 @@ function safeFailure(code) {
 
 function canonicalOrigin(raw) {
   let url;
-  try { url = new URL(raw); } catch { throw new Error('VAULT_TARGET_UNSAFE'); }
+  try { url = new URL(raw); } catch { throw new Error('VAULT_ORIGIN_UNSUPPORTED'); }
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
-    throw new Error('VAULT_TARGET_UNSAFE');
+    throw new Error('VAULT_ORIGIN_UNSUPPORTED');
   }
-  if (url.username || url.password) throw new Error('VAULT_TARGET_UNSAFE');
+  if (url.username || url.password) throw new Error('VAULT_ORIGIN_UNSUPPORTED');
   return url.origin;
 }
 
@@ -587,7 +589,10 @@ export async function handleVaultAction(action, params, signal) {
       return await openPrivateVault(params.requestId);
     }
     return safeFailure('INVALID_ARGUMENT');
-  } catch {
-    return safeFailure('VAULT_TARGET_UNSAFE');
+  } catch (error) {
+    // The checks above throw their own code; a page that never answers throws TAB_WEDGED.
+    const thrown = error?.code === 'TAB_WEDGED' ? 'VAULT_PAGE_UNRESPONSIVE' : error?.message;
+    return safeFailure(/^(VAULT_[A-Z0-9_]+|INVALID_ARGUMENT)$/.test(thrown) ? thrown
+      : action === 'openUi' ? 'VAULT_PERMISSION_DENIED' : 'VAULT_DOCUMENT_CHANGED');
   }
 }

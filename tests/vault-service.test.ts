@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { VaultService, type VaultBrowserContext, type VaultTransport } from '../mcp-server/src/vault/service.js';
+import { safeMessage } from '../mcp-server/src/vault/service-common.js';
 import { scopeForBrowser } from '../mcp-server/src/vault/store.js';
 import { forwardHandler } from '../mcp-server/src/tools/types.js';
 import { routeVaultAwareCall } from '../mcp-server/src/vault/daemon-routing.js';
@@ -124,6 +125,13 @@ describe('VaultService', () => {
     expect(wrapped.isError).toBe(true);
     const text = wrapped.content.find((item) => item.type === 'text');
     expect(text?.type === 'text' ? text.text : '').not.toContain('VAULT_PERMISSION_DENIED');
+  });
+
+  it('gives the unsupported-origin and unresponsive-page codes their own message, not the generic one', () => {
+    // The agent decides its next move from this sentence; the generic fallback
+    // says nothing about the site or about retrying.
+    expect(safeMessage('VAULT_ORIGIN_UNSUPPORTED')).toMatch(/only on HTTPS sites and on loopback HTTP/);
+    expect(safeMessage('VAULT_PAGE_UNRESPONSIVE')).toMatch(/did not respond/);
   });
 
   it('writes a daemon-ephemeral HMAC session reference instead of a raw session ID to audit', async () => {

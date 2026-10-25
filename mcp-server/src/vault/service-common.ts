@@ -138,6 +138,8 @@ export function safeMessage(code: string): string {
     VAULT_EXTENSION_REQUIRED: 'The connected Browser Controller daemon does not support the credential vault. Restart it, then reload the extension.',
     VAULT_PERMISSION_DENIED: 'This browser, site, account, or session does not have a current user grant.',
     VAULT_ORIGIN_MISMATCH: 'The active page does not match the exact site origin saved for this account.',
+    VAULT_ORIGIN_UNSUPPORTED: 'This page is not a supported vault target: fills work only on HTTPS sites and on loopback HTTP.',
+    VAULT_PAGE_UNRESPONSIVE: 'The page did not respond before the vault action timed out. Reload it, then inspect again.',
     VAULT_DOCUMENT_CHANGED: 'The page changed while the private request was waiting. Start a new request.',
     VAULT_TARGET_UNSAFE: 'The page does not have one verified, editable current-password field.',
     VAULT_CONTEXT_PROTECTED: 'This operation is blocked because the page may contain a saved password.',

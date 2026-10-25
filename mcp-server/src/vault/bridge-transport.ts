@@ -93,7 +93,7 @@ export class VaultBridgeTransport {
         const target = this.pending.get(id);
         if (target) this.rejectAction(id, target, new Error(action === 'fill'
           ? 'VAULT_OUTCOME_UNKNOWN: private fill timed out after dispatch'
-          : 'VAULT_TARGET_UNSAFE: private vault action timed out'), true);
+          : 'VAULT_PAGE_UNRESPONSIVE: the extension did not answer the private action'), true);
       }, timeoutMs);
       const pending: PendingVaultAction = { resolve, reject, timeout, action, conn, signal };
       const onAbort = () => {

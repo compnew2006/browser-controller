@@ -9,6 +9,23 @@ let savedRuntimeState: any = { protectionSequence: 0, protectedDocuments: [], pe
 const localValues: Record<string, unknown> = {};
 let rejectSessionWrites = false;
 
+const executeScriptStub = async (request: Record<string, any>) => {
+  injected.push(request);
+  const documentId = request.target.documentIds[0];
+  const frame = frames.find((item) => item.documentId === documentId);
+  if (!frame) return [];
+  if (request.func.name === 'inspectPasswordField') {
+    const candidateCount = candidatesByDocument.get(documentId) ?? 0;
+    return [{ frameId: frame.frameId, documentId, result: {
+      candidateCount, suitable: candidateCount === 1, documentOrigin: new URL(frame.url).origin,
+    } }];
+  }
+  if (request.func.name === 'fillInspectedPassword') {
+    return [{ frameId: frame.frameId, documentId, result: { success: true, retained: true, filled_fields: 1 } }];
+  }
+  return [{ frameId: frame.frameId, documentId, result: true }];
+};
+
 (globalThis as any).chrome = {
   runtime: { id: 'fixture-extension', getURL: (path: string) => `chrome-extension://fixture-extension/${path}` },
   tabs: {
@@ -19,24 +36,7 @@ let rejectSessionWrites = false;
     getFrame: async () => frames.find((frame) => frame.frameId === 0),
     getAllFrames: async () => frames.map((frame) => ({ ...frame })),
   },
-  scripting: {
-    executeScript: async (request: Record<string, any>) => {
-      injected.push(request);
-      const documentId = request.target.documentIds[0];
-      const frame = frames.find((item) => item.documentId === documentId);
-      if (!frame) return [];
-      if (request.func.name === 'inspectPasswordField') {
-        const candidateCount = candidatesByDocument.get(documentId) ?? 0;
-        return [{ frameId: frame.frameId, documentId, result: {
-          candidateCount, suitable: candidateCount === 1, documentOrigin: new URL(frame.url).origin,
-        } }];
-      }
-      if (request.func.name === 'fillInspectedPassword') {
-        return [{ frameId: frame.frameId, documentId, result: { success: true, retained: true, filled_fields: 1 } }];
-      }
-      return [{ frameId: frame.frameId, documentId, result: true }];
-    },
-  },
+  scripting: { executeScript: executeScriptStub },
   storage: {
     session: {
       get: async () => savedRuntimeState === undefined ? {} : ({ bcVaultRuntimeState: savedRuntimeState }),
@@ -104,7 +104,10 @@ function installPage(fields: FixtureInput[], elements: any[] = []) {
 }
 
 describe('extension vault inspection and one-shot fill', () => {
+  const defaultTabsGet = (globalThis as any).chrome.tabs.get;
+
   beforeEach(async () => {
+    (globalThis as any).chrome.tabs.get = defaultTabsGet;
     frames.splice(0, frames.length,
       { frameId: 0, documentId: 'top-document', url: 'https://fixture.test/login' },
       { frameId: 7, documentId: 'same-origin-frame', url: 'https://fixture.test/frame' });
@@ -115,6 +118,38 @@ describe('extension vault inspection and one-shot fill', () => {
     delete localValues.bcVaultMayHaveSensitiveContext;
     rejectSessionWrites = false;
     await vault.restoreVaultRuntimeState();
+  });
+
+  it('reports an unsupported page origin as unsupported, not as a missing password field', async () => {
+    (globalThis as any).chrome.tabs.get = async () => ({ id: 12, url: 'http://example.test/login' });
+    const result = await vault.handleVaultAction('inspect', { tabId: 12 });
+    expect(result).toMatchObject({ success: false, code: 'VAULT_ORIGIN_UNSUPPORTED' });
+  });
+
+  it('keeps the code a vault check threw instead of flattening it to VAULT_TARGET_UNSAFE', async () => {
+    frames[1] = { frameId: 7, documentId: '', url: 'https://fixture.test/frame' };
+    const result = await vault.handleVaultAction('inspect', { tabId: 12 });
+    expect(result).toMatchObject({ success: false, code: 'VAULT_DOCUMENT_CHANGED' });
+  });
+
+  it('reports a tab that cannot be read as a changed document', async () => {
+    (globalThis as any).chrome.tabs.get = async () => { throw new Error('No tab with id: 12.'); };
+    const result = await vault.handleVaultAction('inspect', { tabId: 12 });
+    expect(result).toMatchObject({ success: false, code: 'VAULT_DOCUMENT_CHANGED' });
+  });
+
+  it('reports a page that never answered as unresponsive', async () => {
+    const wedged = Object.assign(new Error('TAB_WEDGED: tab 12 did not respond'), { code: 'TAB_WEDGED' });
+    (globalThis as any).chrome.scripting.executeScript = async (request: Record<string, any>) => {
+      injected.push(request);
+      throw wedged;
+    };
+    try {
+      const result = await vault.handleVaultAction('inspect', { tabId: 12 });
+      expect(result).toMatchObject({ success: false, code: 'VAULT_PAGE_UNRESPONSIVE' });
+    } finally {
+      (globalThis as any).chrome.scripting.executeScript = executeScriptStub;
+    }
   });
 
   it('inspects across same-origin frames and fills only the inspected document ID', async () => {
