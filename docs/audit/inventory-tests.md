@@ -1,0 +1,90 @@
+# Inventory — tests
+
+Tests are listed at file level: **82** files, **1293** test-side symbols. Tests are out of scope for the remediation plan, but they are counted so the inventory covers every parsed symbol in the repository.
+
+| file | lines | test-side symbols |
+|---|---:|---:|
+| tests/architecture-maintenance.test.ts | 73 | 4 |
+| tests/bridge-multibrowser.test.ts | 194 | 4 |
+| tests/bridge-vault.test.ts | 159 | 10 |
+| tests/bridge.test.ts | 704 | 7 |
+| tests/browser-log.test.ts | 132 | 20 |
+| tests/cdp-evaluate.test.ts | 170 | 8 |
+| tests/daemon-lifecycle-identity.test.ts | 50 | 3 |
+| tests/daemon-reconnect.test.ts | 218 | 20 |
+| tests/daemon-restart.test.ts | 244 | 20 |
+| tests/daemon.test.ts | 664 | 10 |
+| tests/emulation.test.ts | 207 | 16 |
+| tests/extension-connection-handshake.test.ts | 206 | 18 |
+| tests/extension-evaluate.test.ts | 127 | 14 |
+| tests/extension-fieldreport.test.ts | 141 | 25 |
+| tests/extension-inspect.test.ts | 248 | 24 |
+| tests/extension-native-pairing.test.ts | 133 | 19 |
+| tests/extension-open-tabs.test.ts | 72 | 10 |
+| tests/extension-router.test.ts | 381 | 32 |
+| tests/extension-shield.test.ts | 281 | 50 |
+| tests/extension-state.test.ts | 94 | 13 |
+| tests/extension-vault.test.ts | 304 | 39 |
+| tests/fill-kinds.test.ts | 377 | 27 |
+| tests/helpers/fake-dom.ts | 183 | 61 |
+| tests/input-aim.test.ts | 394 | 27 |
+| tests/inspect-element.test.ts | 201 | 4 |
+| tests/legacy-ref-registry.test.ts | 141 | 30 |
+| tests/native-host.test.ts | 58 | 4 |
+| tests/navigation-readiness.test.ts | 377 | 38 |
+| tests/network-bodies.test.ts | 118 | 15 |
+| tests/network-capture.test.ts | 137 | 9 |
+| tests/page-dom.test.ts | 281 | 14 |
+| tests/pairing-setup.test.ts | 97 | 2 |
+| tests/popup-open-tabs.test.ts | 116 | 2 |
+| tests/protocol-handshake.test.ts | 481 | 5 |
+| tests/register-tools.test.ts | 188 | 8 |
+| tests/response-bodies.test.ts | 174 | 3 |
+| tests/smart-selector.test.ts | 137 | 7 |
+| tests/tab-concurrency.test.ts | 367 | 4 |
+| tests/tab-replacement.test.ts | 108 | 12 |
+| tests/tools/batch.test.ts | 251 | 10 |
+| tests/tools/fill.test.ts | 191 | 3 |
+| tests/tools/forward-handler.test.ts | 141 | 2 |
+| tests/tools/schema-strict.test.ts | 132 | 2 |
+| tests/tools/screenshot.test.ts | 35 | 2 |
+| tests/tools/snapshot.test.ts | 40 | 2 |
+| tests/trusted-input.test.ts | 246 | 16 |
+| tests/v3-cdp-session.test.ts | 48 | 8 |
+| tests/v3-input.test.ts | 933 | 31 |
+| tests/v3-lifecycle.test.ts | 232 | 38 |
+| tests/v3-logs.test.ts | 291 | 18 |
+| tests/v3-mock.test.ts | 232 | 19 |
+| tests/v3-read.test.ts | 625 | 25 |
+| tests/v3-rebind-roles.test.ts | 111 | 25 |
+| tests/v3-ref-documents.test.ts | 151 | 22 |
+| tests/v3-server.test.ts | 102 | 2 |
+| tests/v3-session-load.test.ts | 80 | 5 |
+| tests/v3-shot.test.ts | 364 | 36 |
+| tests/v3-tabs.test.ts | 411 | 47 |
+| tests/v3-target.test.ts | 358 | 17 |
+| tests/vault-service.test.ts | 549 | 11 |
+| tests/vault-store.test.ts | 206 | 5 |
+| tests/wedged-tab.test.ts | 75 | 10 |
+| tests/window-tabs.test.ts | 57 | 20 |
+| tests/wp1-find-snapshot.test.ts | 146 | 19 |
+| tests/wp2a-click-actionability.test.ts | 159 | 17 |
+| tests/wp2a-input-paths.test.ts | 116 | 15 |
+| tests/wp2a-page-exec-cdp.test.ts | 99 | 12 |
+| tests/wp2b-drag-fill.test.ts | 76 | 15 |
+| tests/wp2b-overlay.test.ts | 144 | 16 |
+| tests/wp3-dialog.test.ts | 180 | 16 |
+| tests/wp3-emulate.test.ts | 188 | 16 |
+| tests/wp3-evaluate.test.ts | 260 | 22 |
+| tests/wp4-mcp-tools.test.ts | 47 | 3 |
+| tests/wp4-navigate.test.ts | 341 | 35 |
+| tests/wp4-screenshot.test.ts | 83 | 20 |
+| tests/wp5-network-events.test.ts | 140 | 22 |
+| tests/wp5-network.test.ts | 142 | 9 |
+| tests/wp6-browser-default.test.ts | 88 | 4 |
+| tests/wp6-daemon-sessions.test.ts | 129 | 5 |
+| tests/wp6-extension-daemon-instance.test.ts | 113 | 13 |
+| tests/wp6-tab-lock-fail-fast.test.ts | 98 | 1 |
+| tests/wpf1-controls.test.ts | 257 | 19 |
+
+Total parsed symbols: **2403** (production 1110 + tests 1293).
