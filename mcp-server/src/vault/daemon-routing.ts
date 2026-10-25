@@ -1,4 +1,5 @@
 import { VaultService } from './service.js';
+import { isRecord } from './service-common.js';
 import { isCredentialVaultPath } from './protected-paths.js';
 
 const INTERNAL_VAULT_TOOL_NAMES = new Set([
@@ -25,10 +26,6 @@ interface RouteOptions {
   tool: string;
   params: Record<string, unknown>;
   signal: AbortSignal;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function safeErrorText(value: unknown): string {
