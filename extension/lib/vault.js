@@ -426,12 +426,6 @@ export async function markDocumentCurrent(tabId, documentId) {
   }
 }
 
-export async function clearInspectionState() {
-  inspections.clear();
-  // Isolated worlds disappear with document destruction; on worker recycle,
-  // an outstanding nonce expires quickly and cannot be replayed by the page.
-}
-
 async function inspectAction(params, signal) {
   if (!Number.isInteger(params.tabId) || Object.keys(params).some((key) => key !== 'tabId')) return safeFailure('INVALID_ARGUMENT');
   pruneInspections();
