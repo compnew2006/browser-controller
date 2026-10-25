@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { tabIdParam, textResult, failureResult, rawResultOf, codedMessageOf } from './types.js';
 import { toolMap } from './index.js';
-import { parseToolParams } from '../register-tools.js';
+import { parseToolParams } from './params.js';
 import { BATCH_BUDGET_MS, BATCH_MAX_DELAY_MS, BATCH_MAX_STEPS, NOT_BATCHABLE, NO_DEFAULT_TAB } from './batch-limits.js';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
