@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { CredentialVaultStore, VaultStorageError, scopeForBrowser } from './store.js';
 import { VaultRedactionRegistry } from './redaction.js';
 import { canonicalizeOrigin, metadataOf, randomId, VaultCredentialSchema, type VaultCredential, type VaultGrant, type VaultPrivateRequest } from './types.js';
+import { OperationRegistry } from './operations.js';
 import {
   TERMINAL_RETENTION_MS, VAULT_FILL_OPERATION_TIMEOUT_MS, VAULT_PENDING_TTL_MS,
   VaultServiceError, isRecord, publicError, safeCode, safeMessage, type VaultBrowserContext,
@@ -17,7 +18,7 @@ export abstract class VaultServiceCore {
   protected readonly grants = new Map<string, LiveGrant>();
   protected readonly requests = new Map<string, InternalPending>();
   protected readonly protectedDocuments = new Map<string, Map<string, ProtectedDocument>>();
-  protected readonly operations = new Map<string, PendingOperation>();
+  protected readonly operations = new OperationRegistry();
   protected readonly protectionSequences = new Map<string, number>();
   protected readonly protectionConnections = new Map<string, string>();
   protected readonly protectionUnknownScopes = new Set<string>();
@@ -194,7 +195,7 @@ export abstract class VaultServiceCore {
     pending.request = { ...pending.request, state: 'processing' };
     let resolveDone!: () => void;
     const done = new Promise<void>((resolve) => { resolveDone = resolve; });
-    this.trackOperation(pending.request.requestId, {
+    this.operations.track(pending.request.requestId, {
       scope: pending.request.browserScope,
       sessionId: pending.request.sessionId,
     }, undefined, { done, resolveDone });
@@ -207,80 +208,32 @@ export abstract class VaultServiceCore {
     pending.terminalAt = this.now();
   }
 
-  protected trackOperation(
-    id: string,
-    metadata: Pick<PendingOperation, 'scope'> & Partial<Pick<PendingOperation, 'sessionId' | 'connectionId' | 'grantId' | 'credentialId'>>,
-    parentSignal?: AbortSignal,
-    completion?: Pick<PendingOperation, 'done' | 'resolveDone'>,
-  ): PendingOperation {
-    let resolveDone = completion?.resolveDone;
-    const done = completion?.done ?? new Promise<void>((resolve) => { resolveDone = resolve; });
-    const operation: PendingOperation = {
-      ...metadata,
-      controller: new AbortController(),
-      done,
-      resolveDone: resolveDone!,
-    };
-    if (parentSignal) {
-      operation.parentSignal = parentSignal;
-      operation.parentAbortHandler = () => operation.controller.abort();
-      if (parentSignal.aborted) operation.controller.abort();
-      else parentSignal.addEventListener('abort', operation.parentAbortHandler, { once: true });
-    }
-    this.operations.set(id, operation);
-    return operation;
-  }
-
-  protected completeOperation(requestId: string): void {
-    const operation = this.operations.get(requestId);
-    if (!operation) return;
-    this.operations.delete(requestId);
-    if (operation.parentSignal && operation.parentAbortHandler) {
-      operation.parentSignal.removeEventListener('abort', operation.parentAbortHandler);
-    }
-    operation.resolveDone();
-  }
-
-  protected operationSignal(pending: InternalPending): AbortSignal | undefined {
-    return this.operations.get(pending.request.requestId)?.controller.signal;
-  }
-
-  /** Aborts in-flight work now; a caller that needs completion also awaits a waitForOperations call. */
-  protected abortOperationsMatching(predicate: (operation: PendingOperation) => boolean): void {
-    for (const operation of this.operations.values()) if (predicate(operation)) operation.controller.abort();
-  }
-
   /** Cancels matching live private requests and aborts the work bound to them. */
   protected cancelRequests(matching: (pending: InternalPending) => boolean = () => true): void {
     for (const pending of this.requests.values()) {
       if (!matching(pending) || !['pending', 'processing'].includes(pending.request.state)) continue;
       this.settle(pending, 'cancelled');
-      this.operations.get(pending.request.requestId)?.controller.abort();
+      this.operations.abort(pending.request.requestId);
     }
   }
 
   protected async cancelScopeOperations(scope: string): Promise<void> {
     this.cancelRequests((pending) => pending.request.browserScope === scope);
     const inScope = (operation: PendingOperation) => operation.scope === scope;
-    this.abortOperationsMatching(inScope);
-    await this.waitForOperationsMatching(inScope);
+    this.operations.abortMatching(inScope);
+    await this.operations.waitForMatching(inScope);
   }
 
   protected async cancelCredentialOperations(scope: string, credentialId: string): Promise<void> {
     const matching = (operation: PendingOperation) => operation.scope === scope && operation.credentialId === credentialId;
-    this.abortOperationsMatching(matching);
-    await this.waitForOperationsMatching(matching);
+    this.operations.abortMatching(matching);
+    await this.operations.waitForMatching(matching);
   }
 
   protected async cancelGrantOperations(grantId: string): Promise<void> {
     const matching = (operation: PendingOperation) => operation.grantId === grantId;
-    this.abortOperationsMatching(matching);
-    await this.waitForOperationsMatching(matching);
-  }
-
-  protected async waitForOperationsMatching(predicate: (operation: PendingOperation) => boolean): Promise<void> {
-    const operations = [...this.operations.values()].filter(predicate);
-    await Promise.all(operations.map((operation) => operation.done));
+    this.operations.abortMatching(matching);
+    await this.operations.waitForMatching(matching);
   }
 
   protected revalidatePending(pending: InternalPending): boolean {

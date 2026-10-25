@@ -94,7 +94,7 @@ export class VaultService extends VaultServiceProtection {
       if (oneShotGrant.consumed || oneShotGrant.claimedBy) return publicError('VAULT_PERMISSION_DENIED');
       oneShotGrant.claimedBy = operationId;
     }
-    const operation = this.trackOperation(operationId, {
+    const operation = this.operations.track(operationId, {
       scope,
       sessionId,
       connectionId: context.connectionId,
@@ -152,7 +152,7 @@ export class VaultService extends VaultServiceProtection {
         oneShotGrant.claimedBy = undefined;
         this.grants.delete(oneShotGrant.grantId);
       }
-      this.completeOperation(operationId);
+      this.operations.complete(operationId);
     }
   }
 

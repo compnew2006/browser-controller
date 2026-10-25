@@ -244,7 +244,7 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
       if (pending.terminalAt && this.now() - pending.terminalAt > TERMINAL_RETENTION_MS) this.requests.delete(id);
     }
     for (const [id, grant] of this.grants) if (grant.sessionId === sessionId) this.grants.delete(id);
-    this.abortOperationsMatching((operation) => operation.sessionId === sessionId);
+    this.operations.abortMatching((operation) => operation.sessionId === sessionId);
   }
 
   /** A reconnect is a new authority epoch even when the copied profile ID matches. */
@@ -254,7 +254,7 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
       if (grant.browserScope === scope && grant.connectionId === connectionId) this.grants.delete(id);
     }
     this.cancelRequests((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId);
-    this.abortOperationsMatching((operation) => operation.scope === scope && operation.connectionId === connectionId);
+    this.operations.abortMatching((operation) => operation.scope === scope && operation.connectionId === connectionId);
   }
 
   /** Closing the authenticated private vault page cancels its waiting approvals. */
@@ -266,7 +266,7 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
   lockAll(): void {
     for (const grantId of this.grants.keys()) this.grants.delete(grantId);
     this.cancelRequests();
-    this.abortOperationsMatching(() => true);
+    this.operations.abortMatching(() => true);
     for (const store of this.stores.values()) store.lock();
   }
 }

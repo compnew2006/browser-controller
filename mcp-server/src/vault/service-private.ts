@@ -58,7 +58,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       const code = safeCode(error);
       return publicError(code);
     } finally {
-      if (requestId && this.operations.get(requestId) !== operationBefore) this.completeOperation(requestId);
+      if (requestId && this.operations.get(requestId) !== operationBefore) this.operations.complete(requestId);
     }
   }
 
@@ -211,7 +211,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
         const current = await this.assertInitiator(connection, sessionId!);
         const initial = await this.inspect(pending.request.tabId!, sessionId!);
         if (initial.origin !== origin || initial.documentId !== pending.request.documentId) throw new VaultServiceError('VAULT_DOCUMENT_CHANGED', 'the page changed while the private form was open');
-        const result = await this.fillGranted(current, sessionId!, pending.request.tabId!, initial, entry.data.id, this.operationSignal(pending), grant.grantId);
+        const result = await this.fillGranted(current, sessionId!, pending.request.tabId!, initial, entry.data.id, this.operations.signalFor(pending.request.requestId), grant.grantId);
         if (pending.request.state === 'processing') pending.request = { ...pending.request, state: isRecord(result) && result.status === 'filled' ? 'accepted' : 'failed' };
         pending.terminalAt = this.now();
         return { success: pending.request.state === 'accepted', status: pending.request.state, requestId: pending.request.requestId, grantId: grant.grantId };
@@ -252,7 +252,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       if (pending.request.state !== 'processing' || !this.revalidatePending(pending)) return this.requestState(pending);
       const grant = this.createGrant(connection, pending.request.sessionId, pending.request.origin!, purpose, handle, purpose === 'fill');
       await store.audit(this.auditEvent('grant', pending.request.browserScope, pending.request.sessionId, pending.request.origin, 'success', handle));
-      const result = await this.fillGranted(current, pending.request.sessionId, pending.request.tabId!, initial, handle!, this.operationSignal(pending), grant.grantId);
+      const result = await this.fillGranted(current, pending.request.sessionId, pending.request.tabId!, initial, handle!, this.operations.signalFor(pending.request.requestId), grant.grantId);
       if (pending.request.state === 'processing') pending.request = { ...pending.request, state: isRecord(result) && result.status === 'filled' ? 'accepted' : 'failed' };
       pending.terminalAt = this.now();
       return { ...result, requestId: pending.request.requestId, grantId: grant.grantId };
@@ -269,7 +269,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
   private finishRequest(connection: PrivateConnection, requestId: unknown, state: 'declined' | 'cancelled'): Record<string, unknown> {
     const pending = this.pendingForConnection(connection, requestId);
     if (!pending) return publicError('VAULT_PERMISSION_DENIED');
-    if (pending.request.state === 'processing') this.operations.get(pending.request.requestId)?.controller.abort();
+    if (pending.request.state === 'processing') this.operations.abort(pending.request.requestId);
     if (!['pending', 'processing'].includes(pending.request.state)) return this.requestState(pending);
     this.settle(pending, state);
     return this.requestState(pending);
@@ -295,7 +295,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     for (const pending of this.requests.values()) {
       if (pending.request.sessionId === grant.sessionId && pending.request.credentialId === grant.credentialId
         && pending.request.browserScope === grant.browserScope && pending.request.state === 'processing') {
-        this.operations.get(pending.request.requestId)?.controller.abort();
+        this.operations.abort(pending.request.requestId);
       }
     }
     const store = this.storeFor(connection.browserId);
