@@ -77,7 +77,7 @@ documentation, not validation.
 
 ---
 
-## P2 — Boundaries, cycles, names — in progress
+## P2 — Boundaries, cycles, names — done
 
 ### Step 1 — break the cycles (F5) — done
 
@@ -130,4 +130,71 @@ The relaxation `register-tools.ts` still needs (`parseToolParams` stays re-expor
 exception, not a hole: the function moved, the bootstrap keeps a one-line re-export so the existing
 test can keep importing it from where it was. Deleting that line is P5's job (export narrowing), with
 the test updated then.
+
+---
+
+## P3 — Vault service: composition (ADR-02) — in progress
+
+### Entry condition — the smoke harness exists and passes
+
+R1 asked for `npm run smoke:vault-isolated` before and after every vault change. It is **available**,
+so no waiver was needed: `scripts/smoke-vault-isolated.mjs` is not a manual checklist, it is a
+Playwright-driven end-to-end run that owns a temporary daemon state directory, its own extension copy
+and a disposable Chromium profile. It saves an account through the private page, lists and fills 20
+times over MCP, checks that a protected page blocks evaluate/screenshot/batch, that page text is
+redacted, and that the fixture password never reaches extension storage, daemon files or logs.
+
+Playwright is not a project dependency. It is supplied per run, as the script expects:
+
+```bash
+VAULT_PLAYWRIGHT_MODULE=<playwright>/index.js \
+VAULT_CHROME_EXECUTABLE="<chromium>/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing" \
+npm run smoke:vault-isolated
+```
+
+(The `/index.js` suffix matters: the script `import()`s the module path and Node refuses a bare
+directory. Playwright 1.64-alpha in the npx cache resolves to chromium revision 1247, but the cache
+holds 1243 — so `VAULT_CHROME_EXECUTABLE` is required, not optional.)
+
+**Baseline on `7ebdb53` (before any P3 change):** `result: passed`, 20 accounts listed, 20 fills
+verified, fill p50 20.97 ms / p95 22.88 ms, list p50 5.36 ms, every boolean check true.
+
+### Step 1 — `OperationRegistry` — done, `3fb027e`
+
+`vault/operations.ts` owns the map, one `AbortController` and one `done` promise per operation:
+`track`, `get`, `complete`, `signalFor`, `abort`, `abortMatching`, `waitForMatching`. The method
+bodies are the old ones moved verbatim. `service-core.ts` 360 → 313 lines.
+
+Two additions to the plan's interface, both from real call sites:
+
+- `get(id)` — `service-private.ts` compares the operation *identity* before and after a private-UI
+  call to decide whether a new operation appeared; no other shape keeps that check exact.
+- `abort(id)` — three sites did `get(id)?.controller.abort()`; a single-operation method says what
+  they mean and keeps the map private.
+
+### Deviation — 19 call sites, not ~10
+
+`06` said to stop if the move needed more than ~10 call-site edits. It needed 19:
+
+| Where | Count | Kind |
+|---|---|---|
+| `service-core.ts` | 8 | 1 track, 1 abort, 3 abort-matching, 3 wait-matching |
+| `service-private.ts` | 6 | 3 map reads, 1 complete, 2 signal |
+| `service-protection.ts` | 3 | abort-matching in `revokeSession`, `revokeConnection`, `lockAll` |
+| `service.ts` | 2 | track in `fillGranted`, complete in its `finally` |
+
+Proceeded rather than stopped, for these reasons and not others:
+
+- every edit is a one-line rename that the compiler validates; none crosses a domain boundary or
+  reads state the old code hid;
+- the high count comes from **cancellation policy being spread over three files**, which is a real
+  finding but not extra coupling — the moved code closes over one map and nothing else;
+- the threshold exists to catch "this is a rewrite, re-plan", and a rewrite would show up as call
+  sites needing *arguments the registry does not have*. None did.
+
+Cost if this was the wrong call: revert `3fb027e`; nothing else depends on it yet.
+
+**After step 1:** `npm run typecheck` clean, `npx eslint mcp-server/src/vault` clean, `npm test`
+89 files / 1138 tests, extractor `parseFailures 0`, `0 unresolved`, `0 cycles`, and the smoke passes
+with the same 20/20 fixtures, the same booleans, fill p50 20.75 ms / p95 24.53 ms.
 
