@@ -1,6 +1,30 @@
 import crypto from 'node:crypto';
 
-/** Every shape a secret may take in page text: normalization forms and both line endings. */
+/** Shortest secret that also gets encoded forms: the base64 or URL form of a few characters would match ordinary text. */
+export const MIN_ENCODED_SECRET_LENGTH = 8;
+
+/**
+ * The encodings a page or a log commonly applies to a string: JSON string escapes, URL
+ * (`encodeURIComponent`) and form (`+` for a space) encoding, and base64 of the UTF-8 bytes in the
+ * standard and URL-safe alphabets, padded and not. A secret that was cut into pieces, chunked, or
+ * embedded inside a larger base64 stream (a different 3-byte alignment) cannot be matched this
+ * way in general: scrubbing is a best-effort backstop, not a guarantee.
+ */
+function encodedForms(value: string): string[] {
+  const base64 = Buffer.from(value, 'utf8').toString('base64');
+  const uri = encodeURIComponent(value);
+  return [
+    JSON.stringify(value).slice(1, -1),
+    uri,
+    uri.replace(/%20/g, '+'),
+    base64,
+    base64.replace(/=+$/, ''),
+    base64.replace(/\+/g, '-').replace(/\//g, '_'),
+    base64.replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'),
+  ];
+}
+
+/** Every shape a secret may take in page text: normalization forms, both line endings, and (for secrets of MIN_ENCODED_SECRET_LENGTH or more) encoded forms. */
 export function secretVariants(value: string): string[] {
   const variants = new Set<string>([
     value,
@@ -11,6 +35,12 @@ export function secretVariants(value: string): string[] {
     value.replace(/\r\n?/g, '\n'),
     value.replace(/\n/g, '\r\n'),
   ]);
+  if (value.length >= MIN_ENCODED_SECRET_LENGTH) {
+    // Only the raw and NFC spellings are encoded: a handful of extra variants per secret, not a product of all forms.
+    for (const base of new Set([value, value.normalize('NFC')])) {
+      for (const form of encodedForms(base)) variants.add(form);
+    }
+  }
   return [...variants].filter(Boolean);
 }
 

@@ -9,6 +9,7 @@
  */
 
 import { redactTextKeys, redactUrl } from './network-capture.js';
+import { isSecretKey, isQuantity } from './secret-keys.js';
 
 export const REDACTED = '[redacted]';
 export const MAX_BODIES = 50;
@@ -22,8 +23,6 @@ const MATCH_WINDOW_MS = 3000;
 // Requests that never finish (long polls, aborted pages) must not leak.
 const INFLIGHT_CAP = 500;
 const TEXT_MIME = /^text\/|json|xml|javascript|ecmascript|x-www-form-urlencoded|graphql|csv|yaml/i;
-// Narrower than the header pattern: JSON keys such as "author" or "max_tokens" are ordinary data.
-const SENSITIVE_KEY = /token|secret|passw|api[-_]?key|^authorization$|^cookie$|^session[-_]?id$/i;
 
 /** Does `text` parse as JSON? */
 function parsesAsJson(text) {
@@ -40,28 +39,30 @@ export function redactBody(text) {
 }
 
 /**
- * Replace the string values under credential keys (access_token, password,
- * apiKey…) in a JSON body, at any depth below the key ({"tokens": ["…"]},
- * {"secret": {"value": "…"}}); numbers stay ("max_tokens": 50). Text that is
- * not JSON, or has nothing to redact, comes back unchanged.
+ * Replace every scalar (string, number, boolean) under a credential key (access_token, password,
+ * apiKey…) in a JSON body, at any depth below the key ({"tokens": ["…"]}, {"pin": {"n": 1234}}).
+ * null stays, and so does a counter such as "max_tokens": 50 (isQuantity). Text that is not JSON,
+ * or has nothing to redact, comes back unchanged.
  */
 export function redactJsonBody(text) {
   let data;
   try { data = JSON.parse(text); } catch { return { text, redacted: [] }; }
   const redacted = new Set();
+  const isScalar = (value) => typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
   const walk = (node, under) => {
     if (Array.isArray(node)) {
       node.forEach((value, i) => {
-        if (under && typeof value === 'string') { node[i] = REDACTED; redacted.add(under); }
+        if (under && isScalar(value)) { node[i] = REDACTED; redacted.add(under); }
         else walk(value, under);
       });
       return;
     }
     if (!node || typeof node !== 'object') return;
     for (const [key, value] of Object.entries(node)) {
-      const owner = under || (SENSITIVE_KEY.test(key) ? key : null);
-      if (typeof value !== 'string') walk(value, owner);
-      else if (owner) { node[key] = REDACTED; redacted.add(owner); }
+      const owner = under || (isSecretKey(key) ? key : null);
+      if (!owner || !isScalar(value)) walk(value, owner);
+      else if (!under && isQuantity(key, value)) continue;
+      else { node[key] = REDACTED; redacted.add(owner); }
     }
   };
   walk(data, null);

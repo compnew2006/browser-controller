@@ -108,16 +108,16 @@ describe('response body capture (CDP Network → per-tab body store)', () => {
 });
 
 describe('redactJsonBody', () => {
-  it('only touches string values of credential keys, and leaves non-JSON alone', () => {
-    expect(redactJsonBody('{"author":"Ann","sessionId":"s1","apiKey":"k","tokens":3}')).toEqual({
-      text: JSON.stringify({ author: 'Ann', sessionId: REDACTED, apiKey: REDACTED, tokens: 3 }),
+  it('only touches values of credential keys, and leaves non-JSON alone', () => {
+    expect(redactJsonBody('{"author":"Ann","sessionId":"s1","apiKey":"k","max_tokens":3}')).toEqual({
+      text: JSON.stringify({ author: 'Ann', sessionId: REDACTED, apiKey: REDACTED, max_tokens: 3 }),
       redacted: ['sessionId', 'apiKey'],
     });
     expect(redactJsonBody('[{"refresh_token":"r"}]').redacted).toEqual(['refresh_token']);
-    // Strings anywhere below a credential key, not just directly under it; numbers stay.
+    // Every scalar below a credential key (string or number), not just directly under it.
     const nested = redactJsonBody('{"tokens":["eyJ1","r1"],"secret":{"value":"sk_live","n":2},"pin":{"password":1234}}');
-    expect(JSON.parse(nested.text)).toEqual({ tokens: [REDACTED, REDACTED], secret: { value: REDACTED, n: 2 }, pin: { password: 1234 } });
-    expect(nested.redacted).toEqual(['tokens', 'secret']);
+    expect(JSON.parse(nested.text)).toEqual({ tokens: [REDACTED, REDACTED], secret: { value: REDACTED, n: REDACTED }, pin: { password: REDACTED } });
+    expect(nested.redacted).toEqual(['tokens', 'secret', 'password']);
     expect(redactJsonBody('{"a":1}')).toEqual({ text: '{"a":1}', redacted: [] }); // untouched text keeps its formatting
     expect(redactJsonBody('token=abc')).toEqual({ text: 'token=abc', redacted: [] });
   });

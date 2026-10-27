@@ -5,7 +5,7 @@
  *   requestId  one request in full; bodies (CDP Network, opt-in) add the response body
  */
 import { resolveTab } from '../lib/page-exec.js';
-import { networkByTab, bodyCaptureByTab, getTabBuffer, PER_TAB_CAP } from '../lib/state.js';
+import { networkByTab, bodyCaptureByTab, getTabBuffer, PER_TAB_CAP, BODY_CAPTURE_PIN } from '../lib/state.js';
 import { withCdp, subscribeCdpEvents, pinCdp, unpinCdp, isCdpPinned } from '../lib/cdp-session.js';
 import { collectPageConsole } from '../lib/browser-log.js';
 import { listView } from '../lib/network-capture.js';
@@ -18,7 +18,6 @@ const CONSOLE_SCAN = 200;
 const URL_MAX = 120;
 const STACK_LINES = 3;
 const STACK_LINE_MAX = 160;
-const BODY_PIN = 'network-bodies';
 const ERROR_LEVELS = new Set(['error']);
 const TYPE_NAMES = { xmlhttprequest: 'xhr', main_frame: 'document', sub_frame: 'frame' };
 const FRAME = /^\s*at\s/;
@@ -62,7 +61,7 @@ async function withDebugger(tabId, fn) {
 function bodyCaptureActive(tabId) {
   const cap = bodyCaptureByTab.get(tabId);
   if (!cap?.unsubscribe) return false;
-  if (isCdpPinned(tabId, BODY_PIN)) return true;
+  if (isCdpPinned(tabId, BODY_CAPTURE_PIN)) return true;
   cap.unsubscribe();
   cap.unsubscribe = null;
   return false;
@@ -91,7 +90,7 @@ async function startBodyCapture(tabId) {
       cap.unsubscribe = null;
       throw err;
     }
-    pinCdp(tabId, BODY_PIN);
+    pinCdp(tabId, BODY_CAPTURE_PIN);
   });
 }
 
@@ -101,7 +100,7 @@ function stopBodyCapture(tabId) {
     cap.unsubscribe();
     cap.unsubscribe = null;
   }
-  unpinCdp(tabId, BODY_PIN);
+  unpinCdp(tabId, BODY_CAPTURE_PIN);
 }
 
 const captureState = (tabId) => ({ active: bodyCaptureActive(tabId), bodies: bodyCaptureByTab.get(tabId)?.bodies.size ?? 0 });

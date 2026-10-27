@@ -5,6 +5,7 @@
  * here: webRequest never sees them (that needs the debugger's Network domain).
  */
 import { PER_TAB_CAP } from './state.js';
+import { isSecretKey } from './secret-keys.js';
 
 export const REDACTED = '[redacted]';
 
@@ -24,8 +25,7 @@ const LIST_FIELDS = ['id', 'method', 'url', 'status', 'type', 'timestamp', 'dura
 export const BODY_PREVIEW_MAX = 2048;
 // Bodies up to this size are parsed whole (JSON) so redaction sees every value; larger ones get a text-level pass.
 const BODY_PARSE_MAX = 64 * 1024;
-// Keys whose values are never shown, at any depth. Over-matching hides a little data; under-matching leaks a secret.
-const SECRET_KEY = /pass|pwd|token|secret|authoriz|api[-_]?key|apikey|credential|private[-_]?key|cookie/i;
+// Keys whose values are never shown, at any depth: the shared policy in secret-keys.js.
 // key=value and "key": value pairs in JSON, form or plain text (for bodies that cannot be parsed whole).
 // The lookbehind starts a key only at the beginning of a word, so a long run of base64 or hex is not
 // rescanned from every position (that took seconds on 64 KB). A value never starts a nested object or
@@ -47,7 +47,7 @@ const clip = (text, max) => (text.length > max ? `${text.slice(0, max)}…[+${te
 function redactDeep(value) {
   if (Array.isArray(value)) return value.map(redactDeep);
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, SECRET_KEY.test(k) ? REDACTED : redactDeep(v)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, isSecretKey(k) ? REDACTED : redactDeep(v)]));
   }
   return value;
 }
@@ -59,7 +59,7 @@ function redactDeep(value) {
 export function redactTextKeys(text) {
   const keys = new Set();
   const out = text.replace(PAIR, (match, quote, key, sep, value) => {
-    if (!SECRET_KEY.test(key)) return match;
+    if (!isSecretKey(key)) return match;
     keys.add(key);
     return `${quote}${key}${quote}${sep}${value.startsWith('"') ? `"${REDACTED}"` : REDACTED}`;
   });
@@ -84,7 +84,7 @@ export function redactUrl(url) {
     if (eq === -1) return pair;
     let key;
     try { key = decodeURIComponent(pair.slice(0, eq)); } catch { key = pair.slice(0, eq); }
-    return SECRET_KEY.test(key) ? `${pair.slice(0, eq)}=***` : pair;
+    return isSecretKey(key) ? `${pair.slice(0, eq)}=***` : pair;
   }).join('&');
   return `${url.slice(0, start + 1)}${query}${url.slice(end)}`;
 }
@@ -129,7 +129,7 @@ export function summarizeRequestBody(body) {
     const entries = Object.entries(body.formData);
     const fields = {};
     for (const [key, values] of entries.slice(0, 50)) {
-      fields[key] = (Array.isArray(values) ? values : [values]).map((v) => (SECRET_KEY.test(key) ? REDACTED : clip(String(v), 200)));
+      fields[key] = (Array.isArray(values) ? values : [values]).map((v) => (isSecretKey(key) ? REDACTED : clip(String(v), 200)));
     }
     return { kind: 'form', fields, ...(entries.length > 50 ? { truncated: true } : {}) };
   }
