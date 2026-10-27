@@ -319,11 +319,11 @@ describe('capacity limits keep existing data (AC-17)', () => {
   });
 
   it('rejects a record over 64 KiB with MEMORY_FULL and keeps the previous file', async () => {
-    const verifications = (profile: number): Record<string, { at: string; tool: 'browser_snapshot'; path: string }> =>
+    const verifications = (profile: number): Record<string, { at: string; tool: 'browser_snapshot' }> =>
       Object.fromEntries(
         Array.from({ length: 64 }, (_, i) => [
           `ui.control:link:v${profile}-${i}`,
-          { at: T1, tool: 'browser_snapshot' as const, path: `/${'a'.repeat(110)}` },
+          { at: T1, tool: 'browser_snapshot' as const },
         ]),
       );
     const profiles = Object.fromEntries(Array.from({ length: MAX_PROFILES }, (_, i) => [`profile-${i}`, { verifications: verifications(i) }]));
@@ -549,7 +549,7 @@ describe('reconciliation across agents and restarts (AC-23, AC-24)', () => {
   it('keeps the original provenance after ten clock years and a restart, and refreshes nothing by itself (AC-23)', async () => {
     await store().putSite(record(ORIGIN, {
       facts: [languageFact('2026-10-27T10:00:00.000Z')],
-      profiles: { 'profile-a': { visit: { firstAt: T1, lastAt: T1, count: 1 }, verifications: { 'site.language': { at: T1, tool: 'browser_navigate', path: '/' } } } },
+      profiles: { 'profile-a': { visit: { firstAt: T1, lastAt: T1, count: 1 }, verifications: { 'site.language': { at: T1, tool: 'browser_navigate' } } } },
     }));
     const raw = fs.readFileSync(siteFile(ORIGIN), 'utf8');
     const later = store({ now: () => Date.parse('2036-10-27T10:00:00.000Z') });

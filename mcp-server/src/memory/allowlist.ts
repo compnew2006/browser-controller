@@ -43,7 +43,7 @@ export const ALLOWLIST = {
       'CookieConsent', 'OptanonConsent', 'OptanonAlertBoxClosed', 'euconsent-v2', 'cookieyes-consent', 'cookielawinfo-checkbox-necessary',
       '_ga', '_gid', '_gat', '_gcl_au', '_fbp',
     ],
-    prefix: ['_ga_', '_gat_'],
+    patterns: ['^_ga_[A-Z0-9]{6,12}$', '^_gat_[A-Za-z0-9]+$'],
   },
 } as const;
 
@@ -85,6 +85,7 @@ const CONTROL_PHRASES: ReadonlySet<string> = new Set(
 );
 const PATH_SEGMENTS: ReadonlySet<string> = new Set(ALLOWLIST.pathSegments);
 const ANONYMITY_EXACT: ReadonlySet<string> = new Set(ALLOWLIST.anonymityNames.exact);
+const ANONYMITY_PATTERNS: readonly RegExp[] = ALLOWLIST.anonymityNames.patterns.map((source) => new RegExp(source, 'u'));
 
 function matchIn(set: ReadonlySet<string>, text: unknown): string | null {
   if (typeof text !== 'string') return null;
@@ -160,5 +161,5 @@ export function controlFact(role: string, name: string): CandidateFact | null {
 /** True for a consent or analytics cookie/storage key name that does not by itself indicate a signed-in user. Exact and case-sensitive. */
 export function isAnonymityName(name: string): boolean {
   if (typeof name !== 'string' || name === '') return false;
-  return ANONYMITY_EXACT.has(name) || ALLOWLIST.anonymityNames.prefix.some((prefix) => name.startsWith(prefix) && name.length > prefix.length);
+  return ANONYMITY_EXACT.has(name) || ANONYMITY_PATTERNS.some((pattern) => pattern.test(name));
 }

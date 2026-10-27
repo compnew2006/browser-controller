@@ -372,9 +372,9 @@ Single project at the repository root:
 - [X] T069 [P] Add the Unreleased entries to CHANGELOG.md (Added: website memory, `browser_memory`, `browser_memory_policy`, `npm run memory`; Changed: the `cookies` permission), with notes to reload the extension and restart the daemon.
 - [X] T070 Run the full local gate from package.json: `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:coverage`, `npm run context:lint`. Run `npm run security:audit` only with owner authorization; otherwise report it as not run.
 - [X] T071 Run the quickstart validation in specs/003-website-agent-memory/quickstart.md, including the owner CLI check on an isolated daemon (`BC_STATE_DIR` temporary, `WS_PORT=17225`).
-- [ ] T072 Do an independent security and privacy review of the full diff, by a reviewer who did not write the code. Record the findings and fixes in specs/003-website-agent-memory/review.md.
+- [X] T072 Do an independent security and privacy review of the full diff, by a reviewer who did not write the code. Record the findings and fixes in specs/003-website-agent-memory/review.md.
 - [ ] T073 Optional real-Chrome check, with separate authorization, using quickstart *Optional real-Chrome check*. Finish with `npm run memory -- delete --all` and `npm run memory -- disable`.
-- [ ] T074 Refresh the code knowledge after the change: `graphify update .` (graphify-out/), and the codebase-memory index through its supported mechanism. Confirm their status. Mark the three ADRs `accepted` only after the owner approves them.
+- [X] T074 Refresh the code knowledge after the change: `graphify update .` (graphify-out/), and the codebase-memory index through its supported mechanism. Confirm their status. Mark the three ADRs `accepted` only after the owner approves them.
 
 ---
 

@@ -123,3 +123,286 @@ Comparison: `baseline` (memory off, 21:16:41) against `on-empty` and `on-seeded`
 | 0 queue drops with 4 clients | pace 0: 418 / 424 `queue_full`; pace 25 ms: 83; pace 100 ms: 0 | **FAIL at pace 0 and 25 ms, PASS at 100 ms** |
 
 Diagnosis of the drops: one commit costs about 8 to 11 ms (temp write, fsync, rename, directory fsync) and the queue is bounded at 256. The pace-0 run issues roughly 1,000 capture-producing calls in a few hundred milliseconds from 4 clients, faster than any real browser can answer (a real navigate takes tens to hundreds of milliseconds). Drops are reported as `queue_full` and never fail an agent call (FR-009, AC-16). Whether the "0 drops" limit is meant for this burst or for a realistic call rate is the owner's call in T066; no limit was changed. Options for the owner: accept 100 ms pacing as the reference workload, or raise the queue bound or coalesce ops per origin.
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:37:14.259Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 155 ms
+- idle RSS: 85168 KiB; peak RSS: 95312 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.90 ms, p95 11.90 ms, p99 12.85 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 10.26 | 14.28 | 31.31 |
+| browser_navigate_snapshot | 200 | 11.37 | 12.85 | 14.79 |
+| browser_snapshot | 200 | 0.05 | 1.31 | 1.40 |
+| browser_memory | 200 | 0.04 | 0.10 | 0.11 |
+| batch | 200 | 0.05 | 0.12 | 1.19 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:37:34.000Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 1000, pace: 0 ms between calls per client
+- daemon start: 158 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 84208 KiB; peak RSS: 95936 KiB
+- store bytes: 428425
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1001; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.80 ms, p95 12.84 ms, p99 13.19 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 11.48 | 12.66 | 30.19 |
+| browser_navigate_snapshot | 200 | 12.09 | 13.50 | 13.79 |
+| browser_snapshot | 200 | 0.03 | 0.67 | 0.75 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.05 |
+| batch | 200 | 0.03 | 0.05 | 0.06 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:38:19.578Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 105 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 85056 KiB; peak RSS: 85056 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":111,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.87 ms, p95 11.04 ms, p99 11.60 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.53 | 2.90 | 6.49 |
+| browser_navigate_snapshot | 200 | 0.44 | 0.95 | 4.98 |
+| browser_snapshot | 200 | 0.03 | 0.45 | 2.12 |
+| browser_memory | 200 | 0.02 | 0.04 | 0.12 |
+| batch | 200 | 0.03 | 0.08 | 0.19 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:38:33.017Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 102 ms
+- idle RSS: 83632 KiB; peak RSS: 83632 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.13 ms, p95 17.12 ms, p99 23.88 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.60 | 3.83 | 7.79 |
+| browser_navigate_snapshot | 200 | 0.44 | 4.97 | 6.76 |
+| browser_snapshot | 200 | 0.02 | 0.38 | 4.01 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.12 |
+| batch | 200 | 0.02 | 0.08 | 0.11 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:38:35.744Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 102 ms
+- idle RSS: 84160 KiB; peak RSS: 84160 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.97 ms, p95 11.09 ms, p99 12.81 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.53 | 3.36 | 6.35 |
+| browser_navigate_snapshot | 200 | 0.45 | 0.93 | 7.00 |
+| browser_snapshot | 200 | 0.03 | 0.39 | 2.46 |
+| browser_memory | 200 | 0.02 | 0.06 | 0.44 |
+| batch | 200 | 0.03 | 0.09 | 0.28 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:39:09.466Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 1000, pace: 0 ms between calls per client
+- daemon start: 161 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 84272 KiB; peak RSS: 84272 KiB
+- store bytes: 428425
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":423,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1001; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.05 ms, p95 12.99 ms, p99 18.35 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.52 | 1.84 | 7.56 |
+| browser_navigate_snapshot | 200 | 0.47 | 0.95 | 1.44 |
+| browser_snapshot | 200 | 0.03 | 0.33 | 0.45 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.06 |
+| batch | 200 | 0.03 | 0.09 | 0.12 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:39:46.961Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 103 ms; recovery after SIGKILL: 102 ms
+- idle RSS: 84160 KiB; peak RSS: 84160 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.67 ms, p95 11.54 ms, p99 12.15 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.55 | 3.62 | 7.90 |
+| browser_navigate_snapshot | 200 | 0.46 | 3.80 | 6.87 |
+| browser_snapshot | 200 | 0.03 | 0.44 | 3.15 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.10 |
+| batch | 200 | 0.03 | 0.09 | 0.39 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:39:49.682Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 83584 KiB; peak RSS: 83584 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 8.98 ms, p95 18.48 ms, p99 21.92 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.53 | 2.94 | 8.06 |
+| browser_navigate_snapshot | 200 | 0.46 | 0.96 | 7.29 |
+| browser_snapshot | 200 | 0.03 | 0.43 | 0.74 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.11 |
+| batch | 200 | 0.03 | 0.06 | 0.14 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:39:52.550Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 103 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 83744 KiB; peak RSS: 83744 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.86 ms, p95 12.01 ms, p99 16.27 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.48 | 3.02 | 5.23 |
+| browser_navigate_snapshot | 200 | 0.44 | 1.06 | 6.51 |
+| browser_snapshot | 200 | 0.03 | 0.40 | 4.84 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.11 |
+| batch | 200 | 0.03 | 0.11 | 1.52 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:39:56.725Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 5 ms between calls per client
+- daemon start: 103 ms; recovery after SIGKILL: 104 ms
+- idle RSS: 85056 KiB; peak RSS: 93424 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.12 ms, p95 18.37 ms, p99 21.80 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.92 | 2.10 | 7.17 |
+| browser_navigate_snapshot | 200 | 0.71 | 1.73 | 2.57 |
+| browser_snapshot | 200 | 0.03 | 0.37 | 0.89 |
+| browser_memory | 200 | 0.13 | 0.51 | 0.81 |
+| batch | 200 | 0.22 | 0.51 | 1.19 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:40:06.218Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 25 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 84416 KiB; peak RSS: 96848 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.78 ms, p95 11.98 ms, p99 20.51 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 2.39 | 4.09 | 7.78 |
+| browser_navigate_snapshot | 200 | 1.70 | 3.25 | 4.32 |
+| browser_snapshot | 200 | 0.21 | 2.25 | 3.19 |
+| browser_memory | 200 | 0.11 | 0.45 | 0.50 |
+| batch | 200 | 0.38 | 0.64 | 3.13 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:40:21.830Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 1000, pace: 0 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 84256 KiB; peak RSS: 84256 KiB
+- store bytes: 428425
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":422,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1001; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.93 ms, p95 12.66 ms, p99 17.90 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.60 | 2.05 | 8.11 |
+| browser_navigate_snapshot | 200 | 0.46 | 0.83 | 1.22 |
+| browser_snapshot | 200 | 0.04 | 0.31 | 0.34 |
+| browser_memory | 200 | 0.03 | 0.05 | 0.06 |
+| batch | 200 | 0.03 | 0.07 | 0.14 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:40:35.007Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 1000, pace: 0 ms between calls per client
+- daemon start: 106 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 84496 KiB; peak RSS: 84496 KiB
+- store bytes: 428425
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":422,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1001; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.97 ms, p95 12.98 ms, p99 15.25 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.56 | 2.06 | 8.45 |
+| browser_navigate_snapshot | 200 | 0.47 | 0.95 | 1.39 |
+| browser_snapshot | 200 | 0.04 | 0.35 | 0.49 |
+| browser_memory | 200 | 0.03 | 0.06 | 0.07 |
+| batch | 200 | 0.03 | 0.06 | 0.08 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:40:48.025Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 1000, pace: 0 ms between calls per client
+- daemon start: 107 ms; recovery after SIGKILL: 102 ms
+- idle RSS: 84720 KiB; peak RSS: 84720 KiB
+- store bytes: 428425
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":422,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1001; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.86 ms, p95 12.17 ms, p99 13.89 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.57 | 2.01 | 8.23 |
+| browser_navigate_snapshot | 200 | 0.46 | 0.76 | 1.34 |
+| browser_snapshot | 200 | 0.04 | 0.34 | 0.38 |
+| browser_memory | 200 | 0.03 | 0.06 | 0.07 |
+| batch | 200 | 0.03 | 0.06 | 0.07 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:41:24.804Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 1000, pace: 0 ms between calls per client
+- daemon start: 161 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 83728 KiB; peak RSS: 83728 KiB
+- store bytes: 428425
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1001; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.01 ms, p95 12.04 ms, p99 13.14 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.52 | 3.02 | 12.36 |
+| browser_navigate_snapshot | 200 | 0.46 | 0.75 | 7.20 |
+| browser_snapshot | 200 | 0.02 | 0.39 | 0.69 |
+| browser_memory | 200 | 0.02 | 0.04 | 0.04 |
+| batch | 200 | 0.03 | 0.07 | 1.65 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:41:37.815Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 1000, pace: 0 ms between calls per client
+- daemon start: 161 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 84288 KiB; peak RSS: 84288 KiB
+- store bytes: 428425
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1001; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 10.96 ms, p95 12.15 ms, p99 13.01 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.47 | 3.11 | 10.00 |
+| browser_navigate_snapshot | 200 | 0.42 | 0.85 | 6.47 |
+| browser_snapshot | 200 | 0.02 | 0.42 | 1.00 |
+| browser_memory | 200 | 0.02 | 0.04 | 0.06 |
+| batch | 200 | 0.03 | 0.05 | 0.14 |
+
+## Post-review re-measure (review F-03 fixes, 2026-10-28; owner decision T066 still open)
+
+Changes measured: queued operations for one origin share one read and one write; a group being committed no longer uses up the 256-operation bound; the store totals its file sizes ahead of the first commit (`warm()`); reminder reads never wait for a commit. Node v22.23.1, darwin/arm64 only (Node 20 not installed).
+
+| Workload (4 clients, 200 iterations/tool, pace 0) | `queue_full` drops | navigate p95 | commit p95 |
+|---|---|---|---|
+| on-empty, 5 runs | 0, 0, 0, 0, 0 | 2.9 to 3.4 ms | 11.0 to 11.9 ms |
+| on-seeded 1,000 origins, 2 runs | 0, 0 (before `warm()`: 422 on every run) | about 1.8 ms | about 13 ms |
+
+The SC-005 limit "0 queue drops with 4 clients" now holds at pace 0 in these runs. It is a burst of about 16 capture operations per millisecond against a commit of about 10 ms, so a slower or busier machine can still drop; drops stay counted, never fail a call, and never corrupt a file. The earlier verdict rows above are kept as the first measurement.
+

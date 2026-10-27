@@ -284,13 +284,30 @@ describe('AC-14: hostile page text is neither stored nor returned', () => {
     }
   });
 
-  it('the injected request to change memory settings does nothing: the policy is exactly what the owner wrote', async () => {
-    const before = fs.readFileSync(path.join(stateDir, 'memory', 'policy.json'), 'utf8');
+  it('the injected request to change memory settings is refused by the daemon and changes nothing (review F-13)', async () => {
+    // The hostile page tells the agent to call browser_memory_policy with ownerConfirmed:true. Whatever an agent
+    // then sends reaches the daemon without the owner's confirmation, because the MCP process strips the flag.
+    expect(page('hostile.html')).toContain('browser_memory_policy');
+    const policyBefore = fs.readFileSync(path.join(stateDir, 'memory', 'policy.json'), 'utf8');
     await call('browser_navigate', { url: `${ORIGIN}/page.html`, snapshot: true });
-    await call('browser_snapshot', { tabId: 7 });
     await drained();
-    expect(fs.readFileSync(path.join(stateDir, 'memory', 'policy.json'), 'utf8')).toBe(before);
-    expect(ext.calls.every((entry) => !/policy/iu.test(entry.tool))).toBe(true);
+    const storeBefore = storeText();
+    expect(storeBefore).toContain('ui.control:link:sign in');
+
+    const outputs: string[] = [];
+    for (const params of [{ action: 'disable' }, { action: 'enable' }, { action: 'delete', tabId: 7 }, { action: 'export', tabId: 7 }]) {
+      const reply = await call('browser_memory_policy', params);
+      outputs.push(JSON.stringify(reply));
+      expect(reply.success, JSON.stringify(params)).toBe(false);
+    }
+    // The agent-facing memory output never repeats the injected instruction either.
+    const detail = JSON.stringify((await call('browser_memory', { tabId: 7 })).result);
+    expect(detail).not.toMatch(/browser_memory_policy|ownerConfirmed/u);
+
+    expect(fs.readFileSync(path.join(stateDir, 'memory', 'policy.json'), 'utf8')).toBe(policyBefore);
+    await drained();
+    expect(storeText()).toBe(storeBefore);
+    expect(outputs.every((text) => !/"success":true/u.test(text))).toBe(true);
   });
 });
 

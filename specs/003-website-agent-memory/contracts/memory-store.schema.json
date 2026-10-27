@@ -53,11 +53,11 @@
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["at", "tool", "path"],
+            "required": ["at", "tool"],
             "properties": {
               "at": { "$ref": "#/$defs/time" },
               "tool": { "enum": ["browser_snapshot", "browser_navigate"] },
-              "path": { "type": "string", "maxLength": 120, "pattern": "^/[^?#]*$" }
+              "path": { "type": "string", "maxLength": 120, "pattern": "^/[^?#]*$", "description": "Present only when every segment is on the reviewed pathSegments allowlist (review F-02)." }
             }
           }
         }

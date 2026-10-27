@@ -33,11 +33,11 @@
   ],
   "primaryLanguageTags": "Any ISO 639 primary subtag matching ^[a-z]{2,3}$; region, script and private-use subtags are dropped.",
   "anonymityNames": {
-    "$comment": "Cookie and web-storage key NAMES that do not by themselves indicate a signed-in user (consent and first-party analytics). Exact names or a prefix ending in *. Any other name makes the page unverified (anonymous:false). Values are never read.",
+    "$comment": "Cookie and web-storage key NAMES that do not by themselves indicate a signed-in user (consent and first-party analytics). Exact names or a full-match pattern (a bare prefix such as _ga_ is not enough: a site could name a session cookie _ga_session). Any other name makes the page unverified (anonymous:false). Values are never read.",
     "exact": [
       "CookieConsent", "OptanonConsent", "OptanonAlertBoxClosed", "euconsent-v2", "cookieyes-consent", "cookielawinfo-checkbox-necessary",
       "_ga", "_gid", "_gat", "_gcl_au", "_fbp"
     ],
-    "prefix": ["_ga_", "_gat_"]
+    "patterns": ["^_ga_[A-Z0-9]{6,12}$", "^_gat_[A-Za-z0-9]+$"]
   }
 }

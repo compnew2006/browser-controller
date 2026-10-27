@@ -268,7 +268,9 @@ describe('capture and sharing across agents and restarts (US1)', () => {
     expect(more.success).toBe(true);
     expect(more.result.origin).toBe(ORIGIN);
     expect(more.result.items.map((item: { kind: string }) => item.kind)).toEqual(expect.arrayContaining(['site.language', 'ui.search', 'ui.control', 'visit']));
-    expect(more.result.items.find((item: { kind: string }) => item.kind === 'ui.search')).toMatchObject({ scope: 'this_profile', path: '/public.html' });
+    expect(more.result.items.find((item: { kind: string }) => item.kind === 'ui.search')).toMatchObject({ scope: 'this_profile' });
+    // /public.html is not on the path allowlist, so no path is stored or shown (review F-02).
+    expect(more.result.items.find((item: { kind: string }) => item.kind === 'ui.search')).not.toHaveProperty('path');
   });
 
   it('AC-03, AC-24: a changed page replaces site.language with no duplicate and no old value', async () => {

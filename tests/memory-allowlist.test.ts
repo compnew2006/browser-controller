@@ -77,7 +77,7 @@ describe('allowlist parity with contracts/fact-allowlist.json', () => {
 
   it('has the same anonymity names', () => {
     expect(ALLOWLIST.anonymityNames.exact).toEqual(CONTRACT.anonymityNames.exact);
-    expect(ALLOWLIST.anonymityNames.prefix).toEqual(CONTRACT.anonymityNames.prefix);
+    expect(ALLOWLIST.anonymityNames.patterns).toEqual(CONTRACT.anonymityNames.patterns);
   });
 
   it('has the same fact kinds', () => {
@@ -268,9 +268,10 @@ describe('isAnonymityName', () => {
     }
   });
 
-  it('accepts the listed prefixes', () => {
+  it('accepts the listed patterns, and only a full match (review F-09)', () => {
     expect(isAnonymityName('_ga_ABC123')).toBe(true);
-    expect(isAnonymityName('_gat_UA-1')).toBe(true);
+    expect(isAnonymityName('_gat_UA1')).toBe(true);
+    for (const name of ['_ga_', '_gat_', '_ga_session', '_ga_abc123', '_ga_ABC12', '_gat_UA-1']) expect(isAnonymityName(name), name).toBe(false);
   });
 
   it('is case-sensitive and exact', () => {

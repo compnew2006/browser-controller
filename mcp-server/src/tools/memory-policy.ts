@@ -41,6 +41,11 @@ async function previewOrigin(host: ToolHost, params: Record<string, unknown>): P
   return failureResult('MEMORY_UNAVAILABLE: the daemon did not ask for confirmation, so nothing was changed.');
 }
 
+/** An injected agent could ask on every turn; after this many unconfirmed requests the prompt stops for a while (review F-11). */
+const MAX_UNCONFIRMED = 3;
+const UNCONFIRMED_WINDOW_MS = 10 * 60_000;
+const unconfirmed = new WeakMap<ToolHost, number[]>();
+
 async function handler(host: ToolHost, params: Record<string, unknown>): Promise<ToolResult> {
   // ownerConfirmed and confirmedOrigin are set below, only after the owner approves; a supplied value is dropped.
   const { ownerConfirmed: _ownerConfirmed, confirmedOrigin: _confirmedOrigin, ...supplied } = params;
@@ -48,6 +53,11 @@ async function handler(host: ToolHost, params: Record<string, unknown>): Promise
   if (!ACTIONS.includes(action)) return invalid('action must be enable, disable, exclude, include, inspect, export or delete');
   const keys = Object.keys(supplied).filter((key) => key !== 'action' && key !== 'tabId');
   if (keys.length) return invalid(`${NAME} takes action and tabId only`);
+  const recent = (unconfirmed.get(host) ?? []).filter((at) => Date.now() - at < UNCONFIRMED_WINDOW_MS);
+  unconfirmed.set(host, recent);
+  if (recent.length >= MAX_UNCONFIRMED) {
+    return failureResult('ACTION_NOT_CONFIRMED: too many recent requests were not confirmed, so no prompt is shown for now; nothing was changed.');
+  }
   const scoped = SCOPED.has(action);
   if (scoped && (typeof supplied.tabId !== 'number' || !Number.isInteger(supplied.tabId) || supplied.tabId < 0)) {
     return invalid(`${action} needs a tabId; the site is taken from that tab`);
@@ -67,6 +77,7 @@ async function handler(host: ToolHost, params: Record<string, unknown>): Promise
     return failureResult('CLIENT_CONFIRMATION_UNAVAILABLE: this MCP client cannot ask the owner for confirmation; nothing was changed.');
   }
   if (answer !== 'approved') {
+    recent.push(Date.now());
     return failureResult('ACTION_NOT_CONFIRMED: the owner declined or did not answer; nothing was changed.');
   }
   return forward(host, { ...request, ownerConfirmed: true, ...(origin ? { confirmedOrigin: origin } : {}) });

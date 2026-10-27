@@ -1,4 +1,4 @@
-import type { CandidateFact } from './allowlist.js';
+import { matchPath, type CandidateFact } from './allowlist.js';
 import { MemoryPolicyError, readPolicy as readPolicyFile, type MemoryPolicy } from './policy.js';
 import {
   MAX_FACTS,
@@ -67,8 +67,10 @@ export interface MemoryQueueOptions {
   onDrained?: (drainedThrough: string) => void;
 }
 
-function validPath(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= MAX_PATH && /^\/[^?#]*$/u.test(value);
+/** A verification keeps a path only when every segment is on the reviewed path allowlist; the stored form is the normalized one. */
+function storablePath(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > MAX_PATH) return null;
+  return matchPath(value);
 }
 
 function sameValue(a: unknown, b: unknown): boolean {
@@ -94,8 +96,8 @@ function earlier(a: string, b: string): string {
  * - Same identity, new value: the new value replaces the old one with fresh
  *   provenance, unless it is strictly older than the current observation.
  *   Equal times resolve by commit order.
- * - A verification is kept only when its path can be stored (<= 120
- *   characters, no query or fragment); the fact is kept either way.
+ * - A verification keeps its path only when every segment is on the path
+ *   allowlist (F-02); otherwise it records the time and tool alone.
  */
 export function applyOp(record: SiteRecord | null, op: CaptureOp, now: string): SiteRecord {
   if (record && record.origin !== op.origin) throw new MemoryStoreError('INVALID_ARGUMENT', 'operation origin does not match the record');
@@ -118,7 +120,8 @@ export function applyOp(record: SiteRecord | null, op: CaptureOp, now: string): 
       ? { firstAt: earlier(state.visit.firstAt, op.at), lastAt: later(state.visit.lastAt, op.at), count: state.visit.count + 1 }
       : { firstAt: op.at, lastAt: op.at, count: 1 };
   } else {
-    const verify = op.tool !== undefined && validPath(op.path);
+    const verify = op.tool !== undefined;
+    const safePath = storablePath(op.path);
     for (const candidate of op.facts) {
       const current = next.facts.find((entry) => entry.factId === candidate.factId);
       let applied = true;
@@ -147,7 +150,7 @@ export function applyOp(record: SiteRecord | null, op: CaptureOp, now: string): 
         const verifications = (profile().verifications ??= {});
         const existing = Object.hasOwn(verifications, candidate.factId) ? verifications[candidate.factId] : undefined;
         if (!existing || Date.parse(existing.at) <= Date.parse(op.at)) {
-          verifications[candidate.factId] = { at: op.at, tool: op.tool as ProfileVerification['tool'], path: op.path as string };
+          verifications[candidate.factId] = { at: op.at, tool: op.tool as ProfileVerification['tool'], ...(safePath ? { path: safePath } : {}) };
         }
       }
     }
@@ -189,7 +192,7 @@ export class MemoryQueue {
   private readonly committedIds = new Map<string, true>();
   private readonly dropped = Object.fromEntries(DROP_REASONS.map((reason) => [reason, 0])) as Record<DropReason, number>;
   private readonly waiters: Array<() => void> = [];
-  private inFlight: CaptureOp | null = null;
+  private inFlight: CaptureOp[] = [];
   private running = false;
   private scheduled = false;
   private committed = 0;
@@ -205,11 +208,11 @@ export class MemoryQueue {
   }
 
   enqueue(op: CaptureOp): EnqueueResult {
-    if (this.committedIds.has(op.opId) || this.pendingIds.has(op.opId) || this.inFlight?.opId === op.opId) {
+    if (this.committedIds.has(op.opId) || this.pendingIds.has(op.opId) || this.inFlight.some((entry) => entry.opId === op.opId)) {
       this.drop(op, 'duplicate');
       return { accepted: false, reason: 'duplicate' };
     }
-    if (this.pending.length + (this.inFlight ? 1 : 0) >= this.maxPending) {
+    if (this.pending.length + (this.inFlight.length > 0 ? 1 : 0) >= this.maxPending) {
       this.drop(op, 'queue_full');
       return { accepted: false, reason: 'queue_full', code: 'MEMORY_QUEUE_FULL' };
     }
@@ -247,8 +250,8 @@ export class MemoryQueue {
 
   stats(): QueueStats {
     return {
-      pending: this.pending.length + (this.inFlight ? 1 : 0),
-      inFlight: this.inFlight !== null,
+      pending: this.pending.length + this.inFlight.length,
+      inFlight: this.inFlight.length > 0,
       committed: this.committed,
       dropped: { ...this.dropped },
       maxPending: this.maxPending,
@@ -270,14 +273,24 @@ export class MemoryQueue {
     this.running = true;
     try {
       while (this.pending.length > 0) {
-        const op = this.pending.shift() as CaptureOp;
-        this.pendingIds.delete(op.opId);
-        this.inFlight = op;
-        await this.commit(op);
-        this.inFlight = null;
+        // Everything queued for the first origin goes into one commit: one read, one write (review F-03).
+        const origin = this.pending[0].origin;
+        const group: CaptureOp[] = [];
+        for (let index = 0; index < this.pending.length; ) {
+          if (this.pending[index].origin === origin) {
+            const [taken] = this.pending.splice(index, 1);
+            this.pendingIds.delete(taken.opId);
+            group.push(taken);
+          } else {
+            index += 1;
+          }
+        }
+        this.inFlight = group;
+        await this.commit(group);
+        this.inFlight = [];
       }
     } finally {
-      this.inFlight = null;
+      this.inFlight = [];
       this.running = false;
     }
     try {
@@ -288,18 +301,26 @@ export class MemoryQueue {
     for (const resolve of this.waiters.splice(0)) resolve();
   }
 
-  private async commit(op: CaptureOp): Promise<void> {
+  private async commit(group: CaptureOp[]): Promise<void> {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const outcomes: Array<DropReason | null> = group.map(() => 'timeout');
     const timeout = new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => {
         controller.abort();
         resolve('timeout');
       }, this.commitTimeoutMs);
     });
-    const outcome = await Promise.race([this.run(op, controller.signal), timeout]);
+    const finished = await Promise.race([this.run(group, controller.signal, outcomes).then(() => 'done' as const), timeout]);
     clearTimeout(timer);
-    if (outcome === null) {
+    // After a timeout the run may still be filling `outcomes`; take the values as they stand now.
+    const settled = finished === 'timeout' ? [...outcomes] : outcomes;
+    group.forEach((op, index) => {
+      const outcome = settled[index];
+      if (outcome !== null) {
+        this.drop(op, outcome);
+        return;
+      }
       this.committed += 1;
       this.committedIds.delete(op.opId);
       this.committedIds.set(op.opId, true);
@@ -313,9 +334,7 @@ export class MemoryQueue {
       } catch {
         // Same as onDrop.
       }
-      return;
-    }
-    this.drop(op, outcome);
+    });
   }
 
   /** Why an operation must not commit under the current policy, or null. */
@@ -336,20 +355,57 @@ export class MemoryQueue {
     return null;
   }
 
-  /** The commit itself. Resolves to null when committed, else the drop reason. Never rejects. */
-  private async run(op: CaptureOp, signal: AbortSignal): Promise<DropReason | null> {
+  /**
+   * The commit of one origin's group: read once, apply each operation that the policy still allows (an operation
+   * that would not fit is dropped alone), write once. Fills `outcomes` (null = committed) and never rejects.
+   */
+  private async run(group: CaptureOp[], signal: AbortSignal, outcomes: Array<DropReason | null>): Promise<void> {
     try {
-      const blocked = this.policyDrop(op);
-      if (blocked) return blocked;
-      const site = await this.store.getSite(op.origin);
-      const next = applyOp(site, op, new Date(this.now()).toISOString());
-      if (signal.aborted) return 'timeout';
-      const stillBlocked = this.policyDrop(op);
-      if (stillBlocked) return stillBlocked;
-      await this.store.putSite(next, { signal });
-      return null;
+      const allowed: number[] = [];
+      group.forEach((op, index) => {
+        const blocked = this.policyDrop(op);
+        if (blocked) outcomes[index] = blocked;
+        else allowed.push(index);
+      });
+      if (allowed.length === 0) return;
+      let site = await this.store.getSite(group[0].origin, { afterWrites: true });
+      const now = new Date(this.now()).toISOString();
+      const applied: number[] = [];
+      for (const index of allowed) {
+        try {
+          site = applyOp(site, group[index], now);
+          applied.push(index);
+        } catch (error) {
+          outcomes[index] = mapStoreError(error);
+        }
+      }
+      if (signal.aborted) return;
+      const writable = applied.filter((index) => {
+        const stillBlocked = this.policyDrop(group[index]);
+        if (stillBlocked) outcomes[index] = stillBlocked;
+        return !stillBlocked;
+      });
+      if (writable.length === 0) return;
+      if (writable.length !== applied.length) {
+        // A policy change landed mid-commit: redo the merge with only the operations that are still allowed.
+        site = await this.store.getSite(group[0].origin, { afterWrites: true });
+        for (const index of writable) site = applyOp(site, group[index], now);
+      }
+      if (!site) return;
+      try {
+        await this.store.putSite(site, { signal });
+      } catch (error) {
+        if (signal.aborted) return;
+        const reason = mapStoreError(error);
+        for (const index of writable) outcomes[index] = reason;
+        return;
+      }
+      for (const index of writable) outcomes[index] = null;
     } catch (error) {
-      return mapStoreError(error);
+      const reason = mapStoreError(error);
+      outcomes.forEach((outcome, index) => {
+        if (outcome === 'timeout') outcomes[index] = reason;
+      });
     }
   }
 }

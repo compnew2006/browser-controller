@@ -75,7 +75,7 @@ const { dispatch, dispatchedTools } = await import('../extension/dispatch/router
 const root = path.resolve(__dirname, '..');
 const allowlist = JSON.parse(
   fs.readFileSync(path.join(root, 'specs/003-website-agent-memory/contracts/fact-allowlist.json'), 'utf8'),
-) as { anonymityNames: { exact: string[]; prefix: string[] } };
+) as { anonymityNames: { exact: string[]; patterns: string[] } };
 
 type Cookie = { name: string; httpOnly?: boolean };
 type World = {
@@ -203,10 +203,27 @@ describe('siteContext anonymity verdict (R-07)', () => {
   });
 
   it('matches names exactly: a lookalike name is not allowlisted', async () => {
-    for (const name of ['CookieConsentX', 'cookieconsent', '_gax', '_ga2', 'x_ga_']) {
+    for (const name of ['CookieConsentX', 'cookieconsent', '_gax', '_ga2', 'x_ga_', '_ga_', '_ga_session', '_gat_']) {
       setWorld({ cookies: [{ name }] });
       expect(await ctx(), name).toMatchObject({ anonymous: false, anonymityReason: 'cookie' });
     }
+  });
+
+  it('also asks by domain: a login cookie scoped to another path is not missed (review F-09)', async () => {
+    setWorld({ cookies: [] });
+    cookiesGetAll.mockImplementation(async (query: { url?: string; domain?: string }) => (query.domain === 'example.com' ? [{ name: 'sid', httpOnly: true }] : []));
+    expect(await ctx()).toMatchObject({ anonymous: false, anonymityReason: 'cookie' });
+    expect(cookiesGetAll).toHaveBeenCalledWith(expect.objectContaining({ url: 'https://example.com/' }));
+    expect(cookiesGetAll).toHaveBeenCalledWith(expect.objectContaining({ domain: 'example.com' }));
+  });
+
+  it('asks the parent domain for a host with three or more labels, and never for an IP address', async () => {
+    setWorld({ urls: ['https://www.example.com/'], cookies: [] });
+    cookiesGetAll.mockImplementation(async (query: { domain?: string }) => (query.domain === 'example.com' ? [{ name: 'sid' }] : []));
+    expect(await ctx()).toMatchObject({ anonymous: false, anonymityReason: 'cookie' });
+    setWorld({ urls: ['http://127.0.0.1:8080/'], cookies: [] });
+    await ctx();
+    expect(cookiesGetAll.mock.calls.every(([query]: [{ domain?: string }]) => query.domain === undefined)).toBe(true);
   });
 
   it('is false for a localStorage or sessionStorage key off the allowlist', async () => {
@@ -319,7 +336,7 @@ describe('siteContext page structure', () => {
     expect(await ctx()).toMatchObject({ passwordField: true, anonymous: true });
   });
 
-  it('reports topLevel false when the probed document is not the top window', async () => {
+  it('relays topLevel false from the probe (the mock drives the flag; real frame detection is not exercised here)', async () => {
     setWorld({ top: false });
     expect(await ctx()).toMatchObject({ topLevel: false });
   });
@@ -346,7 +363,7 @@ describe('siteContext page structure', () => {
 describe('contract parity', () => {
   it('keeps the anonymity names equal to contracts/fact-allowlist.json', () => {
     expect([...siteContext.ANONYMITY_NAMES.exact].sort()).toEqual([...allowlist.anonymityNames.exact].sort());
-    expect([...siteContext.ANONYMITY_NAMES.prefix].sort()).toEqual([...allowlist.anonymityNames.prefix].sort());
+    expect([...siteContext.ANONYMITY_NAMES.patterns].sort()).toEqual([...allowlist.anonymityNames.patterns].sort());
   });
 
   it('requests the cookies permission and advertises site-context', async () => {

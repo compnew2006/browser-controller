@@ -108,6 +108,12 @@ describe('extractSnapshotFacts', () => {
     expect(extractSnapshotFacts(text)).toEqual([]);
   });
 
+  it('reads a snapshot as the extension prints it: a cross-origin frame is one leaf line and adds no fact', () => {
+    const text = ['- searchbox "Search" [e1]', '- iframe "cross-origin https://evil.example" [e2]', '- link "Sign in" [e3]'].join('\n');
+    expect(extractSnapshotFacts(text).map((f) => f.factId).sort()).toEqual(['ui.control:link:sign in', 'ui.search']);
+    expect(JSON.stringify(extractSnapshotFacts(text))).not.toContain('evil');
+  });
+
   it('accepts a leading dash, indentation and a trailing ref', () => {
     expect(extractSnapshotFacts('    - link "Log in" [e9] disabled').map((f) => f.factId)).toEqual(['ui.control:link:log in']);
   });
@@ -152,7 +158,7 @@ describe('afterCall capture', () => {
       'site.language', 'ui.control:button:accept all', 'ui.control:link:sign in', 'ui.search',
     ]);
     expect(saved?.facts.find((f) => f.factId === 'site.language')?.value).toEqual({ lang: 'ar', dir: 'rtl' });
-    expect(saved?.profiles['profile-a'].verifications?.['ui.search']).toMatchObject({ tool: 'browser_navigate', path: '/' });
+    expect(saved?.profiles['profile-a'].verifications?.['ui.search']).toEqual({ at: expect.any(String), tool: 'browser_navigate' });
     expect(JSON.stringify(saved)).not.toContain('Totally unknown');
   });
 

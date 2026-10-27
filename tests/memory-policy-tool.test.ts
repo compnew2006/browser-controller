@@ -173,6 +173,43 @@ describe('browser_memory_policy: owner confirmation (AC-32)', () => {
   });
 });
 
+describe('browser_memory_policy: prompt rate limit (review F-11)', () => {
+  it('after 3 unconfirmed requests in 10 minutes it refuses without prompting, then asks again once the window passes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-10-28T10:00:00Z'));
+      const daemon = makeDaemon();
+      const { call, messages } = await connect(daemon.host, { answers: ['decline', 'cancel', 'decline', 'accept'] });
+      for (let i = 0; i < 3; i += 1) expect(textOf(await call({ action: 'enable' }))).toMatch(/^ACTION_NOT_CONFIRMED: the owner declined/);
+      expect(messages).toHaveLength(3);
+      const refused = await call({ action: 'enable' });
+      expect(refused.isError).toBe(true);
+      expect(textOf(refused)).toMatch(/^ACTION_NOT_CONFIRMED: too many recent requests/);
+      expect(textOf(refused)).not.toMatch(/npm run|please|should/iu);
+      expect(messages).toHaveLength(3);
+      expect(daemon.admin).not.toHaveBeenCalled();
+      vi.setSystemTime(new Date('2026-10-28T10:10:01Z'));
+      expect((await call({ action: 'enable' })).isError).toBeFalsy();
+      expect(messages).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an approval or an unavailable client does not count toward the limit', async () => {
+    const daemon = makeDaemon();
+    const { call } = await connect(daemon.host, { elicitation: false });
+    for (let i = 0; i < 6; i += 1) expect(textOf(await call({ action: 'enable' }))).toMatch(/^CLIENT_CONFIRMATION_UNAVAILABLE:/);
+  });
+
+  it('is per connection: a new MCP server starts with an empty count', async () => {
+    const first = await connect(makeDaemon().host, { answers: ['decline'] });
+    for (let i = 0; i < 4; i += 1) await first.call({ action: 'enable' });
+    const second = await connect(makeDaemon().host, { answers: ['decline'] });
+    expect(textOf(await second.call({ action: 'enable' }))).toMatch(/^ACTION_NOT_CONFIRMED: the owner declined/);
+  });
+});
+
 describe('browser_memory_policy: ownerConfirmed is internal', () => {
   it('an agent-supplied ownerConfirmed or confirmedOrigin never changes policy', async () => {
     const daemon = makeDaemon();

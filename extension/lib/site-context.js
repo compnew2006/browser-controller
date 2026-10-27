@@ -16,16 +16,18 @@ export const ANONYMITY_NAMES = Object.freeze({
     'CookieConsent', 'OptanonConsent', 'OptanonAlertBoxClosed', 'euconsent-v2', 'cookieyes-consent', 'cookielawinfo-checkbox-necessary',
     '_ga', '_gid', '_gat', '_gcl_au', '_fbp',
   ]),
-  prefix: Object.freeze(['_ga_', '_gat_']),
+  patterns: Object.freeze(['^_ga_[A-Z0-9]{6,12}$', '^_gat_[A-Za-z0-9]+$']),
 });
+
+const ANONYMITY_PATTERNS = ANONYMITY_NAMES.patterns.map((source) => new RegExp(source));
 
 const MAX_URL_CHARS = 2048;
 const PROBE_TIMEOUT_MS = 3_000;
 
-/** Whether `name` is an allowlisted anonymity name. Exact or prefix; case-sensitive, no normalization. */
+/** Whether `name` is an allowlisted anonymity name. Exact or a full-match pattern; case-sensitive, no normalization. */
 export function isAnonymityName(name) {
   if (typeof name !== 'string') return false;
-  return ANONYMITY_NAMES.exact.includes(name) || ANONYMITY_NAMES.prefix.some((prefix) => name.startsWith(prefix));
+  return ANONYMITY_NAMES.exact.includes(name) || ANONYMITY_PATTERNS.some((pattern) => pattern.test(name));
 }
 
 /**
@@ -110,7 +112,20 @@ async function cookieNames(tabId, url) {
     storeId = stores.find((store) => Array.isArray(store.tabIds) && store.tabIds.includes(tabId))?.id;
     if (storeId === undefined) throw new Error('no cookie store for the tab');
   }
-  const cookies = await chrome.cookies.getAll(storeId === undefined ? { url } : { url, storeId });
+  const scope = storeId === undefined ? {} : { storeId };
+  // getAll({url}) only sees cookies that would be sent to this exact URL; a login cookie scoped to another path
+  // or to a sibling subdomain is missed. Ask by domain too (host, and its parent for 3+ label hosts), names only.
+  // Over-inclusion can only make a page less anonymous, never more.
+  const queries = [{ url, ...scope }];
+  try {
+    const host = new URL(url).hostname;
+    if (host && !/^[\d.]+$/.test(host) && !host.includes(':')) {
+      queries.push({ domain: host, ...scope });
+      const labels = host.split('.');
+      if (labels.length >= 3) queries.push({ domain: labels.slice(1).join('.'), ...scope });
+    }
+  } catch { /* url was already parsed by the caller */ }
+  const cookies = (await Promise.all(queries.map((query) => chrome.cookies.getAll(query)))).flat();
   return { permission: true, names: cookies.map((cookie) => cookie.name) };
 }
 

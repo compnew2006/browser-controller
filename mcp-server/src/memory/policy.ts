@@ -114,22 +114,49 @@ function validatePolicy(raw: unknown, mode: Mode): MemoryPolicy {
  * nothing); an I/O failure other than "missing" throws MEMORY_UNAVAILABLE.
  */
 export function readPolicy(memoryDir: string): MemoryPolicy {
-  let text: string;
+  const file = policyPath(memoryDir);
+  let fd: number;
   try {
-    text = fs.readFileSync(policyPath(memoryDir), 'utf8');
+    // O_NOFOLLOW refuses a symlink; O_NONBLOCK keeps a FIFO from blocking the daemon at open.
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return defaultPolicy();
     throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file could not be read');
   }
-  if (text.length > MAX_POLICY_BYTES) throw new MemoryPolicyError('MEMORY_CORRUPT', 'policy file is too large');
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new MemoryPolicyError('MEMORY_CORRUPT', 'policy file is not valid JSON');
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file is not a regular file');
+    if (process.platform !== 'win32') {
+      const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
+      if (uid !== undefined && st.uid !== uid) throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file is owned by another user');
+      if ((st.mode & 0o022) !== 0) throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file can be written by other users');
+    }
+    if (st.size > MAX_POLICY_BYTES) throw new MemoryPolicyError('MEMORY_CORRUPT', 'policy file is too large');
+    // Replacing the file (as writePolicy does) changes its inode and times, so the cache never serves a stale policy.
+    const key = `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
+    const hit = policyCache.get(file);
+    if (hit && hit.key === key) return structuredClone(hit.policy);
+    let text: string;
+    try {
+      text = fs.readFileSync(fd, 'utf8');
+    } catch {
+      throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file could not be read');
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new MemoryPolicyError('MEMORY_CORRUPT', 'policy file is not valid JSON');
+    }
+    const policy = validatePolicy(parsed, 'read');
+    policyCache.set(file, { key, policy: structuredClone(policy) });
+    return policy;
+  } finally {
+    fs.closeSync(fd);
   }
-  return validatePolicy(parsed, 'read');
 }
+
+const policyCache = new Map<string, { key: string; policy: MemoryPolicy }>();
 
 function requireOrigin(value: string): string {
   const origin = canonicalOrigin(value);

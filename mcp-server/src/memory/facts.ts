@@ -3,29 +3,19 @@ import { controlFact, languageFact, loginFact, searchFact, type CandidateFact } 
 export const MAX_CANDIDATES = 64;
 
 const SNAPSHOT_LINE = /^(\s*)(?:-\s+)?([a-z]+) "([^"\n]*)"(?:\s|$)/u;
-const FRAME_ROLES: ReadonlySet<string> = new Set(['iframe', 'frame']);
 
 /**
  * Candidate facts from snapshot lines `<role> "<name>"`. A line counts only when its role and whole name are
- * on the allowlist; nothing is truncated. Lines nested under a frame are skipped: the snapshot walks only
- * same-origin frames, but a frame's content is never attributed to the top-level page.
+ * on the allowlist; nothing is truncated. The extension's snapshot names a cross-origin frame as a single
+ * leaf line `iframe "cross-origin <origin>"` and never walks it, so none of its content is attributed to the
+ * page; a same-origin frame is walked without a marker line, and its controls belong to the same origin as
+ * the page. An `iframe` line never matches an allowlisted role, so it is ignored like any other line.
  */
 export function extractSnapshotFacts(text: string): CandidateFact[] {
   const found = new Map<string, CandidateFact>();
-  let frameIndent: number | null = null;
   for (const line of text.split('\n')) {
-    if (line.trim() === '') continue;
-    const indent = /^\s*/u.exec(line)?.[0].length ?? 0;
-    if (frameIndent !== null) {
-      if (indent > frameIndent) continue;
-      frameIndent = null;
-    }
     const match = SNAPSHOT_LINE.exec(line);
     if (!match) continue;
-    if (FRAME_ROLES.has(match[2])) {
-      frameIndent = indent;
-      continue;
-    }
     const fact = searchFact(match[2], match[3]) ?? controlFact(match[2], match[3]);
     if (fact && !found.has(fact.factId)) found.set(fact.factId, fact);
     if (found.size >= MAX_CANDIDATES) break;

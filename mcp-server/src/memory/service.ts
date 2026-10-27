@@ -134,6 +134,7 @@ export class MemoryService {
   private readonly store: MemoryStore;
   private readonly queue: MemoryQueue;
   private policyTail: Promise<unknown> = Promise.resolve();
+  private warmed = false;
   private lastError: { code: string; at: string } | null = null;
   private readonly adminContext: AdminContext;
 
@@ -174,6 +175,10 @@ export class MemoryService {
     if (!OBSERVABLE_TOOLS.has(tool)) return { observe: false };
     try {
       if (!readPolicy(this.memoryDir).enabled) return { observe: false };
+      if (!this.warmed) {
+        this.warmed = true;
+        void this.store.warm?.();
+      }
       const connection = this.deps.connection(sessionId);
       return { observe: true, browserId: connection.browserId, connectionIdBefore: connection.connectionId };
     } catch (error) {

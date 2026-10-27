@@ -88,10 +88,10 @@ function rankFacts(site: SiteRecord, profileId: string): { own: Ranked[]; shared
     const verification = Object.hasOwn(verifications, fact.factId) ? verifications[fact.factId] : undefined;
     if (verification && Date.parse(verification.at) >= Date.parse(fact.firstObserved)) {
       const base = `${label(fact, true)} (this profile, verified ${minute(verification.at)}`;
-      const withSource = `${base} via ${verification.tool} at ${verification.path})`;
+      const withSource = `${base} via ${verification.tool}${verification.path ? ` at ${verification.path}` : ''})`;
       const text = withSource.length <= MAX_ITEM_TEXT ? withSource : `${base} via ${verification.tool})`;
       own.push({
-        item: { kind: fact.kind, scope: 'this_profile', text, verifiedAt: verification.at, path: verification.path },
+        item: { kind: fact.kind, scope: 'this_profile', text, verifiedAt: verification.at, ...(verification.path ? { path: verification.path } : {}) },
         at: Date.parse(verification.at),
         factId: fact.factId,
         brief: `${base})`,

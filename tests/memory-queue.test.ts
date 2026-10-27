@@ -400,7 +400,8 @@ describe('dropPending (disable, exclude, delete)', () => {
     const store = new FakeStore();
     const release = holdGate(store);
     const { queue } = fakeQueue(store);
-    for (let i = 0; i < 5; i += 1) queue.enqueue(op());
+    queue.enqueue(op());
+    for (let i = 0; i < 4; i += 1) queue.enqueue(op({ origin: OTHER }));
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(queue.dropPending('disabled')).toBe(4);
     release();
@@ -580,7 +581,7 @@ describe('failure reasons', () => {
     };
     const { queue } = fakeQueue(store);
     queue.enqueue(op());
-    queue.enqueue(op());
+    queue.enqueue(op({ origin: OTHER }));
     await queue.drain();
     expect(drops(queue)).toEqual({ io_error: 1 });
     expect(queue.stats().committed).toBe(1);
@@ -627,24 +628,24 @@ describe('applyOp reconciliation (R-10)', () => {
   it('adds facts with first and last observation and records the verification for the observing profile only', () => {
     const language = fact(languageFact('ar', 'rtl'));
     const search = fact(searchFact('searchbox', 'Search'));
-    const site = applyOp(null, op({ type: 'facts', facts: [language, search], at: T1, tool: 'browser_snapshot', path: '/home' }), T1);
+    const site = applyOp(null, op({ type: 'facts', facts: [language, search], at: T1, tool: 'browser_snapshot', path: '/search' }), T1);
     expect(site.facts.map((entry) => entry.factId)).toEqual(['site.language', 'ui.search']);
     expect(site.facts[0]).toEqual({ factId: 'site.language', kind: 'site.language', value: { lang: 'ar', dir: 'rtl' }, firstObserved: T1, lastObserved: T1, status: 'current' });
     expect(site.profiles['profile-a'].verifications).toEqual({
-      'site.language': { at: T1, tool: 'browser_snapshot', path: '/home' },
-      'ui.search': { at: T1, tool: 'browser_snapshot', path: '/home' },
+      'site.language': { at: T1, tool: 'browser_snapshot', path: '/search' },
+      'ui.search': { at: T1, tool: 'browser_snapshot', path: '/search' },
     });
     expect(site.profiles['profile-a'].visit ?? null).toBeNull();
   });
 
   it('refreshes an identical fact instead of duplicating it, keeping firstObserved (AC-17)', () => {
     const language = fact(languageFact('ar', 'rtl'));
-    let site = applyOp(null, op({ type: 'facts', facts: [language], at: T1, tool: 'browser_snapshot', path: '/a' }), T1);
-    site = applyOp(site, op({ type: 'facts', facts: [language], at: T2, tool: 'browser_navigate', path: '/b' }), T2);
+    let site = applyOp(null, op({ type: 'facts', facts: [language], at: T1, tool: 'browser_snapshot', path: '/login' }), T1);
+    site = applyOp(site, op({ type: 'facts', facts: [language], at: T2, tool: 'browser_navigate', path: '/account' }), T2);
     expect(site.facts).toHaveLength(1);
     expect(site.facts[0].firstObserved).toBe(T1);
     expect(site.facts[0].lastObserved).toBe(T2);
-    expect(site.profiles['profile-a'].verifications!['site.language']).toEqual({ at: T2, tool: 'browser_navigate', path: '/b' });
+    expect(site.profiles['profile-a'].verifications!['site.language']).toEqual({ at: T2, tool: 'browser_navigate', path: '/account' });
   });
 
   it('replaces a changed value with fresh provenance and keeps no history (AC-03, AC-24)', () => {
@@ -679,12 +680,12 @@ describe('applyOp reconciliation (R-10)', () => {
     expect(site.profiles['profile-b'].verifications!['ui.login'].path).toBe('/account/login');
   });
 
-  it('keeps the fact but skips the verification when the path is not storable', () => {
+  it('keeps the fact and the verification time but stores no path when the path is not on the allowlist', () => {
     const language = fact(languageFact('ar', 'rtl'));
-    for (const path of ['/' + 'a'.repeat(130), '/x?q=1', '/x#frag', 'relative', undefined]) {
+    for (const path of ['/' + 'a'.repeat(130), '/x?q=1', '/x#frag', 'relative', '/', '/not-a-segment', undefined]) {
       const site = applyOp(null, op({ type: 'facts', facts: [language], tool: 'browser_snapshot', path }), T1);
       expect(site.facts).toHaveLength(1);
-      expect(site.profiles['profile-a']?.verifications ?? {}).toEqual({});
+      expect(site.profiles['profile-a'].verifications).toEqual({ 'site.language': { at: T1, tool: 'browser_snapshot' } });
     }
   });
 
@@ -719,7 +720,7 @@ describe('concurrent captures and a writer killed mid-commit (AC-17, AC-19)', ()
         origin: ORIGIN,
         at: T2,
         enqueuedAt: T2,
-        path: '/',
+        path: '/login',
         tool: 'browser_snapshot',
         facts: [
           fact(languageFact('ar', 'rtl')),
@@ -737,17 +738,19 @@ describe('concurrent captures and a writer killed mid-commit (AC-17, AC-19)', ()
     const dying = new JsonMemoryStore(memoryDir, {
       rename: async (from, to) => {
         renames += 1;
-        if (renames === 3) throw new Error('killed between temp write and rename');
+        if (renames === 2) throw new Error('killed between temp write and rename');
         fs.renameSync(from, to);
       },
     });
     const queue = realQueue(dying);
     for (const captured of captureOps(1)) queue.enqueue(captured);
+    await queue.drain();
     for (const captured of captureOps(2)) queue.enqueue(captured);
     await queue.drain();
-    expect(renames).toBe(8);
-    expect(drops(queue)).toEqual({ io_error: 1 });
-    expect(queue.stats().committed).toBe(7);
+    // Each round is one group: one write. The second write dies between the temp write and the rename.
+    expect(renames).toBe(2);
+    expect(drops(queue)).toEqual({ io_error: 4 });
+    expect(queue.stats().committed).toBe(4);
 
     // A restart sees only whole files and removes any temp file.
     const reopened = new JsonMemoryStore(memoryDir);
