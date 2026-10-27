@@ -9,7 +9,7 @@ Type=simple
 WorkingDirectory=%h/browser-controller
 Environment=HOME=%h
 ExecStart=/usr/bin/env node %h/browser-controller/mcp-server/dist/daemon.js
-Restart=always
+Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
 

@@ -15,6 +15,8 @@ describe('managed daemon deployment contract', () => {
   it('ships a systemd user unit for the shared daemon', () => {
     const unit = fs.readFileSync(path.join(root, 'deploy/systemd/browser-controller-daemon.service'), 'utf8');
     expect(unit).toContain('mcp-server/dist/daemon.js');
-    expect(unit).toContain('Restart=always');
+    // A second daemon that loses the lock exits 0 by design: restarting it would loop forever.
+    expect(unit).toContain('Restart=on-failure');
+    expect(unit).not.toContain('Restart=always');
   });
 });

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -201,5 +202,79 @@ describe('CredentialVaultStore', () => {
     const secondRecovery = await newStore();
     await secondRecovery.restoreBackup(backup.id, 32);
     expect((await secondRecovery.get('cred_88888888888888888888888888888888'))?.password === 'synthetic-recovery').toBe(true);
+  });
+});
+
+describe('vault lock reclaim (audit F5-1, F5-2, F5-7)', () => {
+  const DEAD_PID = 2_147_483_646;
+
+  async function lockedStore(options: Record<string, unknown> = {}) {
+    const store = new CredentialVaultStore({ stateDir, browserId, lockTimeoutMs: 400, ...options });
+    await store.initialize();
+    return { store, lockPath: path.join(store.directory, '.lock') };
+  }
+
+  async function plantLock(lockPath: string, content: string, ageMs: number) {
+    await fs.writeFile(lockPath, content, { mode: 0o600 });
+    const when = new Date(Date.now() - ageMs);
+    await fs.utimes(lockPath, when, when);
+  }
+
+  const fixture = () => entry('cred_11111111111111111111111111111111', 'synthetic-lock-pw');
+
+  it('reclaims a stale lock of a dead pid', async () => {
+    const { store, lockPath } = await lockedStore();
+    await plantLock(lockPath, JSON.stringify({ pid: DEAD_PID, createdAt: 1 }), 60_000);
+    await store.upsert(fixture());
+    await expect(fs.access(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not reclaim an old lock held by a live pid', async () => {
+    const { store, lockPath } = await lockedStore();
+    await plantLock(lockPath, JSON.stringify({ pid: process.pid, createdAt: 1 }), 60_000);
+    await expect(store.upsert(fixture())).rejects.toMatchObject({ code: 'VAULT_BUSY' });
+    expect(JSON.parse(await fs.readFile(lockPath, 'utf8')).pid).toBe(process.pid);
+  });
+
+  it('keeps an empty lock inside the grace period', async () => {
+    const { store, lockPath } = await lockedStore();
+    await plantLock(lockPath, '', 0);
+    await expect(store.upsert(fixture())).rejects.toMatchObject({ code: 'VAULT_BUSY' });
+    await expect(fs.access(lockPath)).resolves.toBeUndefined();
+  });
+
+  it('reclaims an empty lock after the grace period instead of staying busy forever', async () => {
+    const { store, lockPath } = await lockedStore();
+    await plantLock(lockPath, '', 60_000);
+    await store.upsert(fixture());
+    await expect(fs.access(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('reclaims an unparseable lock after the grace period', async () => {
+    const { store, lockPath } = await lockedStore();
+    await plantLock(lockPath, '{"pid":', 60_000);
+    await store.upsert(fixture());
+  });
+
+  it('two reclaimers on one stale lock: the loser must not remove the winner lock', async () => {
+    let fired = false;
+    const { store, lockPath } = await lockedStore({
+      lockReclaimHooks: {
+        beforeRename: () => {
+          if (fired) return;
+          fired = true;
+          // Winner takes over between our judgement and our removal; built
+          // beside the old file so the inode cannot be reused.
+          const winner = `${lockPath}.winner`;
+          fsSync.writeFileSync(winner, JSON.stringify({ pid: process.pid, createdAt: Date.now() }), { mode: 0o600 });
+          fsSync.renameSync(winner, lockPath);
+        },
+      },
+    });
+    await plantLock(lockPath, JSON.stringify({ pid: DEAD_PID, createdAt: 1 }), 60_000);
+    // The winner's lock is alive (our pid) and recent enough that it is never reclaimed.
+    await expect(store.upsert(fixture())).rejects.toMatchObject({ code: 'VAULT_BUSY' });
+    expect(fired).toBe(true);
+    expect(JSON.parse(await fs.readFile(lockPath, 'utf8')).pid).toBe(process.pid);
   });
 });

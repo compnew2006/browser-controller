@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { pidAlive, reclaimLock, type LockIdentity, type ReclaimHooks } from './lock-file.js';
 
 /**
  * App version, single-sourced from package.json (extension/manifest.json and
@@ -76,6 +77,9 @@ export const DAEMON_LOCK_FILE = path.join(STATE_DIR, 'daemon.lock');
 /** A lock file younger than this that cannot be read is still being written by the daemon that created it. */
 const LOCK_WRITE_GRACE_MS = 5_000;
 
+/** Test seam for the stale-lock race; empty in production. */
+export const daemonLockReclaimHooks: ReclaimHooks = {};
+
 /** Another daemon holds the runtime lock: this one lost the start race and must exit. */
 export class DaemonLockHeldError extends Error {
   /** Pid of the holder; 0 when its lock file was still being written. */
@@ -96,16 +100,26 @@ export class DaemonLockHeldError extends Error {
  * starting a competitor.
  */
 export function daemonLockHolder(): number | null {
+  return inspectDaemonLock().holder;
+}
+
+/** Holder plus the identity of the lock file judged, so takeover can target exactly that file. */
+function inspectDaemonLock(): { holder: number | null; judged: LockIdentity | null } {
+  let judged: LockIdentity;
+  let mtimeMs: number;
   let raw: string;
-  try { raw = fs.readFileSync(DAEMON_LOCK_FILE, 'utf8'); } catch { return null; }
+  try {
+    const st = fs.lstatSync(DAEMON_LOCK_FILE);
+    judged = { dev: st.dev, ino: st.ino, mtimeMs: st.mtimeMs };
+    mtimeMs = st.mtimeMs;
+    raw = fs.readFileSync(DAEMON_LOCK_FILE, 'utf8');
+  } catch { return { holder: null, judged: null }; }
   let ownerPid = 0;
   try { ownerPid = JSON.parse(raw).pid ?? 0; } catch { /* empty or corrupt */ }
-  if (ownerPid > 0) {
-    try { process.kill(ownerPid, 0); return ownerPid; } catch { return null; }
-  }
+  if (ownerPid > 0) return { holder: pidAlive(ownerPid) ? ownerPid : null, judged };
   // openSync('wx') creates the file before writeFileSync fills it: a daemon
   // that reads it in between must not take a fresh lock for a stale one.
-  try { return Date.now() - fs.statSync(DAEMON_LOCK_FILE).mtimeMs < LOCK_WRITE_GRACE_MS ? 0 : null; } catch { return null; }
+  return { holder: Date.now() - mtimeMs < LOCK_WRITE_GRACE_MS ? 0 : null, judged };
 }
 
 /**
@@ -122,9 +136,11 @@ export function acquireDaemonLock(): void {
       return;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      const holder = daemonLockHolder();
+      const { holder, judged } = inspectDaemonLock();
       if (holder !== null) throw new DaemonLockHeldError(holder, { cause: err });
-      try { fs.unlinkSync(DAEMON_LOCK_FILE); } catch { /* raced with cleanup */ }
+      // Compare-before-remove: only the file judged stale goes, never a
+      // lock another starter created after our judgement.
+      if (judged) reclaimLock(DAEMON_LOCK_FILE, judged, daemonLockReclaimHooks);
     }
   }
 }

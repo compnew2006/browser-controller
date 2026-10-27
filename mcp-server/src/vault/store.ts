@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { VaultDataSchema, VaultEnvelopeSchema, VAULT_MAX_AUDIT_EVENTS, VAULT_VERSION, randomId, type VaultCredential, type VaultData, type VaultEnvelope } from './types.js';
+import { pidAlive, reclaimLock, type ReclaimHooks } from '../lock-file.js';
 import { VaultStorageError, fileError } from './store-errors.js';
 import { dataFromEnvelope, envelopeFor, parseBackup, parseJson, type BackupPackage, type RestoreJournal } from './store-format.js';
 
@@ -30,6 +31,8 @@ interface StoreOptions {
   beforeCommit?: (file: string) => void | Promise<void>;
   /** Narrow lock-initialization fault seam for verifying failed acquisitions release their file. */
   beforeLockSync?: () => void | Promise<void>;
+  /** Test seam for the stale-lock takeover race. */
+  lockReclaimHooks?: ReclaimHooks;
 }
 
 function currentUid(): number | undefined {
@@ -62,6 +65,7 @@ export class CredentialVaultStore {
   private readonly lockTimeoutMs: number;
   private readonly beforeCommit?: StoreOptions['beforeCommit'];
   private readonly beforeLockSync?: StoreOptions['beforeLockSync'];
+  private readonly lockReclaimHooks: ReclaimHooks;
   private key: Buffer | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
 
@@ -76,6 +80,7 @@ export class CredentialVaultStore {
     this.lockTimeoutMs = options.lockTimeoutMs ?? LOCK_WAIT_MS;
     this.beforeCommit = options.beforeCommit;
     this.beforeLockSync = options.beforeLockSync;
+    this.lockReclaimHooks = options.lockReclaimHooks ?? {};
   }
 
   get isUnlocked(): boolean { return this.key !== null; }
@@ -568,12 +573,13 @@ export class CredentialVaultStore {
     const stat = await fs.lstat(this.lockPath);
     assertOwnerMode(stat, 'file', 'vault lock');
     if (Date.now() - stat.mtimeMs < STALE_LOCK_GRACE_MS) return;
-    const bytes = await this.readSafeFile(this.lockPath, 1024);
-    const lock = parseJson(bytes, 'VAULT_STORAGE_INVALID', 'vault lock is invalid') as { pid?: unknown };
-    if (!Number.isInteger(lock?.pid) || (lock.pid as number) < 1) return;
-    try { process.kill(lock.pid as number, 0); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ESRCH') await fs.unlink(this.lockPath).catch(() => {});
-    }
+    const judged = { dev: stat.dev, ino: stat.ino, mtimeMs: stat.mtimeMs };
+    // A crash between the O_EXCL create and the pid write leaves an empty or
+    // torn lock; past the grace period it has no live owner, so it is stale.
+    let pid: unknown;
+    try { pid = (parseJson(await this.readSafeFile(this.lockPath, 1024), 'VAULT_STORAGE_INVALID', 'vault lock is invalid') as { pid?: unknown } | null)?.pid; }
+    catch { pid = undefined; }
+    if (Number.isInteger(pid) && (pid as number) >= 1 && pidAlive(pid as number)) return;
+    reclaimLock(this.lockPath, judged, this.lockReclaimHooks);
   }
 }
