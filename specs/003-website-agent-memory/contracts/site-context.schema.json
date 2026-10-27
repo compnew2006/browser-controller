@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-controller/specs/003-website-agent-memory/site-context.schema.json",
+  "title": "siteContext result block and observe request flag",
+  "description": "Extension ↔ daemon wire additions. The daemon sets observe:true on a browser_navigate or browser_snapshot request only while memory is enabled. The extension advertises capability 'site-context' in its helloAck and then adds siteContext to the success result. The daemon removes siteContext before the result reaches any agent.",
+  "$defs": {
+    "requestAddition": {
+      "type": "object",
+      "properties": {
+        "observe": { "type": "boolean", "description": "Top-level field of ExtensionRequest, next to sessionId; never inside params." }
+      }
+    },
+    "siteContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "incognito", "topLevel", "stable", "anonymous", "anonymityReason"],
+      "properties": {
+        "url": { "type": "string", "maxLength": 2048, "description": "Tab URL after the read, with userinfo removed. Query and fragment are kept here only so the daemon can see they exist; the daemon never stores them." },
+        "incognito": { "type": "boolean" },
+        "topLevel": { "type": "boolean" },
+        "stable": { "type": "boolean", "description": "URL before the handler == URL after it." },
+        "lang": { "type": ["string", "null"], "pattern": "^[a-z]{2,8}$" },
+        "dir": { "enum": ["ltr", "rtl", null] },
+        "passwordField": { "type": "boolean", "description": "A visible input[type=password] exists in the top-level document. Structural only; no value, name or label is read." },
+        "anonymous": { "type": ["boolean", "null"], "description": "R-07 verdict; null = could not be determined." },
+        "anonymityReason": {
+          "enum": ["ok", "cookie", "storage", "indexeddb", "incognito", "query", "unstable", "no_permission", "unavailable"]
+        }
+      }
+    },
+    "anonymityRule": {
+      "description": "anonymous:true only if all hold: not incognito; top-level http(s) document; no userinfo, query or fragment; stable; every cookie name from chrome.cookies.getAll({url, storeId}) and every localStorage/sessionStorage key name is in fact-allowlist.json anonymityNames; indexedDB.databases() is empty. Values are never read into the result. Any step that throws or is unavailable → null with reason 'unavailable' (or 'no_permission' without the cookies permission)."
+    }
+  },
+  "$ref": "#/$defs/siteContext"
+}

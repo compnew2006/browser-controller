@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory fixture: public</title>
+<!--
+  No cookies, no localStorage/sessionStorage, no IndexedDB: anonymous:true.
+  Controls match fact-allowlist.json exactly: searchbox "Search", link "Sign in", button "Accept all".
+  Used by specs/003-website-agent-memory tests (memory-daemon, memory-allowlist) for AC-01, AC-02, AC-18, AC-21.
+-->
+</head>
+<body>
+<h1>Memory fixture: public</h1>
+<form role="search">
+  <input type="search" aria-label="Search">
+</form>
+<nav>
+  <a href="/account/login" aria-label="Sign in">Sign in</a>
+</nav>
+<button type="button" aria-label="Accept all">Accept all</button>
+</body>
+</html>

@@ -38,7 +38,11 @@
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+The current constitution is a proposed mirror of root `constitution.md`, not adopted policy.
+Check its recorded source fingerprint and status before using it; identify proposed checks
+separately from requirements that are already applicable under `AGENTS.md` or user instructions.
+
+*GATE: Check applicable requirements before Phase 0 research and re-check after Phase 1 design.*
 
 [Gates determined based on constitution file]
 

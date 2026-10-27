@@ -24,7 +24,7 @@ Use ES modules, two spaces, semicolons, and nearby naming. Keep tools and handle
 
 ## Spec Kit, Evidence, and Agent Workflow
 
-Spec Kit is configured under `.specify/`; Codex skills are under `.agents/skills/`. Use `$speckit-specify`, `$speckit-plan`, `$speckit-tasks`, and `$speckit-implement`; the workflow pauses for spec and plan review. Root `constitution.md` is proposed pending gates A–D and token tests; `.specify/memory/constitution.md` is a template, not adopted policy. Requirements define intended behavior; source shows current implementation; tests/runtime cover exercised paths. Treat Graphify and codebase-memory as maps; verify claims against source, configuration, and tests. Scope delegated work; findings are evidence, not approval; independently review behavior/security changes.
+Spec Kit is configured under `.specify/`; Codex skills are under `.agents/skills/`. Use `$speckit-specify`, `$speckit-plan`, `$speckit-tasks`, and `$speckit-implement`; the workflow pauses for spec and plan review. Root `constitution.md` is proposed pending gates A–D and token tests; `.specify/memory/constitution.md` mirrors that proposal and is not adopted policy. Check the mirror's source fingerprint against the root file before relying on it. Requirements define intended behavior; source shows current implementation; tests/runtime cover exercised paths. Treat Graphify and codebase-memory as maps; verify claims against source, configuration, and tests. Scope delegated work; findings are evidence, not approval; independently review behavior/security changes.
 
 ## Commits and Pull Requests
 

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory fixture: changed</title>
+<!--
+  Same origin as public.html, representing a later site update: lang changed from ar/rtl to en/ltr,
+  and the login form moved from /account/login to /login (served here). Used for AC-03, AC-24: the
+  newer snapshot must replace site.language with no duplicate current fact, and no old value shown.
+-->
+</head>
+<body>
+<h1>Memory fixture: changed</h1>
+<form role="search">
+  <input type="search" aria-label="Search">
+</form>
+<form>
+  <label for="u">Username</label>
+  <input id="u" type="text" autocomplete="username">
+  <label for="p">Password</label>
+  <input id="p" type="password" autocomplete="current-password">
+  <button type="submit" aria-label="Log in">Log in</button>
+</form>
+</body>
+</html>

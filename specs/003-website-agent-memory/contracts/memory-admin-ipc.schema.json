@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-controller/specs/003-website-agent-memory/memory-admin-ipc.schema.json",
+  "title": "memory-admin IPC messages (owner CLI ↔ daemon)",
+  "description": "Sent on the daemon IPC socket after the normal token hello. The daemon advertises capability 'memory-admin' in its welcome; the CLI refuses to send without it. Not an MCP tool and not a wire tool: routeCall never sees it.",
+  "$defs": {
+    "origin": { "type": "string", "pattern": "^https?://[^/?#\\s]+$", "maxLength": 300 },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "command"],
+      "properties": {
+        "kind": { "const": "memory-admin" },
+        "id": { "type": "string", "maxLength": 64 },
+        "command": { "enum": ["status", "enable", "disable", "exclude", "include", "inspect", "export", "delete"] },
+        "origin": { "$ref": "#/$defs/origin", "description": "Required for exclude, include, inspect, and delete without all." },
+        "all": { "type": "boolean", "description": "delete only: every origin." }
+      }
+    },
+    "response": {
+      "type": "object",
+      "required": ["kind", "id", "success"],
+      "properties": {
+        "kind": { "const": "memory-admin-result" },
+        "id": { "type": "string" },
+        "success": { "type": "boolean" },
+        "error": { "type": "string", "description": "CODE: message (INVALID_ARGUMENT, MEMORY_UNAVAILABLE, MEMORY_CORRUPT)." },
+        "status": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "origins": { "type": "integer" },
+            "bytes": { "type": "integer" },
+            "queueDepth": { "type": "integer" },
+            "dropped": { "type": "object", "additionalProperties": { "type": "integer" } },
+            "lastError": { "type": ["object", "null"], "properties": { "code": { "type": "string" }, "at": { "type": "string" } } },
+            "quarantined": { "type": "integer" }
+          }
+        },
+        "records": { "type": "array", "description": "inspect/export: SiteRecord objects as stored (memory-store.schema.json). Owner-only full view." }
+      }
+    }
+  },
+  "$ref": "#/$defs/request"
+}

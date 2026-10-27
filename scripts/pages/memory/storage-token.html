@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory fixture: storage token</title>
+<!--
+  Sets localStorage.token (not on the allowlist). anonymous:false/null: visit stored, no fact.
+-->
+</head>
+<body>
+<h1>Memory fixture: storage token</h1>
+<p>Sets <code>localStorage.token</code>.</p>
+<script>localStorage.setItem('token', 'fixture-not-a-real-secret');</script>
+</body>
+</html>

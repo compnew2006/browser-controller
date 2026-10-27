@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-controller/specs/003-website-agent-memory/browser-memory-policy-tool.schema.json",
+  "title": "browser_memory_policy MCP tool",
+  "description": "Daemon-routed. Lets an agent request a website-memory policy change. The request only takes effect after the owner confirms it in the agent client through MCP form elicitation, reusing the registerTools confirmation path in mcp-server/src/register-tools.ts. The confirmation text is built only from the action and the canonical origin; agent and page text never appear in it. Kept apart from the read-only browser_memory tool so a client can auto-allow reads while still prompting for policy changes (2026-10-27 clarification, FR-004, AC-32).",
+  "$defs": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": { "enum": ["enable", "disable", "exclude", "include", "inspect", "export", "delete"] },
+        "tabId": { "type": "integer", "minimum": 0, "description": "Required for exclude, include, inspect, export and delete (origin resolved from the tab, so tab locks apply). Rejected for enable and disable, which are not origin-scoped." }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "action": { "enum": ["exclude", "include", "inspect", "export", "delete"] } } },
+          "then": { "required": ["tabId"] }
+        },
+        {
+          "if": { "properties": { "action": { "enum": ["enable", "disable"] } } },
+          "then": { "not": { "required": ["tabId"] } }
+        }
+      ]
+    },
+    "internalNote": {
+      "description": "ownerConfirmed is an internal wire field, never part of this input schema and never accepted from the agent — the same pattern as expectFingerprints in tools/action-support.ts. The daemon call is dispatched with an agent-supplied value of that field always dropped; only the gate's own value, set after the owner confirms through elicitation, is forwarded."
+    },
+    "success": {
+      "type": "object",
+      "required": ["success", "text", "action"],
+      "properties": {
+        "success": { "const": true },
+        "action": { "enum": ["enable", "disable", "exclude", "include", "inspect", "export", "delete"] },
+        "origin": { "type": "string", "description": "Origin-scoped actions only." },
+        "text": { "type": "string", "maxLength": 4000, "description": "Confirms exactly the change that applied. For inspect/export, the same scope as browser_memory for that origin (AC-32)." }
+      }
+    },
+    "failureCodes": {
+      "enum": [
+        "CLIENT_CONFIRMATION_UNAVAILABLE",
+        "ACTION_NOT_CONFIRMED",
+        "MEMORY_SCOPE_UNKNOWN",
+        "MEMORY_UNAVAILABLE",
+        "TAB_LOCKED",
+        "INVALID_ARGUMENT"
+      ],
+      "description": "Failures are 'CODE: message'. CLIENT_CONFIRMATION_UNAVAILABLE: the client cannot elicit the owner. ACTION_NOT_CONFIRMED: the owner declined or did not answer. Neither case changes policy, and a repeated request after either failure gets the same two outcomes — confirmed by the owner, or nothing changes."
+    }
+  },
+  "$ref": "#/$defs/input"
+}

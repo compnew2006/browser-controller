@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory fixture: markers</title>
+<!--
+  Anonymous page (no cookies/storage) carrying planted markers inside lexicon-looking and free text,
+  so a bug that stores anything beyond an exact allowlist match is caught (AC-10). None of these
+  strings equal an entry in contracts/fact-allowlist.json after normalization.
+-->
+</head>
+<body>
+<h1>Memory fixture: markers</h1>
+<nav>
+  <a href="/account/login" aria-label="Sign in as fixture.marker@example.test">Sign in as fixture.marker@example.test</a>
+  <button type="button" aria-label="Accept all cookies: sessionid=abc123marker; token=ghp_fixtureMarkerToken">Accept all cookies: sessionid=abc123marker; token=ghp_fixtureMarkerToken</button>
+</nav>
+<form role="search">
+  <input type="search" aria-label="Search for P@ssw0rdMarker123!" value="P@ssw0rdMarker123!">
+</form>
+<p>
+  Contact: fixture.marker@example.test, phone +1-555-010-0199.
+  Planted cookie marker: session_marker=zzz999; planted token marker: tok_live_markerABCDEF.
+</p>
+</body>
+</html>

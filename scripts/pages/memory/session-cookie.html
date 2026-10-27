@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory fixture: session cookie</title>
+<!--
+  The fixture server sets exactly one HttpOnly cookie here, named "sid" (not on the allowlist).
+  document.cookie cannot see it; only the "cookies" permission can (FR-006). anonymous:false/null.
+-->
+</head>
+<body>
+<h1>Memory fixture: session cookie</h1>
+<p>Sets one HttpOnly <code>sid</code> cookie, not visible to page script.</p>
+</body>
+</html>

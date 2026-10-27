@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory fixture: frame</title>
+<!--
+  Top-level document is anonymous and has no lexicon controls of its own. The iframe is served from
+  a different origin (the fixture server's secondary port) and holds a "Sign in" link that an agent's
+  snapshot can see, but cross-origin iframe controls must be ignored (facts.ts). The {{SECONDARY_ORIGIN}}
+  placeholder is filled in by tests/helpers/memory-fixtures.ts' fixture server.
+-->
+</head>
+<body>
+<h1>Memory fixture: frame</h1>
+<iframe src="{{SECONDARY_ORIGIN}}/public.html" title="cross-origin frame" width="300" height="200"></iframe>
+</body>
+</html>

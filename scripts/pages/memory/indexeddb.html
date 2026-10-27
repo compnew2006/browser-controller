@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory fixture: IndexedDB</title>
+<!--
+  Opens one IndexedDB database, so indexedDB.databases() is non-empty. anonymous:false/null.
+-->
+</head>
+<body>
+<h1>Memory fixture: IndexedDB</h1>
+<p>Opens one IndexedDB database.</p>
+<script>indexedDB.open('memory-fixture-db', 1);</script>
+</body>
+</html>

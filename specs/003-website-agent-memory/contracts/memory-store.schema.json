@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-controller/specs/003-website-agent-memory/memory-store.schema.json",
+  "title": "On-disk website memory (policy.json and sites/<sha256(origin)>.json)",
+  "description": "Written only by the daemon's single writer: temp file → fsync → rename → directory fsync. Unknown schemaVersion or a file that fails this schema is quarantined (renamed .corrupt-<ts>) and reported; it is never repaired in place.",
+  "$defs": {
+    "time": { "type": "string", "format": "date-time" },
+    "origin": { "type": "string", "pattern": "^https?://[^/?#\\s]+$", "maxLength": 300 },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "enabled", "excluded", "deletions", "updatedAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "enabled": { "type": "boolean" },
+        "enabledAt": { "oneOf": [{ "$ref": "#/$defs/time" }, { "type": "null" }] },
+        "excluded": { "type": "array", "maxItems": 5000, "uniqueItems": true, "items": { "$ref": "#/$defs/origin" } },
+        "deletions": { "type": "object", "additionalProperties": { "$ref": "#/$defs/time" } },
+        "updatedAt": { "$ref": "#/$defs/time" }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["factId", "kind", "value", "firstObserved", "lastObserved", "status"],
+      "properties": {
+        "factId": { "type": "string", "maxLength": 120, "pattern": "^(site\\.language|ui\\.search|ui\\.login|ui\\.control:[a-z]+:.+)$" },
+        "kind": { "enum": ["site.language", "ui.search", "ui.login", "ui.control"] },
+        "value": { "type": "object", "maxProperties": 2 },
+        "firstObserved": { "$ref": "#/$defs/time" },
+        "lastObserved": { "$ref": "#/$defs/time" },
+        "status": { "const": "current" }
+      }
+    },
+    "profileState": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "visit": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["firstAt", "lastAt", "count"],
+              "properties": { "firstAt": { "$ref": "#/$defs/time" }, "lastAt": { "$ref": "#/$defs/time" }, "count": { "type": "integer", "minimum": 1 } }
+            }
+          ]
+        },
+        "verifications": {
+          "type": "object",
+          "maxProperties": 64,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["at", "tool", "path"],
+            "properties": {
+              "at": { "$ref": "#/$defs/time" },
+              "tool": { "enum": ["browser_snapshot", "browser_navigate"] },
+              "path": { "type": "string", "maxLength": 120, "pattern": "^/[^?#]*$" }
+            }
+          }
+        }
+      }
+    },
+    "site": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "origin", "facts", "profiles", "commitSeq", "updatedAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "origin": { "$ref": "#/$defs/origin" },
+        "facts": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/fact" } },
+        "profiles": { "type": "object", "maxProperties": 16, "additionalProperties": { "$ref": "#/$defs/profileState" } },
+        "commitSeq": { "type": "integer", "minimum": 1 },
+        "updatedAt": { "$ref": "#/$defs/time" }
+      }
+    },
+    "limits": {
+      "description": "Per site file ≤ 64 KiB; ≤ 5,000 site files; total ≤ 32 MiB. Over a limit: the new operation is dropped (MEMORY_FULL); nothing existing is evicted."
+    }
+  }
+}

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory fixture: login</title>
+<!--
+  Served at /account/login. Visible password field => siteContext.passwordField:true (ui.login).
+  No cookies or storage of its own: anonymous:true, so the login path itself can be captured.
+-->
+</head>
+<body>
+<h1>Memory fixture: login</h1>
+<form>
+  <label for="u">Username</label>
+  <input id="u" type="text" autocomplete="username">
+  <label for="p">Password</label>
+  <input id="p" type="password" autocomplete="current-password">
+  <button type="submit" aria-label="Log in">Log in</button>
+</form>
+</body>
+</html>
