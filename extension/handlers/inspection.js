@@ -8,6 +8,7 @@ import { safeExec, execDom, resolveTab, getFallback } from '../lib/page-exec.js'
 import { requireSender, pointInfo, releaseShield } from '../lib/trusted-input.js';
 import { withFrames } from '../lib/drag-input.js';
 import { sleep } from '../lib/timing.js';
+import { waitPage } from '../lib/wait-page.js';
 import { fallbackByTab, persistSessionState } from '../lib/state.js';
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
 import { parseTarget, targetLabel } from '../lib/target.js';
@@ -86,45 +87,38 @@ export async function handleWait(params, _sessionId, _agentName, signal) {
     ? `target ${targetLabel(target)} ${gone ? 'gone' : 'visible'}`
     : `url ${urlRe ? 'matching' : 'containing'} "${url}"`;
   let last = null;
-  for (;;) {
-    // A cancelled call stops at once, so it does not hold the tab for the rest of its timeout.
-    if (signal?.aborted) return { success: false, error: 'TIMEOUT: wait cancelled by the caller' };
-    // A poll that cannot run (navigation in progress) is "not met yet", not a failure. Each poll
-    // gets only the time the wait has left: a busy page must not hold the call past its timeout.
-    const poll = await execDom(tabId, waitPage, [parsed, fb, gone, url ?? null, urlRe], { timeoutMs: Math.max(1, timeout - elapsed()) }).catch(() => null);
-    if (poll && poll.error) return failureOf(poll);
-    if (poll) last = poll;
-    if (poll && poll.met) return ok(poll.rebound ? [reboundNote(poll.rebound)] : []);
-    if (elapsed() >= timeout) break;
-    await sleep(Math.min(200, Math.max(0, timeout - elapsed())));
+  // Each poll is raced against the deadline and the abort: execDom can overrun its budget (install
+  // plus retry, a frozen page), and the wait must still end with its own result inside the 55 s tool timeout.
+  const cancelledReply = { success: false, error: 'TIMEOUT: wait cancelled by the caller' };
+  let timer;
+  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ __expired: true }), timeout); });
+  const cancelled = new Promise((resolve) => {
+    if (signal?.aborted) resolve(cancelledReply);
+    else signal?.addEventListener('abort', () => resolve(cancelledReply), { once: true });
+  });
+  try {
+    for (;;) {
+      if (signal?.aborted) return cancelledReply;
+      // A poll that cannot run (navigation in progress) is "not met yet", not a failure.
+      const poll = await Promise.race([
+        execDom(tabId, waitPage, [parsed, fb, gone, url ?? null, urlRe], { timeoutMs: Math.max(1, timeout - elapsed()) }).catch(() => null),
+        deadline,
+        cancelled,
+      ]);
+      if (poll === cancelledReply) return cancelledReply;
+      if (poll && poll.__expired) break;
+      if (poll && poll.error) return failureOf(poll);
+      if (poll) last = poll;
+      if (poll && poll.met) return ok(poll.rebound ? [reboundNote(poll.rebound)] : []);
+      if (elapsed() >= timeout) break;
+      if (await Promise.race([sleep(Math.min(200, Math.max(0, timeout - elapsed()))), cancelled]) === cancelledReply) return cancelledReply;
+    }
+  } finally {
+    clearTimeout(timer);
   }
   // The last look found the ref's element gone: say so, so the agent takes a new snapshot instead of waiting again.
   const refGone = last?.refGone && parsed ? ` (ref ${parsed.ref} is no longer on the page)` : '';
   return { success: false, error: `TIMEOUT: ${condition} not met after ${timeout} ms${refGone}` };
-}
-
-/** Page side of browser_wait: one poll of the condition. Self-contained (serialized into the page). */
-function waitPage(_t, _fb, _gone, _urlText, _urlRe) {
-  if (_t == null) {
-    const href = location.href;
-    return { met: _urlRe != null ? new RegExp(_urlRe).test(href) : href.includes(_urlText) };
-  }
-  const D = globalThis.__bcDom;
-  if (!D || !D.resolveTarget) return { __needDom: true };
-  const r = D.resolveTarget(_t, _fb);
-  if (r.error && /^INVALID_SELECTOR/.test(r.error)) return { error: r.error };
-  // A ref this tab never issued cannot appear: a miss is an error in both modes, not "gone".
-  if (r.error === 'REF_GONE' && !r.issued) return { error: 'REF_GONE', ref: r.ref, issued: false };
-  // AMBIGUOUS means several visible matches: the target is there.
-  let visible = !!r.error && /^AMBIGUOUS/.test(r.error);
-  if (!r.error && r.el) visible = D.isVisible(r.el);
-  return {
-    met: _gone ? !visible : visible,
-    // An issued ref whose element left: `gone` is met; visible keeps polling (the fallback may re-find it).
-    refGone: r.error === 'REF_GONE',
-    // A ref re-found by its snapshot descriptor: the reply says so.
-    rebound: r.via === 'fallback' ? _t.ref : null,
-  };
 }
 
 /** The position line of a scroll reply: `x: 40 y: 1234 atEnd: false` (x only when scrolled sideways). */

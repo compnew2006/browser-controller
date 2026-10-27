@@ -15,8 +15,12 @@ import { getOpenDialog, subscribeCdpEvents, dialogLabel, dialogOpenError } from 
 export const BROWSER_EVALUATE_DEFAULT_MS = 5_000;
 export const BROWSER_EVALUATE_MAX_MS = 30_000;
 
-/** Page-side serializer, run with `this` = the evaluated value. */
-function serializeThis() {
+/**
+ * Page-side serializer, run with `this` = the evaluated value. `cap` is the largest string that may
+ * cross CDP: a longer JSON comes back as { head, fullLength } (head = its first `cap` characters),
+ * so the extension never receives the full payload. Self-contained: it is serialized alone.
+ */
+function serializeThis(cap) {
   const describe = (n) => {
     if (!(n instanceof Node)) return String(n);
     if (n.nodeType !== 1) return `#${n.nodeName.toLowerCase()}`;
@@ -43,7 +47,9 @@ function serializeThis() {
     }
     return v;
   });
-  return out === undefined ? null : out;
+  if (out === undefined) return null;
+  if (typeof cap === 'number' && out.length > cap) return { head: out.slice(0, cap), fullLength: out.length };
+  return out;
 }
 
 function capped(value) {
@@ -104,9 +110,14 @@ async function resultOf(send, ro) {
   const ser = await send('Runtime.callFunctionOn', {
     objectId: ro.objectId,
     functionDeclaration: serializeThis.toString(),
+    arguments: [{ value: MAX_RESULT_CHARS }],
     returnByValue: true,
   });
   const json = ser?.result?.value;
+  // Over the cap: the page sent only the head and the full length (see serializeThis).
+  if (json && typeof json === 'object' && typeof json.head === 'string') {
+    return { success: true, result: json.head, truncated: true, fullLength: json.fullLength };
+  }
   if (typeof json !== 'string') return capped(ro.description ?? null);
   if (json.length > MAX_RESULT_CHARS) return capped(json);
   try {
