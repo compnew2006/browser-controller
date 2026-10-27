@@ -7,6 +7,7 @@
  *
  *   node scripts/pairing.mjs install [--extension-id <id>]...   npm run setup:pairing
  *   node scripts/pairing.mjs status                             npm run pairing:status
+ *   node scripts/pairing.mjs rotate                             npm run pairing:rotate
  *   node scripts/pairing.mjs uninstall                          npm run pairing:uninstall
  *
  * Chrome lets only the extension IDs in the manifest's allowed_origins start
@@ -226,6 +227,47 @@ export function status({
   };
 }
 
+/** Same shape as loadOrCreateSecret in mcp-server/src/daemon-config.ts: 24 random bytes as hex. */
+const freshSecret = () => crypto.randomBytes(24).toString('hex');
+
+/** Write `{ [field]: value, createdAt }` to a 0600 temp file next to `file`; returns the temp path. */
+function writeSecretTemp(file, field, value) {
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ [field]: value, createdAt: Date.now() }, null, 2), { mode: 0o600, flag: 'wx' });
+  return tmp;
+}
+
+/**
+ * Replace the enrollment secret (and the daemon auth token, when its file
+ * exists) with fresh random values, atomically per file (temp file + rename,
+ * 0600). Values are never returned or printed. Touches no process: the
+ * running daemon keeps the old values in memory until it is restarted, and
+ * the native pairing host reads the secret at request time.
+ */
+export function rotate({ stateDir = process.env.BC_STATE_DIR || path.join(os.homedir(), '.browser-controller') } = {}) {
+  if (!fs.existsSync(stateDir) || !fs.statSync(stateDir).isDirectory()) {
+    throw new Error(`State directory not found: ${stateDir}. Start your MCP client or \`npm run daemon:start\` once to create it.`);
+  }
+  const enrollmentFile = path.join(stateDir, 'enrollment.json');
+  const tokenFile = path.join(stateDir, 'token.json');
+  let hasSecret = false;
+  try { hasSecret = !!JSON.parse(fs.readFileSync(enrollmentFile, 'utf8')).secret; } catch { /* absent or unreadable */ }
+  if (!hasSecret) {
+    throw new Error(`No enrollment secret in ${stateDir}: nothing to rotate. Start your MCP client or \`npm run daemon:start\` once to create it.`);
+  }
+  const targets = [[enrollmentFile, 'secret']];
+  if (fs.existsSync(tokenFile)) targets.push([tokenFile, 'token']);
+  const temps = [];
+  try {
+    for (const [file, field] of targets) temps.push([writeSecretTemp(file, field, freshSecret()), file]);
+    for (const [tmp, file] of temps) fs.renameSync(tmp, file);
+  } catch (err) {
+    for (const [tmp] of temps) { try { fs.rmSync(tmp, { force: true }); } catch { /* already moved */ } }
+    throw err;
+  }
+  return { secretRotated: true, tokenRotated: targets.length > 1 };
+}
+
 function parseArgs(argv) {
   const [command = 'install', ...rest] = argv;
   const extensionIds = [];
@@ -263,6 +305,14 @@ function main() {
     console.log(r.removed.length ? `Removed from: ${r.removed.join(', ')}` : 'Nothing was registered.');
     return;
   }
+  if (command === 'rotate') {
+    const r = rotate();
+    console.log('Enrollment secret rotated.');
+    console.log(r.tokenRotated ? 'Daemon auth token rotated.' : 'No daemon auth token file yet; nothing else to rotate.');
+    console.log('\nNext: restart the daemon so it drops the old values: npm run daemon:restart');
+    console.log('The extension then pairs itself again through the native pairing host (reload it if pairing was never set up: npm run setup:pairing).');
+    return;
+  }
   if (command === 'status') {
     const s = status();
     const id = unpackedExtensionId(fs.realpathSync(extensionDir));
@@ -282,7 +332,7 @@ function main() {
     }
     return;
   }
-  throw new Error(`Unknown command "${command}" (install | status | uninstall)`);
+  throw new Error(`Unknown command "${command}" (install | status | rotate | uninstall)`);
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {

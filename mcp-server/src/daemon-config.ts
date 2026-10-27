@@ -274,9 +274,8 @@ export interface StoredEnrollment {
 /**
  * Reads the existing enrollment secret, or creates one on first run. The
  * secret is stable across daemon restarts (persisted to enrollment.json), so
- * the user pairs once and the popup keeps working after reboots. Rotating it
- * means deleting enrollment.json and re-running the server (the
- * daemon prints the new secret on next start).
+ * the user pairs once and the popup keeps working after reboots. Rotate it
+ * with `npm run pairing:rotate` (scripts/pairing.mjs) and restart the daemon.
  *
  * Use readEnrollmentSecret() to peek without creating (e.g. index.ts decides
  * whether to print the "first run — here is your secret" banner).

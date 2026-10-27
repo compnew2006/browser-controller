@@ -28,6 +28,7 @@
     "setup:claude": "node agent-config/setup.mjs claude",
     "setup:pairing": "node scripts/pairing.mjs install",
     "pairing:status": "node scripts/pairing.mjs status",
+    "pairing:rotate": "node scripts/pairing.mjs rotate",
     "pairing:uninstall": "node scripts/pairing.mjs uninstall",
     "context:lint": "ai-context-kit lint",
     "context:measure": "ai-context-kit measure"
