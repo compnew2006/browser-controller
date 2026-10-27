@@ -120,6 +120,14 @@ export class ExtensionBridge {
     this.connectionWaitMs = options.connectionWaitMs ?? 5_000;
   }
 
+  /** The daemon's live session ids, sent to each extension connection when it becomes ready. */
+  private sessionRoster: (() => string[]) | null = null;
+
+  /** Set by the daemon: lets a reconnecting extension free the locks of sessions that left while it was away. */
+  setSessionRoster(provider: () => string[]): void {
+    this.sessionRoster = provider;
+  }
+
   private markExtensionReady(conn: ExtensionConnection, info?: { browserId?: unknown; browserLabel?: unknown; capabilities?: unknown }): void {
     this.conns.markReady(conn, info);
     // A reconnect of the same browser replaces its old socket.
@@ -133,6 +141,14 @@ export class ExtensionBridge {
     this.connectionWaiters.forEach((waiter) => waiter.resolve());
     this.connectionWaiters = [];
     console.error(`[Bridge] Extension connected (browser ${conn.label})`);
+    // Only this connection: it alone may have missed releaseSession frames (F4-2).
+    if (this.sessionRoster) {
+      try {
+        conn.ws.send(JSON.stringify({ type: 'sessionRoster', sessionIds: this.sessionRoster() }));
+      } catch {
+        // socket gone — close path will fire
+      }
+    }
   }
 
   private rejectExtensionHandshake(conn: ExtensionConnection, reason: string): void {

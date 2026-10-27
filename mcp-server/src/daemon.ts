@@ -126,6 +126,7 @@ class Daemon {
       token: this.token,
       enrollmentSecret: this.enrollmentSecret,
     });
+    this.bridge.setSessionRoster(() => [...this.clients.values()].map((client) => client.sessionId));
     const vaultTransport: VaultTransport = {
       getBrowserContext: async (sessionId) => this.bridge.vaultTransport.getBrowserContext(sessionId),
       callVaultAction: (action, params, sessionId, signal, agentName) => this.bridge.vaultTransport.callAction(action, params, sessionId, signal, agentName),

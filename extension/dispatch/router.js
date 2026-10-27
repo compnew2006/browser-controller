@@ -7,7 +7,7 @@
 import { runOnTab as runOnTabLib, tabLockedMessage } from '../lib/tab-concurrency.js';
 import {
   tabLocks, tabMutex, tabControl, persistSessionState, wedgedTabs, sessionAgentNames,
-  releaseSessionSettings, claimTabSetting, releaseBodyCapture,
+  releaseSessionSettings, claimTabSetting, releaseBodyCapture, sessionSettingOwners, isSessionStateUnavailable,
 } from '../lib/state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from '../lib/connection.js';
 import { showLockShield, hideLockShield } from '../lib/overlay.js';
@@ -67,7 +67,12 @@ const HANDLERS = {
   browser_classify_action: handleClassifyAction,
 };
 
-/** Public wire tools (exported for the drift-guard test); internal preflight stays private. */
+/**
+ * Public wire tools (exported for the drift-guard test); internal preflight stays private.
+ * browser_classify_action is deliberately in HANDLERS but not here: it is not an MCP tool, yet
+ * the server's action-safety gate (mcp-server/src/tools/action-support.ts) calls it through the
+ * bridge before every click/type/fill, so dispatch must keep reaching it. It only reads the page.
+ */
 export const dispatchedTools = Object.freeze(Object.keys(HANDLERS).filter((name) => name !== 'browser_classify_action'));
 
 export async function dispatch(tool, params, sessionId, agentName, signal) {
@@ -223,6 +228,36 @@ async function handleVaultMessage(msg) {
   }
 }
 
+/** Every session id that owns a lock or a tab setting, or that this worker has seen call. */
+function knownSessionOwners() {
+  const owners = new Set(sessionAgentNames.keys());
+  for (const { sessionId } of tabLocks.snapshot()) owners.add(sessionId);
+  for (const owner of sessionSettingOwners()) owners.add(owner);
+  return owners;
+}
+
+/** Free everything `owner` (a daemon session id) holds: locks, control, tab settings, name. */
+function releaseSessionOwner(owner) {
+  if (!owner) return;
+  // releaseByOwner is synchronous and returns the released tabIds before
+  // any shield calls below run — no async race (review NOTE 7a).
+  const released = tabLocks.releaseByOwner(owner);
+  tabControl.releaseByOwner(owner); // a gone agent no longer "controls" anything
+  // Tab settings it set (mock rules, emulation overrides, body capture) go with it (L1).
+  for (const { tabId, kind } of releaseSessionSettings(owner)) clearTabSetting(tabId, kind);
+  sessionAgentNames.delete(owner);
+  // Persist: without this, a service-worker recycle after the disconnect
+  // would restore the just-released lock from session storage and
+  // resurrect stale exclusivity (spec-review finding).
+  persistSessionState();
+  for (const tabId of released) hideLockShield(tabId);
+  if (released.length) {
+    broadcastStatus(
+      `Released ${released.length} lock(s) from disconnected agent ${owner}`,
+    );
+  }
+}
+
 export async function handleMessage(msg) {
   if (msg.type === 'vaultAction' || msg.type === 'vaultActionCancel') {
     await handleVaultMessage(msg);
@@ -233,26 +268,16 @@ export async function handleMessage(msg) {
   if (msg.type === "releaseSession") {
     // Session ids are unique even when two live clients share a display name.
     // Releasing one session therefore cannot unlock its sibling's tabs.
-    const owner = msg.sessionId;
-    if (owner) {
-      // releaseByOwner is synchronous and returns the released tabIds before
-      // any shield calls below run — no async race (review NOTE 7a).
-      const released = tabLocks.releaseByOwner(owner);
-      tabControl.releaseByOwner(owner); // a gone agent no longer "controls" anything
-      // Tab settings it set (mock rules, emulation overrides, body capture) go with it (L1).
-      for (const { tabId, kind } of releaseSessionSettings(owner)) clearTabSetting(tabId, kind);
-      sessionAgentNames.delete(owner);
-      // Persist: without this, a service-worker recycle after the disconnect
-      // would restore the just-released lock from session storage and
-      // resurrect stale exclusivity (spec-review finding).
-      persistSessionState();
-      for (const tabId of released) hideLockShield(tabId);
-      if (released.length) {
-        broadcastStatus(
-          `Released ${released.length} lock(s) from disconnected agent ${owner}`,
-        );
-      }
-    }
+    releaseSessionOwner(msg.sessionId);
+    return; // control message — no response expected
+  }
+  if (msg.type === "sessionRoster") {
+    // The daemon's live sessions, sent when this connection became ready. A release the daemon
+    // sent while this worker was disconnected was lost: free what absent sessions still own (F4-2).
+    const ids = msg.sessionIds;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) return;
+    const live = new Set(ids);
+    for (const owner of knownSessionOwners()) if (!live.has(owner)) releaseSessionOwner(owner);
     return; // control message — no response expected
   }
   if (msg.type === "cancel") {
@@ -294,6 +319,13 @@ export async function handleMessage(msg) {
   // raw-WS clients only; the daemon always sends ids.
   if (id === undefined || id === null) {
     sendResponse(null, { success: false, error: 'tool call is missing id — no response can be correlated' });
+    return;
+  }
+
+  // The saved lock state could not be read (F4-3): ownership is unknown, not empty. Serving the
+  // call could ignore another agent's lock, so refuse it until a retry of the read succeeds.
+  if (isSessionStateUnavailable()) {
+    sendResponse(id, { success: false, error: 'STATE_UNAVAILABLE: the saved tab-lock state could not be read yet, so tab ownership is unknown. Retry in a few seconds.' });
     return;
   }
 

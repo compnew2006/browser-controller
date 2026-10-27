@@ -164,6 +164,13 @@ export function tabSettingOwner(tabId, kind) {
   return settingOwners.get(tabId)?.get(kind);
 }
 
+/** Every session id that owns a tab setting. */
+export function sessionSettingOwners() {
+  const owners = new Set();
+  for (const kinds of settingOwners.values()) for (const owner of kinds.values()) owners.add(owner);
+  return owners;
+}
+
 /**
  * Take every setting `sessionId` owns, forgetting its claims. Returns [{tabId, kind}] for the
  * caller to clear. Synchronous, like TabLockMap.releaseByOwner.
@@ -203,7 +210,12 @@ const SESSION_STATE_KEY = "bcSessionState";
  * and a tab closed meanwhile is not restored from storage.
  */
 let sessionStateLoaded = false;
+/** True once a storage read has failed and until one succeeds: locks are unknown, not empty (F4-3). */
+let sessionStateLoadFailed = false;
 let persistDeferred = false;
+let loadRetryTimer = null;
+const LOAD_RETRY_DELAYS_MS = [100, 300, 900, 2_700];
+const BACKGROUND_RETRY_MS = 15_000;
 /** @type {Set<number>} */
 const closedBeforeLoad = new Set();
 
@@ -230,50 +242,97 @@ export function persistSessionState() {
         fallbacks,
         refHighWater: Object.fromEntries(refHighWaterByTab),
       },
-    }).catch(() => {});
-  } catch { /* storage unavailable — in-memory behavior */ }
+    }).catch(warnPersistFailure);
+  } catch (error) { warnPersistFailure(error); }
+}
+
+/** A failed write is not fatal (the in-memory state still serves), but it must be visible (F4-3). */
+function warnPersistFailure(error) {
+  console.warn('[BrowserController] Persisting tab-lock state failed; a worker recycle may lose it:', error?.message ?? error);
+}
+
+/**
+ * True while the stored locks could not be read. The router then refuses tool calls: with the
+ * ownership unknown, serving them could ignore another agent's lock (F4-3).
+ */
+export function isSessionStateUnavailable() {
+  return sessionStateLoadFailed;
 }
 
 /**
  * Restore locks + fallbacks after a service-worker recycle. Must complete
  * BEFORE the WS connect (so the shield sweep honors restored owners) and
  * before any tool call (so lock routing sees the real ownership).
+ *
+ * A failed storage read is retried with a bounded backoff (`retryDelaysMs`), then every
+ * BACKGROUND_RETRY_MS. Until a read succeeds the state is not marked loaded: persisting stays
+ * deferred (it would overwrite the stored locks with an empty map) and the state reports
+ * itself unavailable.
  */
-export async function loadSessionState() {
+export async function loadSessionState({ retryDelaysMs = LOAD_RETRY_DELAYS_MS } = {}) {
+  if (loadRetryTimer) {
+    clearTimeout(loadRetryTimer);
+    loadRetryTimer = null;
+  }
+  let stored;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      stored = await chrome.storage.session.get(SESSION_STATE_KEY);
+      break;
+    } catch (error) {
+      sessionStateLoadFailed = true;
+      console.warn('[BrowserController] Reading the saved tab-lock state failed:', error?.message ?? error);
+      if (attempt >= retryDelaysMs.length) {
+        scheduleBackgroundLoad();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt]));
+    }
+  }
   try {
-    const stored = await chrome.storage.session.get(SESSION_STATE_KEY);
-    const state = stored?.[SESSION_STATE_KEY];
-    if (!state) return;
-    if (typeof state.daemonInstance === 'string') adoptedDaemonInstance = state.daemonInstance;
-    if (Array.isArray(state.locks)) {
-      for (const { tabId, sessionId, agentName, since } of state.locks) {
-        if (closedBeforeLoad.has(tabId)) continue; // the tab closed before its lock was read
-        // lock() refuses to steal: a stale entry for a tab another live session
-        // re-locked is impossible here (we're the only instance), but the guard
-        // costs nothing.
-        try {
-          tabLocks.lock(tabId, sessionId, { agentName: agentName ?? undefined, since: typeof since === 'number' ? since : undefined });
-        } catch {}
-      }
+    applyStoredState(stored?.[SESSION_STATE_KEY]);
+  } catch { /* a corrupt payload — start empty, as before */ }
+  sessionStateLoadFailed = false;
+  sessionStateLoaded = true;
+  closedBeforeLoad.clear();
+  if (persistDeferred) {
+    persistDeferred = false;
+    persistSessionState();
+  }
+}
+
+function scheduleBackgroundLoad() {
+  loadRetryTimer = setTimeout(() => {
+    loadRetryTimer = null;
+    loadSessionState({ retryDelaysMs: [] });
+  }, BACKGROUND_RETRY_MS);
+  loadRetryTimer.unref?.();
+}
+
+function applyStoredState(state) {
+  if (!state) return;
+  if (typeof state.daemonInstance === 'string') adoptedDaemonInstance = state.daemonInstance;
+  if (Array.isArray(state.locks)) {
+    for (const { tabId, sessionId, agentName, since } of state.locks) {
+      if (closedBeforeLoad.has(tabId)) continue; // the tab closed before its lock was read
+      // lock() refuses to steal: a stale entry for a tab another live session
+      // re-locked is impossible here (we're the only instance), but the guard
+      // costs nothing.
+      try {
+        tabLocks.lock(tabId, sessionId, { agentName: agentName ?? undefined, since: typeof since === 'number' ? since : undefined });
+      } catch {}
     }
-    if (state.refHighWater && typeof state.refHighWater === "object") {
-      for (const [tabId, n] of Object.entries(state.refHighWater)) {
-        if (Number.isInteger(n) && n > 0 && !closedBeforeLoad.has(Number(tabId))) refHighWaterByTab.set(Number(tabId), n);
-      }
+  }
+  if (state.refHighWater && typeof state.refHighWater === "object") {
+    for (const [tabId, n] of Object.entries(state.refHighWater)) {
+      if (Number.isInteger(n) && n > 0 && !closedBeforeLoad.has(Number(tabId))) refHighWaterByTab.set(Number(tabId), n);
     }
-    if (state.fallbacks && typeof state.fallbacks === "object") {
-      for (const [tabId, entries] of Object.entries(state.fallbacks)) {
-        if (entries && typeof entries === "object" && !closedBeforeLoad.has(Number(tabId))) {
-          fallbackByTab.set(Number(tabId), new Map(Object.entries(entries)));
-        }
+  }
+  if (state.fallbacks && typeof state.fallbacks === "object") {
+    for (const [tabId, entries] of Object.entries(state.fallbacks)) {
+      if (entries && typeof entries === "object" && !closedBeforeLoad.has(Number(tabId))) {
+        fallbackByTab.set(Number(tabId), new Map(Object.entries(entries)));
       }
-    }
-  } catch { /* storage unavailable — start empty, as before */ } finally {
-    sessionStateLoaded = true;
-    closedBeforeLoad.clear();
-    if (persistDeferred) {
-      persistDeferred = false;
-      persistSessionState();
     }
   }
 }
