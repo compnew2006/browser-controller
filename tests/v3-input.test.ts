@@ -44,7 +44,7 @@ const dialogListeners: Array<(src: { tabId: number }, method: string, params?: u
 const { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } = await import('../extension/lib/page-dom.js');
 const { handleClick, handleType } = await import('../extension/handlers/interaction.js');
 const { handleFill, handleDialog } = await import('../extension/handlers/interaction-advanced.js');
-const { detachCdp, clearOpenDialog } = await import('../extension/lib/cdp-session.js');
+const { detachCdp, clearOpenDialog, takeFileChooser, CHOOSER_GRACE_MS } = await import('../extension/lib/cdp-session.js');
 const { fallbackByTab, wedgedTabs } = await import('../extension/lib/state.js');
 
 let doc: FakeDocument;
@@ -928,5 +928,62 @@ describe('a ref re-found by its snapshot descriptor is said so in the reply (not
     const res = await handleFill({ tabId: 1, fields: [{ target: 'e4', value: 'Ada' }] });
     expect(res).toMatchObject({ success: true, filled: 1 });
     expect(res.text).toBe('filled 1 fields\nnote: e4 was re-found after the page changed');
+  });
+});
+
+describe('a file chooser that agent input opens is intercepted, not shown', () => {
+  const chooserCalls = () => cdp.filter((c) => c.method === 'Page.setInterceptFileChooserDialog').map((c) => c.params);
+  const graceOver = () => new Promise((r) => setTimeout(r, CHOOSER_GRACE_MS + 50));
+  function uploadButton() {
+    const btn = doc.el('button', { id: 'up' }, 'Upload');
+    doc.body.append(btn);
+    stackAt(btn);
+  }
+
+  it('interception goes on before the press, and off once the grace after the call is over', async () => {
+    uploadButton();
+    await handleClick({ tabId: 1, target: '#up' });
+    const order = cdp.map((c) => (c.method === 'Input.dispatchMouseEvent' ? c.params.type : c.method === 'Page.setInterceptFileChooserDialog' ? `chooser:${c.params.enabled}` : c.method));
+    expect(order.indexOf('chooser:true')).toBeLessThan(order.indexOf('mousePressed'));
+    expect(chooserCalls()).toEqual([{ enabled: true, cancel: true }]);
+    // The user's own click on an upload button shows the dialog again after the grace.
+    await graceOver();
+    expect(chooserCalls()).toEqual([{ enabled: true, cancel: true }, { enabled: false }]);
+  });
+
+  it('input calls back to back share one interception: on once, off once after the last', async () => {
+    uploadButton();
+    await handleClick({ tabId: 1, target: '#up' });
+    await handleType({ tabId: 1, key: 'Enter' });
+    expect(chooserCalls()).toEqual([{ enabled: true, cancel: true }]);
+    await graceOver();
+    expect(chooserCalls()).toEqual([{ enabled: true, cancel: true }, { enabled: false }]);
+  });
+
+  it('the chooser the click opened is kept for the result line, once', async () => {
+    uploadButton();
+    cdpReply = (method, params) => {
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
+        for (const fn of dialogListeners) fn({ tabId: 1 }, 'Page.fileChooserOpened', { frameId: 'f1', mode: 'selectSingle', backendNodeId: 7 });
+      }
+      return browserReply(method, params);
+    };
+    const res = await handleClick({ tabId: 1, target: '#up' });
+    expect(res).toMatchObject({ success: true, text: 'clicked #up' });
+    expect(takeFileChooser(1)).toEqual({ frameId: 'f1', mode: 'selectSingle', backendNodeId: 7 });
+    expect(takeFileChooser(1)).toBeNull();
+  });
+
+  it('a Chrome that refuses the interception still gets the click, and nothing is switched off after it', async () => {
+    uploadButton();
+    cdpReply = (method, params) => {
+      if (method === 'Page.setInterceptFileChooserDialog') throw new Error("'Page.setInterceptFileChooserDialog' wasn't found");
+      return browserReply(method, params);
+    };
+    const res = await handleClick({ tabId: 1, target: '#up' });
+    expect(res).toMatchObject({ success: true, text: 'clicked #up' });
+    expect(pressed()).toHaveLength(1);
+    await graceOver();
+    expect(chooserCalls()).toEqual([{ enabled: true, cancel: true }]);
   });
 });

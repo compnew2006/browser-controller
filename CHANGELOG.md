@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- A click, key, drag or `browser_evaluate` script that makes the page open a file chooser (an upload button, `input.click()`) no longer opens the native file dialog, which an agent cannot answer and which covered the user's screen on Windows. While agent input or a script runs, and for 0.5 s after it, Chrome intercepts the chooser and the page gets a cancel; the next result says `fileChooser:` and points to `browser_fill` with absolute paths. The user's own clicks show the dialog as before. Extension reload needed.
+
 ## 3.0.9
 
 Reload the extension at `chrome://extensions` and restart the daemon (`npm run daemon:restart`) after updating.

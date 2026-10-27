@@ -11,7 +11,7 @@ import {
 } from '../lib/state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from '../lib/connection.js';
 import { showLockShield, hideLockShield } from '../lib/overlay.js';
-import { getOpenDialog, dialogLabel } from '../lib/cdp-session.js';
+import { getOpenDialog, dialogLabel, takeFileChooser } from '../lib/cdp-session.js';
 import { handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType } from '../handlers/interaction.js';
 import { handleFill, handleDialog } from '../handlers/interaction-advanced.js';
@@ -78,7 +78,7 @@ export const dispatchedTools = Object.freeze(Object.keys(HANDLERS).filter((name)
 export async function dispatch(tool, params, sessionId, agentName, signal) {
   const handler = HANDLERS[tool];
   if (!handler) throw new Error(`Unknown tool: ${tool}`);
-  return withDialogLine(params?.tabId, await handler(params, sessionId, agentName, signal));
+  return withDialogLine(params?.tabId, withFileChooserLine(params?.tabId, await handler(params, sessionId, agentName, signal)));
 }
 
 /**
@@ -91,6 +91,20 @@ function withDialogLine(tabId, result) {
   if (!open || !result || result.success === false || /^dialog: /m.test(text)) return result;
   const line = `dialog: ${dialogLabel(open)}`;
   return { ...result, text: text ? `${text}\n${line}` : line, dialog: open };
+}
+
+/**
+ * A file chooser that agent input opened was intercepted, not shown (cdp-session
+ * holdFileChooser). The next success on the tab says so, once, and how to upload instead.
+ */
+function withFileChooserLine(tabId, result) {
+  if (tabId == null || !result || result.success === false) return result;
+  const chooser = takeFileChooser(tabId);
+  if (!chooser) return result;
+  const files = chooser.mode === 'selectMultiple' ? 'several files' : 'one file';
+  const line = `fileChooser: the page opened a file chooser (${files}); it was not shown. To upload, browser_fill the file input, its label or the upload button with absolute paths.`;
+  const text = typeof result.text === 'string' ? result.text : '';
+  return { ...result, text: text ? `${text}\n${line}` : line, fileChooser: { mode: chooser.mode } };
 }
 
 const OVERLAY_MS = 1_500;

@@ -9,7 +9,7 @@
  * There is no synthetic fallback: when the debugger cannot attach, input fails
  * with DEBUGGER_UNAVAILABLE (requireSender).
  */
-import { ensureCdp, ensureViewport, hasCdp, getOpenDialog, subscribeCdpEvents } from './cdp-session.js';
+import { ensureCdp, ensureViewport, hasCdp, getOpenDialog, subscribeCdpEvents, holdFileChooser } from './cdp-session.js';
 import { safeExec, execDom, getFallback, wedgedError } from './page-exec.js';
 import { wedgedTabs } from './state.js';
 import { agentCursorEnabled } from './overlay.js';
@@ -459,8 +459,9 @@ export function assertInputReady(tabId, signal) {
  *    (wedgedTabs, as safeExec does) and the call fails with the wedged-tab text.
  * A cancelled call (`signal`, the bridge timed it out) starts no new dispatch; a release
  * still goes out, so no button or key is left down. `send(method, params)` resolves true
- * when the dispatch was sent and false when a dialog already blocks the page. close() ends
- * the dialog watch: call it when the input is over.
+ * when the dispatch was sent and false when a dialog already blocks the page. A file chooser
+ * the input opens is intercepted, not shown (holdFileChooser). close() ends the dialog watch
+ * and the interception hold: call it when the input is over.
  */
 export function inputSession(tabId, send, signal) {
   assertInputReady(tabId, signal);
@@ -472,6 +473,7 @@ export function inputSession(tabId, send, signal) {
     blocked = getOpenDialog(tabId) ?? { type: 'dialog', message: '' };
     wake();
   });
+  const chooser = holdFileChooser(tabId, send);
   return {
     get blocked() { return blocked; },
     /** The bare sender, for calls that are not input dispatches (file upload, the value probe). */
@@ -479,6 +481,7 @@ export function inputSession(tabId, send, signal) {
     async send(method, params = {}) {
       if (blocked) return false;
       if (signal?.aborted && !isRelease(method, params)) throw cancelledError();
+      await chooser.ready;
       const dispatch = send(method, params);
       dispatch.catch(() => {}); // a late ack or rejection after the dialog or the budget is swallowed
       let timer;
@@ -493,7 +496,7 @@ export function inputSession(tabId, send, signal) {
       }
       return true;
     },
-    close() { off(); },
+    close() { off(); chooser.release(); },
   };
 }
 

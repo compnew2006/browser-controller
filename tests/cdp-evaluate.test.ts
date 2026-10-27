@@ -52,6 +52,24 @@ describe('cdpEvaluateSource (browser_evaluate over CDP)', () => {
   });
 });
 
+describe('cdpEvaluateSource: a file chooser the script opens is intercepted', () => {
+  const steps = (calls: Array<{ method: string; params: Reply }>) => calls.map((c) => (c.method === 'Page.setInterceptFileChooserDialog'
+    ? `chooser:${c.params.enabled}` : c.method === 'Runtime.evaluate' && c.params.awaitPromise ? 'run' : c.method));
+
+  it('with a tab, interception goes on before the run (its user gesture lets input.click() open the dialog)', async () => {
+    const { send, calls } = fakeSend({ result: { type: 'undefined' } });
+    await cdpEvaluateSource(send, 'document.querySelector("input[type=file]").click()', { tabId: 41 });
+    expect(steps(calls).indexOf('chooser:true')).toBeGreaterThanOrEqual(0);
+    expect(steps(calls).indexOf('chooser:true')).toBeLessThan(steps(calls).indexOf('run'));
+  });
+
+  it('without a tab nothing is switched', async () => {
+    const { send, calls } = fakeSend({ result: { type: 'undefined' } });
+    await cdpEvaluateSource(send, 'void 0');
+    expect(steps(calls)).not.toContain('chooser:true');
+  });
+});
+
 /**
  * A fake page-side parser: `new Function` compiles the source and runs nothing. A run is an
  * expression ending in `()`; every other evaluate only builds the function (the parse check).

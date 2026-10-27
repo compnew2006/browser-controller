@@ -356,6 +356,21 @@ describe('the router and a JavaScript dialog open on the tab', () => {
   });
 });
 
+describe('the router and a file chooser that agent input opened', () => {
+  const textOf = (id: string) => String((sent.find((f) => f.id === id)?.result as { text?: string }).text);
+
+  it('the next success on the tab says once that it was not shown and how to upload instead', async () => {
+    for (const fn of dialogListeners) fn({ tabId: 3 }, 'Page.fileChooserOpened', { frameId: 'f1', mode: 'selectMultiple', backendNodeId: 5 });
+    await handleMessage({ id: 'fc1', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+    await handleMessage({ id: 'fc2', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+    expect(textOf('fc1').split('\n').at(-1)).toBe('fileChooser: the page opened a file chooser (several files); it was not shown. To upload, browser_fill the file input, its label or the upload button with absolute paths.');
+    expect((sent.find((f) => f.id === 'fc1')?.result as { fileChooser?: unknown }).fileChooser).toEqual({ mode: 'selectMultiple' });
+    expect(textOf('fc2')).not.toMatch(/fileChooser/);
+  });
+});
+
 describe('dispatch registry ↔ MCP tool registry (drift guard)', () => {
   // browser_batch and browser_safety are server-only; browser_vault is daemon-owned
   // and uses private internal frames rather than the generic extension tool dispatcher.

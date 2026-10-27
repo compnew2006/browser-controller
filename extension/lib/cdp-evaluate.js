@@ -9,7 +9,7 @@
  * Non-JSON values (DOM nodes, cycles, functions) come back as readable descriptions instead of {}.
  */
 import { MAX_RESULT_CHARS } from './state.js';
-import { getOpenDialog, subscribeCdpEvents, dialogLabel, dialogOpenError } from './cdp-session.js';
+import { getOpenDialog, subscribeCdpEvents, dialogLabel, dialogOpenError, holdFileChooser } from './cdp-session.js';
 
 /** browser_evaluate's timeout: its default and its largest value (contract 3.0). */
 export const BROWSER_EVALUATE_DEFAULT_MS = 5_000;
@@ -180,7 +180,9 @@ function dialogRefusal(tabId) {
  * `return` a value. It is compiled first (nothing runs when it does not parse), then
  * run once, awaited, and read back by value. Failures: SCRIPT_ERROR, or TIMEOUT.
  * `tabId` (optional) watches the tab's JavaScript dialogs: DIALOG_OPEN while one is open,
- * and a paused success when the script opens one.
+ * and a paused success when the script opens one. The run has a user gesture, so its
+ * input.click() would open the native file dialog: with `tabId` a file chooser is
+ * intercepted instead (holdFileChooser).
  */
 export async function cdpEvaluateSource(send, source, { timeoutMs = BROWSER_EVALUATE_DEFAULT_MS, signal, tabId } = {}) {
   const budget = Math.min(Math.max(1000, timeoutMs), BROWSER_EVALUATE_MAX_MS);
@@ -188,6 +190,7 @@ export async function cdpEvaluateSource(send, source, { timeoutMs = BROWSER_EVAL
   if (refused) return refused;
   const group = `bc-eval-${Date.now()}`;
   const { guarded, stop } = racer(budget, signal, tabId);
+  let chooser = null;
   const timedOut = {
     success: false,
     error: `TIMEOUT: evaluate did not finish within ${budget}ms. The page may still be running it; the call returned so the tab is free.`,
@@ -213,6 +216,10 @@ export async function cdpEvaluateSource(send, source, { timeoutMs = BROWSER_EVAL
     // A dialog that opened while the source was checked: a run sent now would queue behind it and execute after it closes.
     const late = dialogRefusal(tabId);
     if (late) return late;
+    if (tabId != null) {
+      chooser = holdFileChooser(tabId, send);
+      await chooser.ready;
+    }
     const run = await guarded(send('Runtime.evaluate', {
       expression: `${fn}()`,
       awaitPromise: true,
@@ -233,6 +240,7 @@ export async function cdpEvaluateSource(send, source, { timeoutMs = BROWSER_EVAL
     return { success: false, error: cdpFailure(err) };
   } finally {
     stop();
+    chooser?.release();
     send('Runtime.releaseObjectGroup', { objectGroup: group }).catch(() => {});
   }
 }

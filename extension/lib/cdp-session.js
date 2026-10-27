@@ -13,7 +13,8 @@
  *
  * Every session enables the Page domain too, so a JavaScript dialog that opens
  * while the session is attached is recorded (see getOpenDialog). Chrome reports a
- * dialog only to a session that had Page enabled before it opened.
+ * dialog only to a session that had Page enabled before it opened. While agent input
+ * runs, the session also intercepts file choosers (see holdFileChooser).
  */
 
 import { raceReject } from './timing.js';
@@ -34,6 +35,12 @@ const openDialogs = new Map();
 
 /** tabId -> { state, reason }: overrides Chrome dropped when its debugger session ended. */
 const lostEmulation = new Map();
+
+/** tabId -> { holds, timer, ready }: agent input is running, so a file chooser it opens is intercepted. */
+const chooserHolds = new Map();
+
+/** tabId -> { frameId, mode, backendNodeId }: the file chooser Chrome intercepted and did not show. */
+const openedChoosers = new Map();
 
 function armIdle(tabId) {
   const s = sessions.get(tabId);
@@ -133,6 +140,56 @@ export function dialogOpenError(tabId, dialog) {
   const err = new Error(`DIALOG_OPEN: a ${dialogLabel(dialog)} is open on tab ${tabId}; answer it with browser_handle_dialog first.`);
   err.code = 'DIALOG_OPEN';
   return err;
+}
+
+/** How long a file chooser stays intercepted after the last agent input on the tab ends. */
+export const CHOOSER_GRACE_MS = 500;
+/** The interception switch is answered by the browser, not the page: a stalled one is skipped. */
+const CHOOSER_SETUP_MS = 1_000;
+
+/**
+ * Intercept file choosers on the tab while agent input runs. A click on an upload button
+ * makes the page call input.click(), and Chrome would open the native file dialog, which
+ * an agent cannot answer and which blocks the user's screen (Windows, macOS). Intercepted,
+ * Chrome shows nothing, the page gets a cancel, and Page.fileChooserOpened is recorded (see
+ * takeFileChooser). `send` is the tab's session sender. The input awaits `ready` before its
+ * first dispatch; release() ends the hold, and once no hold is left the interception goes
+ * off after CHOOSER_GRACE_MS (a page that opens the chooser a little after the click), so
+ * the user's own clicks show the dialog again. A Chrome that refuses the switch shows the
+ * dialog as before.
+ */
+export function holdFileChooser(tabId, send) {
+  let h = chooserHolds.get(tabId);
+  if (!h) {
+    h = { holds: 0, timer: null, ready: null };
+    chooserHolds.set(tabId, h);
+    h.ready = raceReject(send('Page.setInterceptFileChooserDialog', { enabled: true, cancel: true }), CHOOSER_SETUP_MS, 'file chooser interception timed out')
+      .then(() => true, () => false);
+  }
+  clearTimeout(h.timer);
+  h.holds += 1;
+  let released = false;
+  return {
+    ready: h.ready,
+    release() {
+      if (released) return;
+      released = true;
+      h.holds -= 1;
+      if (h.holds > 0) return;
+      h.timer = setTimeout(async () => {
+        if (chooserHolds.get(tabId) !== h || h.holds > 0) return;
+        chooserHolds.delete(tabId);
+        if (await h.ready) send('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
+      }, CHOOSER_GRACE_MS);
+    },
+  };
+}
+
+/** The file chooser Chrome intercepted on the tab ({frameId, mode, backendNodeId}), once; then null. */
+export function takeFileChooser(tabId) {
+  const chooser = openedChoosers.get(tabId);
+  openedChoosers.delete(tabId);
+  return chooser ? { ...chooser } : null;
 }
 
 /** Forget the recorded dialog: it was answered, or Chrome says none is showing. */
@@ -245,6 +302,9 @@ function endSession(tabId, reason) {
     if (s.emulation && Object.keys(s.emulation).length) lostEmulation.set(tabId, { state: s.emulation, reason });
   }
   openDialogs.delete(tabId);
+  // The interception ended with the session: the next input switches it on again.
+  clearTimeout(chooserHolds.get(tabId)?.timer);
+  chooserHolds.delete(tabId);
 }
 
 export async function detachCdp(tabId) {
@@ -288,6 +348,8 @@ if (typeof chrome !== 'undefined' && chrome.debugger?.onEvent) {
     } else if (method === 'Page.javascriptDialogClosed') {
       openDialogs.delete(source.tabId);
       armIdle(source.tabId);
+    } else if (method === 'Page.fileChooserOpened') {
+      openedChoosers.set(source.tabId, { frameId: params?.frameId, mode: params?.mode, backendNodeId: params?.backendNodeId ?? null });
     }
     const subs = eventSubscribers.get(source.tabId);
     let answered = false;
@@ -315,5 +377,6 @@ if (typeof chrome !== 'undefined' && chrome.tabs?.onRemoved) {
   chrome.tabs.onRemoved.addListener((tabId) => {
     endSession(tabId, 'target_closed');
     lostEmulation.delete(tabId);
+    openedChoosers.delete(tabId);
   });
 }
