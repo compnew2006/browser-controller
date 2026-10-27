@@ -1,0 +1,67 @@
+{
+  "feature": "F4 tab-ownership",
+  "generated": "2026-10-27",
+  "scope": "local verification only; not CI, not Owner acceptance",
+  "evidence": [
+    {
+      "type": "test",
+      "ref": "tests/tab-concurrency.test.ts",
+      "covers": "per-tab mutex and lock rules",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/extension-state-load-failure.test.ts",
+      "covers": "fail-closed restore with retry",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/extension-state.test.ts",
+      "covers": "session state",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/wp6-tab-lock-fail-fast.test.ts",
+      "covers": "lock fail-fast",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/bridge-session-roster.test.ts",
+      "covers": "daemon sends live session ids",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/extension-session-roster.test.ts",
+      "covers": "extension releases other sessions",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/v3-tabs.test.ts",
+      "covers": "browser_tabs handler",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "commit",
+      "ref": "f0bc5a1",
+      "covers": "F4-2, F4-3, F6-5",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "76e618d",
+      "covers": "ADR-07, ADR-08 (F4-1, F4-4, F4-6, F4-7)",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "audit",
+      "ref": "docs/audit/09-feature-architecture-review.md sections 4 (F4-*) and 9",
+      "covers": "findings and phase checks",
+      "result": "recorded in the audit; findings marked Resolved or open as listed"
+    }
+  ]
+}

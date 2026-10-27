@@ -1,0 +1,79 @@
+{
+  "feature": "F9 devtools-surface",
+  "generated": "2026-10-27",
+  "scope": "local verification only; not CI, not Owner acceptance",
+  "evidence": [
+    {
+      "type": "test",
+      "ref": "tests/secret-keys.test.ts",
+      "covers": "one secret-key policy",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/response-bodies.test.ts",
+      "covers": "body redaction",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/cdp-evaluate.test.ts",
+      "covers": "evaluate over CDP",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/cdp-evaluate-cap.test.ts",
+      "covers": "evaluate size cap",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/extension-evaluate.test.ts",
+      "covers": "evaluate handler",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/network-capture.test.ts",
+      "covers": "network capture",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/v3-mock.test.ts",
+      "covers": "mock",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/v3-logs.test.ts",
+      "covers": "logs",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "commit",
+      "ref": "9240503",
+      "covers": "F9-2, F9-4, R-1",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "f99d69b",
+      "covers": "evaluate gated by safety mode (F7-1)",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "audit",
+      "ref": "docs/audit/09-feature-architecture-review.md sections 4 (F9-*, R-1) and 9",
+      "covers": "findings and phase checks",
+      "result": "recorded in the audit; findings marked Resolved or open as listed"
+    },
+    {
+      "type": "smoke",
+      "ref": "npm run smoke:real-chrome at aa80328 (darwin)",
+      "covers": "console and network logs PASS",
+      "result": "PASS"
+    }
+  ]
+}

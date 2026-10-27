@@ -1,0 +1,73 @@
+{
+  "feature": "F5 credential-vault",
+  "generated": "2026-10-27",
+  "scope": "local verification only; not CI, not Owner acceptance",
+  "evidence": [
+    {
+      "type": "test",
+      "ref": "tests/vault-store.test.ts",
+      "covers": "store, lock reclaim, two reclaimers on one stale lock",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/vault-contracts.test.ts",
+      "covers": "vault contract",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/vault-fill.test.ts",
+      "covers": "fill workflow",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/vault-grants.test.ts",
+      "covers": "grants",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/vault-requests.test.ts",
+      "covers": "private requests",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/vault-redaction.test.ts",
+      "covers": "literal redaction",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/vault-redaction-encodings.test.ts",
+      "covers": "JSON-escaped, URL-encoded, base64 forms",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/vault-service.test.ts",
+      "covers": "service",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "commit",
+      "ref": "15b5c6e",
+      "covers": "F5-1, F5-2, F5-7: lock reclaim, empty lock",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "9240503",
+      "covers": "R-1: encoded secrets scrubbed",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "audit",
+      "ref": "docs/audit/09-feature-architecture-review.md sections 4 (F5-*, R-1) and 9",
+      "covers": "findings and phase checks",
+      "result": "recorded in the audit; findings marked Resolved or open as listed"
+    }
+  ]
+}

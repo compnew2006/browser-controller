@@ -1,0 +1,61 @@
+{
+  "feature": "F6 tool-layer",
+  "generated": "2026-10-27",
+  "scope": "local verification only; not CI, not Owner acceptance",
+  "evidence": [
+    {
+      "type": "test",
+      "ref": "tests/tools/schema-strict.test.ts",
+      "covers": "tool schemas are strict",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/tools/registry.test.ts",
+      "covers": "tool registry",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/register-tools.test.ts",
+      "covers": "registration",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/tools/batch.test.ts",
+      "covers": "batch, unknown-outcome message",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/extension-router.test.ts",
+      "covers": "dispatch router",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/daemon-wire-tools.test.ts",
+      "covers": "wire tool list",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "commit",
+      "ref": "2bcd5a1",
+      "covers": "F6-1: cut write step says the outcome is unknown",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "f0bc5a1",
+      "covers": "F6-5: classify action stays internal",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "audit",
+      "ref": "docs/audit/09-feature-architecture-review.md sections 4 (F6-*) and 9",
+      "covers": "findings and phase checks",
+      "result": "recorded in the audit; findings marked Resolved or open as listed"
+    }
+  ]
+}

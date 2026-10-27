@@ -1,0 +1,67 @@
+{
+  "feature": "F1 daemon-lifecycle",
+  "generated": "2026-10-27",
+  "scope": "local verification only; not CI, not Owner acceptance",
+  "evidence": [
+    {
+      "type": "test",
+      "ref": "tests/daemon-lock.test.ts",
+      "covers": "stale-lock takeover, concurrent reclaim, inode reuse",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/daemon-script-lifecycle.test.ts",
+      "covers": "daemon CLI lifecycle",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/managed-daemon-mode.test.ts",
+      "covers": "managed mode and the systemd unit",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/daemon-config.test.ts",
+      "covers": "daemon config exports",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/daemon-reconnect.test.ts",
+      "covers": "client reconnect",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/daemon-restart.test.ts",
+      "covers": "daemon restart",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "commit",
+      "ref": "15b5c6e",
+      "covers": "F1-1, F1-3: stale lock taken over once; systemd Restart=on-failure",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "510ab81",
+      "covers": "F1-2: IPC socket with no hello is closed",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "1d4eb97",
+      "covers": "F1-4, F1-6: daemon:stop keeps a live lock, reports a missing build",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "audit",
+      "ref": "docs/audit/09-feature-architecture-review.md sections 4 (F1-*) and 9",
+      "covers": "findings and phase checks",
+      "result": "recorded in the audit; findings marked Resolved or open as listed"
+    }
+  ]
+}

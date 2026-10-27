@@ -1,0 +1,61 @@
+{
+  "feature": "F3 bridge-protocol",
+  "generated": "2026-10-27",
+  "scope": "local verification only; not CI, not Owner acceptance",
+  "evidence": [
+    {
+      "type": "test",
+      "ref": "tests/bridge.test.ts",
+      "covers": "bridge call routing",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/bridge-multibrowser.test.ts",
+      "covers": "multi-browser, dropped sibling frames",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/protocol-handshake.test.ts",
+      "covers": "handshake",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/bridge-session-roster.test.ts",
+      "covers": "session roster frame",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "commit",
+      "ref": "294735f",
+      "covers": "F3-1, F3-2: shared protocol constant name, one helloAck builder",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "d9171a6",
+      "covers": "F3-3, F3-5: BROWSER_BUSY on a backed-up socket, abort listener removed",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "137740a",
+      "covers": "F3-9, F3-10",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "audit",
+      "ref": "docs/audit/09-feature-architecture-review.md sections 4 (F3-*) and 9",
+      "covers": "findings and phase checks",
+      "result": "recorded in the audit; findings marked Resolved or open as listed"
+    },
+    {
+      "type": "smoke",
+      "ref": "npm run smoke:real-chrome at aa80328 (darwin)",
+      "covers": "reconnect PASS",
+      "result": "PASS"
+    }
+  ]
+}

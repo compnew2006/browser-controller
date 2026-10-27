@@ -1,0 +1,67 @@
+{
+  "feature": "F8 inspection",
+  "generated": "2026-10-27",
+  "scope": "local verification only; not CI, not Owner acceptance",
+  "evidence": [
+    {
+      "type": "test",
+      "ref": "tests/page-dom.test.ts",
+      "covers": "page DOM runtime (fake-dom)",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/extension-inspect.test.ts",
+      "covers": "inspection handlers",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/navigation.test.ts",
+      "covers": "navigation",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/navigation-readiness.test.ts",
+      "covers": "navigation readiness",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/browser-wait-bound.test.ts",
+      "covers": "browser_wait bound",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/wp4-screenshot.test.ts",
+      "covers": "screenshot budget",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/tools/snapshot.test.ts",
+      "covers": "snapshot tool",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "commit",
+      "ref": "76e618d",
+      "covers": "ADR-09; webmcp spec marked superseded (F8-3, F8-4)",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "audit",
+      "ref": "docs/audit/09-feature-architecture-review.md sections 4 (F8-*) and 9",
+      "covers": "findings and phase checks",
+      "result": "recorded in the audit; findings marked Resolved or open as listed"
+    },
+    {
+      "type": "smoke",
+      "ref": "npm run smoke:real-chrome at aa80328 (darwin)",
+      "covers": "snapshot PASS",
+      "result": "PASS"
+    }
+  ]
+}

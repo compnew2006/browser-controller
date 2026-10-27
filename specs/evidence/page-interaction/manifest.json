@@ -1,0 +1,73 @@
+{
+  "feature": "F7 page-interaction",
+  "generated": "2026-10-27",
+  "scope": "local verification only; not CI, not Owner acceptance",
+  "evidence": [
+    {
+      "type": "test",
+      "ref": "tests/action-safety-gate.test.ts",
+      "covers": "gate allow/block/ask, fail-closed classifier",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/extension-action-safety.test.ts",
+      "covers": "extension classifier",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/extension-dispatch-fingerprint.test.ts",
+      "covers": "fingerprint compare before input",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/trusted-input.test.ts",
+      "covers": "trusted input",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "test",
+      "ref": "tests/wp2b-drag-fill.test.ts",
+      "covers": "drag and fill",
+      "result": "exists; run as part of the full suite at HEAD aa80328 (1437 tests passed, typecheck, lint, emit exit 0); not run per file"
+    },
+    {
+      "type": "commit",
+      "ref": "f99d69b",
+      "covers": "F7-1, F7-2, F7-3",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "d789b12",
+      "covers": "F7-1 follow-up",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "commit",
+      "ref": "a33981d",
+      "covers": "F7-5, F7-7",
+      "result": "in git history on codex/002-daemon-authentication"
+    },
+    {
+      "type": "audit",
+      "ref": "docs/audit/09-feature-architecture-review.md sections 4 (F7-*) and 9",
+      "covers": "findings and phase checks",
+      "result": "recorded in the audit; findings marked Resolved or open as listed"
+    },
+    {
+      "type": "smoke",
+      "ref": "npm run smoke:real-chrome at aa80328 (darwin), fresh build, extension reloaded",
+      "covers": "click, type, upload, 5 of 5 drags: PASS",
+      "result": "PASS"
+    },
+    {
+      "type": "smoke",
+      "ref": "real-Chrome IPC check of F7-5/F7-7 at aa80328",
+      "covers": "classifier runs in a real page; fingerprint mismatch refuses click and type with SAFETY_TARGET_CHANGED, nothing clicked or typed; a match clicks: PASS",
+      "result": "PASS"
+    }
+  ]
+}
