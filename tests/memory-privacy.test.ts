@@ -243,8 +243,10 @@ describe('AC-10: planted markers never reach storage, outputs, exports, status o
       }
     }
     // Facts in the store are exactly allowlist values: nothing but role and normalized name, or language.
+    // The "Search for <marker>" box is kept only as the canonical phrase (allowlist v2); its page name is dropped.
     const record = storeRecord();
-    expect(record.facts.map((fact: { factId: string }) => fact.factId).sort()).toEqual(['site.language', 'ui.control:link:sign in']);
+    expect(record.facts.map((fact: { factId: string }) => fact.factId).sort()).toEqual(['site.language', 'ui.control:link:sign in', 'ui.search']);
+    expect(record.facts.find((fact: { factId: string }) => fact.factId === 'ui.search').value.name).toBe('search');
   });
 
   it('the raw snapshot text is not stored (AC-21)', async () => {

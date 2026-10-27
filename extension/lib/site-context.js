@@ -16,9 +16,16 @@ import { getOpenDialog } from './cdp-session.js';
 export const ANONYMITY_NAMES = Object.freeze({
   exact: Object.freeze([
     'CookieConsent', 'OptanonConsent', 'OptanonAlertBoxClosed', 'euconsent-v2', 'cookieyes-consent', 'cookielawinfo-checkbox-necessary',
-    '_ga', '_gid', '_gat', '_gcl_au', '_fbp',
+    '_ga', '_gid', '_gat', '_gcl_au', '_fbp', 'cookies_policy',
+    'FCCDCF', 'FCNEC', 'GeoIP', 'NetworkProbeLimit', 'WMF-Last-Access', 'WMF-Last-Access-Global',
+    'appLifetimeMetrics', 'userLifetimeMetrics', 'glean_session_last_active', '__cf_bm', '_cfuvid', 'cf_clearance',
+    'AWSALB', 'AWSALBCORS', '_clck', '_clsk', 'CentralAuthAnon', 'ddg-promotions',
   ]),
-  patterns: Object.freeze(['^_ga_[A-Z0-9]{6,12}$', '^_gat_[A-Za-z0-9]+$']),
+  patterns: Object.freeze([
+    '^_ga_[A-Z0-9]{6,12}$', '^_gat_[A-Za-z0-9]+$', '^[a-z0-9_]+wikimwuser-sessionId$',
+    '^MediaWikiModuleStore:[A-Za-z0-9_]+$', '^CentralNoticeKV\\|[A-Za-z0-9_|-]+$', '^_GESPSK-[A-Za-z0-9_-]+$',
+    '^_hjSessionUser_[0-9]+$', '^_hjSession_[0-9]+$', '^wmE-sessionTick[A-Za-z]+$',
+  ]),
 });
 
 const ANONYMITY_PATTERNS = ANONYMITY_NAMES.patterns.map((source) => new RegExp(source));
@@ -33,19 +40,6 @@ export const URL_BEFORE_BUDGET_MS = 200;
 export const SITE_CONTEXT_BUDGET_MS = 1_300;
 export const OBSERVE_BUDGET_MS = URL_BEFORE_BUDGET_MS + SITE_CONTEXT_BUDGET_MS;
 const PROBE_TIMEOUT_MS = 900;
-
-/**
- * Second-level labels that, under a two-letter country code, form a public suffix (co.uk, com.au,
- * gov.eg). No public suffix list ships with the extension, so this covers the common cases only;
- * a missed suffix can only make pages read as less anonymous, never more.
- */
-const SECOND_LEVEL_SUFFIX_LABELS = new Set(['co', 'com', 'net', 'org', 'gov', 'edu', 'ac', 'or', 'ne', 'go', 'gob', 'mil', 'nic', 'me', 'ltd', 'plc', 'sch', 'info', 'biz']);
-
-function looksLikePublicSuffix(domain) {
-  const labels = domain.split('.');
-  if (labels.length < 2) return true;
-  return labels.length === 2 && /^[a-z]{2}$/.test(labels[1]) && SECOND_LEVEL_SUFFIX_LABELS.has(labels[0]);
-}
 
 /** Whether `name` is an allowlisted anonymity name. Exact or a full-match pattern; case-sensitive, no normalization. */
 export function isAnonymityName(name) {
@@ -151,6 +145,14 @@ function inspectUrl(raw) {
   return { http: parsed.protocol === 'http:' || parsed.protocol === 'https:', tainted, safeUrl: parsed.href.slice(0, MAX_URL_CHARS) };
 }
 
+/** True when a cookie set for `domain` would be sent to the host of `url` (RFC 6265 domain-match). */
+function appliesToHost(domain, url) {
+  let host;
+  try { host = new URL(url).hostname.toLowerCase(); } catch { return true; }
+  const scope = String(domain ?? '').toLowerCase().replace(/^\./, '');
+  return scope === '' || host === scope || host.endsWith(`.${scope}`);
+}
+
 /** Cookie names for `url` in the tab's own cookie store (HttpOnly included). Values are dropped here. */
 async function cookieNames(tabId, url) {
   if (typeof chrome.cookies?.getAll !== 'function') return { permission: false, names: [] };
@@ -162,20 +164,23 @@ async function cookieNames(tabId, url) {
   }
   const scope = storeId === undefined ? {} : { storeId };
   // getAll({url}) only sees cookies that would be sent to this exact URL; a login cookie scoped to another path
-  // or to a sibling subdomain is missed. Ask by domain too (host, and its parent for 3+ label hosts unless the
-  // parent looks like a public suffix such as co.uk), names only.
-  // Over-inclusion can only make a page less anonymous, never more.
+  // or to a sibling subdomain is missed. Ask by domain too — the host, and its parent for a host of three or more
+  // labels — names only. Over-inclusion can only make a page less anonymous, so the parent is asked on any doubt:
+  // guessing at a public suffix (ac.me is a registered domain, not a suffix) would hide a login cookie shared
+  // across subdomains and let a signed-in page pass as anonymous. getAll({domain}) also returns every subdomain's
+  // cookies (asking co.uk lists all *.co.uk sites), so only cookies whose domain matches this host are kept.
   const queries = [{ url, ...scope }];
   try {
     const host = new URL(url).hostname;
     if (host && !/^[\d.]+$/.test(host) && !host.includes(':')) {
       queries.push({ domain: host, ...scope });
-      const parent = host.split('.').slice(1).join('.');
-      if (host.split('.').length >= 3 && !looksLikePublicSuffix(parent)) queries.push({ domain: parent, ...scope });
+      const labels = host.split('.');
+      // Three labels leave a two-label parent; a two-label host has only a bare TLD above it, which holds nothing.
+      if (labels.length >= 3) queries.push({ domain: labels.slice(1).join('.'), ...scope });
     }
   } catch { /* url was already parsed by the caller */ }
   const cookies = (await Promise.all(queries.map((query) => chrome.cookies.getAll(query)))).flat();
-  return { permission: true, names: cookies.map((cookie) => cookie.name) };
+  return { permission: true, names: cookies.filter((cookie) => appliesToHost(cookie.domain, url)).map((cookie) => cookie.name) };
 }
 
 function primaryLanguage(raw) {

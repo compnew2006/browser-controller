@@ -46,7 +46,7 @@ Size ≤ 64 KiB; a commit that would exceed it is dropped (`MEMORY_FULL`).
 Value shapes:
 
 - `site.language`: `{ lang: <primary subtag>, dir: "ltr" | "rtl" | null }`
-- `ui.search`: `{ role: "searchbox" | "textbox" | "combobox", name: <lexicon phrase> }`
+- `ui.search`: `{ role: "searchbox" | "textbox" | "combobox" | "search", name: <lexicon phrase> }` (`search` is the ARIA landmark, added in allowlist v2; a name starting with a reviewed prefix such as "search " is stored as that prefix's canonical phrase)
 - `ui.login`: `{ path: <lexicon path> | null }`
 - `ui.control`: `{ role: <allowed role>, name: <lexicon phrase> }`
 

@@ -93,8 +93,14 @@ describe('extractSnapshotFacts', () => {
   });
 
   it('never truncates a name to make it match', () => {
-    const text = ['link "Sign in to see your orders"', 'button "Accept all and continue"', 'searchbox "Search for secrets"'].join('\n');
+    const text = ['link "Sign in to see your orders"', 'button "Accept all and continue"', 'searchbox "Searchable secrets"'].join('\n');
     expect(extractSnapshotFacts(text)).toEqual([]);
+  });
+
+  it('keeps a "Search …" box only as the canonical phrase, never its page name (allowlist v2)', () => {
+    const facts = extractSnapshotFacts('searchbox "Search for secrets"');
+    expect(facts).toEqual([{ factId: 'ui.search', kind: 'ui.search', value: { role: 'searchbox', name: 'search' } }]);
+    expect(JSON.stringify(facts)).not.toContain('secrets');
   });
 
   it('ignores planted markers, hostile text and roles outside the lists', () => {

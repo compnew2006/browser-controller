@@ -197,6 +197,39 @@ describe('siteContext anonymity verdict (R-07)', () => {
     expect(await ctx()).toMatchObject({ anonymous: true, anonymityReason: 'ok' });
   });
 
+  it('accepts a signed-out Wikipedia page (allowlist v2 survey names)', async () => {
+    setWorld({
+      cookies: [{ name: 'GeoIP' }, { name: 'NetworkProbeLimit' }, { name: 'arwikimwuser-sessionId' }, { name: 'WMF-Last-Access', httpOnly: true }],
+      local: [
+        'CentralNoticeKV|global|buckets', 'MediaWikiModuleStore:arwiki', 'CentralAuthAnon',
+        'wmE-sessionTickLastTickTime', 'wmE-sessionTickTickCount',
+      ],
+    });
+    expect(await ctx()).toMatchObject({ anonymous: true, anonymityReason: 'ok' });
+    expect(reads.values).toBe(0);
+  });
+
+  it('accepts DuckDuckGo after its promotion key is written', async () => {
+    setWorld({ local: ['ddg-promotions'] });
+    expect(await ctx()).toMatchObject({ anonymous: true, anonymityReason: 'ok' });
+  });
+
+  it('is false on a signed-in Wikipedia page even with the v2 names present', async () => {
+    setWorld({
+      cookies: [
+        { name: 'GeoIP' }, { name: 'arwikimwuser-sessionId' },
+        { name: 'centralauth_User' }, { name: 'centralauth_Session', httpOnly: true }, { name: 'arwikiSession', httpOnly: true }, { name: 'arwikiUserID' },
+      ],
+      local: ['MediaWikiModuleStore:arwiki'],
+    });
+    expect(await ctx()).toMatchObject({ anonymous: false, anonymityReason: 'cookie' });
+  });
+
+  it('keeps generic storage keys such as events and pings unverified', async () => {
+    setWorld({ local: ['appLifetimeMetrics', 'userLifetimeMetrics', 'glean_session_last_active', 'events', 'pings'] });
+    expect(await ctx()).toMatchObject({ anonymous: false, anonymityReason: 'storage' });
+  });
+
   it('is false when an HttpOnly cookie is not on the allowlist', async () => {
     setWorld({ cookies: [{ name: 'CookieConsent' }, { name: 'sid', httpOnly: true }] });
     expect(await ctx()).toMatchObject({ anonymous: false, anonymityReason: 'cookie' });
@@ -224,6 +257,26 @@ describe('siteContext anonymity verdict (R-07)', () => {
     setWorld({ urls: ['http://127.0.0.1:8080/'], cookies: [] });
     await ctx();
     expect(cookiesGetAll.mock.calls.every(([query]: [{ domain?: string }]) => query.domain === undefined)).toBe(true);
+  });
+
+  it('asks a parent the public-suffix guess used to skip: ac.me is a registered domain', async () => {
+    setWorld({ urls: ['https://app.ac.me/'], cookies: [] });
+    cookiesGetAll.mockImplementation(async (query: { domain?: string }) => (query.domain === 'ac.me' ? [{ name: 'sid' }] : []));
+    expect(await ctx()).toMatchObject({ anonymous: false, anonymityReason: 'cookie' });
+    expect(cookiesGetAll).toHaveBeenCalledWith(expect.objectContaining({ domain: 'ac.me' }));
+  });
+
+  it('asks a real public suffix too; it answers empty and the page still reads anonymous', async () => {
+    setWorld({ urls: ['https://shop.example.co.uk/'], cookies: [] });
+    cookiesGetAll.mockImplementation(async () => []);
+    expect(await ctx()).toMatchObject({ anonymous: true, anonymityReason: 'ok' });
+    expect(cookiesGetAll).toHaveBeenCalledWith(expect.objectContaining({ domain: 'example.co.uk' }));
+  });
+
+  it('asks no parent for a two-label host: only a bare TLD sits above it', async () => {
+    setWorld({ urls: ['https://example.com/'], cookies: [] });
+    await ctx();
+    expect(cookiesGetAll.mock.calls.every(([query]: [{ domain?: string }]) => query.domain !== 'com')).toBe(true);
   });
 
   it('is false for a localStorage or sessionStorage key off the allowlist', async () => {
@@ -404,20 +457,43 @@ describe('code-review fixes: the observation is bounded and side-effect free', (
     expect(cookiesGetAll).not.toHaveBeenCalled();
   });
 
-  it('never asks a public suffix such as co.uk for cookies (#6)', async () => {
-    for (const host of ['bbc.co.uk', 'shop.com.eg', 'site.gov.eg', 'x.com.au']) {
+  it('asks the parent even where it looks like a public suffix, and never a bare TLD (#6)', async () => {
+    // Skipping a guessed suffix hid a cookie shared across subdomains, which let a signed-in page
+    // read as anonymous. A scope Chrome forbids for domain cookies answers empty, so asking costs
+    // a lookup and can only ever make the page read as less anonymous.
+    for (const host of ['bbc.co.uk', 'shop.com.eg', 'site.gov.eg', 'x.com.au', 'app.ac.me']) {
       setWorld({ urls: [`https://${host}/`], cookies: [] });
       await ctx();
       const domains = cookiesGetAll.mock.calls.map(([query]: [{ domain?: string }]) => query.domain).filter(Boolean);
-      const suffix = host.split('.').slice(1).join('.');
-      expect(domains, host).not.toContain(suffix);
       expect(domains, host).toContain(host);
+      expect(domains, host).toContain(host.split('.').slice(1).join('.'));
+    }
+    for (const host of ['example.com', 'site.dev']) {
+      setWorld({ urls: [`https://${host}/`], cookies: [] });
+      await ctx();
+      const domains = cookiesGetAll.mock.calls.map(([query]: [{ domain?: string }]) => query.domain).filter(Boolean);
+      expect(domains, host).toEqual([host]);
     }
     setWorld({ urls: ['https://www.bbc.co.uk/'], cookies: [] });
     await ctx();
     const domains = cookiesGetAll.mock.calls.map(([query]: [{ domain?: string }]) => query.domain).filter(Boolean);
     expect(domains).toContain('bbc.co.uk');
     expect(domains).not.toContain('co.uk');
+  });
+
+  it('keeps only cookies whose domain matches the host when asking a parent such as co.uk', async () => {
+    const byDomain = (other: { name: string; domain: string }[]) => async (query: { domain?: string }) =>
+      (query.domain === 'co.uk' ? other : []).map((c) => ({ ...c, httpOnly: true }));
+    setWorld({ urls: ['https://bbc.co.uk/'] });
+    cookiesGetAll.mockImplementation(byDomain([{ name: 'sid', domain: '.othersite.co.uk' }]));
+    expect(await ctx()).toMatchObject({ anonymous: true });
+    setWorld({ urls: ['https://bbc.co.uk/'] });
+    cookiesGetAll.mockImplementation(byDomain([{ name: 'sid', domain: '.bbc.co.uk' }]));
+    expect(await ctx()).toMatchObject({ anonymous: false, anonymityReason: 'cookie' });
+    setWorld({ urls: ['https://app.ac.me/'] });
+    cookiesGetAll.mockImplementation(async (query: { domain?: string }) =>
+      (query.domain === 'ac.me' ? [{ name: 'session', domain: '.ac.me', httpOnly: true }] : []));
+    expect(await ctx()).toMatchObject({ anonymous: false, anonymityReason: 'cookie' });
   });
 
   it('observes the replacement tab when navigate replaced a frozen one (#7)', async () => {

@@ -1,4 +1,4 @@
-import { type CandidateFact } from './allowlist.js';
+import type { CandidateFact } from './allowlist.js';
 import { MemoryPolicyError, readPolicy as readPolicyFile, type MemoryPolicy } from './policy.js';
 import { applyOp, canonicalValue, earlier, later } from './reconcile.js';
 import { MemoryStoreError, type MemoryStore, type ProfileVerification } from './store.js';

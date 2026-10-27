@@ -1,49 +1,81 @@
 /**
  * The reviewed fact allowlist as code. It mirrors
  * specs/003-website-agent-memory/contracts/fact-allowlist.json (owner gate 3,
- * approved 2026-10-27); tests/memory-allowlist.test.ts fails if the two drift.
+ * approved 2026-10-27, widened at the owner's request 2026-10-28 as v2);
+ * tests/memory-allowlist.test.ts fails if the two drift.
  * A stored string must equal an entry here after normalizeText(); anything
  * else is discarded, never truncated or rewritten.
  */
 
 export const ALLOWLIST = {
-  version: 1,
+  version: 2,
   factKinds: {
     'site.language': { source: 'siteContext.lang and siteContext.dir', values: 'lang: primaryLanguageTags; dir: ltr | rtl | null' },
-    'ui.search': { source: 'snapshot line \'<role> "<name>"\' with role in searchRoles and name in phrases.search' },
+    'ui.search': { source: 'snapshot line \'<role> "<name>"\' with role in searchRoles and name in phrases.search, or name starting with a searchPrefixes prefix (then the stored name is that prefix\'s canonical phrase, never the page\'s name)' },
     'ui.login': { source: 'siteContext.passwordField === true', values: 'path: page path if every segment is in pathSegments, else null' },
     'ui.control': { source: 'snapshot line \'<role> "<name>"\' with role in controlRoles and name in any phrases group except search' },
   },
-  searchRoles: ['searchbox', 'textbox', 'combobox'],
+  searchRoles: ['searchbox', 'textbox', 'combobox', 'search'],
   controlRoles: ['button', 'link', 'tab', 'menuitem'],
+  searchPrefixes: [
+    { prefix: 'search ', canonical: 'search' },
+    { prefix: 'ابحث في ', canonical: 'ابحث' },
+    { prefix: 'البحث في ', canonical: 'ابحث' },
+    { prefix: 'بحث في ', canonical: 'ابحث' },
+  ],
   phrases: {
-    search: ['search', 'search site', 'بحث', 'ابحث', 'البحث'],
+    search: [
+      'search', 'search site', 'بحث', 'ابحث', 'البحث', 'search the web', 'search this site', 'search docs',
+      'ابحث في الموقع',
+    ],
     account: [
-      'sign in', 'log in', 'login', 'sign up', 'register', 'create account', 'log out', 'sign out', 'forgot password',
-      'تسجيل الدخول', 'دخول', 'إنشاء حساب', 'تسجيل', 'تسجيل الخروج', 'خروج', 'نسيت كلمة المرور',
+      'sign in', 'log in', 'login', 'sign up', 'register', 'create account', 'log out', 'sign out',
+      'forgot password', 'تسجيل الدخول', 'دخول', 'إنشاء حساب', 'تسجيل', 'تسجيل الخروج', 'خروج', 'نسيت كلمة المرور',
+      'your account', 'my account', 'account', 'profile', 'حسابي', 'الحساب', 'الملف الشخصي',
     ],
     consent: [
-      'accept', 'accept all', 'accept cookies', 'allow all', 'reject', 'reject all', 'decline', 'cookie settings', 'manage cookies', 'manage preferences',
-      'قبول', 'قبول الكل', 'موافق', 'رفض', 'رفض الكل', 'إعدادات ملفات تعريف الارتباط',
+      'accept', 'accept all', 'accept cookies', 'allow all', 'reject', 'reject all', 'decline', 'cookie settings',
+      'manage cookies', 'manage preferences', 'قبول', 'قبول الكل', 'موافق', 'رفض', 'رفض الكل', 'إعدادات ملفات تعريف الارتباط',
+      'accept additional cookies', 'reject additional cookies', 'view cookies', 'accept all cookies', 'reject all cookies', 'necessary cookies only', 'only necessary cookies', 'agree',
+      'i agree', 'i accept', 'got it', 'ok', 'قبول جميع ملفات تعريف الارتباط', 'رفض جميع ملفات تعريف الارتباط', 'أوافق', 'حسنًا',
+      'فهمت',
     ],
     navigation: [
-      'menu', 'close', 'next', 'previous', 'back', 'home', 'help', 'contact us', 'language', 'settings',
-      'القائمة', 'إغلاق', 'التالي', 'السابق', 'رجوع', 'الرئيسية', 'مساعدة', 'اتصل بنا', 'اللغة', 'الإعدادات',
+      'menu', 'close', 'next', 'previous', 'back', 'home', 'help', 'contact us',
+      'language', 'settings', 'القائمة', 'إغلاق', 'التالي', 'السابق', 'رجوع', 'الرئيسية',
+      'مساعدة', 'اتصل بنا', 'اللغة', 'الإعدادات', 'skip to content', 'skip to main content', 'main menu', 'open menu',
+      'show navigation menu', 'show search menu', 'more', 'more menu', 'sitemap', 'about', 'about us', 'faq',
+      'terms', 'privacy', 'انتقل إلى المحتوى', 'تخطي إلى المحتوى', 'القائمة الرئيسية', 'القائمة الرئيسة', 'المزيد', 'من نحن',
+      'الأسئلة الشائعة', 'الشروط', 'الخصوصية',
     ],
-    commerce: ['cart', 'add to cart', 'checkout', 'buy now', 'السلة', 'أضف إلى السلة', 'الدفع', 'اشتر الآن'],
-    forms: ['submit', 'continue', 'send', 'save', 'إرسال', 'متابعة', 'حفظ'],
+    commerce: [
+      'cart', 'add to cart', 'checkout', 'buy now', 'السلة', 'أضف إلى السلة', 'الدفع', 'اشتر الآن',
+      'wishlist', 'my orders', 'donate', 'قائمة الرغبات', 'طلباتي', 'تبرع',
+    ],
+    forms: [
+      'submit', 'continue', 'send', 'save', 'إرسال', 'متابعة', 'حفظ',
+    ],
   },
   pathSegments: [
     'login', 'log-in', 'signin', 'sign-in', 'logon', 'auth', 'account', 'accounts', 'session', 'sessions', 'sso', 'identity',
     'register', 'signup', 'sign-up', 'join', 'password', 'reset', 'search', 'help', 'support', 'contact', 'cart', 'checkout',
-    'en', 'ar', 'fr', 'de', 'es',
+    'en', 'ar', 'fr', 'de', 'es', 'user', 'profile', 'settings', 'docs', 'documentation', 'about', 'faq',
+    'terms', 'privacy', 'news', 'blog', 'wiki', 'home', 'it', 'pt', 'ru', 'zh', 'ja', 'tr',
+    'fa', 'ur',
   ],
   anonymityNames: {
     exact: [
       'CookieConsent', 'OptanonConsent', 'OptanonAlertBoxClosed', 'euconsent-v2', 'cookieyes-consent', 'cookielawinfo-checkbox-necessary',
-      '_ga', '_gid', '_gat', '_gcl_au', '_fbp',
+      '_ga', '_gid', '_gat', '_gcl_au', '_fbp', 'cookies_policy',
+      'FCCDCF', 'FCNEC', 'GeoIP', 'NetworkProbeLimit', 'WMF-Last-Access', 'WMF-Last-Access-Global',
+      'appLifetimeMetrics', 'userLifetimeMetrics', 'glean_session_last_active', '__cf_bm', '_cfuvid', 'cf_clearance',
+      'AWSALB', 'AWSALBCORS', '_clck', '_clsk', 'CentralAuthAnon', 'ddg-promotions',
     ],
-    patterns: ['^_ga_[A-Z0-9]{6,12}$', '^_gat_[A-Za-z0-9]+$'],
+    patterns: [
+      '^_ga_[A-Z0-9]{6,12}$', '^_gat_[A-Za-z0-9]+$', '^[a-z0-9_]+wikimwuser-sessionId$',
+      '^MediaWikiModuleStore:[A-Za-z0-9_]+$', '^CentralNoticeKV\\|[A-Za-z0-9_|-]+$', '^_GESPSK-[A-Za-z0-9_-]+$',
+      '^_hjSessionUser_[0-9]+$', '^_hjSession_[0-9]+$', '^wmE-sessionTick[A-Za-z]+$',
+    ],
   },
 } as const;
 
@@ -138,9 +170,22 @@ export function languageFact(lang: string | null | undefined, dir: string | null
   return { factId: 'site.language', kind: 'site.language', value: { lang: primary, dir: direction(dir) } };
 }
 
+/**
+ * A search name that starts with a reviewed prefix ("search …", "ابحث في …") maps to that prefix's
+ * canonical phrase; the rest of the page's name is dropped, so no page text is stored.
+ */
+function canonicalSearchName(text: string): string | null {
+  if (typeof text !== 'string') return null;
+  const normalized = normalizeText(text);
+  for (const { prefix, canonical } of ALLOWLIST.searchPrefixes) {
+    if (normalized.startsWith(prefix) && normalized.length > prefix.length) return canonical;
+  }
+  return null;
+}
+
 export function searchFact(role: string, name: string): CandidateFact | null {
   if (!(ALLOWLIST.searchRoles as readonly string[]).includes(role)) return null;
-  const phrase = matchSearchName(name);
+  const phrase = matchSearchName(name) ?? canonicalSearchName(name);
   if (!phrase) return null;
   return { factId: 'ui.search', kind: 'ui.search', value: { role: role as SearchRole, name: phrase } };
 }
