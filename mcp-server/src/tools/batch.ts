@@ -127,7 +127,9 @@ export const batchTool: ToolDefinition = {
           const parsed = parseToolParams(def, stepParams);
           const outcome = await untilDeadline(runStep(def, host, parsed, deadline), deadline);
           if (outcome === BUDGET_USED) {
-            return withReceipts(failureResult(`${label}: TIMEOUT: batch budget used; ${actions.length - i - 1} skipped`), false);
+            // A cut write step may have completed in the page: say so, as VAULT_OUTCOME_UNKNOWN does.
+            const unknown = def.idempotent === true ? '' : '; outcome unknown, the step may have completed: check the page before retrying';
+            return withReceipts(failureResult(`${label}: TIMEOUT: batch budget used${unknown}; ${actions.length - i - 1} skipped`), false);
           }
           result = outcome;
         } catch (err) {

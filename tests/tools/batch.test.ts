@@ -208,8 +208,46 @@ describe('browser_batch', () => {
       const res = await pending;
       expect(res.isError).toBe(true);
       // Step 2 starts at 30 s with 20 s of budget left: it is cut at 50 s, and step 3 never starts.
-      expect(textOf(res)).toBe('step 2/3 browser_click: TIMEOUT: batch budget used; 1 skipped');
+      // browser_click is a write step, so AC-C3 adds the outcome-unknown note (read steps keep the plain text, see below).
+      expect(textOf(res)).toBe('step 2/3 browser_click: TIMEOUT: batch budget used; outcome unknown, the step may have completed: check the page before retrying; 1 skipped');
       expect(calls).toEqual(['browser_click', 'browser_click']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a write step cut by the budget reports an unknown outcome and says to check the page', async () => {
+    vi.useFakeTimers();
+    try {
+      const host: ToolHost = {
+        async callTool() {
+          await new Promise((resolve) => setTimeout(resolve, 60_000));
+          return { success: true, text: 'done' };
+        },
+      };
+      const pending = run(host, { tabId: 1, actions: [{ tool: 'browser_click', params: { target: '#a' } }, { tool: 'browser_click', params: { target: '#b' } }] });
+      await vi.advanceTimersByTimeAsync(60_000);
+      const text = textOf(await pending);
+      expect(text).toMatch(/^step 1\/2 browser_click: TIMEOUT: batch budget used; outcome unknown/);
+      expect(text).toMatch(/check the page before retrying/);
+      expect(text).toMatch(/1 skipped$/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a read step cut by the budget keeps the plain TIMEOUT message', async () => {
+    vi.useFakeTimers();
+    try {
+      const host: ToolHost = {
+        async callTool() {
+          await new Promise((resolve) => setTimeout(resolve, 60_000));
+          return { success: true, text: 'done' };
+        },
+      };
+      const pending = run(host, { tabId: 1, actions: [{ tool: 'browser_snapshot', params: {} }] });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(textOf(await pending)).toBe('step 1/1 browser_snapshot: TIMEOUT: batch budget used; 0 skipped');
     } finally {
       vi.useRealTimers();
     }
