@@ -360,18 +360,18 @@ Single project at the repository root:
 
 ## Phase 8: Polish and cross-cutting
 
-- [ ] T065 Run scripts/memory-bench.mjs with memory on (empty store and 1,000 seeded origins) and compare with the baseline against the SC-005 limits:
+- [X] T065 Run scripts/memory-bench.mjs with memory on (empty store and 1,000 seeded origins) and compare with the baseline against the SC-005 limits:
   - navigate p95 overhead ≤ 25 ms, snapshot p95 overhead ≤ 30 ms;
   - commit p95 ≤ 50 ms, start overhead ≤ 50 ms;
   - idle RSS growth ≤ 10 MiB;
   - 0 queue drops with 4 clients.
   Record the results in specs/003-website-agent-memory/baseline.md.
 - [ ] T066 Owner gate 4: the owner confirms or changes the SC-005 limits from T065. Record the decision in plan.md.
-- [ ] T067 [P] Document memory in README.md: what is stored, off by default, the owner CLI, `browser_memory`, `browser_memory_policy` with owner confirmation, the `cookies` permission, and the reload and restart steps.
-- [ ] T068 [P] Add the website-memory threat model to SECURITY.md. Residual risks: HTTP authentication, client certificates, IP-based personalization, tokens in a URL path (R-07); approval fatigue for policy requests; shell access to the CLI and store as the same OS user (R-13).
-- [ ] T069 [P] Add the Unreleased entries to CHANGELOG.md (Added: website memory, `browser_memory`, `browser_memory_policy`, `npm run memory`; Changed: the `cookies` permission), with notes to reload the extension and restart the daemon.
-- [ ] T070 Run the full local gate from package.json: `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:coverage`, `npm run context:lint`. Run `npm run security:audit` only with owner authorization; otherwise report it as not run.
-- [ ] T071 Run the quickstart validation in specs/003-website-agent-memory/quickstart.md, including the owner CLI check on an isolated daemon (`BC_STATE_DIR` temporary, `WS_PORT=17225`).
+- [X] T067 [P] Document memory in README.md: what is stored, off by default, the owner CLI, `browser_memory`, `browser_memory_policy` with owner confirmation, the `cookies` permission, and the reload and restart steps.
+- [X] T068 [P] Add the website-memory threat model to SECURITY.md. Residual risks: HTTP authentication, client certificates, IP-based personalization, tokens in a URL path (R-07); approval fatigue for policy requests; shell access to the CLI and store as the same OS user (R-13).
+- [X] T069 [P] Add the Unreleased entries to CHANGELOG.md (Added: website memory, `browser_memory`, `browser_memory_policy`, `npm run memory`; Changed: the `cookies` permission), with notes to reload the extension and restart the daemon.
+- [X] T070 Run the full local gate from package.json: `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:coverage`, `npm run context:lint`. Run `npm run security:audit` only with owner authorization; otherwise report it as not run.
+- [X] T071 Run the quickstart validation in specs/003-website-agent-memory/quickstart.md, including the owner CLI check on an isolated daemon (`BC_STATE_DIR` temporary, `WS_PORT=17225`).
 - [ ] T072 Do an independent security and privacy review of the full diff, by a reviewer who did not write the code. Record the findings and fixes in specs/003-website-agent-memory/review.md.
 - [ ] T073 Optional real-Chrome check, with separate authorization, using quickstart *Optional real-Chrome check*. Finish with `npm run memory -- delete --all` and `npm run memory -- disable`.
 - [ ] T074 Refresh the code knowledge after the change: `graphify update .` (graphify-out/), and the codebase-memory index through its supported mechanism. Confirm their status. Mark the three ADRs `accepted` only after the owner approves them.

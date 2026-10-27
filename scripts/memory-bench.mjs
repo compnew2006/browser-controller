@@ -32,9 +32,10 @@ const OUT_FILE = path.join(ROOT, 'specs', '003-website-agent-memory', 'baseline.
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function parseArgs(argv) {
-  const out = { mode: 'baseline', iterations: 200, clients: 4, seeded: 1000 };
+  const out = { mode: 'baseline', iterations: 200, clients: 4, seeded: 1000, paceMs: 0 };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--mode') out.mode = argv[++i];
+    if (argv[i] === '--pace-ms') out.paceMs = Number(argv[++i]);
     else if (argv[i] === '--iterations') out.iterations = Number(argv[++i]);
     else if (argv[i] === '--clients') out.clients = Number(argv[++i]);
     else if (argv[i] === '--seeded') out.seeded = Number(argv[++i]);
@@ -148,8 +149,21 @@ async function connectIpcClient(sockPath, token, agentName, buildIpcHello) {
                 socket.write(JSON.stringify({ kind: 'call', id, tool, params }) + '\n');
               });
             },
+            admin(command) {
+              const id = `${agentName}-admin-${++seq}`;
+              return new Promise((callResolve, callReject) => {
+                const callTimer = setTimeout(() => { pending.delete(id); callReject(new Error('memory-admin timed out')); }, 10_000);
+                pending.set(id, { resolve: callResolve, reject: callReject, timer: callTimer });
+                socket.write(JSON.stringify({ kind: 'memory-admin', id, command }) + '\n');
+              });
+            },
             close() { socket.destroy(); },
           });
+          continue;
+        }
+        if (msg.kind === 'memory-admin-result' && typeof msg.id === 'string') {
+          const call = pending.get(msg.id);
+          if (call) { pending.delete(msg.id); clearTimeout(call.timer); call.resolve(msg); }
           continue;
         }
         if (msg.kind === 'ping') { try { socket.write(JSON.stringify({ kind: 'pong' }) + '\n'); } catch { /* closing */ } continue; }
@@ -202,9 +216,16 @@ async function connectFakeExtension(wsPort, token, protocolMod, authMod) {
     if (msg.tool) {
       const params = msg.params ?? {};
       let result;
-      if (msg.tool === 'browser_navigate') result = { tabId: params.tabId ?? nextTabId++, url: params.url ?? 'about:blank' };
-      else if (msg.tool === 'browser_snapshot') result = { text: 'generic "fixture" [e1]', tabId: params.tabId };
-      else result = { from: 'bench' };
+      const siteContext = (u) => ({ url: u, incognito: false, topLevel: true, stable: true, lang: 'en', dir: 'ltr', passwordField: false, anonymous: true, anonymityReason: 'ok' });
+      const snapshotText = '- searchbox "Search" [e1]\n- link "Sign in" [e2]\n- button "Accept all" [e3]';
+      if (msg.tool === 'browser_navigate') {
+        const u = params.url ?? 'about:blank';
+        result = { tabId: params.tabId ?? nextTabId++, url: u, text: params.snapshot === true ? snapshotText : `navigated to ${u}` };
+        if (params.observe === true) result.siteContext = siteContext(u);
+      } else if (msg.tool === 'browser_snapshot') {
+        result = { text: snapshotText, tabId: params.tabId };
+        if (params.observe === true) result.siteContext = siteContext(`http://127.0.0.1:1/public.html`);
+      } else result = { from: 'bench' };
       ws.send(JSON.stringify({ id: msg.id, success: true, result }));
     }
   });
@@ -230,21 +251,19 @@ function writePolicy(stateDir, enabled) {
   }, null, 2));
 }
 
-function seedSiteRecords(stateDir, count) {
-  const dir = path.join(stateDir, 'memory', 'sites');
-  fs.mkdirSync(dir, { recursive: true });
-  const now = new Date().toISOString();
+async function seedSiteRecords(stateDir, count) {
+  const { JsonMemoryStore } = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'memory', 'store.js')).href);
+  const { MemoryQueue } = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'memory', 'queue.js')).href);
+  const memoryDir = path.join(stateDir, 'memory');
+  const queue = new MemoryQueue({ store: new JsonMemoryStore(memoryDir), memoryDir });
   for (let i = 0; i < count; i++) {
-    const origin = `http://bench-${i}.example.test`;
-    const hash = crypto.createHash('sha256').update(origin, 'utf8').digest('hex');
-    const record = {
-      schemaVersion: 1,
-      origin,
-      facts: [{ factId: 'ui.search', kind: 'ui.search', text: 'searchbox "Search"', verifiedAt: now }],
-      profiles: {},
-      commitSeq: 1,
-    };
-    fs.writeFileSync(path.join(dir, `${hash}.json`), JSON.stringify(record));
+    const at = new Date().toISOString();
+    queue.enqueue({
+      opId: `seed-${i}`, type: 'facts', profileId: 'seed', origin: `http://bench-${i}.example.test`, at, enqueuedAt: at,
+      path: '/', tool: 'browser_snapshot',
+      facts: [{ factId: 'ui.search', kind: 'ui.search', value: { role: 'searchbox', name: 'search' } }],
+    });
+    await queue.drain();
   }
 }
 
@@ -268,6 +287,41 @@ async function runTool(client, tool, params) {
   return { elapsedMs, ok: response.success !== false, unavailable, size: JSON.stringify(response).length };
 }
 
+// Commit latency: enqueue -> onCommit through the real MemoryQueue and JsonMemoryStore on a copy of the state.
+async function commitBench(stateDir, args) {
+  const { JsonMemoryStore } = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'memory', 'store.js')).href);
+  const { MemoryQueue } = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'memory', 'queue.js')).href);
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-memory-bench-commit-'));
+  try {
+    fs.cpSync(path.join(stateDir, 'memory'), path.join(copy, 'memory'), { recursive: true });
+    const memoryDir = path.join(copy, 'memory');
+    for (const entry of [memoryDir, ...fs.readdirSync(memoryDir, { recursive: true, withFileTypes: true }).map((e) => path.join(e.parentPath, e.name))]) {
+      fs.chmodSync(entry, fs.statSync(entry).isDirectory() ? 0o700 : 0o600);
+    }
+    const store = new JsonMemoryStore(memoryDir);
+    const started = new Map();
+    const times = [];
+    const drops = {};
+    const queue = new MemoryQueue({ store, memoryDir, onCommit: (op) => times.push(performance.now() - started.get(op.opId)), onDrop: (op, reason) => { drops[reason] = (drops[reason] ?? 0) + 1; } });
+    const total = args.iterations;
+    for (let i = 0; i < total; i++) {
+      const at = new Date().toISOString();
+      const op = {
+        opId: `commit-bench-${i}`, type: 'facts', profileId: 'bench', origin: `http://commit-${i % 50}.example.test`, at, enqueuedAt: at,
+        path: '/public.html', tool: 'browser_snapshot',
+        facts: [{ factId: 'ui.search', kind: 'ui.search', value: { role: 'searchbox', name: 'search' } }],
+      };
+      started.set(op.opId, performance.now());
+      queue.enqueue(op);
+      await queue.drain();
+    }
+    if (times.length === 0) throw new Error(`commit bench committed nothing; drops ${JSON.stringify(drops)}`);
+    return summarize(times);
+  } finally {
+    fs.rmSync(copy, { recursive: true, force: true });
+  }
+}
+
 async function withClients(count, work) {
   return Promise.all(Array.from({ length: count }, (_, i) => work(i)));
 }
@@ -281,7 +335,7 @@ async function main() {
   const authMod = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'bridge-auth.js')).href);
 
   writePolicy(stateDir, args.mode !== 'baseline');
-  if (args.mode === 'on-seeded') seedSiteRecords(stateDir, args.seeded);
+  if (args.mode === 'on-seeded') await seedSiteRecords(stateDir, args.seeded);
 
   const handle = await startIsolatedDaemon(stateDir, wsPort);
   const extensionWs = await connectFakeExtension(wsPort, handle.token, protocolMod, authMod);
@@ -305,6 +359,7 @@ async function main() {
     await withClients(args.clients, async (i) => {
       for (let n = 0; n < Math.ceil(args.iterations / args.clients); n++) {
         const outcome = await run(clients[i]);
+        if (args.paceMs > 0) await sleep(args.paceMs);
         if (outcome.unavailable) { unavailableTools.add(tool); continue; }
         samples[tool].push(outcome.elapsedMs);
       }
@@ -329,6 +384,15 @@ async function main() {
   }));
 
   clearInterval(rssInterval);
+  let queueStatus = null;
+  if (args.mode !== 'baseline') {
+    for (let i = 0; i < 100; i++) {
+      const reply = await clients[0].admin('status');
+      queueStatus = reply.status ?? null;
+      if (!queueStatus || queueStatus.queueDepth === 0) break;
+      await sleep(50);
+    }
+  }
   for (const client of clients) client.close();
   try { extensionWs.close(); } catch { /* already closed */ }
 
@@ -339,6 +403,7 @@ async function main() {
   await stopIsolatedDaemon(recoveryHandle);
 
   const bytes = storeBytes(stateDir);
+  const commit = args.mode === 'baseline' ? null : await commitBench(stateDir, args);
   fs.rmSync(stateDir, { recursive: true, force: true });
 
   const report = {
@@ -348,6 +413,7 @@ async function main() {
     clients: args.clients,
     iterations: args.iterations,
     seeded: args.mode === 'on-seeded' ? args.seeded : 0,
+    paceMs: args.paceMs,
     startMs: handle.startMs,
     recoveryMs,
     idleRssKb,
@@ -355,7 +421,10 @@ async function main() {
     storeBytes: bytes,
     tools: Object.fromEntries(Object.entries(samples).map(([tool, ms]) => [tool, summarize(ms)])),
     unavailableTools: [...unavailableTools],
-    queueDrops: 'UNAVAILABLE (queue.ts not implemented yet)',
+    queueDrops: queueStatus ? queueStatus.dropped : 'UNAVAILABLE (memory off: no status)',
+    quarantined: queueStatus ? queueStatus.quarantined : null,
+    origins: queueStatus ? queueStatus.origins : null,
+    commit,
   };
 
   appendReport(report);
@@ -365,11 +434,12 @@ async function main() {
 function appendReport(report) {
   const header = `## ${report.mode} — Node ${report.node}, ${report.platform} (${new Date().toISOString()})\n`;
   const lines = [header];
-  lines.push(`- clients: ${report.clients}, iterations/tool: ${report.iterations}, seeded origins: ${report.seeded}`);
+  lines.push(`- clients: ${report.clients}, iterations/tool: ${report.iterations}, seeded origins: ${report.seeded}, pace: ${report.paceMs} ms between calls per client`);
   lines.push(`- daemon start: ${report.startMs} ms; recovery after SIGKILL: ${report.recoveryMs} ms`);
   lines.push(`- idle RSS: ${report.idleRssKb ?? 'UNAVAILABLE'} KiB; peak RSS: ${report.peakRssKb ?? 'UNAVAILABLE'} KiB`);
   lines.push(`- store bytes: ${report.storeBytes}`);
-  lines.push(`- queue drops: ${report.queueDrops}`);
+  lines.push(`- queue drops: ${typeof report.queueDrops === 'string' ? report.queueDrops : JSON.stringify(report.queueDrops)}; origins in store: ${report.origins ?? 'n/a'}; quarantined: ${report.quarantined ?? 'n/a'}`);
+  if (report.commit) lines.push(`- commit (in-process queue->store, ${report.commit.n} ops): p50 ${report.commit.p50.toFixed(2)} ms, p95 ${report.commit.p95.toFixed(2)} ms, p99 ${report.commit.p99.toFixed(2)} ms`);
   if (report.unavailableTools.length) lines.push(`- unavailable in this build: ${report.unavailableTools.join(', ')} (not implemented yet — Phase 2/3)`);
   lines.push('');
   lines.push('| Tool | n | p50 ms | p95 ms | p99 ms |');

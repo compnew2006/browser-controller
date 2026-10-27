@@ -7,7 +7,7 @@ Node 20 leg of R-18's "Node 20 and 22" requirement is not yet measured. CI runs 
 baseline should be added there or on a machine that has it, before owner gate 4 is treated as
 satisfied.
 
-## baseline — Node v22.23.1, darwin/arm64 (2026-10-27T07:03:15.678Z)
+## baseline (initial, before memory code existed; fake extension had no siteContext) — Node v22.23.1, darwin/arm64 (2026-10-27T07:03:15.678Z)
 
 - clients: 4, iterations/tool: 200, seeded origins: 0
 - daemon start: 105 ms; recovery after SIGKILL: 103 ms
@@ -24,35 +24,102 @@ satisfied.
 | browser_memory | 0 | — | — | — |
 | batch | 200 | 0.03 | 0.13 | 0.23 |
 
-## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:14:26.661Z)
+## baseline — Node v22.23.1, darwin/arm64 (2026-10-27T21:16:41.473Z)
 
 - clients: 4, iterations/tool: 200, seeded origins: 0
-- daemon start: 103 ms; recovery after SIGKILL: 103 ms
-- idle RSS: 85872 KiB; peak RSS: 85872 KiB
-- store bytes: 166
-- queue drops: UNAVAILABLE (queue.ts not implemented yet)
+- daemon start: 102 ms; recovery after SIGKILL: 102 ms
+- idle RSS: 84336 KiB; peak RSS: 84336 KiB
+- store bytes: 145
+- queue drops: UNAVAILABLE (memory off: no status); origins in store: n/a; quarantined: n/a
 
 | Tool | n | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|
-| browser_navigate | 200 | 0.42 | 1.63 | 3.98 |
-| browser_navigate_snapshot | 200 | 0.35 | 0.61 | 0.99 |
-| browser_snapshot | 200 | 0.03 | 0.31 | 0.56 |
-| browser_memory | 200 | 0.02 | 0.05 | 0.05 |
-| batch | 200 | 0.02 | 0.08 | 0.11 |
+| browser_navigate | 200 | 0.32 | 1.62 | 4.08 |
+| browser_navigate_snapshot | 200 | 0.25 | 0.40 | 0.90 |
+| browser_snapshot | 200 | 0.03 | 0.23 | 0.24 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.06 |
+| batch | 200 | 0.03 | 0.12 | 0.18 |
 
-## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:14:27.371Z)
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:17:48.186Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0
+- daemon start: 104 ms; recovery after SIGKILL: 102 ms
+- idle RSS: 84944 KiB; peak RSS: 84944 KiB
+- store bytes: 1623
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":418,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 8.29 ms, p95 11.12 ms, p99 12.13 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.54 | 2.24 | 6.67 |
+| browser_navigate_snapshot | 200 | 0.44 | 0.80 | 1.21 |
+| browser_snapshot | 200 | 0.02 | 0.37 | 0.48 |
+| browser_memory | 200 | 0.02 | 0.08 | 0.15 |
+| batch | 200 | 0.03 | 0.09 | 0.14 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:18:02.448Z)
 
 - clients: 4, iterations/tool: 200, seeded origins: 1000
-- daemon start: 104 ms; recovery after SIGKILL: 102 ms
+- daemon start: 106 ms; recovery after SIGKILL: 156 ms
 - idle RSS: 84160 KiB; peak RSS: 84160 KiB
-- store bytes: 210056
-- queue drops: UNAVAILABLE (queue.ts not implemented yet)
+- store bytes: 439513
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":424,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1001; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.08 ms, p95 11.07 ms, p99 11.98 ms
 
 | Tool | n | p50 ms | p95 ms | p99 ms |
 |---|---|---|---|---|
-| browser_navigate | 200 | 0.47 | 1.55 | 4.71 |
-| browser_navigate_snapshot | 200 | 0.35 | 0.44 | 0.99 |
-| browser_snapshot | 200 | 0.03 | 0.30 | 0.71 |
-| browser_memory | 200 | 0.02 | 0.05 | 0.07 |
-| batch | 200 | 0.03 | 0.08 | 0.20 |
+| browser_navigate | 200 | 0.57 | 2.19 | 8.22 |
+| browser_navigate_snapshot | 200 | 0.45 | 0.83 | 1.35 |
+| browser_snapshot | 200 | 0.04 | 0.34 | 0.36 |
+| browser_memory | 200 | 0.03 | 0.04 | 0.06 |
+| batch | 200 | 0.03 | 0.07 | 0.18 |
 
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:18:22.890Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 25 ms between calls per client
+- daemon start: 103 ms; recovery after SIGKILL: 104 ms
+- idle RSS: 84416 KiB; peak RSS: 96000 KiB
+- store bytes: 1623
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":83,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.83 ms, p95 11.12 ms, p99 12.17 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.96 | 4.72 | 6.98 |
+| browser_navigate_snapshot | 200 | 0.66 | 3.32 | 4.36 |
+| browser_snapshot | 200 | 0.22 | 1.07 | 2.02 |
+| browser_memory | 200 | 0.18 | 0.85 | 1.43 |
+| batch | 200 | 0.47 | 0.66 | 1.34 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:18:50.988Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 100 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 157 ms
+- idle RSS: 83536 KiB; peak RSS: 94928 KiB
+- store bytes: 1623
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.26 ms, p95 11.02 ms, p99 11.99 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 2.41 | 4.32 | 6.82 |
+| browser_navigate_snapshot | 200 | 2.67 | 4.44 | 5.58 |
+| browser_snapshot | 200 | 0.21 | 1.69 | 2.18 |
+| browser_memory | 200 | 0.45 | 0.65 | 1.18 |
+| batch | 200 | 0.45 | 1.02 | 1.22 |
+
+
+## SC-005 verdict (T065, measured 2026-10-27/28; owner decision T066 still open)
+
+Comparison: `baseline` (memory off, 21:16:41) against `on-empty` and `on-seeded` (1,000 origins) at pace 0. Node v22.23.1, darwin/arm64 only: **Node 20 was not run** (not installed here); the Node 20 leg of R-18 stays open. The fake extension answers in under a millisecond, so every call is a worst-case burst, and commit latency is measured in-process (queue to store, real fsync) on a copy of the state.
+
+| Limit | Measured | Verdict |
+|---|---|---|
+| navigate p95 overhead ≤ 25 ms | +0.62 ms (empty), +0.57 ms (seeded) | PASS |
+| snapshot p95 overhead ≤ 30 ms | +0.14 ms (empty), +0.11 ms (seeded) | PASS |
+| commit p95 ≤ 50 ms | 11.12 ms (empty), 11.07 ms (seeded) | PASS |
+| start overhead ≤ 50 ms | +2 ms (empty), +4 ms (seeded) | PASS |
+| idle RSS growth ≤ 10 MiB | +0.6 MiB (empty), −0.2 MiB (seeded); peak equals idle at the 200 ms sampling | PASS (weak: RSS sampled only every 200 ms) |
+| 0 queue drops with 4 clients | pace 0: 418 / 424 `queue_full`; pace 25 ms: 83; pace 100 ms: 0 | **FAIL at pace 0 and 25 ms, PASS at 100 ms** |
+
+Diagnosis of the drops: one commit costs about 8 to 11 ms (temp write, fsync, rename, directory fsync) and the queue is bounded at 256. The pace-0 run issues roughly 1,000 capture-producing calls in a few hundred milliseconds from 4 clients, faster than any real browser can answer (a real navigate takes tens to hundreds of milliseconds). Drops are reported as `queue_full` and never fail an agent call (FR-009, AC-16). Whether the "0 drops" limit is meant for this burst or for a realistic call rate is the owner's call in T066; no limit was changed. Options for the owner: accept 100 ms pacing as the reference workload, or raise the queue bound or coalesce ops per origin.

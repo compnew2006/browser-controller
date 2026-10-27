@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+- Website memory, off by default: agents sharing one Chrome profile can reuse a small set of allowlisted facts about a site (page language, search box, login form, well-known control names), stored locally under `<state dir>/memory/`. See README "Website memory".
+- `browser_memory {tabId}` (read-only) and a labelled reminder on `browser_navigate` results when memory is on.
+- `browser_memory_policy {action, tabId?}`: an agent can ask to enable, disable, exclude, include, inspect, export or delete memory; the owner must approve a prompt in the MCP client.
+- `npm run memory -- status | enable | disable | exclude | include | inspect | export | delete`: owner CLI over the daemon's local socket.
+- `scripts/memory-bench.mjs` for the memory performance baseline.
+
+### Changed
+- The extension requests the `cookies` permission (cookie names only, never values) to tell whether a page is anonymous. Chrome will ask to approve it: reload the extension at `chrome://extensions` and restart the daemon after updating. The tool count is now 21.
+
 ### Fixed
 - A click, key, drag or `browser_evaluate` script that makes the page open a file chooser (an upload button, `input.click()`) no longer opens the native file dialog, which an agent cannot answer and which covered the user's screen on Windows. While agent input or a script runs, and for 0.5 s after it, Chrome intercepts the chooser and the page gets a cancel; the next result says `fileChooser:` and points to `browser_fill` with absolute paths. The user's own clicks show the dialog as before. Extension reload needed.
 
