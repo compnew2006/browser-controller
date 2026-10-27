@@ -281,7 +281,7 @@ describe('ExtensionBridge protocol handshake', () => {
     await sleep(40);
   });
 
-  function createBridge(port: number, opts?: { defaultTimeoutMs?: number; handshakeGraceMs?: number }): ExtensionBridge {
+  function createBridge(port: number, opts?: { defaultTimeoutMs?: number; handshakeGraceMs?: number; reconnectWait?: { ms: number; windowMs?: number } }): ExtensionBridge {
     const bridge = new ExtensionBridge({
       port,
       ...testBridgeCredentials(),
@@ -291,6 +291,7 @@ describe('ExtensionBridge protocol handshake', () => {
       handshakeGraceMs: opts?.handshakeGraceMs,
       // Production waits 5 s for an extension; the refusal reason surfaces when this wait ends.
       connectionWaitMs: 300,
+      reconnectWait: opts?.reconnectWait,
     });
     bridges.push(bridge);
     return bridge;
@@ -595,6 +596,35 @@ describe('ExtensionBridge protocol handshake', () => {
 
     await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(`NOT_CONNECTED: ${OLDER_EXTENSION_REASON}`);
     expect(bridge.isConnected()).toBe(false);
+  });
+
+  // A daemon restart drops the extension, which reconnects after its 1, 2, 4 s backoff: a call made
+  // meanwhile waits for it instead of failing NOT_CONNECTED at the short wait.
+  it('right after start, a call waits the longer reconnect wait for the extension', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port, { reconnectWait: { ms: 3_000 } });
+    await bridge.start();
+
+    const call = bridge.callTool('browser_snapshot', { tabId: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    const { client, hello } = await connectWs(port);
+    client.send(authenticatedHelloAck(await hello));
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.tool) client.send(JSON.stringify({ id: msg.id, success: true, result: { late: true } }));
+    });
+
+    await expect(call).resolves.toEqual({ late: true });
+  });
+
+  it('with no extension seen inside the window, a call fails after the short wait', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port, { reconnectWait: { ms: 3_000, windowMs: 0 } });
+    await bridge.start();
+
+    const started = Date.now();
+    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(/^NOT_CONNECTED: /);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it('holds a tool call until the helloAck arrives, then routes it', async () => {

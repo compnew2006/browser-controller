@@ -129,6 +129,8 @@ class Daemon {
       host: DEFAULT_WS_HOST,
       token: this.token,
       enrollmentSecret: this.enrollmentSecret,
+      // The extension retries after 1, 2 and 4 s: a call right after a daemon restart waits for it.
+      reconnectWait: { ms: 15_000 },
     });
     this.bridge.setSessionRoster(() => [...this.clients.values()].map((client) => client.sessionId));
     const vaultTransport: VaultTransport = {

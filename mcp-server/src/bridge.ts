@@ -71,6 +71,8 @@ interface BridgeOptions {
   handshakeGraceMs?: number;
   /** How long callTool waits for an extension to connect before failing with NOT_CONNECTED. */
   connectionWaitMs?: number;
+  /** Within `windowMs` (60 s) of the start or of an extension drop one is likely reconnecting: wait `ms` instead. */
+  reconnectWait?: { ms: number; windowMs?: number };
 }
 
 
@@ -92,6 +94,9 @@ export class ExtensionBridge {
   private maxWsPayloadBytes: number;
   private handshakeGraceMs: number;
   private connectionWaitMs: number;
+  private reconnectWait: { ms: number; windowMs: number };
+  /** When an extension last dropped; the start counts too, since the daemon may have just restarted. */
+  private lastExtensionAt = Date.now();
   /** Reason a connection that had been ready was refused, until some browser connects fine. Fails calls fast. */
   private handshakeError: string | null = null;
   /**
@@ -125,6 +130,7 @@ export class ExtensionBridge {
     this.maxWsPayloadBytes = options.maxWsPayloadBytes ?? MAX_WS_MESSAGE_BYTES;
     this.handshakeGraceMs = options.handshakeGraceMs ?? 3_000;
     this.connectionWaitMs = options.connectionWaitMs ?? 5_000;
+    this.reconnectWait = { ms: options.reconnectWait?.ms ?? this.connectionWaitMs, windowMs: options.reconnectWait?.windowMs ?? 60_000 };
   }
 
   /** The daemon's live session ids, sent to each extension connection when it becomes ready. */
@@ -184,6 +190,7 @@ export class ExtensionBridge {
   /** Forget a connection and fail the calls that were waiting on it. */
   private dropConn(conn: ExtensionConnection, reason: string): void {
     if (!this.conns.has(conn)) return;
+    if (conn.state === 'ready') this.lastExtensionAt = Date.now();
     this.conns.delete(conn);
     this.vaultTransport.connectionDropped(conn, reason);
     if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
@@ -448,7 +455,8 @@ export class ExtensionBridge {
     if (tool === 'browser_tabs' && !skipTabs) return tabsAcrossBrowsers(this.conns, params, sessionId, (p) => this.callTool(tool, p, sessionId, signal, agentName, true));
     if (!this.isConnected()) {
       try {
-        await this.waitForConnection(this.connectionWaitMs);
+        const reconnecting = Date.now() - this.lastExtensionAt < this.reconnectWait.windowMs;
+        await this.waitForConnection(reconnecting ? this.reconnectWait.ms : this.connectionWaitMs);
       } catch (error) {
         // Every "no extension" failure reads with the NOT_CONNECTED code the agent acts on.
         const wait = error instanceof Error ? error.message : String(error);
