@@ -7,14 +7,16 @@ import { resolveTab, execDom, getFallback } from '../lib/page-exec.js';
 import { parseTarget } from '../lib/target.js';
 
 const ACTIONS = new Set(['browser_click', 'browser_type', 'browser_fill', 'browser_evaluate']);
-const DELETE_INTENT = /\b(delete|remove|destroy|erase|revoke|unsubscribe|cancel\s+(?:plan|account|subscription))\b/i;
-const SUBMIT_INTENT = /\b(submit|save|send|confirm|apply|place\s+order|checkout|pay|purchase|sign\s+in|log\s+in|register)\b/i;
 const ENTER_KEY = /(?:^|\s|\+)enter(?:$|\s)/i;
 
 /** Page side. This returns risk categories, never the page's label or field value. */
 function pageActionCategories(_targets, _action, _submit, _key, _drag) {
   const D = globalThis.__bcDom;
-  if (!D || !D.resolveTarget) return { __needDom: true };
+  if (!D || !D.resolveTarget || !D.safetyFingerprint) return { __needDom: true };
+  // Defined here, not at module level: chrome.scripting serializes this function alone.
+  const DELETE_INTENT = /\b(delete|remove|destroy|erase|revoke|unsubscribe|cancel\s+(?:plan|account|subscription))\b/i;
+  const SUBMIT_INTENT = /\b(submit|save|send|confirm|apply|place\s+order|checkout|pay|purchase|sign\s+in|log\s+in|register)\b/i;
+  const ENTER_KEY = /(?:^|\s|\+)enter(?:$|\s)/i;
   const categories = new Set();
   const fingerprints = [];
 
@@ -47,7 +49,7 @@ function pageActionCategories(_targets, _action, _submit, _key, _drag) {
     const tag = String(el.tagName || '').toLowerCase();
     const type = String(el.type || D.attr(el, 'type') || '').toLowerCase();
     const role = String(D.roleOf(el) || '').toLowerCase();
-    fingerprints.push(`${D.refFor(el)}:${tag}:${type}`);
+    fingerprints.push(D.safetyFingerprint(el));
     if (tag === 'input' && type === 'file') categories.add('upload');
 
     if (_action === 'browser_click') {

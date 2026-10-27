@@ -5,7 +5,7 @@ import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { tabIdParam, targetParam, forwardHandler, failureResult } from './types.js';
-import { actionHandler, actionOptionsShape, enforceActionSafety } from './action-support.js';
+import { actionHandler, actionOptionsShape, runActionSafety, withExpectedFingerprints } from './action-support.js';
 import { isCredentialVaultPath } from '../vault/protected-paths.js';
 
 /**
@@ -121,9 +121,9 @@ const handler = async (
     });
   }
   const safeParams = { ...params, fields: resolved };
-  const blocked = await enforceActionSafety(host, 'browser_fill', safeParams);
-  if (blocked) return blocked;
-  return forwardFill(host, safeParams);
+  const gate = await runActionSafety(host, 'browser_fill', safeParams);
+  if (gate.refusal) return gate.refusal;
+  return forwardFill(host, withExpectedFingerprints(safeParams, gate));
 };
 // Registry drift guard: this custom handler still forwards to the same wire name.
 (handler as { toolName?: string }).toolName = 'browser_fill';

@@ -72,6 +72,7 @@ interface Classification {
   site: string;
   categories: string[];
   fingerprint: string;
+  fingerprints: string[];
 }
 
 async function classify(host: ToolHost, tool: string, params: Record<string, unknown>): Promise<Classification> {
@@ -82,39 +83,53 @@ async function classify(host: ToolHost, tool: string, params: Record<string, unk
   if (raw?.success !== true || typeof raw.site !== 'string' || !Array.isArray(raw.categories)) {
     throw new Error(typeof raw?.error === 'string' ? raw.error : 'classifier returned an invalid result');
   }
+  const fingerprints = evaluating ? [] : Array.isArray(raw.fingerprints) ? raw.fingerprints.filter((value): value is string => typeof value === 'string') : [];
   return {
     site: raw.site.toLowerCase(),
     categories: evaluating ? ['evaluate'] : raw.categories.filter((value): value is string => typeof value === 'string'),
-    fingerprint: evaluating ? '[]' : JSON.stringify(Array.isArray(raw.fingerprints) ? raw.fingerprints.filter((value) => typeof value === 'string') : []),
+    fingerprint: JSON.stringify(fingerprints),
+    fingerprints,
   };
 }
 
-/** Run before dispatch. The classifier receives targets and action kinds only, never field values. */
-export async function enforceActionSafety(
+/** The outcome of a safety run: a refusal, or the fingerprints of the final classification (absent when none ran). */
+export interface SafetyOutcome {
+  refusal: ToolResult | null;
+  expectFingerprints?: string[];
+}
+
+/**
+ * Run before dispatch. The classifier receives targets and action kinds only, never field values.
+ * `expectFingerprints` (internal wire field, never in a tool schema) is set only when a classification
+ * ran for a tool that acts on page elements; the extension compares it again when input is about to be sent.
+ */
+export async function runActionSafety(
   host: ToolHost,
   tool: string,
   params: Record<string, unknown>,
-): Promise<ToolResult | null> {
+): Promise<SafetyOutcome> {
   const settings = getSafetySettings(host);
-  if (!settings.enabled || (tool === 'browser_click' && params.hover === true)) return null;
+  if (!settings.enabled || (tool === 'browser_click' && params.hover === true)) return { refusal: null };
 
   let classification: Classification;
   try {
     classification = await classify(host, tool, params);
   } catch (error) {
-    return refuse(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`);
+    return { refusal: refuse(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`) };
   }
-  if (classification.categories.length === 0) return null;
+  // Page JS has no element to compare: evaluate is gated by the site rule alone.
+  const wire = (fingerprints: string[]): SafetyOutcome => ({ refusal: null, ...(tool === 'browser_evaluate' ? {} : { expectFingerprints: fingerprints }) });
+  if (classification.categories.length === 0) return wire(classification.fingerprints);
 
   const rule = settings.siteRules.find((item) => item.site === classification.site);
   const decision = rule?.action ?? settings.defaultAction;
-  if (decision === 'allow') return null;
+  if (decision === 'allow') return wire(classification.fingerprints);
   if (decision === 'block') {
-    return refuse(`ACTION_BLOCKED: safety policy blocks ${classification.categories.join(', ')} on ${classification.site}; no action was dispatched.`);
+    return { refusal: refuse(`ACTION_BLOCKED: safety policy blocks ${classification.categories.join(', ')} on ${classification.site}; no action was dispatched.`) };
   }
 
   const controller = controllerByHost.get(host);
-  if (!controller) return refuse('CLIENT_CONFIRMATION_UNAVAILABLE: no confirmation channel is available; no action was dispatched.');
+  if (!controller) return { refusal: refuse('CLIENT_CONFIRMATION_UNAVAILABLE: no confirmation channel is available; no action was dispatched.') };
   let confirmation: 'approved' | 'declined' | 'unavailable';
   try {
     const fillTargets = tool === 'browser_fill' && Array.isArray(params.fields)
@@ -132,10 +147,10 @@ export async function enforceActionSafety(
     confirmation = 'unavailable';
   }
   if (confirmation === 'unavailable') {
-    return refuse('CLIENT_CONFIRMATION_UNAVAILABLE: this MCP client cannot ask for confirmation; no action was dispatched.');
+    return { refusal: refuse('CLIENT_CONFIRMATION_UNAVAILABLE: this MCP client cannot ask for confirmation; no action was dispatched.') };
   }
   if (confirmation !== 'approved') {
-    return refuse(`ACTION_NOT_CONFIRMED: ${classification.categories.join(', ')} on ${classification.site} was declined or dismissed; no action was dispatched.`);
+    return { refusal: refuse(`ACTION_NOT_CONFIRMED: ${classification.categories.join(', ')} on ${classification.site} was declined or dismissed; no action was dispatched.`) };
   }
 
   // A page can change while the confirmation UI is open. Recheck the category and
@@ -145,12 +160,27 @@ export async function enforceActionSafety(
     const before = [...classification.categories].sort().join(',');
     const after = [...current.categories].sort().join(',');
     if (current.site !== classification.site || after !== before || current.fingerprint !== classification.fingerprint) {
-      return refuse('SAFETY_TARGET_CHANGED: the page action changed while confirmation was open; no action was dispatched. Review the page and try again.');
+      return { refusal: refuse('SAFETY_TARGET_CHANGED: the page action changed while confirmation was open; no action was dispatched. Review the page and try again.') };
     }
+    return wire(current.fingerprints);
   } catch (error) {
-    return refuse(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`);
+    return { refusal: refuse(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`) };
   }
-  return null;
+}
+
+/** Run before dispatch; a refusal, or null to go on. Callers that dispatch use runActionSafety to also get the fingerprints. */
+export async function enforceActionSafety(
+  host: ToolHost,
+  tool: string,
+  params: Record<string, unknown>,
+): Promise<ToolResult | null> {
+  return (await runActionSafety(host, tool, params)).refusal;
+}
+
+/** Params for dispatch: an agent-supplied expectFingerprints is dropped, then the gate's own value (if any) is set. */
+export function withExpectedFingerprints(params: Record<string, unknown>, outcome: SafetyOutcome): Record<string, unknown> {
+  const { expectFingerprints: _supplied, ...rest } = params;
+  return outcome.expectFingerprints ? { ...rest, expectFingerprints: outcome.expectFingerprints } : rest;
 }
 
 export const actionOptionsShape = {
@@ -236,15 +266,18 @@ export function actionHandler(
       }
     }
 
-    const blocked = options.safety === false ? null : await enforceActionSafety(host, tool, actionParams);
+    // safety:false means the handler runs the gate itself (browser_fill); it still must not see a supplied fingerprint list.
+    const gate: SafetyOutcome = options.safety === false ? { refusal: null } : await runActionSafety(host, tool, actionParams);
+    const blocked = gate.refusal;
     if (blocked) {
       return withReceipt(blocked, tool, { status: 'not_dispatched', summary: summaryOf(blocked) }, false);
     }
+    const dispatchParams = withExpectedFingerprints(actionParams, gate);
 
     // A dispatch error keeps its upstream coding (INTERNAL_ERROR for a message with no CODE:)
     // and stays a throw, so browser_batch can resend a rate-limited step. A failed result
     // (isError) still gets its receipt below.
-    const result = await handler(host, actionParams);
+    const result = await handler(host, dispatchParams);
     // The handler ran its own gate check (browser_fill checks files first) and refused.
     if (gateRefusals.has(result)) {
       return withReceipt(result, tool, { status: 'not_dispatched', summary: summaryOf(result) }, false);

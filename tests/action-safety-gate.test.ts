@@ -3,6 +3,8 @@ import { clickTool } from "../mcp-server/src/tools/click.js";
 import { typeTool } from "../mcp-server/src/tools/type.js";
 import { fillTool } from "../mcp-server/src/tools/fill.js";
 import { evaluateTool } from "../mcp-server/src/tools/evaluate.js";
+import { batchTool, useToolRegistry } from "../mcp-server/src/tools/batch.js";
+import { parseToolParams } from "../mcp-server/src/tools/params.js";
 import {
   attachSafetyController,
   setSafetySettings,
@@ -22,6 +24,9 @@ interface Setup {
   siteRules?: Array<{ site: string; action: SafetyAction }>;
   // Classifier answers for successive calls (second call is the post-confirmation recheck).
   recheck?: string[];
+  // Fingerprints the classifier reports; recheckFingerprints answers the post-confirmation recheck.
+  fingerprints?: string[];
+  recheckFingerprints?: string[];
 }
 
 function setup(opts: Setup = {}) {
@@ -37,7 +42,7 @@ function setup(opts: Setup = {}) {
         if (opts.classifier === "reject") throw new Error("boom");
         if (opts.classifier === "invalid") return { success: false, error: "TAB_GONE: no tab" };
         const categories = call > 0 && opts.recheck ? opts.recheck : opts.categories ?? [];
-        return { success: true, site: opts.site ?? "example.com", categories, fingerprints: [] };
+        return { success: true, site: opts.site ?? "example.com", categories, fingerprints: call > 0 && opts.recheckFingerprints ? opts.recheckFingerprints : opts.fingerprints ?? [] };
       }
       sent.push({ tool, params });
       return { success: true, text: "ok" };
@@ -277,5 +282,84 @@ describe("browser_evaluate follows the site's action while safety is on", () => 
     const s = setup({ classifier: "reject", defaultAction: "allow" });
     expect(text(await evaluateTool.handler(s.host, evalParams))).toMatch(/^SAFETY_CHECK_FAILED:/);
     expect(evals(s)).toHaveLength(0);
+  });
+});
+
+describe("action safety gate: dispatch-time fingerprints (F7-5)", () => {
+  const dispatched = (s: ReturnType<typeof setup>, tool: string) => s.sent.filter((c) => c.tool === tool);
+
+  it("click on the allow path carries the classifier's fingerprints", async () => {
+    const s = setup({ categories: [], fingerprints: ["e1:button:submit"] });
+    await clickTool.handler(s.host, click);
+    expect(dispatched(s, "browser_click")[0].params.expectFingerprints).toEqual(["e1:button:submit"]);
+  });
+
+  it("a site allow decision on a categorized click also carries them", async () => {
+    const s = setup({ categories: ["submit"], defaultAction: "allow", fingerprints: ["e1:button:"] });
+    await clickTool.handler(s.host, click);
+    expect(dispatched(s, "browser_click")[0].params.expectFingerprints).toEqual(["e1:button:"]);
+  });
+
+  it("type carries them", async () => {
+    const s = setup({ fingerprints: ["e2:input:text"] });
+    await typeTool.handler(s.host, { tabId: 1, target: "e2", text: "hi" });
+    expect(dispatched(s, "browser_type")[0].params.expectFingerprints).toEqual(["e2:input:text"]);
+  });
+
+  it("fill carries them, in field order", async () => {
+    const s = setup({ fingerprints: ["e2:input:text", "e3:input:email"] });
+    await fillTool.handler(s.host, { tabId: 1, fields: [{ target: "e2", value: "a" }, { target: "e3", value: "b" }] });
+    expect(dispatched(s, "browser_fill")[0].params.expectFingerprints).toEqual(["e2:input:text", "e3:input:email"]);
+  });
+
+  it("ask path sends the recheck result, not the first one", async () => {
+    const s = setup({ categories: ["submit"], defaultAction: "ask", fingerprints: ["e1:button:"], recheckFingerprints: ["e1:button:"] });
+    await clickTool.handler(s.host, click);
+    expect(s.classified).toHaveLength(2);
+    expect(dispatched(s, "browser_click")[0].params.expectFingerprints).toEqual(["e1:button:"]);
+  });
+
+  it("safety off: no expectFingerprints", async () => {
+    const s = setup({ enabled: false, fingerprints: ["e1:button:"] });
+    await clickTool.handler(s.host, click);
+    expect("expectFingerprints" in dispatched(s, "browser_click")[0].params).toBe(false);
+  });
+
+  it("hover: no expectFingerprints", async () => {
+    const s = setup({ fingerprints: ["e1:button:"] });
+    await clickTool.handler(s.host, { ...click, hover: true });
+    expect("expectFingerprints" in dispatched(s, "browser_click")[0].params).toBe(false);
+  });
+
+  it("evaluate: no expectFingerprints", async () => {
+    const s = setup({ defaultAction: "allow", fingerprints: ["e1:button:"] });
+    await evaluateTool.handler(s.host, { tabId: 1, code: "1" } as never);
+    expect(s.sent.some((c) => "expectFingerprints" in c.params)).toBe(false);
+  });
+
+  it("an agent-supplied value fails schema validation", () => {
+    expect(() => parseToolParams(clickTool, { ...click, expectFingerprints: ["x"] })).toThrow();
+    expect(() => parseToolParams(typeTool, { tabId: 1, text: "a", expectFingerprints: ["x"] })).toThrow();
+    expect(() => parseToolParams(fillTool, { tabId: 1, fields: [{ target: "e1", value: "a" }], expectFingerprints: ["x"] })).toThrow();
+  });
+
+  it("an agent-supplied value that reaches a handler is overwritten or dropped", async () => {
+    const forged = { ...click, expectFingerprints: ["forged"] };
+    const on = setup({ fingerprints: ["e1:button:"] });
+    await clickTool.handler(on.host, forged);
+    expect(dispatched(on, "browser_click")[0].params.expectFingerprints).toEqual(["e1:button:"]);
+    const off = setup({ enabled: false });
+    await clickTool.handler(off.host, forged);
+    expect("expectFingerprints" in dispatched(off, "browser_click")[0].params).toBe(false);
+    const fill = setup({ fingerprints: ["e1:input:text"] });
+    await fillTool.handler(fill.host, { tabId: 1, fields: [{ target: "e1", value: "a" }], expectFingerprints: ["forged"] });
+    expect(dispatched(fill, "browser_fill")[0].params.expectFingerprints).toEqual(["e1:input:text"]);
+  });
+
+  it("a batch step gets it too", async () => {
+    useToolRegistry((name) => (name === "browser_click" ? clickTool : undefined));
+    const s = setup({ fingerprints: ["e1:button:"] });
+    await batchTool.handler(s.host, { tabId: 1, actions: [{ tool: "browser_click", params: { target: "e1" } }] });
+    expect(dispatched(s, "browser_click")[0].params.expectFingerprints).toEqual(["e1:button:"]);
   });
 });

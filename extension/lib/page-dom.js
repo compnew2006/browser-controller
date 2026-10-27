@@ -14,7 +14,7 @@
  * shadow roots + same-origin iframes); anything ambiguous is reported, never guessed.
  */
 
-export const PAGE_DOM_VERSION = 15;
+export const PAGE_DOM_VERSION = 16;
 
 /**
  * `refBase`: the highest ref number the tab's earlier documents showed (lib/state.js
@@ -87,6 +87,16 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     }
     registry.set(ref, el);
     return ref;
+  }
+  /**
+   * What the safety classifier and the dispatch-time check both compare: the element's ref, tag and
+   * input type. One formula for both, so they cannot drift. A change of the same element in place
+   * (its text, its attributes) keeps its fingerprint; a different element does not.
+   */
+  function safetyFingerprint(el) {
+    const tag = String(el.tagName || '').toLowerCase();
+    const type = String(el.type || attr(el, 'type') || '').toLowerCase();
+    return `${refFor(el)}:${tag}:${type}`;
   }
   /** Was this ref issued in this tab (this document or an earlier one)? `e<n>` with n at most the counter. */
   function refIssued(ref) {
@@ -921,7 +931,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     roleOf, nameOf, composedText, isInteractive, preciseMatch, centerOf, elementAt,
     composedContains, rowContextOf, describe, registry, flatText, styleOf, connected, cursor,
     isExtensionNode, clickBlocker, clickTarget, labelsOf, byText, resolveTarget,
-    peekRef, refFor, refIssued, refIsEarlier, pruneRegistry, ownText,
+    peekRef, refFor, safetyFingerprint, refIssued, refIsEarlier, pruneRegistry, ownText,
     isSensitiveField, redactSensitiveText,
   });
   return true;

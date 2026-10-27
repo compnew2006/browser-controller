@@ -5,7 +5,7 @@
  */
 import { resolveTab, execDom } from '../lib/page-exec.js';
 import { getOpenDialog, clearOpenDialog, sendAttached } from '../lib/cdp-session.js';
-import { requireSender, locateTarget, focusByClick, selectFocused, releaseShield, cursorTo, cdpClickAt, cdpKeyPress, targetAim, wordTargetRefMiss, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
+import { requireSender, locateTarget, focusByClick, selectFocused, releaseShield, cursorTo, cdpClickAt, cdpKeyPress, targetAim, targetChangedError, wordTargetRefMiss, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
 import { settleWithin, TIMED_OUT, sleep } from '../lib/timing.js';
 import { reboundNote } from '../lib/ref-errors.js';
 import { targetLabel } from '../lib/target.js';
@@ -232,12 +232,44 @@ async function refuseMissingFiles(tabId, fields) {
   if (missing.length) throw new Error(`FILE_NOT_FOUND: ${missing.join(', ')} does not exist or is not a readable file; nothing was filled.`);
 }
 
+/** Page side: the safety fingerprint of each field's element, in field order (null for a point target). */
+function pageFieldFingerprints(targets) {
+  const D = globalThis.__bcDom;
+  if (!D || !D.resolveTarget || !D.safetyFingerprint) return { __needDom: true };
+  const perField = [];
+  for (const item of targets) {
+    const resolved = D.resolveTarget(item.target, item.fallback);
+    if (resolved.error) return { error: resolved.error };
+    perField.push(resolved.el ? D.safetyFingerprint(resolved.el) : null);
+  }
+  return { perField };
+}
+
+/**
+ * The server's safety check classified these fields (`expectFingerprints`, in field order; a point
+ * target has no fingerprint). Resolve them all now, before any input, and refuse the call when one
+ * differs. Returns each field's own fingerprint, so a field's click re-checks it, or null when the
+ * call carries no list. An empty list has nothing to compare.
+ */
+async function checkFieldFingerprints(tabId, fields, expectFingerprints) {
+  if (!Array.isArray(expectFingerprints) || expectFingerprints.length === 0) return null;
+  const aims = fields.map((field) => {
+    const { parsed, fb } = targetAim(tabId, field?.target);
+    return { target: parsed, fallback: fb };
+  });
+  const res = await execDom(tabId, pageFieldFingerprints, [aims]);
+  if (!res || res.error || res.__needDom) throw targetChangedError();
+  const now = res.perField.filter((fp) => fp !== null);
+  if (now.length !== expectFingerprints.length || now.some((fp, i) => fp !== expectFingerprints[i])) throw targetChangedError();
+  return res.perField;
+}
+
 /**
  * Fill one field by its kind. Returns null when it is filled, else `CODE: message`.
  * `input` is the call's input session: a dialog the field's input opens ends the field
  * (the caller reports it), and nothing after it is sent.
  */
-async function fillField(tabId, input, field, rebound) {
+async function fillField(tabId, input, field, rebound, expect = null) {
   const target = field.target;
   const label = targetLabel(target);
   const { parsed, fb } = targetAim(tabId, target);
@@ -250,7 +282,7 @@ async function fillField(tabId, input, field, rebound) {
 
   if (info.kind === 'text') {
     if (typeof value !== 'string') return `INVALID_ARGUMENT: ${label} takes a string`;
-    const loc = await focusByClick(tabId, input, target, { edit: true });
+    const loc = await focusByClick(tabId, input, target, { edit: true, expect });
     if (!loc.success) return loc.error;
     if (input.blocked) return null;
     await selectFocused(tabId);
@@ -288,7 +320,7 @@ async function fillField(tabId, input, field, rebound) {
     if (info.kind === 'radio' && !value) return `INVALID_ARGUMENT: ${label} is a radio button: it can only be set to true`;
     // Clicked only when the state differs (a click on a checked box would uncheck it).
     if (info.checked === value) return null;
-    const loc = await locateTarget(tabId, { target, check: 'click' });
+    const loc = await locateTarget(tabId, { target, check: 'click', expect });
     if (!loc.success) return loc.error;
     if (input.blocked) return null;
     await sleep(await cursorTo(tabId, loc.x, loc.y, 'click'));
@@ -326,12 +358,13 @@ export async function handleFill(params, _sessionId, _agentName, signal) {
   await resolveTab(tabId);
   assertInputReady(tabId, signal);
   await refuseMissingFiles(tabId, fields);
+  const expected = await checkFieldFingerprints(tabId, fields, params.expectFingerprints);
   const input = inputSession(tabId, await requireSender(tabId), signal);
   const failed = [];
   const rebound = new Set();
   let stopped = null;
   try {
-    for (const field of fields) {
+    for (const [index, field] of fields.entries()) {
       const target = targetLabel(field?.target ?? '(no target)');
       if (stopped) { failed.push(`${target}: ${stopped}`); continue; }
       if (input.blocked) {
@@ -341,7 +374,7 @@ export async function handleFill(params, _sessionId, _agentName, signal) {
       }
       let error = null;
       try {
-        error = await fillField(tabId, input, field ?? {}, rebound);
+        error = await fillField(tabId, input, field ?? {}, rebound, expected?.[index] ?? null);
       } catch (err) {
         error = String(err?.message || err);
         // A wedged tab or a cancelled call: the rest of the call is not attempted.

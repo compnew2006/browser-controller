@@ -39,11 +39,11 @@ export async function cdpClickAt(send, x, y, { button = 'left', clickCount = 1, 
  * `cursor` ({ effect, count }) the agent cursor glides to that centre (`cursorMs`).
  * Kept self-contained: it is serialized into the page by chrome.scripting.
  */
-function pageLocate(fb, mode, cursor, check, target) {
+function pageLocate(fb, mode, cursor, check, target, expect) {
   // `fb` is the snapshot's fallback descriptor of a ref target (lib/state.js fallbacks).
   const D = globalThis.__bcDom;
   // An older runtime (installed before an extension update) has no cursor, clickTarget or resolveTarget.
-  if (!D || !D.clickTarget || (cursor && !D.cursor) || (target && !D.resolveTarget)) return { __needDom: true };
+  if (!D || !D.clickTarget || (cursor && !D.cursor) || (target && !D.resolveTarget) || (expect && !D.safetyFingerprint)) return { __needDom: true };
   // A press watch is this measurement's own (watchPress below): an earlier call's is dropped.
   if (globalThis.__bcPressWatch) { globalThis.__bcPressWatch.off(); globalThis.__bcPressWatch = null; }
   let el = null;
@@ -89,6 +89,9 @@ function pageLocate(fb, mode, cursor, check, target) {
     }
   }
   if (!el && !viewPoint) return { success: false, error: 'REF_GONE', url: location.href };
+  // The element the safety check classified (browser_classify_action): another one here is refused
+  // before any scroll, focus or input. The caller words the error (SAFETY_TARGET_CHANGED).
+  if (expect && el && D.safetyFingerprint(el) !== expect) return { success: false, error: 'SAFETY_TARGET_CHANGED' };
   // Text into a read-only field changes nothing: refused before anything is sent.
   if (mode === 'edit' && readOnlyField(el)) {
     return { success: false, error: `ELEMENT_READONLY: ${D.describe(el)} is read-only; nothing was typed.` };
@@ -325,16 +328,36 @@ export function wordTargetRefMiss(tabId, parsed, loc) {
   return { ...loc, error: refErrorMessage(parsed.ref, known, !!loc.earlier) };
 }
 
+/** The refusal when the element at dispatch time is not the one the safety check classified. No input was sent. */
+export function targetChangedError() {
+  return new Error('SAFETY_TARGET_CHANGED: the target changed after the safety check; no input was sent. Review the page and try again.');
+}
+
+/**
+ * The one fingerprint a click or type call must still find, from the wire field `expectFingerprints`
+ * (set by the server after its safety check). No array, or an empty one (a point or drag, which the
+ * classifier does not probe), means nothing to compare. More than one entry cannot match one element.
+ */
+export function expectedFingerprint(expectFingerprints) {
+  if (!Array.isArray(expectFingerprints) || expectFingerprints.length === 0) return null;
+  if (expectFingerprints.length !== 1 || typeof expectFingerprints[0] !== 'string') throw targetChangedError();
+  return expectFingerprints[0];
+}
+
 /**
  * Locate the element (or point) a tool acts on: `target` is the shared locator contract
  * (contract principle 2). Without one, `mode` decides (the active or focused element).
  * Throws INVALID_ARGUMENT for a blank target.
  */
-export async function locateTarget(tabId, { target, mode = 'none', cursor = null, check = null }) {
+export async function locateTarget(tabId, { target, mode = 'none', cursor = null, check = null, expect = null }) {
   const parsed = target == null ? null : parseTarget(target);
   // A ref on the target path keeps its snapshot fallback (the re-render re-find the ref path always had).
   const aimFb = parsed?.kind === 'ref' ? getFallback(tabId, parsed.ref) : null;
-  const run = (cur) => execDom(tabId, pageLocate, [aimFb, mode, cur, check, parsed]);
+  const run = async (cur) => {
+    const res = await execDom(tabId, pageLocate, [aimFb, mode, cur, check, parsed, expect]);
+    if (res?.error === 'SAFETY_TARGET_CHANGED') throw targetChangedError();
+    return res;
+  };
   let loc = await run(cursor);
   // Never-shown background tab: size its viewport, then measure again.
   if (loc?.success && loc.zeroViewport && hasCdp(tabId)) {
@@ -492,8 +515,8 @@ export function inputSession(tabId, send, signal) {
  * check (hidden, disabled, covered; with `edit`, read-only too) comes back with
  * nothing clicked. `clicked` says the click went out.
  */
-export async function focusByClick(tabId, input, target, { edit = false } = {}) {
-  const loc = await locateTarget(tabId, { target, mode: edit ? 'edit' : 'keys', check: 'click' });
+export async function focusByClick(tabId, input, target, { edit = false, expect = null } = {}) {
+  const loc = await locateTarget(tabId, { target, mode: edit ? 'edit' : 'keys', check: 'click', expect });
   // The check speaks of a click; for keys what matters is that nothing was typed.
   if (!loc.success) return { ...loc, error: String(loc.error).replace(/nothing was clicked\.$/, 'nothing was typed.') };
   if (loc.focused || input.blocked) return loc;

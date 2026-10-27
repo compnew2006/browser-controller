@@ -10,7 +10,7 @@
 import { resolveTab } from '../lib/page-exec.js';
 import { getOpenDialog } from '../lib/cdp-session.js';
 import { parseTarget, targetLabel } from '../lib/target.js';
-import { requireSender, locateTarget, locatePointer, focusByClick, measureTarget, selectFocused, releaseShield, cdpClickAt, cdpKeyPress, keyDefinition, modifierBits, cursorTo, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
+import { requireSender, locateTarget, locatePointer, expectedFingerprint, focusByClick, measureTarget, selectFocused, releaseShield, cdpClickAt, cdpKeyPress, keyDefinition, modifierBits, cursorTo, assertInputReady, inputSession, dialogSummary, inputBlockedError } from '../lib/trusted-input.js';
 import { sleep } from '../lib/timing.js';
 import { reboundNote } from '../lib/ref-errors.js';
 import { clearSelection, withFrames, interceptDrags } from '../lib/drag-input.js';
@@ -258,6 +258,8 @@ async function dragBetween(tabId, input, from, to) {
 export async function handleClick(params, _sessionId, _agentName, signal) {
   const { tabId, target, button = 'left', count, modifiers = [], hover = false, dragTo } = params;
   parseTarget(target);
+  // Hover and drag are not probed by the safety check: their list is empty or absent.
+  const expect = hover || dragTo != null ? null : expectedFingerprint(params.expectFingerprints);
   if (dragTo != null) parseTarget(dragTo);
   if (!BUTTONS.has(button)) throw new Error(`INVALID_ARGUMENT: unknown button ${button}`);
   const clickCount = countOf(count);
@@ -271,7 +273,7 @@ export async function handleClick(params, _sessionId, _agentName, signal) {
     if (dragTo != null) return await dragBetween(tabId, input, target, dragTo);
 
     const urlBefore = await tabUrl(tabId);
-    const loc = await locatePointer(tabId, { target }, 'click', clickCount);
+    const loc = await locatePointer(tabId, { target, expect }, 'click', clickCount);
     if (!loc.success) return refused(tabId, loc);
     let after = {};
     // A link whose response is a file is a download, not a navigation: the response says which.
@@ -321,6 +323,7 @@ export async function handleType(params, _sessionId, _agentName, signal) {
   if (target !== undefined) parseTarget(target);
   if (!text && key == null && !clear && !submit) throw new Error('INVALID_ARGUMENT: browser_type needs text, key, clear or submit');
   const combos = key == null ? null : keyCombosOf(key);
+  const expect = expectedFingerprint(params.expectFingerprints);
   await resolveTab(tabId);
   assertInputReady(tabId, signal);
   const input = inputSession(tabId, await requireSender(tabId), signal);
@@ -328,10 +331,10 @@ export async function handleType(params, _sessionId, _agentName, signal) {
     const urlBefore = await tabUrl(tabId);
     let loc;
     if (target !== undefined) {
-      loc = await focusByClick(tabId, input, target, { edit: !!(text || clear) });
+      loc = await focusByClick(tabId, input, target, { edit: !!(text || clear), expect });
     } else {
       // Text and clear need a field to act on; a key alone may go to whatever has focus.
-      loc = await locateTarget(tabId, { mode: text || clear ? 'focused' : 'active' });
+      loc = await locateTarget(tabId, { mode: text || clear ? 'focused' : 'active', expect });
       if (loc.error === 'NO_FOCUS') loc = { success: false, error: 'NO_FOCUS: no field has focus: pass target, or click the field first.' };
     }
     if (!loc.success) return refused(tabId, loc);
