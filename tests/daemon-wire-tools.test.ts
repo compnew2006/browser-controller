@@ -39,7 +39,8 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
   beforeAll(async () => {
     if (!fs.existsSync(DAEMON_JS)) throw new Error(`${DAEMON_JS} missing, run \`npm run build\` first`);
     proc = spawn(process.execPath, [DAEMON_JS], {
-      env: { ...process.env, BC_STATE_DIR: stateDir, WS_PORT: String(36_000 + Math.floor(Math.random() * 2_000)), WS_HOST: '127.0.0.1' },
+      // No extension ever connects here: keep the plain 5 s wait (no reconnect wait after the start).
+      env: { ...process.env, BC_STATE_DIR: stateDir, BC_RECONNECT_WAIT_MS: '0', WS_PORT: String(36_000 + Math.floor(Math.random() * 2_000)), WS_HOST: '127.0.0.1' },
       stdio: 'ignore',
     });
     for (let i = 0; i < 100; i++) {

@@ -130,7 +130,7 @@ export class ExtensionBridge {
     this.maxWsPayloadBytes = options.maxWsPayloadBytes ?? MAX_WS_MESSAGE_BYTES;
     this.handshakeGraceMs = options.handshakeGraceMs ?? 3_000;
     this.connectionWaitMs = options.connectionWaitMs ?? 5_000;
-    this.reconnectWait = { ms: options.reconnectWait?.ms ?? this.connectionWaitMs, windowMs: options.reconnectWait?.windowMs ?? 60_000 };
+    this.reconnectWait = { ms: Math.max(options.reconnectWait?.ms ?? 0, this.connectionWaitMs), windowMs: options.reconnectWait?.windowMs ?? 60_000 };
   }
 
   /** The daemon's live session ids, sent to each extension connection when it becomes ready. */

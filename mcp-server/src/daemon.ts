@@ -93,6 +93,8 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_PER_MIN = envInt('BC_RATE_LIMIT_PER_MIN', 120, 0);
 // An IPC socket that sends no valid hello within this grace is destroyed (F1-2).
 const IPC_HELLO_GRACE_MS = envInt('BC_IPC_HELLO_MS', 10_000, 1);
+// How long a call waits for the extension right after the start or a drop (0: the plain 5 s wait).
+const RECONNECT_WAIT_MS = envInt('BC_RECONNECT_WAIT_MS', 15_000, 0);
 export const MAX_IPC_LINE_BYTES = envInt('BC_MAX_IPC_LINE_BYTES', 1_000_000, 1024);
 
 class Daemon {
@@ -130,7 +132,7 @@ class Daemon {
       token: this.token,
       enrollmentSecret: this.enrollmentSecret,
       // The extension retries after 1, 2 and 4 s: a call right after a daemon restart waits for it.
-      reconnectWait: { ms: 15_000 },
+      reconnectWait: { ms: RECONNECT_WAIT_MS },
     });
     this.bridge.setSessionRoster(() => [...this.clients.values()].map((client) => client.sessionId));
     const vaultTransport: VaultTransport = {

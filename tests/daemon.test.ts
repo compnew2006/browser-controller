@@ -71,6 +71,7 @@ async function startDaemon(): Promise<void> {
       ...process.env,
       BC_STATE_DIR: TMP_STATE, // isolate state from real ~/.browser-controller
       BC_HEARTBEAT_MS: '200',  // fast heartbeat for the eviction test
+      BC_RECONNECT_WAIT_MS: '0', // no extension connects here: keep the plain 5 s wait
       BC_HEARTBEAT_MAX_MISSED: '3',
       WS_PORT: String(WS_PORT),
       WS_HOST: '127.0.0.1',
@@ -419,6 +420,7 @@ describe('daemon per-session rate limiting', { timeout: 30_000 }, () => {
         ...process.env,
         BC_STATE_DIR: RL_STATE,
         BC_HEARTBEAT_MS: '60000',   // don't evict mid-test
+        BC_RECONNECT_WAIT_MS: '0',  // no extension connects here: keep the plain 5 s wait
         BC_HEARTBEAT_MAX_MISSED: '3',
         WS_PORT: String(RL_PORT),
         WS_HOST: '127.0.0.1',
