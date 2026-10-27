@@ -17,6 +17,8 @@ export * from './site-record.js';
 const DEFAULT_CACHE_ENTRIES = 512;
 const SITE_FILE = /^[0-9a-f]{64}\.json$/u;
 const QUARANTINED_FILE = /^([0-9a-f]{64}\.json)\.corrupt-\d+$/u;
+/** The policy is written by the service, not this store, so its temp file may belong to a write in flight. */
+const STALE_POLICY_TEMP_MS = 60_000;
 
 export interface PutSiteOptions {
   /** Aborting before the rename discards the write and removes its temp file. */
@@ -281,24 +283,36 @@ export class JsonMemoryStore implements MemoryStore {
       st = await fsp.lstat(this.sitesDir);
     } catch (error) {
       if (errorCode(error) === 'ENOENT') {
-        await this.removeTemps(this.memoryDir, /^policy\.json\..+\.tmp$/u);
+        await this.removeTemps(this.memoryDir, /^policy\.json\..+\.tmp$/u, STALE_POLICY_TEMP_MS);
         return;
       }
       throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'memory directory could not be read');
     }
     this.assertPrivate(st, 'directory');
     await this.removeTemps(this.sitesDir, /\.tmp$/u);
-    await this.removeTemps(this.memoryDir, /^policy\.json\..+\.tmp$/u);
+    await this.removeTemps(this.memoryDir, /^policy\.json\..+\.tmp$/u, STALE_POLICY_TEMP_MS);
   }
 
-  private async removeTemps(dir: string, pattern: RegExp): Promise<void> {
+  /** Removes matching temp files; with `minAgeMs`, only those not modified for that long (a write may be in flight). */
+  private async removeTemps(dir: string, pattern: RegExp, minAgeMs = 0): Promise<void> {
     let names: string[];
     try {
       names = await fsp.readdir(dir);
     } catch {
       return;
     }
-    await Promise.all(names.filter((name) => pattern.test(name)).map((name) => fsp.rm(path.join(dir, name), { force: true }).catch(() => undefined)));
+    // File times come from the wall clock, not the injectable one.
+    const cutoff = Date.now() - minAgeMs;
+    await Promise.all(
+      names
+        .filter((name) => pattern.test(name))
+        .map(async (name) => {
+          const file = path.join(dir, name);
+          if (minAgeMs > 0 && (await fsp.lstat(file)).mtimeMs > cutoff) return;
+          await fsp.rm(file, { force: true });
+        })
+        .map((removal) => removal.catch(() => undefined)),
+    );
   }
 
   /** The POSIX owner and mode-bit check; win32 has no comparable mode bits, so it is skipped there. */

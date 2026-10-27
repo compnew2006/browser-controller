@@ -8,12 +8,11 @@
  * real Chrome, because R-18 only needs the daemon's own overhead, not a browser.
  *
  * Usage: node scripts/memory-bench.mjs [--mode baseline|on-empty|on-seeded] [--iterations 200]
+ *          [--clients 4] [--seeded 1000] [--pace-ms 0]
  *
- * `browser_memory`/`browser_memory_policy` and the memory module (Phase 2/3, tasks.md) do
- * not exist yet at the time this script was written. Calls to them fail with "unknown
- * tool", counted and reported as UNAVAILABLE rather than crashing the run — so only
- * `--mode baseline` is meaningfully different from the others today; on-empty/on-seeded
- * are kept so this same script measures the real thing once Phase 2/3 land.
+ * baseline runs with memory off; on-empty enables memory with no stored sites; on-seeded
+ * also writes `--seeded` site records first. `--pace-ms` waits between calls per client.
+ * A measurement this environment cannot take is reported as UNAVAILABLE, never guessed.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -35,7 +34,7 @@ function parseArgs(argv) {
   const out = { mode: 'baseline', iterations: 200, clients: 4, seeded: 1000, paceMs: 0 };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--mode') out.mode = argv[++i];
-    if (argv[i] === '--pace-ms') out.paceMs = Number(argv[++i]);
+    else if (argv[i] === '--pace-ms') out.paceMs = Number(argv[++i]);
     else if (argv[i] === '--iterations') out.iterations = Number(argv[++i]);
     else if (argv[i] === '--clients') out.clients = Number(argv[++i]);
     else if (argv[i] === '--seeded') out.seeded = Number(argv[++i]);

@@ -25,7 +25,7 @@ import { handleMock, releaseMock } from '../handlers/mock.js';
 import { handleInspectElement } from '../handlers/inspect.js';
 import { handleClassifyAction } from '../handlers/action-safety.js';
 import { handleVaultAction, isPrivateVaultTab } from '../lib/vault-actions.js';
-import { buildSiteContext, captureTabUrl } from '../lib/site-context.js';
+import { buildSiteContext, captureTabUrlBounded } from '../lib/site-context.js';
 import { handleMemoryContext } from '../handlers/memory-context.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
@@ -86,7 +86,7 @@ export async function dispatch(tool, params, sessionId, agentName, signal, obser
   const handler = HANDLERS[tool];
   if (!handler) throw new Error(`Unknown tool: ${tool}`);
   const watching = observe === true && OBSERVED_TOOLS.has(tool);
-  const urlBefore = watching && typeof params?.tabId === 'number' ? await captureTabUrl(params.tabId).catch(() => null) : null;
+  const urlBefore = watching && typeof params?.tabId === 'number' ? await captureTabUrlBounded(params.tabId) : null;
   const result = await handler(params, sessionId, agentName, signal);
   const observed = watching ? await withSiteContext(tool, params, urlBefore, result) : result;
   return withDialogLine(params?.tabId, withFileChooserLine(params?.tabId, observed));
@@ -97,14 +97,17 @@ const OBSERVED_TOOLS = new Set(['browser_navigate', 'browser_snapshot']);
 
 /**
  * Add siteContext to a successful navigate or snapshot result. The block is built after the
- * handler, from the tab the call used (a navigate without tabId opens its own: result.tabId).
- * Observation never changes the outcome of the call.
+ * handler, from the tab the result names (a navigate without tabId opens its own, and a navigate
+ * may replace a frozen tab), else the tab the call asked for; the daemon picks the same tab.
+ * Observation never changes the outcome of the call, and stays within its time budget.
  */
 async function withSiteContext(tool, params, urlBefore, result) {
   if (!result || result.success === false) return result;
-  const tabId = typeof params?.tabId === 'number' ? params.tabId : result.tabId;
+  const tabId = typeof result.tabId === 'number' ? result.tabId : params?.tabId;
   if (typeof tabId !== 'number') return result;
-  const siteContext = await buildSiteContext(tabId, { urlBefore, navigated: tool === 'browser_navigate' });
+  // A URL taken from another tab (the one a navigate replaced) says nothing about this one.
+  const before = tabId === params?.tabId ? urlBefore : null;
+  const siteContext = await buildSiteContext(tabId, { urlBefore: before, navigated: tool === 'browser_navigate' });
   return { ...result, siteContext };
 }
 

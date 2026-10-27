@@ -36,13 +36,21 @@ export function attachSafetyController(host: ToolHost, controller: SafetyControl
  * Ask the owner, through the client's form elicitation, with a prompt the caller built from fixed words
  * and values it verified. Any failure to ask counts as `unavailable`, so nothing proceeds on a guess.
  */
-export async function requestOwnerConfirmation(host: ToolHost, tool: string, message: string): Promise<'approved' | 'declined' | 'unavailable'> {
+/**
+ * 'unavailable' only when this client cannot ask at all. A prompt that was shown but failed or timed out is
+ * 'unanswered', so callers count it like a decline.
+ */
+export async function requestOwnerConfirmation(
+  host: ToolHost,
+  tool: string,
+  message: string,
+): Promise<'approved' | 'declined' | 'unanswered' | 'unavailable'> {
   const controller = controllerByHost.get(host);
   if (!controller) return 'unavailable';
   try {
     return await controller.confirm({ categories: [], site: '', tool, message });
   } catch {
-    return 'unavailable';
+    return 'unanswered';
   }
 }
 

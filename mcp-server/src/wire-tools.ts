@@ -17,6 +17,6 @@ export const DAEMON_ONLY_WIRE_TOOLS: ReadonlySet<string> = new Set(['browser_mem
  * extension (audit F6-3).
  */
 export function isKnownWireTool(name: unknown): boolean {
-  if (typeof name !== 'string') return false;
+  if (typeof name !== 'string' || DAEMON_ONLY_WIRE_TOOLS.has(name)) return false;
   return toolMap.has(name) || INTERNAL_WIRE_TOOLS.has(name) || name.startsWith('browser_vault_internal_');
 }

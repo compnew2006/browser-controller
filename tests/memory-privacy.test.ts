@@ -375,11 +375,11 @@ describe('no network I/O (US4: AC-20, R-16)', () => {
       });
       await memory.flush();
 
-      const view = await memory.handleTool('browser_memory', { tabId: 7 }, 's1', { siteContext: context });
+      const view = await memory.handleTool('browser_memory', { tabId: 7 }, 's1', { siteContext: context, connectionIdBefore: 'conn-1' });
       expect(view.success).toBe(true);
 
       const bridge = { callTool: async () => ({ success: true, siteContext: context }) };
-      const host = { handleTool: memory.handleTool.bind(memory), admin: memory.admin.bind(memory) };
+      const host = { prepareTool: memory.prepareTool.bind(memory), handleTool: memory.handleTool.bind(memory), admin: memory.admin.bind(memory) };
       const unconfirmed = await routeMemoryPolicyTool(host as any, bridge, 's1', 'agent', { action: 'inspect', tabId: 7 }, new AbortController().signal);
       expect(unconfirmed.success).toBe(false);
       const inspected = await routeMemoryPolicyTool(host as any, bridge, 's1', 'agent', { action: 'export', tabId: 7, ownerConfirmed: true, confirmedOrigin: NET_ORIGIN }, new AbortController().signal);

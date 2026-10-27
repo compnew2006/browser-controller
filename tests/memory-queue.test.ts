@@ -6,6 +6,7 @@ import { controlFact, languageFact, loginFact, searchFact, type CandidateFact } 
 import { MemoryPolicyError, defaultPolicy, policyPath, writePolicy, type MemoryPolicy } from '../mcp-server/src/memory/policy.js';
 import {
   DROP_REASONS,
+  MAX_GROUP_ENTRIES,
   MAX_PENDING_OPERATIONS,
   MemoryQueue,
   applyOp,
@@ -165,14 +166,14 @@ describe('bound of 256 operations', () => {
     expect(drops(queue)).toEqual({ queue_full: 1 });
   });
 
-  it('frees a slot once an operation commits', async () => {
+  it('frees a slot once an origin commits', async () => {
     const store = new FakeStore();
     const { queue } = fakeQueue(store, { maxPending: 2 });
-    expect(queue.enqueue(op()).accepted).toBe(true);
-    expect(queue.enqueue(op()).accepted).toBe(true);
-    expect(queue.enqueue(op()).accepted).toBe(false);
+    expect(queue.enqueue(op({ origin: 'https://a.example' })).accepted).toBe(true);
+    expect(queue.enqueue(op({ origin: 'https://b.example' })).accepted).toBe(true);
+    expect(queue.enqueue(op({ origin: 'https://c.example' })).accepted).toBe(false);
     await queue.drain();
-    expect(queue.enqueue(op()).accepted).toBe(true);
+    expect(queue.enqueue(op({ origin: 'https://c.example' })).accepted).toBe(true);
     await queue.drain();
   });
 
@@ -509,9 +510,11 @@ describe('commit timeout of 2 s', () => {
     expect(files).toEqual([]);
     expect(await store.getSite(ORIGIN)).toBeNull();
 
-    queue.enqueue(op({ opId: 'fast' }));
-    await queue.drain();
-    expect(queue.stats().committed).toBe(1);
+    // The same store still writes. A fresh queue with the default timeout keeps a loaded test run from timing it out.
+    const next = realQueue(store);
+    next.enqueue(op({ opId: 'fast' }));
+    await next.drain();
+    expect(next.stats().committed).toBe(1);
     expect(fs.readdirSync(path.join(memoryDir, 'sites'))).toEqual([siteFileName(ORIGIN)]);
   });
 });
@@ -780,5 +783,102 @@ describe('concurrent captures and a writer killed mid-commit (AC-17, AC-19)', ()
     await queue.drain();
     expect((await store.getSite(ORIGIN))!.profiles['profile-a'].visit!.count).toBe(1);
     expect(drops(queue)).toEqual({ duplicate: 2 });
+  });
+});
+
+describe('per-origin folding: the bound counts origins, not operations (F-03 regression)', () => {
+  function stamp(seq: number): string {
+    return new Date(Date.parse(T1) + seq).toISOString();
+  }
+
+  it('4 concurrent clients × 500 ops on one origin with a 10 ms store: no queue_full, and the record equals the sequential result', async () => {
+    const store = new FakeStore();
+    store.putImpl = () => new Promise<void>((resolve) => setTimeout(resolve, 10));
+    const { queue } = fakeQueue(store);
+    const language = fact(languageFact('en', 'ltr'));
+    const signIn = fact(controlFact('link', 'Sign in'));
+    const accepted: CaptureOp[] = [];
+    let seq = 0;
+    const client = async (index: number): Promise<void> => {
+      for (let i = 0; i < 500; i += 1) {
+        seq += 1;
+        const at = stamp(seq);
+        const profileId = index === 3 ? 'profile-b' : 'profile-a';
+        const next: CaptureOp =
+          i % 2 === 0
+            ? op({ profileId, at, enqueuedAt: at })
+            : op({ type: 'facts', profileId, at, enqueuedAt: at, facts: [language, signIn], tool: 'browser_snapshot', path: i % 4 === 1 ? '/login' : '/account' });
+        const result = queue.enqueue(next);
+        expect(result.accepted).toBe(true);
+        accepted.push(next);
+        if (i % 7 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    };
+    await Promise.all([0, 1, 2, 3].map(client));
+    await queue.drain();
+    expect(drops(queue)).toEqual({});
+    expect(queue.stats().committed).toBe(2000);
+    expect(store.putCalls.length).toBeLessThan(2000);
+    let expected: SiteRecord | null = null;
+    for (const entry of accepted) expected = applyOp(expected, entry, T3);
+    const saved = store.records.get(ORIGIN);
+    expect(saved?.facts).toEqual(expected?.facts);
+    expect(saved?.profiles).toEqual(expected?.profiles);
+  });
+
+  it('257 distinct origins while the store is stalled: exactly the 257th is queue_full, and a held origin still folds', async () => {
+    const store = new FakeStore();
+    const release = holdGate(store);
+    const { queue } = fakeQueue(store);
+    expect(queue.enqueue(op({ origin: 'https://site-0.example' })).accepted).toBe(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(queue.stats().inFlight).toBe(true);
+    for (let i = 1; i < 256; i += 1) expect(queue.enqueue(op({ origin: `https://site-${i}.example` })).accepted).toBe(true);
+    expect(queue.enqueue(op({ opId: 'origin-257', origin: 'https://site-256.example' }))).toEqual({ accepted: false, reason: 'queue_full', code: 'MEMORY_QUEUE_FULL' });
+    expect(queue.enqueue(op({ origin: 'https://site-0.example' })).accepted).toBe(true);
+    expect(queue.enqueue(op({ origin: 'https://site-9.example' })).accepted).toBe(true);
+    expect(queue.stats().groups).toBeLessThanOrEqual(MAX_PENDING_OPERATIONS);
+    release();
+    await queue.drain();
+    expect(drops(queue)).toEqual({ queue_full: 1 });
+    expect(queue.stats().committed).toBe(258);
+    expect(store.records.get('https://site-9.example')?.profiles['profile-a'].visit?.count).toBe(2);
+  });
+
+  it('memory stays bounded: origins held never exceed the cap and entries per origin never exceed MAX_GROUP_ENTRIES', async () => {
+    const store = new FakeStore();
+    const release = holdGate(store);
+    const { queue } = fakeQueue(store);
+    const en = fact(languageFact('en', 'ltr'));
+    const fr = fact(languageFact('fr', 'ltr'));
+    let maxGroups = 0;
+    let maxEntries = 0;
+    let offered = 0;
+    for (let round = 0; round < 3; round += 1) {
+      for (let i = 0; i < 300; i += 1) {
+        for (let k = 0; k < 3; k += 1) {
+          offered += 1;
+          const at = stamp(offered);
+          queue.enqueue(op({ type: 'facts', origin: `https://site-${i}.example`, at, enqueuedAt: at, facts: [offered % 2 === 0 ? en : fr], tool: 'browser_snapshot' }));
+        }
+        maxGroups = Math.max(maxGroups, queue.stats().groups);
+        maxEntries = Math.max(maxEntries, queue.stats().maxGroupEntries);
+      }
+    }
+    // A flip-flopping value cannot fold, so one origin is fed far more distinct entries than the per-origin bound.
+    for (let i = 0; i < 2 * MAX_GROUP_ENTRIES; i += 1) {
+      offered += 1;
+      const at = stamp(offered);
+      queue.enqueue(op({ type: 'facts', origin: 'https://site-1.example', at, enqueuedAt: at, facts: [offered % 2 === 0 ? en : fr], tool: 'browser_snapshot' }));
+      maxEntries = Math.max(maxEntries, queue.stats().maxGroupEntries);
+    }
+    expect(maxGroups).toBeLessThanOrEqual(MAX_PENDING_OPERATIONS);
+    expect(maxEntries).toBeLessThanOrEqual(MAX_GROUP_ENTRIES);
+    release();
+    await queue.drain();
+    const stats = queue.stats();
+    const droppedTotal = Object.values(stats.dropped).reduce((sum, n) => sum + n, 0);
+    expect(stats.committed + droppedTotal).toBe(offered);
+    expect(stats.dropped.queue_full).toBeGreaterThan(0);
   });
 });

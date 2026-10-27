@@ -6,12 +6,23 @@ import { SITE_CONTEXT_CAPABILITY } from '../protocol.js';
 import { adminFromWire, errorCode, runAdminCommand, type AdminContext } from './admin.js';
 import { collectFacts, extractSnapshotFacts, MAX_CANDIDATES } from './facts.js';
 import { MemoryCursorError, buildMemoryView, buildReminder, unavailableLine, type MemoryView } from './output.js';
-import { MemoryPolicyError, pruneDeletions, readPolicy, writePolicy, type MemoryPolicy } from './policy.js';
+import {
+  MemoryPolicyError,
+  countQuarantinedPolicies,
+  defaultPolicy,
+  pruneDeletions,
+  quarantinePolicy,
+  readPolicy,
+  writePolicy,
+  type MemoryPolicy,
+} from './policy.js';
 import { MemoryQueue, type CaptureOp, type DropReason } from './queue.js';
 import { decideScope, type ScopeDecision, type ScopeSiteContext } from './scope.js';
 import { JsonMemoryStore, MemoryStoreError, type MemoryStore, type SiteRecord } from './store.js';
+import type { MemoryToolContext, MemoryToolPurpose } from './tool-route.js';
 
 export { extractSnapshotFacts };
+export type { MemoryToolContext };
 
 const MAX_PATH = 120;
 const REMINDER_TIMEOUT_MS = 50;
@@ -37,11 +48,6 @@ export interface MemoryServiceDeps {
   reminderTimeoutMs?: number;
 }
 
-/** What the daemon hands `handleTool` besides the validated agent arguments. */
-export interface MemoryToolContext {
-  /** The tab's `siteContext` from the extension (internal action `browser_memory_internal_context`, under the tab lock), or null. Never agent-supplied. */
-  siteContext: unknown;
-}
 
 export type MemoryToolResult = ({ success: true } & MemoryView) | { success: false; error: string };
 
@@ -157,7 +163,7 @@ export class MemoryService {
       iso: () => this.iso(),
       store: this.store,
       queue: this.queue,
-      mutatePolicy: (change) => this.mutatePolicy(change),
+      mutatePolicy: (change, options) => this.mutatePolicy(change, false, options?.resetCorrupt === true),
       status: () => this.status(),
     };
   }
@@ -303,6 +309,29 @@ export class MemoryService {
   }
 
   /**
+   * Before the daemon reads a tab for a memory tool. `read` (browser_memory) refuses while memory is off or the
+   * extension lacks site-context, so the extension is never called; `policy` refuses nothing. Both give the
+   * connection the read starts on, which `handleTool` compares with the connection after it. Never throws.
+   */
+  prepareTool(sessionId: string, purpose: MemoryToolPurpose): { connectionId: string | null } | { error: string } {
+    try {
+      if (purpose === 'read' && !readPolicy(this.memoryDir).enabled) return { error: 'MEMORY_DISABLED: website memory is off; the owner controls it.' };
+    } catch (error) {
+      const code = errorCode(error);
+      this.noteError(code);
+      return { error: `${code === 'MEMORY_CORRUPT' ? 'MEMORY_CORRUPT' : 'MEMORY_UNAVAILABLE'}: website memory could not be read.` };
+    }
+    let connection: MemoryConnection;
+    try {
+      connection = this.deps.connection(sessionId);
+    } catch {
+      return purpose === 'read' ? { error: 'MEMORY_UNAVAILABLE: no browser extension is connected for this session.' } : { connectionId: null };
+    }
+    if (purpose === 'read' && !connection.supportsSiteContext) return { error: 'MEMORY_NOT_SUPPORTED: the connected browser extension does not support website memory.' };
+    return { connectionId: connection.connectionId };
+  }
+
+  /**
    * `browser_memory {tabId, kind?, cursor?}` for the verified profile and the origin of the tab's current page. The
    * profile and origin come from the connection and the extension, never from the parameters (AC-26). Failures are
    * `CODE: message`; none names a policy command or carries page content (R-12).
@@ -316,20 +345,20 @@ export class MemoryService {
 
       const policy = readPolicy(this.memoryDir);
       if (!policy.enabled) return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
-      const before = this.deps.connection(sessionId);
-      if (!before.supportsSiteContext) return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
-
+      // The connection now, after the context read; the one before it came from prepareTool (R-04).
       const after = this.deps.connection(sessionId);
+      if (!after.supportsSiteContext) return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
+
       const siteContext = parseSiteContext(context.siteContext);
       const decision = decideScope({
         purpose: 'reminder',
         policy,
-        browserId: before.browserId,
+        browserId: after.browserId,
         liveConnectionsForBrowserId: after.ambiguous ? 2 : 1,
-        connectionIdBefore: before.connectionId,
+        connectionIdBefore: context.connectionIdBefore ?? undefined,
         connectionIdAfter: after.connectionId,
         extensionCapabilities: after.supportsSiteContext ? [SITE_CONTEXT_CAPABILITY] : [],
-        vault: this.deps.vault.memoryEligibility(before.browserId, input.tabId),
+        vault: this.deps.vault.memoryEligibility(after.browserId, input.tabId),
         siteContext,
         sanitizedUnchanged: true,
       });
@@ -355,10 +384,21 @@ export class MemoryService {
     this.mutatePolicy((policy) => pruneDeletions(policy, drainedThrough, this.iso()), true).catch((error) => this.noteError(errorCode(error)));
   }
 
-  /** Every policy change runs here, one at a time. With `skipUnchanged`, an unchanged policy is not written. */
-  private mutatePolicy(change: (policy: MemoryPolicy) => MemoryPolicy, skipUnchanged = false): Promise<MemoryPolicy> {
+  /**
+   * Every policy change runs here, one at a time. With `skipUnchanged`, an unchanged policy is not written. With
+   * `resetCorrupt` (the owner's `disable` and `delete`), an unreadable policy is set aside and the change starts
+   * from the disabled default; every other change refuses with MEMORY_CORRUPT.
+   */
+  private mutatePolicy(change: (policy: MemoryPolicy) => MemoryPolicy, skipUnchanged = false, resetCorrupt = false): Promise<MemoryPolicy> {
     const run = this.policyTail.then(async () => {
-      const current = readPolicy(this.memoryDir);
+      let current: MemoryPolicy;
+      try {
+        current = readPolicy(this.memoryDir);
+      } catch (error) {
+        if (!resetCorrupt || !(error instanceof MemoryPolicyError) || error.code !== 'MEMORY_CORRUPT') throw error;
+        quarantinePolicy(this.memoryDir, this.now());
+        current = defaultPolicy();
+      }
       const next = change(current);
       if (skipUnchanged && next === current) return current;
       await writePolicy(this.memoryDir, next);
@@ -389,7 +429,7 @@ export class MemoryService {
       queueDepth: stats.pending,
       dropped: { ...stats.dropped },
       lastError: this.lastError,
-      quarantined: stored.corrupt.length,
+      quarantined: stored.corrupt.length + countQuarantinedPolicies(this.memoryDir),
     };
   }
 

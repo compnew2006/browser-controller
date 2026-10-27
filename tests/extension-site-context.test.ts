@@ -19,22 +19,7 @@ vi.mock('../extension/lib/overlay.js', () => ({
   showLockShield: async () => {},
   hideLockShield: async () => {},
 }));
-const execControl = vi.hoisted(() => ({ failNext: null as Error | null }));
-vi.mock('../extension/lib/page-exec.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../extension/lib/page-exec.js')>();
-  // The probe is a self-contained page function: run it in this realm against stubbed globals.
-  return {
-    ...actual,
-    safeExec: async (_tabId: number, func: (...a: unknown[]) => unknown, args: unknown[] = []) => {
-      if (execControl.failNext) {
-        const error = execControl.failNext;
-        execControl.failNext = null;
-        throw error;
-      }
-      return func(...args);
-    },
-  };
-});
+const execControl = vi.hoisted(() => ({ failNext: null as Error | null, hang: false }));
 const navigateHandler = vi.hoisted(() => vi.fn());
 const snapshotHandler = vi.hoisted(() => vi.fn());
 const textHandler = vi.hoisted(() => vi.fn());
@@ -52,7 +37,16 @@ const tabsGet = vi.fn(async (id: number): Promise<Tab> => {
   const url = tabState.urls.length > 1 ? tabState.urls.shift()! : tabState.urls[0]!;
   return { id, url, incognito: tabState.incognito };
 });
-const executeScript = vi.fn(async () => [{ result: null }]);
+// The probe is a self-contained page function: run it in this realm against stubbed globals.
+const executeScript = vi.fn(async ({ func, args = [] }: { func: (...a: unknown[]) => unknown; args?: unknown[] }) => {
+  if (execControl.hang) return new Promise<never>(() => {});
+  if (execControl.failNext) {
+    const error = execControl.failNext;
+    execControl.failNext = null;
+    throw error;
+  }
+  return [{ result: await func(...args) }];
+});
 const chromeMock: Record<string, unknown> = {
   tabs: { get: tabsGet, query: async () => [], update: async () => ({}), remove: async () => ({}), create: async () => ({}) },
   scripting: { executeScript },
@@ -71,6 +65,7 @@ const chromeMock: Record<string, unknown> = {
 
 const siteContext = await import('../extension/lib/site-context.js');
 const { dispatch, dispatchedTools } = await import('../extension/dispatch/router.js');
+const { wedgedTabs } = await import('../extension/lib/state.js');
 
 const root = path.resolve(__dirname, '..');
 const allowlist = JSON.parse(
@@ -160,6 +155,10 @@ async function ctx(opts: { urlBefore?: string | null; navigated?: boolean } = {}
 
 beforeEach(() => {
   reads.values = 0;
+  execControl.hang = false;
+  execControl.failNext = null;
+  executeScript.mockClear();
+  wedgedTabs.clear();
   navigateHandler.mockReset();
   snapshotHandler.mockReset();
   textHandler.mockReset();
@@ -168,6 +167,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   const g = globalThis as Record<string, unknown>;
   for (const key of ['indexedDB', 'localStorage', 'sessionStorage', 'document', 'getComputedStyle', 'window']) delete g[key];
 });
@@ -357,6 +357,82 @@ describe('siteContext page structure', () => {
   it('keeps url within the contract length', async () => {
     setWorld({ urls: [`https://example.com/${'a'.repeat(3000)}`] });
     expect((await ctx()).url.length).toBeLessThanOrEqual(2048);
+  });
+});
+
+describe('code-review fixes: the observation is bounded and side-effect free', () => {
+  it('never marks the tab wedged when the probe runs past its budget (#2)', async () => {
+    vi.useFakeTimers();
+    execControl.hang = true;
+    const pending = ctx();
+    await vi.advanceTimersByTimeAsync(siteContext.SITE_CONTEXT_BUDGET_MS + 10);
+    expect(await pending).toMatchObject({ anonymous: null, anonymityReason: 'unavailable' });
+    expect(wedgedTabs.has(tabState.id)).toBe(false);
+  });
+
+  it('answers within its budget when a cookie read hangs (#3)', async () => {
+    vi.useFakeTimers();
+    cookiesGetAll.mockImplementation(() => new Promise(() => {}));
+    let settled = false;
+    const pending = ctx().then((out) => { settled = true; return out; });
+    await vi.advanceTimersByTimeAsync(siteContext.SITE_CONTEXT_BUDGET_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(settled).toBe(true);
+    expect(await pending).toMatchObject({ anonymous: null, anonymityReason: 'unavailable', stable: false });
+  });
+
+  it('keeps the whole navigate observation within the observe budget and leaves the result intact (#3)', async () => {
+    vi.useFakeTimers();
+    tabsGet.mockImplementationOnce(() => new Promise(() => {})); // the URL read before the handler hangs
+    cookiesGetAll.mockImplementation(() => new Promise(() => {}));
+    navigateHandler.mockResolvedValue({ success: true, url: 'https://example.com/', tabId: 7, text: 'url: https://example.com/' });
+    let settled = false;
+    const pending = dispatch('browser_navigate', { url: 'https://example.com/', tabId: 7 }, 's1', 'a', undefined, true)
+      .then((out) => { settled = true; return out; });
+    await vi.advanceTimersByTimeAsync(siteContext.OBSERVE_BUDGET_MS + 1);
+    expect(settled).toBe(true);
+    const out = await pending;
+    expect(out).toMatchObject({ success: true, text: 'url: https://example.com/' });
+    expect(out.siteContext).toMatchObject({ anonymous: null });
+  });
+
+  it('never probes a private tab (incognito verdict comes first)', async () => {
+    setWorld({ incognito: true });
+    expect(await ctx()).toMatchObject({ incognito: true, anonymous: false, anonymityReason: 'incognito' });
+    expect(executeScript).not.toHaveBeenCalled();
+    expect(cookiesGetAll).not.toHaveBeenCalled();
+  });
+
+  it('never asks a public suffix such as co.uk for cookies (#6)', async () => {
+    for (const host of ['bbc.co.uk', 'shop.com.eg', 'site.gov.eg', 'x.com.au']) {
+      setWorld({ urls: [`https://${host}/`], cookies: [] });
+      await ctx();
+      const domains = cookiesGetAll.mock.calls.map(([query]: [{ domain?: string }]) => query.domain).filter(Boolean);
+      const suffix = host.split('.').slice(1).join('.');
+      expect(domains, host).not.toContain(suffix);
+      expect(domains, host).toContain(host);
+    }
+    setWorld({ urls: ['https://www.bbc.co.uk/'], cookies: [] });
+    await ctx();
+    const domains = cookiesGetAll.mock.calls.map(([query]: [{ domain?: string }]) => query.domain).filter(Boolean);
+    expect(domains).toContain('bbc.co.uk');
+    expect(domains).not.toContain('co.uk');
+  });
+
+  it('observes the replacement tab when navigate replaced a frozen one (#7)', async () => {
+    tabsGet.mockImplementation(async (id: number) => {
+      if (id === 5) throw new Error('No tab with id: 5');
+      return { id, url: 'https://example.com/', incognito: false };
+    });
+    navigateHandler.mockResolvedValue({ success: true, url: 'https://example.com/', tabId: 7, replacedTabId: 5, text: 'url: https://example.com/' });
+    const out = await dispatch('browser_navigate', { url: 'https://example.com/', tabId: 5 }, 's1', 'a', undefined, true);
+    expect(out.siteContext).toMatchObject({ url: 'https://example.com/', stable: true, anonymous: true, anonymityReason: 'ok' });
+    expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({ target: { tabId: 7 } }));
+    tabsGet.mockImplementation(async (id: number) => {
+      const url = tabState.urls.length > 1 ? tabState.urls.shift()! : tabState.urls[0]!;
+      return { id, url, incognito: tabState.incognito };
+    });
   });
 });
 

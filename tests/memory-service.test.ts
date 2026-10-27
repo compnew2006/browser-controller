@@ -539,7 +539,7 @@ describe('status with a broken store (US4)', () => {
 });
 
 describe('handleTool', () => {
-  const ask = (params: Record<string, unknown> = { tabId: 7 }, siteContext: unknown = context()) => service.handleTool('browser_memory', params, 's1', { siteContext });
+  const ask = (params: Record<string, unknown> = { tabId: 7 }, siteContext: unknown = context()) => service.handleTool('browser_memory', params, 's1', { siteContext, connectionIdBefore: 'conn-1' });
 
   it('returns the labeled view for the tab origin and the verified profile (AC-26)', async () => {
     await seedFacts();
@@ -581,7 +581,7 @@ describe('handleTool', () => {
   ])('fails %s and returns no observation (AC-28)', async (_name, arrange, siteContext, pattern) => {
     await seedFacts();
     await arrange();
-    const answer = await service.handleTool('browser_memory', { tabId: 7 }, 's1', { siteContext: siteContext === undefined ? context() : siteContext });
+    const answer = await service.handleTool('browser_memory', { tabId: 7 }, 's1', { siteContext: siteContext === undefined ? context() : siteContext, connectionIdBefore: 'conn-1' });
     expect(answer).toMatchObject({ success: false, error: expect.stringMatching(pattern) });
     expect(JSON.stringify(answer)).not.toMatch(/example\.com|Sign in/u);
   });
@@ -602,7 +602,7 @@ describe('handleTool', () => {
       expect(await ask(params)).toMatchObject({ success: false, error: expect.stringMatching(/^INVALID_ARGUMENT:/u) });
     }
     expect(await ask({ tabId: 7, cursor: 'nonsense' })).toMatchObject({ success: false, error: expect.stringMatching(/^INVALID_ARGUMENT:/u) });
-    expect(await service.handleTool('browser_other', { tabId: 7 }, 's1', { siteContext: context() })).toMatchObject({ success: false });
+    expect(await service.handleTool('browser_other', { tabId: 7 }, 's1', { siteContext: context(), connectionIdBefore: 'conn-1' })).toMatchObject({ success: false });
   });
 
   it('reports a store failure as MEMORY_CORRUPT or MEMORY_UNAVAILABLE', async () => {

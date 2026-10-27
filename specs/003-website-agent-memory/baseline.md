@@ -406,3 +406,111 @@ Changes measured: queued operations for one origin share one read and one write;
 
 The SC-005 limit "0 queue drops with 4 clients" now holds at pace 0 in these runs. It is a burst of about 16 capture operations per millisecond against a commit of about 10 ms, so a slower or busier machine can still drop; drops stay counted, never fail a call, and never corrupt a file. The earlier verdict rows above are kept as the first measurement.
 
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T23:09:39.574Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 85392 KiB; peak RSS: 85392 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":32,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.08 ms, p95 11.95 ms, p99 16.60 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.50 | 4.64 | 11.85 |
+| browser_navigate_snapshot | 200 | 0.49 | 3.80 | 5.93 |
+| browser_snapshot | 200 | 0.02 | 0.42 | 1.35 |
+| browser_memory | 200 | 0.02 | 0.04 | 0.10 |
+| batch | 200 | 0.03 | 0.09 | 1.14 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T23:09:46.261Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 155 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 85984 KiB; peak RSS: 85984 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":229,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.08 ms, p95 11.00 ms, p99 11.26 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.61 | 3.61 | 8.24 |
+| browser_navigate_snapshot | 200 | 0.47 | 1.17 | 6.59 |
+| browser_snapshot | 200 | 0.03 | 0.92 | 3.08 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.15 |
+| batch | 200 | 0.03 | 0.23 | 0.59 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T23:09:48.764Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 102 ms
+- idle RSS: 84576 KiB; peak RSS: 84576 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":90,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 8.95 ms, p95 11.04 ms, p99 12.08 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.47 | 2.59 | 3.98 |
+| browser_navigate_snapshot | 200 | 0.46 | 3.60 | 6.69 |
+| browser_snapshot | 200 | 0.03 | 0.38 | 4.00 |
+| browser_memory | 200 | 0.02 | 0.10 | 0.21 |
+| batch | 200 | 0.03 | 0.12 | 0.28 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T23:18:10.604Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 104 ms; recovery after SIGKILL: 104 ms
+- idle RSS: 85152 KiB; peak RSS: 85152 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.37 ms, p95 11.35 ms, p99 13.10 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.64 | 2.48 | 7.19 |
+| browser_navigate_snapshot | 200 | 0.55 | 1.06 | 1.38 |
+| browser_snapshot | 200 | 0.03 | 0.50 | 0.74 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.05 |
+| batch | 200 | 0.03 | 0.11 | 0.27 |
+
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T23:18:12.993Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0, pace: 0 ms between calls per client
+- daemon start: 105 ms; recovery after SIGKILL: 102 ms
+- idle RSS: 84944 KiB; peak RSS: 84944 KiB
+- store bytes: 1535
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 8.01 ms, p95 11.10 ms, p99 13.61 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.61 | 4.39 | 6.01 |
+| browser_navigate_snapshot | 200 | 0.62 | 1.30 | 1.90 |
+| browser_snapshot | 200 | 0.03 | 0.50 | 0.83 |
+| browser_memory | 200 | 0.02 | 0.06 | 0.15 |
+| batch | 200 | 0.08 | 0.51 | 2.25 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T23:18:30.951Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 1000, pace: 0 ms between calls per client
+- daemon start: 158 ms; recovery after SIGKILL: 104 ms
+- idle RSS: 84848 KiB; peak RSS: 84848 KiB
+- store bytes: 428425
+- queue drops: {"disabled":0,"excluded":0,"deleted":0,"duplicate":0,"queue_full":0,"timeout":0,"capacity":0,"io_error":0,"corrupt":0}; origins in store: 1001; quarantined: 0
+- commit (in-process queue->store, 200 ops): p50 9.14 ms, p95 11.03 ms, p99 11.93 ms
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.51 | 1.80 | 8.58 |
+| browser_navigate_snapshot | 200 | 0.57 | 0.93 | 1.18 |
+| browser_snapshot | 200 | 0.03 | 0.50 | 0.72 |
+| browser_memory | 200 | 0.02 | 0.04 | 0.04 |
+| batch | 200 | 0.03 | 0.06 | 0.51 |
+
+
+### Note: per-origin folding (2026-10-28)
+
+The two on-empty runs at 23:09 (229 and 90 `queue_full`) used the #12 cap, which counted every held operation, the in-flight group included, against 256. A 4-client burst on one origin filled it. The queue now folds operations per origin as they arrive: visits of one profile become one tally, and identical fact observations become one entry. The 256 bound counts distinct origins held, and each origin holds at most 64 folded entries. Both on-empty runs at 23:18 and the on-seeded run at 23:18:30 (1,000 seeded origins) report 0 `queue_full`, all at pace 0 ms.
+
+These runs use a fake extension that answers in well under 1 ms, so they produce calls much faster than real pages. A drop is still possible in one case: a 257th distinct origin arriving while 256 origins are held, or an origin holding 64 entries whose values keep changing. Such drops are counted per operation in `status`. Node 20 was not run (not installed here).

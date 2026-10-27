@@ -117,7 +117,11 @@ export async function routeMemoryPolicyTool(
 
   let origin: string | undefined;
   let siteContext: unknown = null;
+  let connectionIdBefore: string | null = null;
   if (SCOPED.has(action)) {
+    const prepared = memory.prepareTool(sessionId, 'policy');
+    if ('error' in prepared) return fail(prepared.error);
+    connectionIdBefore = prepared.connectionId;
     const tab = await resolveTab(bridge, sessionId, agentName, args.tabId as number, signal);
     if ('success' in tab) return tab;
     ({ origin, siteContext } = tab);
@@ -126,7 +130,7 @@ export async function routeMemoryPolicyTool(
   if (!args.ownerConfirmed) {
     return {
       ...fail('ACTION_NOT_CONFIRMED: the owner has not confirmed this change; nothing was changed.'),
-      result: { ownerConfirmationRequired: true, action, ...(origin ? { origin } : {}) },
+      result: { success: false, ownerConfirmationRequired: true, action, ...(origin ? { origin } : {}) },
     };
   }
   if (origin !== undefined && args.confirmedOrigin !== origin) {
@@ -136,7 +140,7 @@ export async function routeMemoryPolicyTool(
   try {
     if (action === 'inspect' || action === 'export') {
       // The requesting profile's view of this one origin: the same answer browser_memory gives, never the owner's full records.
-      const answer = await memory.handleTool('browser_memory', { tabId: args.tabId, kind: 'all' }, sessionId, { siteContext });
+      const answer = await memory.handleTool('browser_memory', { tabId: args.tabId, kind: 'all' }, sessionId, { siteContext, connectionIdBefore });
       if (!isRecord(answer)) return fail('MEMORY_UNAVAILABLE: website memory returned no answer');
       if (answer.success === false) return fail(typeof answer.error === 'string' ? answer.error : 'MEMORY_UNAVAILABLE: website memory failed');
       const text = typeof answer.text === 'string' ? answer.text.slice(0, TEXT_MAX) : '';

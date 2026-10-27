@@ -57,5 +57,11 @@ export const toolMap = new Map<string, ToolDefinition>(
   allTools.map((t) => [t.name, t]),
 );
 
+/**
+ * Bridge timeouts for wire actions the daemon sends that are not tools: the memory context read is bounded like
+ * browser_memory itself, so it never falls back to the bridge's 30 s default.
+ */
+export const internalWireTimeouts: ReadonlyMap<string, number> = new Map([['browser_memory_internal_context', 10_000]]);
+
 /** Browser_batch resolves its steps through the map above. */
 useToolRegistry((name) => toolMap.get(name));

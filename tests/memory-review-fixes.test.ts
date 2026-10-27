@@ -209,16 +209,22 @@ describe('F-03: queued operations for one origin share one write', () => {
     expect(saved?.facts).toHaveLength(1);
   });
 
-  it('a group being committed does not use up the pending bound (zero drops under a burst)', async () => {
+  it('an origin being committed still counts toward the bound, and room returns once it is written', async () => {
     const store = new CountingStore(new JsonMemoryStore(memoryDir));
     await writePolicy(memoryDir, enabledPolicy());
     const queue = new MemoryQueue({ store, memoryDir, now: () => Date.parse(T3), maxPending: 4 });
-    for (let index = 0; index < 4; index += 1) expect(queue.enqueue(op()).accepted).toBe(true);
-    expect(queue.enqueue(op()).accepted).toBe(false);
+    const origin = (index: number): string => `https://site-${index}.example`;
+    for (let index = 0; index < 4; index += 1) expect(queue.enqueue(op({ origin: origin(index) })).accepted).toBe(true);
+    expect(queue.enqueue(op({ origin: origin(4) })).accepted).toBe(false);
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(queue.stats().inFlight).toBe(true);
-    expect(queue.enqueue(op()).accepted).toBe(true);
+    expect(queue.enqueue(op({ origin: origin(4) }))).toMatchObject({ accepted: false, reason: 'queue_full' });
+    // More work for an origin already held folds into it.
+    expect(queue.enqueue(op({ origin: origin(0) })).accepted).toBe(true);
+    expect(queue.enqueue(op({ origin: origin(3) })).accepted).toBe(true);
+    await queue.drain();
+    expect(queue.enqueue(op({ origin: origin(4) })).accepted).toBe(true);
     await queue.drain();
   });
 

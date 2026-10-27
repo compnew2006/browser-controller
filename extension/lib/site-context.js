@@ -5,7 +5,9 @@
  * Only names are compared (cookie, localStorage and sessionStorage keys); values are never read.
  * Any step that fails or is unavailable gives anonymous:null, which the daemon treats as unverified.
  */
-import { safeExec } from './page-exec.js';
+import { withTimeout } from './page-exec.js';
+import { wedgedTabs } from './state.js';
+import { getOpenDialog } from './cdp-session.js';
 
 /**
  * Cookie and web-storage key names that do not by themselves indicate a signed-in user. Keep equal
@@ -22,7 +24,28 @@ export const ANONYMITY_NAMES = Object.freeze({
 const ANONYMITY_PATTERNS = ANONYMITY_NAMES.patterns.map((source) => new RegExp(source));
 
 const MAX_URL_CHARS = 2048;
-const PROBE_TIMEOUT_MS = 3_000;
+/**
+ * Time budgets. The observation runs inside the navigate or snapshot call, so it must stay well
+ * below the bridge timeout: the URL read before the handler plus everything after it fit in
+ * OBSERVE_BUDGET_MS. Past a budget the answer is anonymous:null ('unavailable'), never an error.
+ */
+export const URL_BEFORE_BUDGET_MS = 200;
+export const SITE_CONTEXT_BUDGET_MS = 1_300;
+export const OBSERVE_BUDGET_MS = URL_BEFORE_BUDGET_MS + SITE_CONTEXT_BUDGET_MS;
+const PROBE_TIMEOUT_MS = 900;
+
+/**
+ * Second-level labels that, under a two-letter country code, form a public suffix (co.uk, com.au,
+ * gov.eg). No public suffix list ships with the extension, so this covers the common cases only;
+ * a missed suffix can only make pages read as less anonymous, never more.
+ */
+const SECOND_LEVEL_SUFFIX_LABELS = new Set(['co', 'com', 'net', 'org', 'gov', 'edu', 'ac', 'or', 'ne', 'go', 'gob', 'mil', 'nic', 'me', 'ltd', 'plc', 'sch', 'info', 'biz']);
+
+function looksLikePublicSuffix(domain) {
+  const labels = domain.split('.');
+  if (labels.length < 2) return true;
+  return labels.length === 2 && /^[a-z]{2}$/.test(labels[1]) && SECOND_LEVEL_SUFFIX_LABELS.has(labels[0]);
+}
 
 /** Whether `name` is an allowlisted anonymity name. Exact or a full-match pattern; case-sensitive, no normalization. */
 export function isAnonymityName(name) {
@@ -86,6 +109,31 @@ export async function captureTabUrl(tabId) {
   return typeof tab?.url === 'string' ? tab.url : null;
 }
 
+/** captureTabUrl within URL_BEFORE_BUDGET_MS; null (unknown) past it. */
+export function captureTabUrlBounded(tabId) {
+  return withTimeout(captureTabUrl(tabId), URL_BEFORE_BUDGET_MS, () => new Error('url read timed out')).catch(() => null);
+}
+
+/**
+ * Run probeSitePage in the tab's top frame. Unlike safeExec, a slow page never marks the tab
+ * wedged: the observation must not change how later calls treat the tab. Any failure is null.
+ */
+async function runProbe(tabId) {
+  if (wedgedTabs.has(tabId) || getOpenDialog(tabId)) return null;
+  try {
+    const results = await withTimeout(
+      chrome.scripting.executeScript({ target: { tabId }, func: probeSitePage }),
+      PROBE_TIMEOUT_MS,
+      () => new Error('probe timed out'),
+    );
+    const res = results?.[0]?.result;
+    if (!res || typeof res !== 'object' || typeof res.__bcScriptError === 'string') return null;
+    return res;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Shape of the URL: whether it is a plain http(s) address, and whether it carries userinfo, a query
  * or a fragment. `safeUrl` is the URL with userinfo removed and within the contract's length.
@@ -114,15 +162,16 @@ async function cookieNames(tabId, url) {
   }
   const scope = storeId === undefined ? {} : { storeId };
   // getAll({url}) only sees cookies that would be sent to this exact URL; a login cookie scoped to another path
-  // or to a sibling subdomain is missed. Ask by domain too (host, and its parent for 3+ label hosts), names only.
+  // or to a sibling subdomain is missed. Ask by domain too (host, and its parent for 3+ label hosts unless the
+  // parent looks like a public suffix such as co.uk), names only.
   // Over-inclusion can only make a page less anonymous, never more.
   const queries = [{ url, ...scope }];
   try {
     const host = new URL(url).hostname;
     if (host && !/^[\d.]+$/.test(host) && !host.includes(':')) {
       queries.push({ domain: host, ...scope });
-      const labels = host.split('.');
-      if (labels.length >= 3) queries.push({ domain: labels.slice(1).join('.'), ...scope });
+      const parent = host.split('.').slice(1).join('.');
+      if (host.split('.').length >= 3 && !looksLikePublicSuffix(parent)) queries.push({ domain: parent, ...scope });
     }
   } catch { /* url was already parsed by the caller */ }
   const cookies = (await Promise.all(queries.map((query) => chrome.cookies.getAll(query)))).flat();
@@ -138,15 +187,50 @@ function primaryLanguage(raw) {
  * `urlBefore` is the tab URL taken before the handler (null if the tab did not exist yet).
  * `navigated` is true for browser_navigate: the URL is expected to change across the handler, so
  * only the handler-end URL is compared with the URL after the page read.
- * Never throws.
+ * Answers within `budgetMs`; past it the block is anonymous:null ('unavailable'). Never throws.
  */
-export async function buildSiteContext(tabId, { urlBefore = null, navigated = false } = {}) {
+export async function buildSiteContext(tabId, { urlBefore = null, navigated = false, budgetMs = SITE_CONTEXT_BUDGET_MS } = {}) {
+  let timer;
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(unavailableContext(null)), budgetMs); });
+  try {
+    return await Promise.race([readSiteContext(tabId, urlBefore, navigated), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function unavailableContext(tab) {
+  return {
+    url: '',
+    incognito: tab?.incognito === true,
+    topLevel: false,
+    stable: false,
+    anonymous: null,
+    anonymityReason: 'unavailable',
+  };
+}
+
+async function readSiteContext(tabId, urlBefore, navigated) {
   let tab = null;
   try {
     tab = await chrome.tabs.get(tabId);
     const afterHandler = typeof tab?.url === 'string' ? tab.url : '';
     const incognito = tab?.incognito === true;
-    const probe = await safeExec(tabId, probeSitePage, [], { timeoutMs: PROBE_TIMEOUT_MS });
+    if (incognito) {
+      // A private tab is never probed: the verdict is known without reading the page.
+      return {
+        url: inspectUrl(afterHandler).safeUrl,
+        incognito: true,
+        topLevel: false,
+        stable: navigated || urlBefore === afterHandler,
+        lang: null,
+        dir: null,
+        passwordField: false,
+        anonymous: false,
+        anonymityReason: 'incognito',
+      };
+    }
+    const probe = await runProbe(tabId);
     const afterRead = await captureTabUrl(tabId);
     const stable = afterRead === afterHandler && (navigated || urlBefore === afterHandler);
     const shape = inspectUrl(afterHandler);
@@ -162,7 +246,6 @@ export async function buildSiteContext(tabId, { urlBefore = null, navigated = fa
     };
     const verdict = (anonymous, anonymityReason) => ({ ...context, anonymous, anonymityReason });
 
-    if (incognito) return verdict(false, 'incognito');
     if (!stable) return verdict(null, 'unstable');
     if (!shape.http) return verdict(null, 'unavailable');
     if (shape.tainted) return verdict(false, 'query');
@@ -180,13 +263,6 @@ export async function buildSiteContext(tabId, { urlBefore = null, navigated = fa
     if (probe.databases > 0) return verdict(false, 'indexeddb');
     return verdict(true, 'ok');
   } catch {
-    return {
-      url: '',
-      incognito: tab?.incognito === true,
-      topLevel: false,
-      stable: false,
-      anonymous: null,
-      anonymityReason: 'unavailable',
-    };
+    return unavailableContext(tab);
   }
 }

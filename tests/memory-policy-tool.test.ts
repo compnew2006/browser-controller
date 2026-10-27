@@ -36,7 +36,8 @@ function makeDaemon() {
     status: { enabled: request.command === 'enable' },
   }));
   const handleTool = vi.fn(async () => ({ success: true as const, text: 'memory (untrusted site notes)', origin: ORIGIN, items: [] }));
-  const memory: PolicyToolHost = { admin, handleTool };
+  const prepareTool = vi.fn(() => ({ connectionId: 'conn-1' }));
+  const memory: PolicyToolHost = { admin, prepareTool, handleTool };
   const bridge = {
     callTool: vi.fn(async (_tool: string, _params: Record<string, unknown>) => {
       if (tab.fail) throw new Error(tab.fail);
@@ -153,11 +154,12 @@ describe('browser_memory_policy: owner confirmation (AC-32)', () => {
     expect(daemon.admin).not.toHaveBeenCalled();
   });
 
-  it('an elicitation that fails is treated as unavailable and nothing changes', async () => {
+  it('an elicitation that fails or times out is not a confirmation and nothing changes', async () => {
     const daemon = makeDaemon();
     const { call } = await connect(daemon.host, { answers: ['throw'] });
     const result = await call({ action: 'enable' });
-    expect(textOf(result)).toMatch(/^CLIENT_CONFIRMATION_UNAVAILABLE:/);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/^ACTION_NOT_CONFIRMED: the owner declined or did not answer/);
     expect(daemon.admin).not.toHaveBeenCalled();
   });
 
@@ -194,6 +196,16 @@ describe('browser_memory_policy: prompt rate limit (review F-11)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('failed or timed-out prompts count toward the limit like declines', async () => {
+    const daemon = makeDaemon();
+    const { call, messages } = await connect(daemon.host, { answers: ['throw', 'throw', 'throw', 'accept'] });
+    for (let i = 0; i < 3; i += 1) expect(textOf(await call({ action: 'enable' }))).toMatch(/^ACTION_NOT_CONFIRMED: the owner declined or did not answer/);
+    const refused = await call({ action: 'enable' });
+    expect(textOf(refused)).toMatch(/^ACTION_NOT_CONFIRMED: too many recent requests/);
+    expect(messages).toHaveLength(3);
+    expect(daemon.admin).not.toHaveBeenCalled();
   });
 
   it('an approval or an unavailable client does not count toward the limit', async () => {

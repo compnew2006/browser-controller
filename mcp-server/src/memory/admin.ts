@@ -17,7 +17,8 @@ export interface AdminContext {
   iso(): string;
   store: MemoryStore;
   queue: MemoryQueue;
-  mutatePolicy(change: (policy: MemoryPolicy) => MemoryPolicy): Promise<MemoryPolicy>;
+  /** `resetCorrupt`: an unreadable policy is set aside and the change starts from the disabled default. */
+  mutatePolicy(change: (policy: MemoryPolicy) => MemoryPolicy, options?: { resetCorrupt?: boolean }): Promise<MemoryPolicy>;
   status(): Promise<MemoryAdminStatus>;
 }
 
@@ -39,8 +40,10 @@ export async function adminFromWire(context: AdminContext, raw: unknown): Promis
 
 /**
  * The owner commands (contracts/memory-admin-ipc.schema.json). A command answers only after the policy change
- * is on disk and the write that was in flight has finished, so no capture for an affected origin lands after
- * the answer. `delete` writes its tombstone first (R-17); `delete --all` uses the key `"*"`.
+ * is on disk and an in-flight write for an affected origin has finished (bounded by the commit timeout), so no
+ * capture for that origin lands after the answer. Work for other origins is never waited for. `delete` writes its tombstone first (R-17); `delete --all` uses the key `"*"`.
+ * An unreadable policy file blocks every change except `disable` and `delete`, which set it aside and start again
+ * from the disabled default; the refusal names them.
  */
 export async function runAdminCommand(context: AdminContext, request: MemoryAdminRequest): Promise<MemoryAdminResult> {
   const { id } = request;
@@ -56,14 +59,14 @@ export async function runAdminCommand(context: AdminContext, request: MemoryAdmi
         await context.mutatePolicy((policy) => enablePolicy(policy, at));
         return done({ status: await context.status() });
       case 'disable':
-        await context.mutatePolicy((policy) => disablePolicy(policy, at));
+        await context.mutatePolicy((policy) => disablePolicy(policy, at), { resetCorrupt: true });
         context.queue.dropPending('disabled');
-        await context.queue.drain();
+        await context.queue.settle();
         return done({ status: await context.status() });
       case 'exclude':
         await context.mutatePolicy((policy) => excludeOrigin(policy, origin as string, at));
         context.queue.dropPending('excluded', (op) => op.origin === origin);
-        await context.queue.drain();
+        await context.queue.settle((inFlight) => inFlight === origin);
         return done({ status: await context.status() });
       case 'include':
         await context.mutatePolicy((policy) => includeOrigin(policy, origin as string, at));
@@ -76,9 +79,9 @@ export async function runAdminCommand(context: AdminContext, request: MemoryAdmi
         return done({ records: await context.store.listSites() });
       case 'delete': {
         const key = request.all === true ? '*' : (origin as string);
-        await context.mutatePolicy((policy) => recordDeletion(policy, key, at));
+        await context.mutatePolicy((policy) => recordDeletion(policy, key, at), { resetCorrupt: true });
         context.queue.dropPending('deleted', (op) => key === '*' || op.origin === key);
-        await context.queue.drain();
+        await context.queue.settle((inFlight) => key === '*' || inFlight === key);
         if (key === '*') await context.store.deleteAll();
         else await context.store.deleteSite(key);
         return done({ status: await context.status() });
@@ -86,7 +89,8 @@ export async function runAdminCommand(context: AdminContext, request: MemoryAdmi
     }
   } catch (error) {
     const code = errorCode(error);
-    const message = error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.message : 'memory operation failed';
+    let message = error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.message : 'memory operation failed';
+    if (error instanceof MemoryPolicyError && error.code === 'MEMORY_CORRUPT') message += '; run "disable" or "delete --all" to reset memory';
     return { kind: 'memory-admin-result', id, success: false, error: `${code}: ${message}` };
   }
 }

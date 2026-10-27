@@ -221,3 +221,26 @@ export async function writePolicy(memoryDir: string, policy: MemoryPolicy, optio
     throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file could not be written');
   }
 }
+
+const QUARANTINED_POLICY = /^policy\.json\.corrupt-\d+$/u;
+
+/**
+ * Set an unreadable policy aside as `policy.json.corrupt-<ts>` so the owner can reset memory. Only the reset
+ * commands (`disable`, `delete`) call this; afterwards the policy reads as the disabled default.
+ */
+export function quarantinePolicy(memoryDir: string, now: number): void {
+  try {
+    fs.renameSync(policyPath(memoryDir), path.join(memoryDir, `policy.json.corrupt-${now}`));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file could not be set aside');
+  }
+}
+
+/** How many unreadable policy files have been set aside. */
+export function countQuarantinedPolicies(memoryDir: string): number {
+  try {
+    return fs.readdirSync(memoryDir).filter((name) => QUARANTINED_POLICY.test(name)).length;
+  } catch {
+    return 0;
+  }
+}

@@ -14,9 +14,19 @@ export interface MemoryToolBridge {
 export interface MemoryToolContext {
   /** The tab's siteContext from the extension, or null when it sent none. Never agent-supplied. */
   siteContext: unknown;
+  /** The session's extension connection when the tab read started; handleTool compares it with the one after (R-04). */
+  connectionIdBefore: string | null;
 }
 
+/** `prepareTool` purposes: `read` is browser_memory and refuses while memory is off; `policy` only takes the connection. */
+export type MemoryToolPurpose = 'read' | 'policy';
+
 export interface MemoryToolHost {
+  /**
+   * Runs before any tab read. A refusal (`CODE: message`) means the extension is not called at all: no tab lock,
+   * no shield, no probe. Otherwise it gives the connection the read starts on.
+   */
+  prepareTool(sessionId: string, purpose: MemoryToolPurpose): { connectionId: string | null } | { error: string };
   handleTool(tool: string, params: Record<string, unknown>, sessionId: string, context: MemoryToolContext): Promise<unknown>;
 }
 
@@ -42,8 +52,8 @@ export function contextFailure(error: unknown): string {
 }
 
 /**
- * `browser_memory`: read the tab's context from the extension under the normal tab lock (AC-12),
- * then let MemoryService answer. The agent's own arguments never carry the context. `sanitize` is the
+ * `browser_memory`: refuse first while memory is off or unsupported, so nothing is read from the tab; otherwise
+ * read the tab's context from the extension under the normal tab lock (AC-12), then let MemoryService answer. The agent's own arguments never carry the context. `sanitize` is the
  * vault's output scrub, applied to the answer like any other tool result.
  */
 export async function routeMemoryTool(
@@ -57,6 +67,8 @@ export async function routeMemoryTool(
 ): Promise<RoutedCallResult> {
   const args = parseArguments(params);
   if (typeof args === 'string') return fail(args);
+  const prepared = memory.prepareTool(sessionId, 'read');
+  if ('error' in prepared) return fail(prepared.error);
   let raw: unknown;
   try {
     raw = await bridge.callTool(CONTEXT_ACTION, { tabId: args.tabId }, sessionId, signal, agentName);
@@ -65,7 +77,7 @@ export async function routeMemoryTool(
   }
   const siteContext = isRecord(raw) ? raw.siteContext ?? null : null;
   try {
-    const answer = await memory.handleTool('browser_memory', args, sessionId, { siteContext });
+    const answer = await memory.handleTool('browser_memory', args, sessionId, { siteContext, connectionIdBefore: prepared.connectionId });
     if (!isRecord(answer)) return fail('MEMORY_UNAVAILABLE: website memory returned no answer');
     if (answer.success === false) return fail(typeof answer.error === 'string' ? answer.error : 'MEMORY_UNAVAILABLE: website memory failed');
     return { success: true, result: await sanitize(answer) };

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition } from './types.js';
-import { allTools } from './registry.js';
+import { allTools, internalWireTimeouts } from './registry.js';
 
 export { allTools, toolMap } from './registry.js';
 
@@ -56,11 +56,12 @@ export function isIdempotent(tool: string): boolean {
  * parallel table that can drift. The registry guard test
  * (registry.test.ts) requires every tool to declare a `timeoutMs`.
  */
-const timeoutByToolName = new Map(
-  allTools
+const timeoutByToolName = new Map([
+  ...allTools
     .filter((t) => typeof t.timeoutMs === "number")
-    .map((t) => [t.name, t.timeoutMs as number]),
-);
+    .map((t) => [t.name, t.timeoutMs as number] as const),
+  ...internalWireTimeouts,
+]);
 
 export function toolTimeoutMs(tool: string): number | undefined {
   return timeoutByToolName.get(tool);

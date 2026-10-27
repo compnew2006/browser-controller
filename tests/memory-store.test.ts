@@ -172,6 +172,9 @@ describe('atomic replace (AC-17, AC-18)', () => {
     fs.writeFileSync(strayA, '{"partial":');
     fs.writeFileSync(strayB, '');
     fs.writeFileSync(strayPolicy, '{"partial":');
+    // A policy temp is only stale once it is old; a fresh one may belong to a write in flight.
+    const old = new Date(Date.now() - 10 * 60_000);
+    fs.utimesSync(strayPolicy, old, old);
     fs.writeFileSync(path.join(memoryDir, 'policy.json'), '{}');
 
     const restarted = store();
