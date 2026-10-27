@@ -14,6 +14,15 @@ interface SafetyController {
   confirm(details: { categories: string[]; site: string; tool: string; target?: string }): Promise<'approved' | 'declined' | 'unavailable'>;
 }
 
+/** Results refused by the safety gate: nothing was dispatched, so the action wrapper gives them a not_dispatched receipt. */
+const gateRefusals = new WeakSet<ToolResult>();
+
+function refuse(message: string): ToolResult {
+  const result = failureResult(message);
+  gateRefusals.add(result);
+  return result;
+}
+
 const settingsByHost = new WeakMap<ToolHost, SafetySettings>();
 const controllerByHost = new WeakMap<ToolHost, SafetyController>();
 
@@ -66,14 +75,17 @@ interface Classification {
 }
 
 async function classify(host: ToolHost, tool: string, params: Record<string, unknown>): Promise<Classification> {
-  const raw = await host.callTool('browser_classify_action', classificationParams(tool, params)) as Record<string, unknown>;
+  // Page JS cannot be classified. Ask the classifier for the tab's host only (a request with no
+  // target inspects no element), and treat every evaluate as one category: the site's effective action.
+  const evaluating = tool === 'browser_evaluate';
+  const raw = await host.callTool('browser_classify_action', evaluating ? { tabId: params.tabId, action: 'browser_click' } : classificationParams(tool, params)) as Record<string, unknown>;
   if (raw?.success !== true || typeof raw.site !== 'string' || !Array.isArray(raw.categories)) {
     throw new Error(typeof raw?.error === 'string' ? raw.error : 'classifier returned an invalid result');
   }
   return {
     site: raw.site.toLowerCase(),
-    categories: raw.categories.filter((value): value is string => typeof value === 'string'),
-    fingerprint: JSON.stringify(Array.isArray(raw.fingerprints) ? raw.fingerprints.filter((value) => typeof value === 'string') : []),
+    categories: evaluating ? ['evaluate'] : raw.categories.filter((value): value is string => typeof value === 'string'),
+    fingerprint: evaluating ? '[]' : JSON.stringify(Array.isArray(raw.fingerprints) ? raw.fingerprints.filter((value) => typeof value === 'string') : []),
   };
 }
 
@@ -90,7 +102,7 @@ export async function enforceActionSafety(
   try {
     classification = await classify(host, tool, params);
   } catch (error) {
-    return failureResult(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`);
+    return refuse(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`);
   }
   if (classification.categories.length === 0) return null;
 
@@ -98,11 +110,11 @@ export async function enforceActionSafety(
   const decision = rule?.action ?? settings.defaultAction;
   if (decision === 'allow') return null;
   if (decision === 'block') {
-    return failureResult(`ACTION_BLOCKED: safety policy blocks ${classification.categories.join(', ')} on ${classification.site}; no action was dispatched.`);
+    return refuse(`ACTION_BLOCKED: safety policy blocks ${classification.categories.join(', ')} on ${classification.site}; no action was dispatched.`);
   }
 
   const controller = controllerByHost.get(host);
-  if (!controller) return failureResult('CLIENT_CONFIRMATION_UNAVAILABLE: no confirmation channel is available; no action was dispatched.');
+  if (!controller) return refuse('CLIENT_CONFIRMATION_UNAVAILABLE: no confirmation channel is available; no action was dispatched.');
   let confirmation: 'approved' | 'declined' | 'unavailable';
   try {
     const fillTargets = tool === 'browser_fill' && Array.isArray(params.fields)
@@ -120,10 +132,10 @@ export async function enforceActionSafety(
     confirmation = 'unavailable';
   }
   if (confirmation === 'unavailable') {
-    return failureResult('CLIENT_CONFIRMATION_UNAVAILABLE: this MCP client cannot ask for confirmation; no action was dispatched.');
+    return refuse('CLIENT_CONFIRMATION_UNAVAILABLE: this MCP client cannot ask for confirmation; no action was dispatched.');
   }
   if (confirmation !== 'approved') {
-    return failureResult(`ACTION_NOT_CONFIRMED: ${classification.categories.join(', ')} on ${classification.site} was declined or dismissed; no action was dispatched.`);
+    return refuse(`ACTION_NOT_CONFIRMED: ${classification.categories.join(', ')} on ${classification.site} was declined or dismissed; no action was dispatched.`);
   }
 
   // A page can change while the confirmation UI is open. Recheck the category and
@@ -133,10 +145,10 @@ export async function enforceActionSafety(
     const before = [...classification.categories].sort().join(',');
     const after = [...current.categories].sort().join(',');
     if (current.site !== classification.site || after !== before || current.fingerprint !== classification.fingerprint) {
-      return failureResult('SAFETY_TARGET_CHANGED: the page action changed while confirmation was open; no action was dispatched. Review the page and try again.');
+      return refuse('SAFETY_TARGET_CHANGED: the page action changed while confirmation was open; no action was dispatched. Review the page and try again.');
     }
   } catch (error) {
-    return failureResult(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`);
+    return refuse(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`);
   }
   return null;
 }
@@ -181,7 +193,7 @@ function diff(before: Snapshot, after: Snapshot): Record<string, unknown> {
   };
 }
 
-function summaryOf(result: ToolResult): string {
+export function summaryOf(result: ToolResult): string {
   const item = result.content.find((part) => part.type === 'text');
   if (!result.isError) return 'completed';
   const firstLine = item?.type === 'text' ? item.text.split('\n', 1)[0] : '';
@@ -189,7 +201,7 @@ function summaryOf(result: ToolResult): string {
   return code ? `failed (${code})` : 'failed';
 }
 
-function withReceipt(result: ToolResult, tool: string, receipt: Record<string, unknown>, success: boolean): ToolResult {
+export function withReceipt(result: ToolResult, tool: string, receipt: Record<string, unknown>, success: boolean): ToolResult {
   return {
     ...result,
     structuredContent: { success, receipt: { tool, ...receipt } },
@@ -233,6 +245,10 @@ export function actionHandler(
     // and stays a throw, so browser_batch can resend a rate-limited step. A failed result
     // (isError) still gets its receipt below.
     const result = await handler(host, actionParams);
+    // The handler ran its own gate check (browser_fill checks files first) and refused.
+    if (gateRefusals.has(result)) {
+      return withReceipt(result, tool, { status: 'not_dispatched', summary: summaryOf(result) }, false);
+    }
     const raw = rawResultOf(result) ?? {};
     let after: Snapshot | undefined;
     if (wantsObservation || wanted) {

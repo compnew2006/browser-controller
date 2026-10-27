@@ -7,8 +7,8 @@ const HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a
 
 export const safetyTool: ToolDefinition = {
   name: 'browser_safety',
-  summary: 'Configure session rules for submit, delete and upload actions',
-  description: 'Session policy for submit, delete and upload actions; ask requires client elicitation.',
+  summary: 'Configure session rules for submit, delete, upload and evaluate',
+  description: 'Session policy for submit, delete and upload actions, and for browser_evaluate (site rule or default applies); ask requires client elicitation.',
   inputSchema: z.object({
     enabled: z.boolean(),
     defaultAction: action.optional(),
