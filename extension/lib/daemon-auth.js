@@ -1,4 +1,4 @@
-import { PROTOCOL_VERSION } from './protocol.js';
+import { EXTENSION_PROTOCOL_VERSION } from './protocol.js';
 
 export const HTTP_AUTH_PROTOCOL_VERSION = 1;
 
@@ -101,7 +101,7 @@ export async function verifyWebSocketDaemonProof(secret, hello, expectedNonce) {
   if (!hello || hello.type !== 'hello' || !validNonce(expectedNonce) ||
       hello.clientNonce !== expectedNonce || !validNonce(hello.serverNonce) ||
       typeof hello.instanceId !== 'string' || !hello.instanceId ||
-      hello.protocolVersion !== PROTOCOL_VERSION || !Array.isArray(hello.capabilities)) return false;
+      hello.protocolVersion !== EXTENSION_PROTOCOL_VERSION || !Array.isArray(hello.capabilities)) return false;
   const transcript = [
     'bc-ws-server-v1',
     String(hello.protocolVersion),

@@ -1,5 +1,5 @@
 /** Keep in sync with EXTENSION_PROTOCOL_VERSION in mcp-server/src/protocol.ts. */
-export const PROTOCOL_VERSION = 2;
+export const EXTENSION_PROTOCOL_VERSION = 2;
 
 export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   'tool-dispatch',
@@ -29,13 +29,13 @@ export function validateDaemonHello(message) {
   if (message.protocolVersion === undefined || message.protocolVersion === null) {
     return { ok: false, legacy: false, reason: OLDER_DAEMON_REASON };
   }
-  if (message.protocolVersion !== PROTOCOL_VERSION) {
+  if (message.protocolVersion !== EXTENSION_PROTOCOL_VERSION) {
     // The port owner is not authenticated yet and the popup shows this reason: name a number, never its text.
     const received = Number.isSafeInteger(message.protocolVersion) ? ` ${String(message.protocolVersion)}` : '';
     return {
       ok: false,
       legacy: false,
-      reason: `Unsupported protocol version${received}; expected ${PROTOCOL_VERSION}. Restart the daemon and reload the extension.`,
+      reason: `Unsupported protocol version${received}; expected ${EXTENSION_PROTOCOL_VERSION}. Restart the daemon and reload the extension.`,
     };
   }
   if (!Array.isArray(message.capabilities)) {
@@ -60,15 +60,21 @@ export function validateDaemonHello(message) {
   return { ok: true, legacy: false };
 }
 
-export function buildExtensionHelloAck(appVersion, identity = {}) {
+/**
+ * The one helloAck builder. `auth` is the daemon-proof binding ({ clientNonce,
+ * instanceId }); the proof itself is computed async by daemon-auth.js and set by the caller.
+ */
+export function buildExtensionHelloAck(appVersion, identity = {}, auth = {}) {
   return {
     type: 'helloAck',
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: EXTENSION_PROTOCOL_VERSION,
     ...(appVersion ? { appVersion } : {}),
     capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
     // Multi-browser: a stable id per browser profile (+ a human label) so the
     // daemon can keep several browsers connected and route sessions to one.
     ...(identity.browserId ? { browserId: identity.browserId } : {}),
     ...(identity.browserLabel ? { browserLabel: identity.browserLabel } : {}),
+    ...(auth.clientNonce ? { clientNonce: auth.clientNonce } : {}),
+    ...(auth.instanceId ? { instanceId: auth.instanceId } : {}),
   };
 }

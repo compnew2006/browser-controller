@@ -382,11 +382,10 @@ export async function connect() {
             refuseDaemon(socket, 'Daemon authentication failed. Check the local pairing and restart the daemon.');
             return;
           }
-          const acknowledgement = {
-            ...buildExtensionHelloAck(chrome.runtime.getManifest().version, browserIdentity),
+          const acknowledgement = buildExtensionHelloAck(chrome.runtime.getManifest().version, browserIdentity, {
             clientNonce,
             instanceId: msg.instanceId,
-          };
+          });
           acknowledgement.authProof = await createWebSocketClientProof(wsToken, msg, {
             ...browserIdentity,
             capabilities: acknowledgement.capabilities,

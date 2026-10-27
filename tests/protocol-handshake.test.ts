@@ -29,7 +29,7 @@ import {
   validateProtocolVersion,
 } from '../mcp-server/src/protocol.js';
 import {
-  PROTOCOL_VERSION as BROWSER_PROTOCOL_VERSION,
+  EXTENSION_PROTOCOL_VERSION as BROWSER_PROTOCOL_VERSION,
   EXTENSION_PROTOCOL_CAPABILITIES as BROWSER_CAPABILITIES,
   REQUIRED_DAEMON_CAPABILITIES,
   buildExtensionHelloAck as buildBrowserHelloAck,
@@ -155,6 +155,53 @@ describe('protocol handshake contract', () => {
       ok: false,
       reason: expect.stringMatching(/daemon is older than 3\.0/i),
     });
+  });
+
+  // F3-1: the validators on both sides must agree on ok/not-ok and on the kind of reason.
+  it('keeps the TS and JS validators in parity for the same version and capability inputs', () => {
+    const reasonClass = (check: { ok: boolean; reason?: string }): string => {
+      if (check.ok) return 'ok';
+      const reason = check.reason ?? '';
+      if (/older than 3\.0/i.test(reason)) return 'older';
+      if (/unsupported/i.test(reason)) return 'version';
+      if (/missing required/i.test(reason)) return 'missing';
+      return 'other';
+    };
+    const signedHello = buildExtensionHello('3.0.0', 'daemon-test', { clientNonce: newAuthNonce(), serverNonce: newAuthNonce(), enrollmentSecret: TEST_ENROLLMENT_SECRET });
+    const versions: unknown[] = [undefined, null, EXTENSION_PROTOCOL_VERSION, EXTENSION_PROTOCOL_VERSION + 1, 'text', 1.5];
+    const capabilityLists: unknown[] = [
+      undefined,
+      EXTENSION_PROTOCOL_CAPABILITIES,
+      REQUIRED_EXTENSION_CAPABILITIES,
+      V2_EXTENSION_CAPABILITIES,
+      ['tools-v3'],
+      ['tool-dispatch', 'ping-pong'],
+      [],
+      'tools-v3',
+    ];
+    for (const protocolVersion of versions) {
+      for (const capabilities of capabilityLists) {
+        const daemonSide = validateExtensionHelloAck({ protocolVersion, capabilities });
+        const extensionSide = validateDaemonHello({ ...signedHello, protocolVersion, capabilities });
+        const label = JSON.stringify({ protocolVersion, capabilities });
+        expect([label, extensionSide.ok]).toEqual([label, daemonSide.ok]);
+        expect([label, reasonClass(extensionSide)]).toEqual([label, reasonClass(daemonSide)]);
+      }
+    }
+  });
+
+  it('builds one helloAck on the extension side, with the auth binding when given', () => {
+    const auth = { clientNonce: 'n'.repeat(43), instanceId: 'abcd1234' };
+    expect(buildBrowserHelloAck('3.0.0', { browserId: 'b1', browserLabel: 'B' }, auth)).toEqual({
+      type: 'helloAck',
+      protocolVersion: EXTENSION_PROTOCOL_VERSION,
+      appVersion: '3.0.0',
+      capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
+      browserId: 'b1',
+      browserLabel: 'B',
+      ...auth,
+    });
+    expect(buildBrowserHelloAck('3.0.0')).not.toHaveProperty('clientNonce');
   });
 
   it('advertises the 3.0 tool contract and no 2.x capability', () => {
