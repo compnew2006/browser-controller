@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## 3.0.8
+
+After updating: run `npm run build`, restart the daemon (`npm run daemon:restart`), reload the extension at `chrome://extensions`, and restart MCP clients that still run an older build.
+
+### Security
+- The daemon and the extension authenticate each other with the enrollment secret. The extension proves itself before the daemon accepts its connection, and the daemon signs its nonce-bound hello, so another local process or extension cannot pose as either side. `/pair` hands out the auth token only for a fresh proof under the secret. The secret reaches the extension through the native pairing host (`npm run setup:pairing`) or is pasted once in the popup; it is never sent over HTTP.
+- `npm run pairing:rotate` replaces the enrollment secret and the daemon auth token and prints neither. Restart the daemon after it. Running MCP clients pick up the new token on their next reconnect.
+- With safety mode on, `browser_evaluate` follows the site's effective action (`block`, `ask` or `allow`), as click, type and fill do.
+- With safety mode on, click, type and fill check the classified element again just before the input. If the page swapped it, the call fails `SAFETY_TARGET_CHANGED` and no input is sent.
+- Request and response bodies use one secret-key redaction policy, and every scalar under a secret key is hidden except numeric counters. JSON-escaped, URL-encoded and base64 forms of vault secrets of 8 or more characters are scrubbed too. `browser_evaluate` results are still not a secret-safe channel.
+- Only the newest three vault recovery backups are kept. Each backup holds the key and every credential it had.
+- The daemon refuses a tool name it does not know from an IPC client (`UNKNOWN_TOOL`).
+- A malformed HTTP request target no longer crashes the daemon; it gets 400.
+- Four transitive advisories under the MCP SDK are cleared (`npm audit` reports 0).
+
+### Fixed
+- `browser_fill` uploads to a hidden file input, as on Odoo. Target the input by selector (`input[type=file]`), its label, or the visible upload button, with absolute paths. No page fetch and no Chrome "Local network access" prompt is involved. The safety policy treats such a fill as an upload. Extension reload needed.
+- With safety mode on, click, type and fill on an element failed in real pages: the classifier used patterns that Chrome does not send with the page function. Extension reload needed.
+- A focused Enter inside a closed shadow root no longer fails `SAFETY_TARGET_CHANGED`.
+- `browser_wait` ends with its own `TIMEOUT` inside the tool timeout on a frozen page, and a cancel stops it at once.
+- An oversized `browser_evaluate` object result is cut in the page, so it no longer crosses the debugger in full.
+- A tab lock no longer outlives its session when a release was lost while the extension was disconnected: the daemon sends its live sessions on each connect and the extension frees the others. A failed read of the stored lock state fails tool calls with `STATE_UNAVAILABLE` until a read succeeds, instead of starting empty. A late successful read keeps what happened meanwhile.
+- A socket that never proved itself can no longer fail agents' calls during a reconnect. A connection that never answers the handshake is reported as such, with the reload hint, not as an older extension.
+- Calls on a backed-up extension socket (over 4 MiB buffered) fail `BROWSER_BUSY` instead of queueing. An IPC client that sends no hello within 10 s is disconnected.
+- A daemon or vault lock is taken over only once when stale, and a reused pid no longer blocks the daemon from starting. `npm run daemon:stop` keeps a live or starting daemon's lock, and `status` and `stop` report a missing build instead of "not running".
+- `browser_batch` says a write step cut by the batch budget may have completed.
+- A failed vault action reports its own reason (`DOCUMENT_CHANGED`, `ORIGIN_MISMATCH`, `VAULT_PAGE_UNRESPONSIVE`, `VAULT_ORIGIN_UNSUPPORTED`) instead of claiming the page has no password field.
+- The popup says the daemon rejected the enrollment secret instead of "daemon not reachable".
+
 ## 3.0.7
 
 ### Added
