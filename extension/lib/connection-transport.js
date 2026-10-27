@@ -38,5 +38,13 @@ export function withTimeout(run, ms = PAIRING_TIMEOUT_MS) {
   const expired = new Promise((_, reject) => {
     timer = setTimeout(() => { abort.abort(); reject(new Error('request timed out')); }, ms);
   });
-  return Promise.race([run(abort.signal), expired]).finally(() => clearTimeout(timer));
+  let running;
+  try {
+    running = run(abort.signal);
+  } catch (error) {
+    // A synchronous throw never reaches the race: stop the timer, or it rejects `expired` unhandled.
+    clearTimeout(timer);
+    throw error;
+  }
+  return Promise.race([running, expired]).finally(() => clearTimeout(timer));
 }

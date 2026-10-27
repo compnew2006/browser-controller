@@ -25,15 +25,31 @@ export function newAuthNonce() {
   return base64url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
+/** Why a daemon request failed, for the popup: 'auth' (pairing/secret problem) or 'unreachable'. */
+export function daemonFailureKind(error) {
+  return error instanceof DaemonAuthenticationError ? 'auth' : 'unreachable';
+}
+
+// The enrollment secret and the token are the only two HMAC keys in use; import each once.
+// Oldest entry goes first, so a changed secret never keeps the old key alive for long.
+const HMAC_KEY_CACHE_SIZE = 2;
+/** @type {Map<string, Promise<CryptoKey>>} */
+const hmacKeys = new Map();
+
+function hmacKey(secret) {
+  let key = hmacKeys.get(secret);
+  if (!key) {
+    key = crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    key.catch(() => hmacKeys.delete(secret));
+    hmacKeys.set(secret, key);
+    while (hmacKeys.size > HMAC_KEY_CACHE_SIZE) hmacKeys.delete(hmacKeys.keys().next().value);
+  }
+  return key;
+}
+
 async function hmac(secret, transcript) {
   if (typeof secret !== 'string' || !secret) throw new DaemonAuthenticationError('Enrollment secret is unavailable.');
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
+  const key = await hmacKey(secret);
   return base64url(new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(transcript))));
 }
 

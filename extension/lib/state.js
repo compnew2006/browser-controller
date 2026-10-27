@@ -128,6 +128,7 @@ export function getAdoptedDaemonInstance() {
   return adoptedDaemonInstance;
 }
 export function setAdoptedDaemonInstance(instanceId) {
+  if (!sessionStateLoaded) liveInstanceAdopted = true;
   adoptedDaemonInstance = instanceId;
 }
 
@@ -220,6 +221,33 @@ const BACKGROUND_RETRY_MS = 15_000;
 const closedBeforeLoad = new Set();
 
 /**
+ * Decisions made while the stored state was not (yet) read. A late load must merge with them,
+ * never overwrite them: a daemon instance adopted on empty state stays adopted, and a lock
+ * released meanwhile is not resurrected from storage. Cleared when a load is applied.
+ */
+let liveInstanceAdopted = false;
+let locksClearedBeforeLoad = false;
+/** @type {Set<string>} */
+const sessionsReleasedBeforeLoad = new Set();
+/** @type {Set<number>} */
+const tabsUnlockedBeforeLoad = new Set();
+{
+  // Record releases that happen before the load. They go through the lock map's own methods
+  // (router, popup, connection), so the record is made there instead of in every caller.
+  const record = (name, onCall) => {
+    const original = tabLocks[name].bind(tabLocks);
+    tabLocks[name] = (...args) => {
+      if (!sessionStateLoaded) onCall(...args);
+      return original(...args);
+    };
+  };
+  record('releaseByOwner', (sessionId) => sessionsReleasedBeforeLoad.add(sessionId));
+  record('unlock', (tabId) => tabsUnlockedBeforeLoad.add(tabId));
+  record('release', (tabId) => tabsUnlockedBeforeLoad.add(tabId));
+  record('unlockAll', () => { locksClearedBeforeLoad = true; });
+}
+
+/**
  * Persist lock ownership + smart-selector fallbacks to chrome.storage.session.
  * Called after every mutation (cheap: the payload is small). Failures are
  * swallowed — persistence is a best-effort durability upgrade, never a
@@ -295,6 +323,14 @@ export async function loadSessionState({ retryDelaysMs = LOAD_RETRY_DELAYS_MS } 
   sessionStateLoadFailed = false;
   sessionStateLoaded = true;
   closedBeforeLoad.clear();
+  // A live decision changed what the stored state said: write the merged result back.
+  if (liveInstanceAdopted || locksClearedBeforeLoad || sessionsReleasedBeforeLoad.size || tabsUnlockedBeforeLoad.size) {
+    persistDeferred = true;
+  }
+  liveInstanceAdopted = false;
+  locksClearedBeforeLoad = false;
+  sessionsReleasedBeforeLoad.clear();
+  tabsUnlockedBeforeLoad.clear();
   if (persistDeferred) {
     persistDeferred = false;
     persistSessionState();
@@ -311,10 +347,16 @@ function scheduleBackgroundLoad() {
 
 function applyStoredState(state) {
   if (!state) return;
-  if (typeof state.daemonInstance === 'string') adoptedDaemonInstance = state.daemonInstance;
-  if (Array.isArray(state.locks)) {
+  // The live instance wins. When it differs from the stored one, the stored locks belong to the
+  // old daemon: drop them, as adoptDaemonInstance() does on an instance change.
+  const storedInstance = typeof state.daemonInstance === 'string' ? state.daemonInstance : null;
+  if (!liveInstanceAdopted && storedInstance) adoptedDaemonInstance = storedInstance;
+  const staleLocks = locksClearedBeforeLoad || (liveInstanceAdopted && storedInstance !== adoptedDaemonInstance);
+  if (Array.isArray(state.locks) && !staleLocks) {
     for (const { tabId, sessionId, agentName, since } of state.locks) {
-      if (closedBeforeLoad.has(tabId)) continue; // the tab closed before its lock was read
+      // The tab closed, or was unlocked or released, before its lock was read.
+      if (closedBeforeLoad.has(tabId) || tabsUnlockedBeforeLoad.has(tabId)) continue;
+      if (sessionsReleasedBeforeLoad.has(sessionId)) continue; // its session ended meanwhile
       // lock() refuses to steal: a stale entry for a tab another live session
       // re-locked is impossible here (we're the only instance), but the guard
       // costs nothing.

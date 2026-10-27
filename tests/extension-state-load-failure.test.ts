@@ -101,4 +101,60 @@ describe('F4-3: tab-lock restore fails closed', () => {
     expect(warn).toHaveBeenCalled();
     expect(String(warn.mock.calls[0].join(' '))).toMatch(/quota exceeded/);
   });
+
+  describe('a late load merges with the live decisions made during the outage (AC-W1)', () => {
+    const lateLoad = async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.useFakeTimers();
+      getFailures = 99;
+      const loading = state.loadSessionState({ retryDelaysMs: [] });
+      await vi.advanceTimersByTimeAsync(0);
+      await loading;
+      expect(state.isSessionStateUnavailable()).toBe(true);
+    };
+    const recover = async () => {
+      getFailures = 0;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(state.isSessionStateUnavailable()).toBe(false);
+    };
+
+    it('keeps the live daemon instance and drops the old instance locks after an instance change', async () => {
+      sessionStore.set('bcSessionState', { locks: savedLocks, daemonInstance: 'Y', fallbacks: {} });
+      await lateLoad();
+      // what connection.js adoptDaemonInstance does on the hello of a new daemon
+      state.setAdoptedDaemonInstance('X');
+      state.tabLocks.unlockAll();
+      await recover();
+      expect(state.getAdoptedDaemonInstance()).toBe('X');
+      expect(state.tabLocks.owner(5)).toBeUndefined();
+      expect(state.tabLocks.owner(6)).toBeUndefined();
+      expect(sessionStore.get('bcSessionState').daemonInstance).toBe('X');
+      expect(stored()).toEqual([]);
+    });
+
+    it('does not restore a lock of a session released during the outage', async () => {
+      await lateLoad();
+      state.tabLocks.releaseByOwner('agentA');
+      await recover();
+      expect(state.tabLocks.owner(5)).toBeUndefined();
+      expect(state.tabLocks.owner(6)).toBe('agentB');
+      expect(stored()).toEqual([6]);
+    });
+
+    it('does not restore a lock the user released by tab during the outage', async () => {
+      await lateLoad();
+      state.tabLocks.release(6);
+      await recover();
+      expect(state.tabLocks.owner(5)).toBe('agentA');
+      expect(state.tabLocks.owner(6)).toBeUndefined();
+    });
+
+    it('adopts the stored instance when none was adopted meanwhile', async () => {
+      sessionStore.set('bcSessionState', { locks: savedLocks, daemonInstance: 'Y', fallbacks: {} });
+      await lateLoad();
+      await recover();
+      expect(state.getAdoptedDaemonInstance()).toBe('Y');
+      expect(state.tabLocks.owner(5)).toBe('agentA');
+    });
+  });
 });

@@ -5,7 +5,7 @@
 // / unlockAll + daemon /pair /status /kill).
 import { escapeHtml, agentLabelFor, controlBadgeParts, openTabsSignature, renderOpenTabRows } from './open-tabs-view.js';
 import { bindVaultOpenButton } from './popup-vault.js';
-import { authenticatedDaemonFetch } from '../lib/daemon-auth.js';
+import { authenticatedDaemonFetch, daemonFailureKind } from '../lib/daemon-auth.js';
 
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -147,17 +147,19 @@ async function refreshAgents() {
     if (!res.ok) { setAgents([]); return; }
     const data = await res.json();
     setAgents(Array.isArray(data.agents) ? data.agents : []);
-  } catch {
-    setAgents(null); // null = daemon down
+  } catch (error) {
+    setAgents(null, daemonFailureKind(error)); // null = daemon unreachable or refused us
   }
 }
 
 let lastAgentsDown = false;
+let lastAgentsFailure = 'unreachable';
 
-function setAgents(agents) {
+function setAgents(agents, failure = 'unreachable') {
   // null signals "daemon down" — keep an empty agent list (so the Pin dropdown
   // has nothing to list) but render the unreachable state in the agents panel.
   lastAgentsDown = agents === null;
+  lastAgentsFailure = failure;
   lastAgents = Array.isArray(agents) ? agents : [];
   renderAgents();
   // tabs depend on agents (the Pin dropdown lists them) — re-render too.
@@ -167,7 +169,10 @@ function setAgents(agents) {
 function renderAgents() {
   agentsCountEl.textContent = lastAgents.length ? String(lastAgents.length) : '';
   if (lastAgentsDown) {
-    agentsEl.innerHTML = '<div class="empty warn">daemon not reachable</div>';
+    // A refused secret is a pairing problem, not a dead daemon: tell the user which.
+    agentsEl.innerHTML = lastAgentsFailure === 'auth'
+      ? '<div class="empty warn">daemon rejected the enrollment secret; check it in Settings</div>'
+      : '<div class="empty warn">daemon not reachable</div>';
     return;
   }
   const agents = lastAgents;

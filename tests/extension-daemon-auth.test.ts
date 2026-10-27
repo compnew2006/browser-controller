@@ -134,3 +134,26 @@ describe('authenticatedDaemonFetch', () => {
     })).rejects.toThrow(/authentication/i);
   });
 });
+
+describe('popup failure classification and key cache (AC-W5, AC-W6)', () => {
+  it('a DaemonAuthenticationError is an auth failure, anything else is unreachable', async () => {
+    const { daemonFailureKind, DaemonAuthenticationError } = await import('../extension/lib/daemon-auth.js');
+    expect(daemonFailureKind(new DaemonAuthenticationError('x'))).toBe('auth');
+    expect(daemonFailureKind(new TypeError('Failed to fetch'))).toBe('unreachable');
+  });
+
+  it('imports an HMAC key once per secret and keeps proofs correct', async () => {
+    const { createWebSocketClientProof } = await import('../extension/lib/daemon-auth.js');
+    const hello = { protocolVersion: 3, clientNonce: 'a'.repeat(43), serverNonce: 'b'.repeat(43), instanceId: 'd' };
+    const spy = vi.spyOn(crypto.subtle, 'importKey');
+    const key = 'cache-test-secret-' + Math.random();
+    const first = await createWebSocketClientProof(key, hello);
+    expect(typeof first).toBe('string');
+    expect(spy.mock.calls.length).toBe(1);
+    const calls = spy.mock.calls.length;
+    const second = await createWebSocketClientProof(key, hello);
+    expect(spy.mock.calls.length).toBe(calls); // second call reused the imported key
+    expect(second).toEqual(first);
+    spy.mockRestore();
+  });
+});
