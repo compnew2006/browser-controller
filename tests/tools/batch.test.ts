@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { toolMap } from '../../mcp-server/src/tools/index.js';
+import { BATCH_BUDGET_MS } from '../../mcp-server/src/tools/batch-limits.js';
 import type { ToolHost } from '../../mcp-server/src/tools/types.js';
 
 const batch = toolMap.get('browser_batch')!;
@@ -23,6 +24,11 @@ const textOf = (res: { content: Array<{ type: string; text?: string }> }) =>
   res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
 
 describe('browser_batch', () => {
+  it('its registry timeoutMs is the batch budget, the one bound the handler enforces', () => {
+    expect(batch.timeoutMs).toBe(BATCH_BUDGET_MS);
+    expect('timeoutMs' in batch.inputSchema.shape).toBe(false);
+  });
+
   it('runs steps in order, applies the default tabId, and returns the last step', async () => {
     const { host, calls } = fakeHost();
     const res = await run(host, {

@@ -5,9 +5,10 @@ import path from 'node:path';
 import { VaultDataSchema, VaultEnvelopeSchema, VAULT_MAX_AUDIT_EVENTS, VAULT_VERSION, randomId, type VaultCredential, type VaultData, type VaultEnvelope } from './types.js';
 import { pidAlive, reclaimLock, type ReclaimHooks } from '../lock-file.js';
 import { VaultStorageError, fileError } from './store-errors.js';
-import { dataFromEnvelope, envelopeFor, parseBackup, parseJson, type BackupPackage, type RestoreJournal } from './store-format.js';
+import { backupsToPrune, dataFromEnvelope, envelopeFor, parseBackup, parseJson, type BackupPackage, type RestoreJournal } from './store-format.js';
 
 export { VaultStorageError } from './store-errors.js';
+export { VAULT_BACKUP_RETENTION } from './store-format.js';
 
 const KEY_BYTES = 32;
 const MAX_STORE_BYTES = 8 * 1024 * 1024;
@@ -194,11 +195,19 @@ export class CredentialVaultStore {
         const backup: BackupPackage = { version: VAULT_VERSION, namespace: this.namespace, createdAt: now, key: key.toString('base64'), envelope };
         const file = path.join(this.backups, `${id}.json`);
         await this.atomicWrite(file, Buffer.from(JSON.stringify(backup), 'utf8'), MAX_BACKUP_BYTES, true);
+        await this.pruneBackups(id);
         return { id, createdAt: now };
       } finally {
         key.fill(0);
       }
     });
+  }
+
+  /** Best effort: a prune failure never fails the backup. Only backup files are touched, never the live store or key. */
+  private async pruneBackups(keepId: string): Promise<void> {
+    try {
+      for (const id of backupsToPrune(await this.listBackups(), keepId)) await fs.unlink(path.join(this.backups, `${id}.json`)).catch(() => undefined);
+    } catch { /* extra copies only; the next backup retries */ }
   }
 
   async listBackups(): Promise<Array<{ id: string; createdAt: number }>> {

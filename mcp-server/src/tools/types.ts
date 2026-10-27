@@ -65,7 +65,9 @@ export interface ToolDefinition {
   /**
    * Per-tool transport timeout in ms (bridge → extension round-trip). Falls
    * back to the bridge default (30s) when omitted. Co-located with `idempotent`
-   * so the tool registry is the single source of transport policy.
+   * so the tool registry is the single source of transport policy. A tool the
+   * server runs itself (browser_batch) never reaches the bridge: its value is
+   * the tool's own time budget, not a transport timeout.
    */
   timeoutMs?: number;
 }

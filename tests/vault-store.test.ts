@@ -3,8 +3,8 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { CredentialVaultStore, VaultStorageError } from '../mcp-server/src/vault/store.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CredentialVaultStore, VaultStorageError, VAULT_BACKUP_RETENTION } from '../mcp-server/src/vault/store.js';
 import type { VaultCredential } from '../mcp-server/src/vault/types.js';
 
 let stateDir: string;
@@ -183,6 +183,36 @@ describe('CredentialVaultStore', () => {
     expect((await store.list()).map((item) => item.id)).toEqual(['cred_66666666666666666666666666666666']);
     await expect(store.restoreBackup('../key')).rejects.toBeInstanceOf(VaultStorageError);
     expect((await store.listBackups()).length).toBe(2);
+  });
+
+  it('keeps only the newest backups after a new backup, and leaves the live vault and key alone', async () => {
+    const store = await newStore();
+    await store.initialize();
+    await store.upsert(entry('cred_88888888888888888888888888888888', 'synthetic-retain'));
+    const made: string[] = [];
+    for (let i = 0; i < VAULT_BACKUP_RETENTION + 2; i++) made.push((await store.createBackup(100 + i)).id);
+    const kept = (await store.listBackups()).map((item) => item.id);
+    expect(kept).toEqual(made.slice(2).reverse());
+    expect((await fs.readdir(path.join(store.directory, 'backups'))).sort()).toEqual(kept.map((id) => `${id}.json`).sort());
+    expect((await store.list()).map((item) => item.id)).toEqual(['cred_88888888888888888888888888888888']);
+    await fs.access(path.join(store.directory, 'key'));
+    await store.restoreBackup(kept[0]!, 500);
+    expect((await store.list()).length).toBe(1);
+  });
+
+  it('a backup prune failure does not fail the backup', async () => {
+    const store = await newStore();
+    await store.initialize();
+    for (let i = 0; i < VAULT_BACKUP_RETENTION; i++) await store.createBackup(200 + i);
+    const unlink = vi.spyOn(fs, 'unlink').mockRejectedValue(Object.assign(new Error('EPERM'), { code: 'EPERM' }));
+    try {
+      const latest = await store.createBackup(300);
+      expect((await store.listBackups())[0]!.id).toBe(latest.id);
+      expect(unlink).toHaveBeenCalled();
+    } finally {
+      unlink.mockRestore();
+    }
+    expect((await store.listBackups()).length).toBe(VAULT_BACKUP_RETENTION + 1);
   });
 
   it('restores explicitly from a valid backup when the local key is missing or the live envelope is corrupt', async () => {

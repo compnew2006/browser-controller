@@ -80,3 +80,14 @@ export function parseBackup(value: unknown, namespace: string): BackupPackage | 
   if (!parsedEnvelope.success) return null;
   return { version: VAULT_VERSION, namespace, createdAt: backup.createdAt, key: backup.key, envelope: parsedEnvelope.data };
 }
+
+/**
+ * Newest backups kept. A backup embeds the key and every credential it held,
+ * so older ones are removed after each new backup instead of piling up.
+ */
+export const VAULT_BACKUP_RETENTION = 3;
+
+/** Ids to delete: everything past the newest VAULT_BACKUP_RETENTION, never `keepId`. `backups` is newest first. */
+export function backupsToPrune(backups: Array<{ id: string }>, keepId: string): string[] {
+  return backups.filter((item) => item.id !== keepId).slice(VAULT_BACKUP_RETENTION - 1).map((item) => item.id);
+}
