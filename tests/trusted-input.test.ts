@@ -191,6 +191,17 @@ describe('trusted input (CDP)', () => {
     expect(inputs()).toHaveLength(0);
   });
 
+  it('click: a target-changed throw on the track measurement releases the input shield, then rethrows', async () => {
+    cursorOn = true;
+    pageResults.push({ success: true, x: 100, y: 40, visible: true, cursorMs: 5 });
+    pageResults.push({ success: false, error: 'SAFETY_TARGET_CHANGED' });
+    await expect(ti.locatePointer(5, { target: '#go', expect: 'e1:button:' }, 'click')).rejects.toThrow(/^SAFETY_TARGET_CHANGED/);
+    // locate, track (threw), then the release that closes __bcAgentInputUntil and the press watch.
+    expect(pageArgs).toHaveLength(3);
+    expect(pageArgs[2]).toEqual([null]);
+    expect(inputs()).toHaveLength(0);
+  });
+
   it('click at a point: the press waits until the agent cursor has arrived', async () => {
     cursorOn = true;
     pageResults.push({ success: true, x: 30, y: 40, visible: true, cursorMs: 30 });

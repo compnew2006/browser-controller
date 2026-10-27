@@ -43,7 +43,7 @@ function pageLocate(fb, mode, cursor, check, target, expect) {
   // `fb` is the snapshot's fallback descriptor of a ref target (lib/state.js fallbacks).
   const D = globalThis.__bcDom;
   // An older runtime (installed before an extension update) has no cursor, clickTarget or resolveTarget.
-  if (!D || !D.clickTarget || (cursor && !D.cursor) || (target && !D.resolveTarget) || (expect && !D.safetyFingerprint)) return { __needDom: true };
+  if (!D || !D.clickTarget || (cursor && !D.cursor) || (target && !D.resolveTarget) || (expect && !D.safetyFingerprint) || !D.deepActiveElement) return { __needDom: true };
   // A press watch is this measurement's own (watchPress below): an earlier call's is dropped.
   if (globalThis.__bcPressWatch) { globalThis.__bcPressWatch.off(); globalThis.__bcPressWatch = null; }
   let el = null;
@@ -56,20 +56,8 @@ function pageLocate(fb, mode, cursor, check, target, expect) {
     via = r.via;
     viewPoint = r.point || null;
   }
-  // The element the keyboard reaches: from the top document down through focused shadow roots
-  // and same-origin frames. A frame without focus still has an activeElement (its body), so a
-  // frame's own activeElement says nothing about where keys go.
-  const deepActive = () => {
-    let a = document.activeElement || document.body;
-    for (let i = 0; a && i < 10; i++) {
-      const s = D.shadowOf(a);
-      if (s && s.activeElement) { a = s.activeElement; continue; }
-      const d = D.frameDoc(a);
-      if (d && d.activeElement) { a = d.activeElement; continue; }
-      break;
-    }
-    return a;
-  };
+  // The element the keyboard reaches (one walk shared with the safety classifier).
+  const deepActive = () => D.deepActiveElement();
   // Inputs that take no typed text (the rest are text-like, and readonly applies to them).
   const NON_TEXT_INPUTS = ['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'image', 'range', 'color', 'hidden'];
   // Modes whose input is keys: browser_type and the text fields of browser_fill.
@@ -409,7 +397,8 @@ export async function locatePointer(tabId, target, effect, count = 1) {
   const loc = await locateTarget(tabId, { ...aim, cursor: { effect, count } });
   if (!loc?.success || !(loc.cursorMs > 0)) return loc;
   await sleep(loc.cursorMs);
-  const again = await locateTarget(tabId, { ...aim, cursor: { effect: 'track' } });
+  // A throw here (the target changed) must not leave the input window and press watch armed.
+  const again = await locateTarget(tabId, { ...aim, cursor: { effect: 'track' } }).catch(async (err) => { await releaseShield(tabId); throw err; });
   // The answer is the measurement after the glide, never the first one: a target that
   // vanished or became blocked during the glide is reported, not clicked where it was.
   if (!again?.success) { await releaseShield(tabId); return again; }

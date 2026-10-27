@@ -12,7 +12,7 @@ const ENTER_KEY = /(?:^|\s|\+)enter(?:$|\s)/i;
 /** Page side. This returns risk categories, never the page's label or field value. */
 function pageActionCategories(_targets, _action, _submit, _key, _drag) {
   const D = globalThis.__bcDom;
-  if (!D || !D.resolveTarget || !D.safetyFingerprint) return { __needDom: true };
+  if (!D || !D.resolveTarget || !D.safetyFingerprint || !D.deepActiveElement || !D.fileInputFor) return { __needDom: true };
   // Defined here, not at module level: chrome.scripting serializes this function alone.
   const DELETE_INTENT = /\b(delete|remove|destroy|erase|revoke|unsubscribe|cancel\s+(?:plan|account|subscription))\b/i;
   const SUBMIT_INTENT = /\b(submit|save|send|confirm|apply|place\s+order|checkout|pay|purchase|sign\s+in|log\s+in|register)\b/i;
@@ -20,23 +20,11 @@ function pageActionCategories(_targets, _action, _submit, _key, _drag) {
   const categories = new Set();
   const fingerprints = [];
 
-  const focusedElement = () => {
-    let active = document.activeElement;
-    for (let depth = 0; active && depth < 10; depth++) {
-      if (active.shadowRoot?.activeElement) { active = active.shadowRoot.activeElement; continue; }
-      if (active.tagName === 'IFRAME' || active.tagName === 'FRAME') {
-        try { if (active.contentDocument?.activeElement) { active = active.contentDocument.activeElement; continue; } } catch {}
-      }
-      break;
-    }
-    return active;
-  };
-
   if (_action === 'browser_type' && (_submit || ENTER_KEY.test(String(_key || '')))) categories.add('submit');
   if (_action === 'browser_click' && _drag) categories.add('unknown');
 
   for (const item of _targets) {
-    const resolved = item.focused ? { el: focusedElement() } : D.resolveTarget(item.target, item.fallback);
+    const resolved = item.focused ? { el: D.deepActiveElement() } : D.resolveTarget(item.target, item.fallback, _action === 'browser_fill' ? { file: true } : undefined);
     if (resolved.error) return { error: resolved.error };
     const el = resolved.el;
     if (!el) {
@@ -50,7 +38,8 @@ function pageActionCategories(_targets, _action, _submit, _key, _drag) {
     const type = String(el.type || D.attr(el, 'type') || '').toLowerCase();
     const role = String(D.roleOf(el) || '').toLowerCase();
     fingerprints.push(D.safetyFingerprint(el));
-    if (tag === 'input' && type === 'file') categories.add('upload');
+    // A fill of a button or label that opens a file input is an upload too.
+    if ((tag === 'input' && type === 'file') || (_action === 'browser_fill' && D.fileInputFor(el))) categories.add('upload');
 
     if (_action === 'browser_click') {
       const form = el.form || el.closest?.('form') || null;

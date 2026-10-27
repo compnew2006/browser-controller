@@ -74,13 +74,16 @@ export async function handleDialog(params) {
  */
 function pageFieldKind(t, fb) {
   const D = globalThis.__bcDom;
-  if (!D || !D.resolveTarget) return { __needDom: true };
-  const r = D.resolveTarget(t, fb);
+  if (!D || !D.resolveTarget || !D.fileInputFor) return { __needDom: true };
+  const r = D.resolveTarget(t, fb, { file: true });
   if (r.error) return { error: r.error, ...(r.issued !== undefined ? { issued: r.issued } : {}), ...(r.earlier ? { earlier: true } : {}) };
   // A ref re-found by its descriptor is reported (the note line); the registry now holds it.
   const rebound = r.via === 'fallback' ? { via: 'fallback' } : {};
   const el = r.el;
   if (!el) return { kind: 'none', ...rebound };
+  // A hidden file input, its label or the visible upload button: all are the file field.
+  const fileInput = D.fileInputFor(el);
+  if (fileInput) return { kind: 'file', multiple: !!fileInput.multiple, ...rebound };
   const tag = el.tagName.toLowerCase();
   const type = String(el.type || '').toLowerCase();
   if (tag === 'select') return { kind: 'select', multiple: !!el.multiple, ...rebound };
@@ -165,11 +168,11 @@ function pageChooseOptions(t, fb, wanted, multi) {
 /** Page-side: mark the file input with a one-shot token (CDP finds it by the marker). */
 function pageMarkFile(t, fb, token) {
   const D = globalThis.__bcDom;
-  if (!D || !D.resolveTarget) return { __needDom: true };
-  const r = D.resolveTarget(t, fb);
+  if (!D || !D.resolveTarget || !D.fileInputFor) return { __needDom: true };
+  const r = D.resolveTarget(t, fb, { file: true });
   if (r.error) return { error: r.error };
-  const el = r.el;
-  if (!el || el.tagName !== 'INPUT' || el.type !== 'file') return { notFile: true };
+  const el = D.fileInputFor(r.el);
+  if (!el) return { notFile: true };
   el.setAttribute('data-bc-upload', token);
   return { multiple: !!el.multiple };
 }
@@ -238,7 +241,8 @@ function pageFieldFingerprints(targets) {
   if (!D || !D.resolveTarget || !D.safetyFingerprint) return { __needDom: true };
   const perField = [];
   for (const item of targets) {
-    const resolved = D.resolveTarget(item.target, item.fallback);
+    // The same options as the classifier (browser_fill), so both fingerprint the same element.
+    const resolved = D.resolveTarget(item.target, item.fallback, { file: true });
     if (resolved.error) return { error: resolved.error };
     perField.push(resolved.el ? D.safetyFingerprint(resolved.el) : null);
   }

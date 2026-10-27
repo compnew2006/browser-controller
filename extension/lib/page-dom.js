@@ -14,7 +14,7 @@
  * shadow roots + same-origin iframes); anything ambiguous is reported, never guessed.
  */
 
-export const PAGE_DOM_VERSION = 16;
+export const PAGE_DOM_VERSION = 17;
 
 /**
  * `refBase`: the highest ref number the tab's earlier documents showed (lib/state.js
@@ -126,6 +126,47 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
   function frameDoc(el) {
     if (!el || el.tagName !== 'IFRAME' && el.tagName !== 'FRAME') return null;
     try { return el.contentDocument || null; } catch { return null; }
+  }
+
+  /**
+   * The element the keyboard reaches: from the top document down through focused shadow roots
+   * (open or closed) and same-origin frames. A frame without focus still has an activeElement
+   * (its body), so a frame's own activeElement says nothing about where keys go.
+   */
+  function deepActiveElement() {
+    let a = document.activeElement || document.body;
+    for (let i = 0; a && i < 10; i++) {
+      const s = shadowOf(a);
+      if (s && s.activeElement) { a = s.activeElement; continue; }
+      const d = frameDoc(a);
+      if (d && d.activeElement) { a = d.activeElement; continue; }
+      break;
+    }
+    return a;
+  }
+
+  /**
+   * The file input an element controls, or null: the element itself, a label's control, a file input
+   * inside it, or (a button beside a hidden input, as Odoo draws it) the nearest ancestor within three
+   * levels that holds exactly one. A form field that is not a file input maps to nothing.
+   */
+  function fileInputFor(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const isFile = (n) => !!n && n.tagName === 'INPUT' && String(n.type || attr(n, 'type') || '').toLowerCase() === 'file';
+    if (isFile(el)) return el;
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable) return null;
+    // An ARIA control (a switch beside an attach button) is its own field.
+    if (['checkbox', 'radio', 'switch', 'textbox', 'searchbox', 'combobox', 'listbox', 'slider', 'spinbutton'].includes(roleOf(el))) return null;
+    if (el.tagName === 'LABEL' && isFile(el.control)) return el.control;
+    const inside = el.querySelectorAll ? el.querySelectorAll('input') : [];
+    for (const n of inside) if (isFile(n)) return n;
+    let up = el.parentElement;
+    for (let i = 0; up && i < 3; i++, up = up.parentElement) {
+      const files = Array.from(up.querySelectorAll ? up.querySelectorAll('input') : []).filter(isFile);
+      if (files.length === 1) return files[0];
+      if (files.length > 1) return null;
+    }
+    return null;
   }
 
   /** Every search root: documents (top + same-origin frames) and shadow roots. */
@@ -460,7 +501,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
    *                                or never was (REF_NOT_FOUND); `earlier` says it was issued by an
    *                                earlier document of the tab. lib/ref-errors.js words it.
    */
-  function resolveTarget(t, fb) {
+  function resolveTarget(t, fb, opts) {
     if (!t) return { error: 'INVALID_ARGUMENT: target is empty' };
     if (t.kind === 'point') {
       let el = null;
@@ -505,6 +546,9 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
         el = firstVisible(all);
       }
       if (el) return { el, via: 'selector' };
+      // A file use (browser_fill) may reach a hidden file input: the page's own button opens it the same way.
+      const hiddenFile = opts && opts.file ? all.find((n) => n.tagName === 'INPUT' && String(n.type || '').toLowerCase() === 'file') : null;
+      if (hiddenFile) return { el: hiddenFile, via: 'selector' };
       if (all.length) return { error: `ELEMENT_HIDDEN: ${t.selector} matches only hidden elements` };
       return { error: `NOT_FOUND: ${t.selector} matches nothing` };
     }
@@ -927,7 +971,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
 
   globalThis.__bcDom = Object.freeze({
     v: version,
-    clean, attr, shadowOf, frameDoc, allRoots, queryAll, isVisible, flatChildren,
+    clean, attr, shadowOf, frameDoc, deepActiveElement, fileInputFor, allRoots, queryAll, isVisible, flatChildren,
     roleOf, nameOf, composedText, isInteractive, preciseMatch, centerOf, elementAt,
     composedContains, rowContextOf, describe, registry, flatText, styleOf, connected, cursor,
     isExtensionNode, clickBlocker, clickTarget, labelsOf, byText, resolveTarget,
