@@ -284,6 +284,8 @@ Leave protection state and the transport calls in the facade until 1–3 have la
 
 **Context.** `PAGE_DOM_INSTALL` is 904 lines / complexity 484 because an injected function cannot import (constraint 2). The same constraint forces the `collect`/`visible` duplication.
 
+*Correction (2026-10-27, `09` F8-2).* `09` places the `collect`/`visible` duplication between `PAGE_DOM_INSTALL` and `PAGE_FALLBACK_INSTALL`. That was not reproduced: the pair is copied in `extension/lib/vault-actions.js` (`inspectPasswordField`, `fillInspectedPassword`), forced by the same constraint. `PAGE_FALLBACK_INSTALL` has only an overlapping inline visibility check in `computeNth`. `09` section 5 is corrected to match.
+
 **Decision (recommended).** Do not decide yet — this is a wayfinder ticket, because the answer changes the extension's build story. If pursued: a second `tsc` target (or the existing TypeScript compiler API) emits each page script as a single-file IIFE string into a generated `page-scripts.js`, and the call sites pass the string to `executeScript` instead of a function. No new dependency (constraint 3).
 
 **Alternatives.** *Keep as is* — legitimate; the code works and is well commented. *String-template the shared helper into both bodies* — moves the duplication into a build step with worse ergonomics than bundling. *Have the injected function import via dynamic `import(chrome.runtime.getURL(...))`* — works in MV3 but adds an async hop before the page script can run and fails on pages with a strict CSP.

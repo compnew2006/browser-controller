@@ -1,3 +1,5 @@
+> **Status: superseded (2026-10-27).** The per-call shield (commit `e4c6baf`) replaced LOCKED decision 1, and lock persistence in `extension/lib/state.js` replaced the "persisting locks is out of scope" note. `browser_tabs` has no `lock` or `unlock` action. Line references below point at the pre-split `background.js`. The body is kept for history. See ADR-07 in `docs/audit/10-decision-records.md` and finding F4-1/F4-7 in `docs/audit/09-feature-architecture-review.md`.
+
 # Spec — Tab Control-Lock Shield (blue inner frame + input block)
 
 ## Header (LOCKED)

@@ -180,6 +180,7 @@ Written down so the next dedup pass does not "fix" them:
 | Pair | Why not |
 |---|---|
 | `vault.js` `collect`/`visible` (A6) | Chrome serialises the function body; no shared scope exists. |
+| *Correction (2026-10-27, `09` F8-2).* `09` says this duplication is between `PAGE_DOM_INSTALL` and `PAGE_FALLBACK_INSTALL`, and that `inspection.js` calls `D.isVisible` / `D.nameOf` rather than copying them. The calls in `inspection.js` hold. The page-script claim was not reproduced, so this row stands with a new file name: the `collect`/`visible` pair is copied in `extension/lib/vault-actions.js` (`inspectPasswordField` and `fillInspectedPassword`; the file was `vault.js` when A6 was written). Separately, `computeNth` in `PAGE_FALLBACK_INSTALL` (`extension/utils/smart-selector.js`) has its own display/visibility/opacity check that overlaps `isVisible` in `PAGE_DOM_INSTALL`. `09` section 5 is corrected to match. | |
 | `PAGE_DOM_INSTALL` vs `PAGE_FALLBACK_INSTALL` | Two independent injected scripts with separate lifecycles and separate injection points. |
 | Extension origin checks vs daemon origin checks | Different trust domains. The daemon must not trust the extension's verdict, and vice versa — this is defence in depth, and the same reasoning already governs `tools/fill.ts` and `vault/daemon-routing.ts`. |
 | `Daemon` handshake vs `DaemonClient` handshake | Two sides of a wire must validate the peer independently. Only the *plumbing* may be shared (framing, pending table, backoff), never the validation. |

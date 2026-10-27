@@ -10,6 +10,8 @@ derived?
 
 ## What the audit found, then corrected
 
+> **Update (2026-10-27, `09` F6-4).** The gap below is closed. `tests/extension-router.test.ts` ("every registered MCP tool has an extension handler" and "dispatches exactly the known tool set") asserts the extension dispatch against the MCP tool list, with `browser_batch` and `browser_safety` exempt and `browser_vault` handled separately. `tests/vault-redaction.test.ts` asserts the redaction registry against `allTools`. The text below is the original analysis.
+
 `05` F9 says a tool's name lives in three homes and has no compile-time link. Reading the tests sharpened
 that, and part of the finding turned out to be already handled:
 

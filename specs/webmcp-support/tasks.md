@@ -1,3 +1,5 @@
+> **Status: superseded (2026-10-27).** The WebMCP feature was removed in Browser Controller 3.0 (commit `9e40798`; `CHANGELOG.md` lists `browser_webmcp_list` and `browser_webmcp_call` as removed). No `webmcp` text remains in `extension/` or `mcp-server/src`. Statements below that say "implemented" describe the 2.x code only. The body is kept for history. See finding F8-4 in `docs/audit/09-feature-architecture-review.md`.
+
 # Tasks — WebMCP support (revision 2)
 
 Tasks are ordered, atomic and checkable. Each one lists the files it owns, its dependencies,
