@@ -441,6 +441,57 @@ describe('ExtensionBridge', () => {
     expect(typeof cancelMsg.id).toBe('string');
   }, 15_000);
 
+  it('a timed-out call detaches its abort listener from a long-lived signal (F3-5)', async () => {
+    const port = nextPort();
+    const bridge = new ExtensionBridge({ port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 60 });
+    bridges.push(bridge);
+    await bridge.start();
+    await connectClient(port);
+
+    const controller = new AbortController();
+    const added: unknown[] = [];
+    const removed: unknown[] = [];
+    const add = controller.signal.addEventListener.bind(controller.signal);
+    const remove = controller.signal.removeEventListener.bind(controller.signal);
+    controller.signal.addEventListener = ((type: string, fn: unknown, opts?: unknown) => {
+      if (type === 'abort') added.push(fn);
+      return add(type, fn as EventListener, opts as AddEventListenerOptions);
+    }) as typeof add;
+    controller.signal.removeEventListener = ((type: string, fn: unknown, opts?: unknown) => {
+      if (type === 'abort') removed.push(fn);
+      return remove(type, fn as EventListener, opts as EventListenerOptions);
+    }) as typeof remove;
+
+    await expect(bridge.callTool('browser_click', { ref: 'e1' }, undefined, controller.signal)).rejects.toThrow(/^TIMEOUT:/);
+    expect(added).toHaveLength(1);
+    expect(removed).toEqual(added);
+  }, 15_000);
+
+  // F3-3: a socket the browser is not reading must fail the call fast, not queue frames without bound.
+  it('refuses a tool call fast with BROWSER_BUSY when the socket buffer is over the limit (F3-3)', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+    const client = await connectClient(port);
+    const received: any[] = [];
+    client.on('message', (data) => received.push(JSON.parse(data.toString())));
+
+    const serverSide = (bridge as unknown as { conns: { live(): Array<{ ws: WebSocket }> } }).conns.live()[0].ws;
+    let buffered = 8 * 1024 * 1024;
+    Object.defineProperty(serverSide, 'bufferedAmount', { get: () => buffered });
+
+    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(/^BROWSER_BUSY: the browser is not reading its connection; try again shortly/);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(received.filter((m) => m.tool)).toHaveLength(0); // refused, not sent, not retried
+
+    buffered = 0; // drained: calls flow again
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.tool) client.send(JSON.stringify({ id: msg.id, success: true, result: { ok: 1 } }));
+    });
+    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).resolves.toEqual({ ok: 1 });
+  });
+
   it('rejects immediately if the signal is already aborted before send', async () => {
     const port = nextPort();
     const bridge = createBridge(port);

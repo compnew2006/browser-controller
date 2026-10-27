@@ -32,6 +32,13 @@ import { VaultBridgeTransport } from './vault/bridge-transport.js';
 export { isDaemonResponsiveOnPort } from './bridge-security.js';
 export { MAX_WS_MESSAGE_BYTES } from './bridge-frames.js';
 
+/**
+ * Outbound backpressure limit: a tool call is refused while more than this many
+ * bytes wait unsent on the extension socket (the browser is not reading).
+ * 4 MiB is several large tool frames, far above a healthy socket's few KiB.
+ */
+export const MAX_WS_BUFFERED_BYTES = 4 * 1024 * 1024;
+
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -467,6 +474,10 @@ export class ExtensionBridge {
     } catch (err) {
       return Promise.reject(err);
     }
+    // Backpressure: fail fast instead of queueing frames for a browser that is not reading. Never retried.
+    if (conn.ws.bufferedAmount > MAX_WS_BUFFERED_BYTES) {
+      return Promise.reject(new Error('BROWSER_BUSY: the browser is not reading its connection; try again shortly'));
+    }
     return new Promise((resolve, reject) => {
       const id = String(++this.requestId);
       // Timeout policy (audit M3): the tool registry is the single source of
@@ -483,6 +494,7 @@ export class ExtensionBridge {
 
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(id);
+        if (signal) signal.removeEventListener('abort', onAbort);
         // Notify the extension to abort this id's in-flight handler. This id is
         // being abandoned (retry gets a new id, or the call is rejected), so the
         // old handler must stop to free the tab mutex. Without this a timed-out
