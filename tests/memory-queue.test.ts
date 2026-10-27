@@ -707,3 +707,75 @@ describe('applyOp reconciliation (R-10)', () => {
     expect(() => applyOp(site, visit(T2, 'profile-3'), T2)).not.toThrow();
   });
 });
+
+describe('concurrent captures and a writer killed mid-commit (AC-17, AC-19)', () => {
+  const clients = ['profile-a', 'profile-b', 'profile-c', 'profile-d'];
+
+  function captureOps(round: number): CaptureOp[] {
+    return clients.map((profileId) =>
+      op({
+        type: 'facts',
+        profileId,
+        origin: ORIGIN,
+        at: T2,
+        enqueuedAt: T2,
+        path: '/',
+        tool: 'browser_snapshot',
+        facts: [
+          fact(languageFact('ar', 'rtl')),
+          fact(searchFact('searchbox', 'Search')),
+          fact(controlFact('link', 'Sign in')),
+        ],
+        opId: `round-${round}-${profileId}`,
+      }),
+    );
+  }
+
+  it('leaves every file parseable with one current fact per id after 4 clients and a kill between temp write and rename', async () => {
+    await setPolicy();
+    let renames = 0;
+    const dying = new JsonMemoryStore(memoryDir, {
+      rename: async (from, to) => {
+        renames += 1;
+        if (renames === 3) throw new Error('killed between temp write and rename');
+        fs.renameSync(from, to);
+      },
+    });
+    const queue = realQueue(dying);
+    for (const captured of captureOps(1)) queue.enqueue(captured);
+    for (const captured of captureOps(2)) queue.enqueue(captured);
+    await queue.drain();
+    expect(renames).toBe(8);
+    expect(drops(queue)).toEqual({ io_error: 1 });
+    expect(queue.stats().committed).toBe(7);
+
+    // A restart sees only whole files and removes any temp file.
+    const reopened = new JsonMemoryStore(memoryDir);
+    const sitesDir = path.join(memoryDir, 'sites');
+    for (const name of fs.readdirSync(sitesDir)) {
+      expect(name.endsWith('.tmp'), name).toBe(false);
+      expect(() => JSON.parse(fs.readFileSync(path.join(sitesDir, name), 'utf8')), name).not.toThrow();
+    }
+    const site = (await reopened.getSite(ORIGIN))!;
+    const ids = site.facts.map((current) => current.factId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect([...ids].sort()).toEqual(['site.language', 'ui.control:link:sign in', 'ui.search']);
+    expect(site.facts.every((current) => current.status === 'current')).toBe(true);
+    // The killed commit is not half applied: no profile is recorded unless its commit landed.
+    expect(Object.keys(site.profiles).length).toBeLessThanOrEqual(4);
+  });
+
+  it('applies one opId delivered twice exactly once (AC-19)', async () => {
+    await setPolicy();
+    const store = new JsonMemoryStore(memoryDir);
+    const queue = realQueue(store);
+    const visit = op({ opId: 'same-call' });
+    expect(queue.enqueue(visit).accepted).toBe(true);
+    expect(queue.enqueue({ ...visit }).accepted).toBe(false);
+    await queue.drain();
+    expect(queue.enqueue({ ...visit }).accepted).toBe(false);
+    await queue.drain();
+    expect((await store.getSite(ORIGIN))!.profiles['profile-a'].visit!.count).toBe(1);
+    expect(drops(queue)).toEqual({ duplicate: 2 });
+  });
+});

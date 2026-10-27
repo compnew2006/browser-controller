@@ -11,7 +11,8 @@ export interface SafetySettings {
 }
 
 interface SafetyController {
-  confirm(details: { categories: string[]; site: string; tool: string; target?: string }): Promise<'approved' | 'declined' | 'unavailable'>;
+  /** `message`, when set, is the whole prompt text; the safety gate leaves it unset and the controller words the prompt itself. */
+  confirm(details: { categories: string[]; site: string; tool: string; target?: string; message?: string }): Promise<'approved' | 'declined' | 'unavailable'>;
 }
 
 /** Results refused by the safety gate: nothing was dispatched, so the action wrapper gives them a not_dispatched receipt. */
@@ -29,6 +30,20 @@ const controllerByHost = new WeakMap<ToolHost, SafetyController>();
 export function attachSafetyController(host: ToolHost, controller: SafetyController): void {
   controllerByHost.set(host, controller);
   settingsByHost.set(host, { enabled: false, defaultAction: 'ask', siteRules: [] });
+}
+
+/**
+ * Ask the owner, through the client's form elicitation, with a prompt the caller built from fixed words
+ * and values it verified. Any failure to ask counts as `unavailable`, so nothing proceeds on a guess.
+ */
+export async function requestOwnerConfirmation(host: ToolHost, tool: string, message: string): Promise<'approved' | 'declined' | 'unavailable'> {
+  const controller = controllerByHost.get(host);
+  if (!controller) return 'unavailable';
+  try {
+    return await controller.confirm({ categories: [], site: '', tool, message });
+  } catch {
+    return 'unavailable';
+  }
 }
 
 export function setSafetySettings(host: ToolHost, settings: SafetySettings): void {

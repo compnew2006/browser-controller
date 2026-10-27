@@ -24,3 +24,35 @@ satisfied.
 | browser_memory | 0 | — | — | — |
 | batch | 200 | 0.03 | 0.13 | 0.23 |
 
+## on-empty — Node v22.23.1, darwin/arm64 (2026-10-27T21:14:26.661Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 0
+- daemon start: 103 ms; recovery after SIGKILL: 103 ms
+- idle RSS: 85872 KiB; peak RSS: 85872 KiB
+- store bytes: 166
+- queue drops: UNAVAILABLE (queue.ts not implemented yet)
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.42 | 1.63 | 3.98 |
+| browser_navigate_snapshot | 200 | 0.35 | 0.61 | 0.99 |
+| browser_snapshot | 200 | 0.03 | 0.31 | 0.56 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.05 |
+| batch | 200 | 0.02 | 0.08 | 0.11 |
+
+## on-seeded — Node v22.23.1, darwin/arm64 (2026-10-27T21:14:27.371Z)
+
+- clients: 4, iterations/tool: 200, seeded origins: 1000
+- daemon start: 104 ms; recovery after SIGKILL: 102 ms
+- idle RSS: 84160 KiB; peak RSS: 84160 KiB
+- store bytes: 210056
+- queue drops: UNAVAILABLE (queue.ts not implemented yet)
+
+| Tool | n | p50 ms | p95 ms | p99 ms |
+|---|---|---|---|---|
+| browser_navigate | 200 | 0.47 | 1.55 | 4.71 |
+| browser_navigate_snapshot | 200 | 0.35 | 0.44 | 0.99 |
+| browser_snapshot | 200 | 0.03 | 0.30 | 0.71 |
+| browser_memory | 200 | 0.02 | 0.05 | 0.07 |
+| batch | 200 | 0.03 | 0.08 | 0.20 |
+

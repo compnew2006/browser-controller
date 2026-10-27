@@ -60,7 +60,7 @@ export function registerTools(server: McpServer, host: ToolHost): void {
       const target = details.target ? ` for target ${details.target}` : '';
       const response = await server.server.elicitInput({
         mode: 'form',
-        message: `Allow ${details.categories.join(', ')} via ${details.tool} on ${details.site}${target}?`,
+        message: details.message ?? `Allow ${details.categories.join(', ')} via ${details.tool} on ${details.site}${target}?`,
         requestedSchema: {
           type: 'object',
           properties: { confirm: { type: 'boolean', title: 'Allow this action' } },

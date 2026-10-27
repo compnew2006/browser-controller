@@ -544,3 +544,46 @@ describe.skipIf(!posix)('POSIX permissions', () => {
     expect(await code(store().getSite(ORIGIN))).toBe('MEMORY_UNAVAILABLE');
   });
 });
+
+describe('reconciliation across agents and restarts (AC-23, AC-24)', () => {
+  it('keeps the original provenance after ten clock years and a restart, and refreshes nothing by itself (AC-23)', async () => {
+    await store().putSite(record(ORIGIN, {
+      facts: [languageFact('2026-10-27T10:00:00.000Z')],
+      profiles: { 'profile-a': { visit: { firstAt: T1, lastAt: T1, count: 1 }, verifications: { 'site.language': { at: T1, tool: 'browser_navigate', path: '/' } } } },
+    }));
+    const raw = fs.readFileSync(siteFile(ORIGIN), 'utf8');
+    const later = store({ now: () => Date.parse('2036-10-27T10:00:00.000Z') });
+    const read = (await later.getSite(ORIGIN))!;
+    expect(read.facts[0]).toMatchObject({ status: 'current', firstObserved: T1, lastObserved: T1 });
+    expect(read.profiles['profile-a'].verifications!['site.language'].at).toBe(T1);
+    expect(fs.readFileSync(siteFile(ORIGIN), 'utf8')).toBe(raw);
+  });
+
+  it("makes another agent's changed observation current with its own provenance and returns no old value (AC-24)", async () => {
+    const s = store();
+    const { applyOp } = await import('../mcp-server/src/memory/queue.js');
+    const { languageFact: candidate } = await import('../mcp-server/src/memory/allowlist.js');
+    const op = (profileId: string, at: string, lang: string, dir: string) => ({
+      opId: `${profileId}-${at}`,
+      type: 'facts' as const,
+      profileId,
+      origin: ORIGIN,
+      at,
+      enqueuedAt: at,
+      facts: [candidate(lang, dir)!],
+      path: '/',
+      tool: 'browser_snapshot' as const,
+    });
+    let site = applyOp(null, op('profile-a', T1, 'ar', 'rtl'), T1);
+    await s.putSite(site);
+    site = applyOp((await store().getSite(ORIGIN))!, op('profile-b', T2, 'en', 'ltr'), T2);
+    await s.putSite(site);
+    const read = (await store({ now: () => Date.parse('2036-01-01T00:00:00.000Z') }).getSite(ORIGIN))!;
+    const languages = read.facts.filter((fact) => fact.kind === 'site.language');
+    expect(languages).toHaveLength(1);
+    expect(languages[0]).toMatchObject({ value: { lang: 'en', dir: 'ltr' }, firstObserved: T2, lastObserved: T2, status: 'current' });
+    expect(fs.readFileSync(siteFile(ORIGIN), 'utf8')).not.toContain('"ar"');
+    expect(read.profiles['profile-b'].verifications!['site.language'].at).toBe(T2);
+    expect(read.profiles['profile-a'].verifications!['site.language']).toBeDefined();
+  });
+});

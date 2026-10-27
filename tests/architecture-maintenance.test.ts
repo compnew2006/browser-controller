@@ -54,6 +54,25 @@ describe('maintenance quality gates', () => {
     }
   });
 
+  it('keeps website memory local: no network, process or socket API is imported under mcp-server/src/memory/ (R-16)', () => {
+    const files = sourceFiles('mcp-server/src/memory', '.ts');
+    expect(files.length).toBeGreaterThan(8);
+    const allowedBuiltins = new Set(['node:fs', 'node:fs/promises', 'node:path', 'node:crypto']);
+    const allowedSiblings = new Set(['../protocol.js', '../daemon-config.js', '../bridge-frames.js', '../vault/daemon-routing.js']);
+    const banned = /\b(?:net|http|https|http2|dns|dgram|tls|child_process|cluster|worker_threads|ws|undici|node-fetch)\b/u;
+    for (const file of files) {
+      const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+      const specifiers = [...source.matchAll(/(?:from|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/gu)].map((match) => match[1]);
+      for (const specifier of specifiers) {
+        if (specifier.startsWith('./')) continue;
+        if (specifier.startsWith('../')) expect(allowedSiblings.has(specifier), `${file} imports ${specifier}`).toBe(true);
+        else expect(allowedBuiltins.has(specifier), `${file} imports ${specifier}`).toBe(true);
+        expect(banned.test(specifier.replace(/^node:/u, '')), `${file} imports ${specifier}`).toBe(false);
+      }
+      expect(source, file).not.toMatch(/\bfetch\s*\(|new\s+WebSocket\b|XMLHttpRequest|\bglobalThis\.fetch\b/u);
+    }
+  });
+
   it('exposes repeatable lint, coverage, and production-audit commands', () => {
     const pkg = readJson('package.json');
     expect(pkg.scripts).toEqual(expect.objectContaining({

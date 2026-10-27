@@ -485,6 +485,25 @@ describe('withReminder', () => {
     expect(result.memory).toEqual(['memory: unavailable (MEMORY_UNAVAILABLE)']);
   });
 
+  it('uses the 50 ms reminder budget by default: a store that answers in 300 ms is skipped (AC-16, R-15)', async () => {
+    await seedFacts();
+    const stalled: MemoryStore = {
+      getSite: () => new Promise((resolve) => setTimeout(() => resolve(null), 300)),
+      putSite: async () => undefined,
+      deleteSite: async () => false,
+      deleteAll: async () => 0,
+      listSites: async () => [],
+      status: async () => ({ origins: 0, totalBytes: 0, corrupt: [] }),
+    };
+    service = new MemoryService({ memoryDir, vault: { memoryEligibility: () => eligibility }, connection: () => ({ ...conn }), now: () => clock, store: stalled });
+    const call = service.beginCall('s1', 'browser_navigate');
+    const started = Date.now();
+    const result = (await service.withReminder(call, reminderOutcome())) as Record<string, any>;
+    expect(Date.now() - started).toBeLessThan(250);
+    expect(result.memory).toEqual(['memory: unavailable (MEMORY_UNAVAILABLE)']);
+    expect(result).toMatchObject({ success: true, tabId: 7 });
+  });
+
   it('feeds capture the original result, never the reminder (no memory about memory)', async () => {
     await seedFacts();
     const call = service.beginCall('s1', 'browser_navigate');
@@ -492,6 +511,24 @@ describe('withReminder', () => {
     const decorated = (await service.withReminder(call, sent)) as Record<string, any>;
     expect(decorated.text).toContain('memory (untrusted');
     expect(sent.result).toEqual({ success: true, url: `${ORIGIN}/`, tabId: 7, text: '- searchbox "Search" [e1]' });
+  });
+});
+
+describe('status with a broken store (US4)', () => {
+  it('still answers, with zero counts and the last error, when the store cannot be read', async () => {
+    const broken: MemoryStore = {
+      getSite: async () => { throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'io'); },
+      putSite: async () => undefined,
+      deleteSite: async () => false,
+      deleteAll: async () => 0,
+      listSites: async () => [],
+      status: async () => { throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'io'); },
+    };
+    service = makeService(broken);
+    const status = await service.status();
+    expect(status).toMatchObject({ origins: 0, bytes: 0, queueDepth: 0, quarantined: 0, lastError: { code: 'MEMORY_UNAVAILABLE' } });
+    const viaAdmin = await service.admin({ command: 'status' } as any);
+    expect(JSON.stringify(viaAdmin)).toContain('MEMORY_UNAVAILABLE');
   });
 });
 

@@ -1,28 +1,12 @@
 import path from 'node:path';
-import {
-  parseMemoryAdminRequest,
-  type MemoryAdminRequest,
-  type MemoryAdminResult,
-  type MemoryAdminStatus,
-} from '../daemon-config.js';
+import type { MemoryAdminRequest, MemoryAdminResult, MemoryAdminStatus } from '../daemon-config.js';
 import { OBSERVABLE_TOOLS } from '../bridge-frames.js';
 import type { MemoryObservation } from '../vault/daemon-routing.js';
 import { SITE_CONTEXT_CAPABILITY } from '../protocol.js';
+import { adminFromWire, errorCode, runAdminCommand, type AdminContext } from './admin.js';
 import { collectFacts, extractSnapshotFacts, MAX_CANDIDATES } from './facts.js';
 import { MemoryCursorError, buildMemoryView, buildReminder, unavailableLine, type MemoryView } from './output.js';
-import {
-  MemoryPolicyError,
-  canonicalOrigin,
-  disablePolicy,
-  enablePolicy,
-  excludeOrigin,
-  includeOrigin,
-  pruneDeletions,
-  readPolicy,
-  recordDeletion,
-  writePolicy,
-  type MemoryPolicy,
-} from './policy.js';
+import { MemoryPolicyError, pruneDeletions, readPolicy, writePolicy, type MemoryPolicy } from './policy.js';
 import { MemoryQueue, type CaptureOp, type DropReason } from './queue.js';
 import { decideScope, type ScopeDecision, type ScopeSiteContext } from './scope.js';
 import { JsonMemoryStore, MemoryStoreError, type MemoryStore, type SiteRecord } from './store.js';
@@ -30,7 +14,7 @@ import { JsonMemoryStore, MemoryStoreError, type MemoryStore, type SiteRecord } 
 export { extractSnapshotFacts };
 
 const MAX_PATH = 120;
-const REMINDER_TIMEOUT_MS = 500;
+const REMINDER_TIMEOUT_MS = 50;
 const TOOL_KINDS: readonly string[] = ['all', 'facts', 'visits'];
 
 /** Identity of the extension connection that serves a session; `ambiguous` means another live connection has the same browserId. */
@@ -130,10 +114,6 @@ function parseToolInput(params: Record<string, unknown>): { tabId: number; kind:
   return { tabId, kind: (kind as 'all' | 'facts' | 'visits' | undefined) ?? 'all', ...(cursor === undefined ? {} : { cursor }) };
 }
 
-function errorCode(error: unknown): string {
-  return error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.code : 'MEMORY_UNAVAILABLE';
-}
-
 const DROP_ERROR_CODES: Partial<Record<DropReason, string>> = {
   io_error: 'MEMORY_UNAVAILABLE',
   timeout: 'MEMORY_UNAVAILABLE',
@@ -155,6 +135,7 @@ export class MemoryService {
   private readonly queue: MemoryQueue;
   private policyTail: Promise<unknown> = Promise.resolve();
   private lastError: { code: string; at: string } | null = null;
+  private readonly adminContext: AdminContext;
 
   constructor(deps: MemoryServiceDeps) {
     this.deps = deps;
@@ -171,6 +152,13 @@ export class MemoryService {
       },
       onDrained: (drainedThrough) => this.pruneTombstones(drainedThrough),
     });
+    this.adminContext = {
+      iso: () => this.iso(),
+      store: this.store,
+      queue: this.queue,
+      mutatePolicy: (change) => this.mutatePolicy(change),
+      status: () => this.status(),
+    };
   }
 
   private iso(): string {
@@ -382,7 +370,12 @@ export class MemoryService {
     } catch (error) {
       this.noteError(errorCode(error));
     }
-    const stored = await this.store.status();
+    let stored: Awaited<ReturnType<MemoryStore['status']>> = { origins: 0, totalBytes: 0, corrupt: [] };
+    try {
+      stored = await this.store.status();
+    } catch (error) {
+      this.noteError(errorCode(error));
+    }
     const stats = this.queue.stats();
     return {
       enabled,
@@ -396,61 +389,12 @@ export class MemoryService {
   }
 
   /** Validates an untrusted `memory-admin` line, then runs it. Always answers; never throws. */
-  async adminFromWire(raw: unknown): Promise<MemoryAdminResult> {
-    const parsed = parseMemoryAdminRequest(raw);
-    if (!parsed.ok) {
-      const id = isRecord(raw) && typeof raw.id === 'string' ? raw.id.slice(0, 64) : '';
-      return { kind: 'memory-admin-result', id, success: false, error: parsed.error };
-    }
-    return this.admin(parsed.request);
+  adminFromWire(raw: unknown): Promise<MemoryAdminResult> {
+    return adminFromWire(this.adminContext, raw);
   }
 
-  async admin(request: MemoryAdminRequest): Promise<MemoryAdminResult> {
-    const { id } = request;
-    const done = (extra: Partial<MemoryAdminResult> = {}): MemoryAdminResult => ({ kind: 'memory-admin-result', id, success: true, ...extra });
-    try {
-      const origin = request.origin === undefined ? null : canonicalOrigin(request.origin);
-      if (request.origin !== undefined && origin === null) throw new MemoryPolicyError('INVALID_ARGUMENT', 'origin must be an http or https origin');
-      const at = this.iso();
-      switch (request.command) {
-        case 'status':
-          return done({ status: await this.status() });
-        case 'enable':
-          await this.mutatePolicy((policy) => enablePolicy(policy, at));
-          return done({ status: await this.status() });
-        case 'disable':
-          await this.mutatePolicy((policy) => disablePolicy(policy, at));
-          this.queue.dropPending('disabled');
-          return done({ status: await this.status() });
-        case 'exclude':
-          await this.mutatePolicy((policy) => excludeOrigin(policy, origin as string, at));
-          this.queue.dropPending('excluded', (op) => op.origin === origin);
-          return done({ status: await this.status() });
-        case 'include':
-          await this.mutatePolicy((policy) => includeOrigin(policy, origin as string, at));
-          return done({ status: await this.status() });
-        case 'inspect': {
-          const site = await this.store.getSite(origin as string);
-          return done({ records: site ? [site] : [] });
-        }
-        case 'export':
-          return done({ records: await this.store.listSites() });
-        case 'delete': {
-          // Tombstone first, so queued and in-flight work for the origin cannot write it back.
-          const key = request.all === true ? '*' : (origin as string);
-          await this.mutatePolicy((policy) => recordDeletion(policy, key, at));
-          this.queue.dropPending('deleted', (op) => key === '*' || op.origin === key);
-          await this.queue.drain();
-          if (key === '*') await this.store.deleteAll();
-          else await this.store.deleteSite(key);
-          return done({ status: await this.status() });
-        }
-      }
-    } catch (error) {
-      const code = errorCode(error);
-      const message = error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.message : 'memory operation failed';
-      return { kind: 'memory-admin-result', id, success: false, error: `${code}: ${message}` };
-    }
+  admin(request: MemoryAdminRequest): Promise<MemoryAdminResult> {
+    return runAdminCommand(this.adminContext, request);
   }
 
   /** Resolves when no capture is queued or being written. Used by tests and shutdown. */

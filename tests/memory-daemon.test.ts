@@ -107,6 +107,30 @@ function adminStatus(): Promise<{ queueDepth: number }> {
   });
 }
 
+/** One owner command on the same authenticated socket. */
+function adminCall(command: string, extra: Record<string, unknown> = {}): Promise<any> {
+  const id = `cmd-${++adminSeq}`;
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    const timer = setTimeout(() => reject(new Error('no memory-admin answer')), 5000);
+    const onData = (chunk: string) => {
+      buffer += chunk;
+      for (const line of buffer.split('\n')) {
+        try {
+          const message = JSON.parse(line);
+          if (message.kind === 'memory-admin-result' && message.id === id) {
+            clearTimeout(timer);
+            client.socket.off('data', onData);
+            resolve(message);
+          }
+        } catch { /* partial line */ }
+      }
+    };
+    client.socket.on('data', onData);
+    client.socket.write(`${JSON.stringify({ kind: 'memory-admin', id, command, ...extra })}\n`);
+  });
+}
+
 /** Waits until the daemon has committed and cached everything queued, so the next read sees it. */
 async function committed(): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -122,6 +146,7 @@ let ext: FakeExtension | null;
 let client: IpcClient;
 let current: string;
 let pages: Record<string, Page>;
+let tabLocked = false;
 
 /** A fake browser: navigate and snapshot answer from `pages`, and `siteContext` rides along only when the daemon asks. */
 function browser(tool: string, params: Record<string, unknown>): unknown {
@@ -145,6 +170,7 @@ function browser(tool: string, params: Record<string, unknown>): unknown {
     return answer(current, page, page.text);
   }
   if (tool === 'browser_memory_internal_context') {
+    if (tabLocked) return new Error('TAB_LOCKED: tab 7 is controlled by another session');
     const page = pages[current];
     return { success: true, siteContext: page ? siteContext(current, page) : null };
   }
@@ -197,6 +223,7 @@ beforeEach(() => {
   stateDir = mkIsolatedStateDir();
   ext = null;
   current = '';
+  tabLocked = false;
   pages = { ...PAGES };
 });
 
@@ -429,5 +456,204 @@ describe('batches and reminders (US1)', () => {
       await connect('default');
       expect(await expectSilent()).toMatch(/^MEMORY_SCOPE_UNKNOWN:/u);
     });
+  });
+});
+
+describe('control and isolation (US2)', () => {
+  const EXACT_MINUTE = /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/u;
+  const OTHER = 'http://127.0.0.1:4011';
+
+  async function asProfile(browserId: string): Promise<void> {
+    client.close();
+    ext?.close();
+    await settle(100);
+    await connect(browserId);
+  }
+
+  it('AC-06: nothing is stored before enable, and enabling backfills nothing', async () => {
+    await boot();
+    await client.call('browser_navigate', { url: PUBLIC, snapshot: true });
+    await client.call('browser_snapshot', { tabId: 7 });
+    await settle();
+    expect(fs.existsSync(path.join(stateDir, 'memory', 'sites'))).toBe(false);
+    expect(recordOf()).toBeNull();
+
+    expect((await adminCall('enable')).success).toBe(true);
+    await settle();
+    expect(recordOf()).toBeNull();
+
+    await client.call('browser_navigate', { url: PUBLIC });
+    const saved = await until(recordOf);
+    expect(saved.profiles[PROFILE].visit.count).toBe(1);
+    expect(saved.facts).toEqual([]);
+  });
+
+  it('AC-07, AC-29: another profile sees the shared facts only, never a visit, a path, a time or a profile id', async () => {
+    writeEnabledPolicy(stateDir);
+    pages[`${OTHER}/public.html`] = { ...PAGES[PUBLIC] };
+    await boot();
+    await client.call('browser_navigate', { url: PUBLIC, snapshot: true });
+    await until(withFacts);
+    await committed();
+    await client.call('browser_navigate', { url: PUBLIC });
+    await until(() => (recordOf()?.profiles[PROFILE]?.visit?.count === 2 ? true : null));
+    await committed();
+
+    await asProfile('profile-2');
+    const reply = await client.call('browser_navigate', { url: PUBLIC });
+    expect(reply.success).toBe(true);
+    const block: string = reply.result.memory.join('\n');
+    expect(block).toContain('language ar, direction rtl (shared, observed ');
+    expect(block).toContain('not verified in this profile');
+    for (const leak of ['(this profile', 'visits:', PROFILE, '/public.html', ' via ']) expect(block, leak).not.toContain(leak);
+    expect(block).not.toMatch(EXACT_MINUTE);
+
+    const detail = await client.call('browser_memory', { tabId: 7 });
+    expect(detail.success).toBe(true);
+    const shared = detail.result.items.filter((item: { scope: string }) => item.scope === 'shared');
+    expect(shared.map((item: { kind: string }) => item.kind)).toEqual(expect.arrayContaining(['site.language', 'ui.search', 'ui.control']));
+    for (const item of shared) {
+      expect(item).not.toHaveProperty('path');
+      expect(item).not.toHaveProperty('verifiedAt');
+      expect(item.observedMonth).toMatch(/^\d{4}-\d{2}$/u);
+    }
+    expect(JSON.stringify(detail.result)).not.toContain(PROFILE);
+    // P2's own view of visits is its own count, not P1's two.
+    await until(() => (recordOf()?.profiles['profile-2']?.visit?.count === 1 ? true : null));
+    const own = (await client.call('browser_memory', { tabId: 7, kind: 'visits' })).result.items;
+    expect(own).toHaveLength(1);
+    expect(own[0].text).toContain('visits: 1,');
+
+    // A different port is a different origin: nothing from 4010 is shown there.
+    const elsewhere = await client.call('browser_navigate', { url: `${OTHER}/public.html` });
+    expect(elsewhere.result).not.toHaveProperty('memory');
+    const none = await client.call('browser_memory', { tabId: 7, kind: 'facts' });
+    expect(none.result.items).toEqual([]);
+  });
+
+  it('AC-30: a page with an HttpOnly session cookie stores no fact, so there is nothing to share', async () => {
+    const origin = 'http://127.0.0.1:4021';
+    const url = `${origin}/session-cookie.html`;
+    pages[url] = { text: PUBLIC_SNAPSHOT, lang: 'en', dir: 'ltr', context: { anonymous: false, anonymityReason: 'cookie' } };
+    writeEnabledPolicy(stateDir);
+    await boot();
+    await client.call('browser_navigate', { url, snapshot: true });
+    await client.call('browser_snapshot', { tabId: 7 });
+    const saved = await until(() => recordOf(origin));
+    expect(saved.facts).toEqual([]);
+
+    await asProfile('profile-2');
+    const reply = await client.call('browser_navigate', { url });
+    expect(reply.result).not.toHaveProperty('memory');
+    const detail = await client.call('browser_memory', { tabId: 7, kind: 'facts' });
+    expect(detail.result.items).toEqual([]);
+  });
+
+  it.each([
+    ['session-cookie.html', 4021, 'cookie'],
+    ['storage-token.html', 4022, 'storage'],
+    ['indexeddb.html', 4023, 'indexeddb'],
+  ])('AC-22: %s stores a visit only', async (file, port, reason) => {
+    const origin = `http://127.0.0.1:${port}`;
+    const url = `${origin}/${file}`;
+    pages[url] = { text: PUBLIC_SNAPSHOT, lang: 'en', dir: 'ltr', context: { anonymous: reason === 'indexeddb' ? null : false, anonymityReason: reason } };
+    writeEnabledPolicy(stateDir);
+    await boot();
+    await client.call('browser_navigate', { url, snapshot: true });
+    await client.call('browser_snapshot', { tabId: 7 });
+    await committed();
+    const saved = await until(() => recordOf(origin));
+    expect(saved.profiles[PROFILE].visit.count).toBe(1);
+    expect(saved.facts).toEqual([]);
+  });
+
+  it('AC-21: facts are stored and the raw snapshot is not', async () => {
+    writeEnabledPolicy(stateDir);
+    pages[PUBLIC] = { ...PAGES[PUBLIC], text: `${PUBLIC_SNAPSHOT}\n- link "Totally unlisted product page" [e4]\n- text "A paragraph of page content"` };
+    await boot();
+    await client.call('browser_navigate', { url: PUBLIC, snapshot: true });
+    await until(withFacts);
+    await committed();
+    const raw = fs.readFileSync(siteRecordPath(stateDir, ORIGIN), 'utf8');
+    expect(Object.keys(JSON.parse(raw)).sort()).toEqual(['commitSeq', 'facts', 'origin', 'profiles', 'schemaVersion', 'updatedAt']);
+    for (const text of ['[e1]', '[e4]', 'Totally unlisted', 'A paragraph', 'Accept all', 'searchbox "Search"']) expect(raw, text).not.toContain(text);
+    expect(raw).toContain('accept all');
+  });
+
+  it('AC-12: browser_memory on a tab locked by another session gives TAB_LOCKED and changes no lock', async () => {
+    writeEnabledPolicy(stateDir);
+    await boot();
+    await client.call('browser_navigate', { url: PUBLIC, snapshot: true });
+    await until(withFacts);
+    await committed();
+
+    tabLocked = true;
+    const seen = ext!.calls.length;
+    const reply = await client.call('browser_memory', { tabId: 7 });
+    expect(reply.success).toBe(false);
+    expect(reply.error).toMatch(/^TAB_LOCKED/u);
+    expect(JSON.stringify(reply)).not.toMatch(/sign in|searchbox|127\.0\.0\.1:4010/u);
+    expect(ext!.calls.slice(seen).map((entry) => entry.tool)).toEqual(['browser_memory_internal_context']);
+  });
+});
+
+describe('failure isolation (US4: AC-16)', () => {
+  /** A state directory whose store cannot be read or written: `memory/sites` is a file, not a directory. */
+  function breakStore(): void {
+    const memoryDir = path.join(stateDir, 'memory');
+    fs.rmSync(path.join(memoryDir, 'sites'), { recursive: true, force: true });
+    fs.mkdirSync(memoryDir, { recursive: true });
+    fs.writeFileSync(path.join(memoryDir, 'sites'), 'not a directory');
+  }
+
+  const strip = (result: Record<string, any>) => {
+    const { memory: _memory, ...rest } = result;
+    return { ...rest, text: String(rest.text).split('\nmemory')[0] };
+  };
+
+  it('keeps navigate and snapshot results while the store is broken, and says only that memory is unavailable', async () => {
+    writeEnabledPolicy(stateDir);
+    await boot();
+    const healthyNav = await client.call('browser_navigate', { url: PUBLIC, snapshot: true });
+    const healthySnap = await client.call('browser_snapshot', { tabId: 7 });
+    await until(withFacts);
+    await committed();
+    client.close();
+    ext?.close();
+    await stopIsolatedDaemon(daemon);
+    breakStore();
+    daemon = await startIsolatedDaemon(stateDir, { wsPort: await freePort() });
+    await connect();
+
+    const started = Date.now();
+    const nav = await client.call('browser_navigate', { url: PUBLIC, snapshot: true });
+    const snap = await client.call('browser_snapshot', { tabId: 7 });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(nav.success).toBe(true);
+    expect(snap.success).toBe(true);
+    expect(snap.result).toEqual(healthySnap.result);
+    expect(nav.result.memory).toEqual(['memory: unavailable (MEMORY_UNAVAILABLE)']);
+    expect(strip(nav.result)).toEqual(strip(healthyNav.result));
+    expect(nav.result.text).toBe(`${healthyNav.result.text.split('\nmemory')[0]}\nmemory: unavailable (MEMORY_UNAVAILABLE)`);
+
+    const detail = await client.call('browser_memory', { tabId: 7 });
+    expect(detail.success).toBe(false);
+    expect(detail.error).toMatch(/^MEMORY_UNAVAILABLE:/u);
+    expect(`${daemon.logs.stdout}\n${daemon.logs.stderr}`).not.toMatch(/Unhandled|TypeError|uncaught/iu);
+  });
+
+  it('does not queue up or fail later calls after a failed commit', async () => {
+    writeEnabledPolicy(stateDir);
+    breakStore();
+    await boot();
+    for (let i = 0; i < 5; i++) {
+      const reply = await client.call('browser_navigate', { url: PUBLIC, snapshot: true });
+      expect(reply.success).toBe(true);
+    }
+    await committed();
+    const status = await adminCall('status');
+    expect(status.ok).not.toBe(false);
+    expect(status.status.queueDepth).toBe(0);
+    expect(status.status.lastError?.code).toBe('MEMORY_UNAVAILABLE');
   });
 });

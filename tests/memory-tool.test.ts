@@ -7,8 +7,8 @@ import type { ToolHost } from '../mcp-server/src/tools/types.js';
 const memory = toolMap.get('browser_memory')!;
 
 describe('browser_memory tool definition (T038)', () => {
-  it('is registered last, read-only and retry-safe', () => {
-    expect(allTools.at(-1)?.name).toBe('browser_memory');
+  it('is registered right before browser_memory_policy, read-only and retry-safe', () => {
+    expect(allTools.at(-2)?.name).toBe('browser_memory');
     expect(isIdempotent('browser_memory')).toBe(true);
     expect(toolTimeoutMs('browser_memory')).toBe(10_000);
   });

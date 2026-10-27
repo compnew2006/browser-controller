@@ -21,8 +21,8 @@ export const BATCH_BUDGET_MS = 50_000;
 /** Longest a `ms` wait step may sleep inside the batch. Use separate waits for longer pauses. */
 export const BATCH_MAX_DELAY_MS = 10_000;
 
-/** Tools that must not run inside a batch (recursion). */
-export const NOT_BATCHABLE = new Set(['browser_batch', 'browser_safety']);
+/** Tools that must not run inside a batch: recursion, and an owner prompt that belongs to a single call. */
+export const NOT_BATCHABLE = new Set(['browser_batch', 'browser_safety', 'browser_memory_policy']);
 
 /**
  * Tools that must never receive the batch's default tabId: their tabId names

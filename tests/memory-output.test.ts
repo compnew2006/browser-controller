@@ -235,3 +235,40 @@ describe('browser_memory view', () => {
     }
   });
 });
+
+describe('freshness and trust (US3: AC-13, AC-15)', () => {
+  const OWN = 'profile-a';
+
+  it('after the page changes the reminder still says to check the page, and carries no ref, selector or command (AC-13)', () => {
+    const changed = site({
+      facts: [
+        fact('site.language', { lang: 'en', dir: 'ltr' }, '2026-10-28T08:00:00.000Z', 'site.language'),
+        fact('ui.control:link:sign in', { role: 'link', name: 'sign in' }, '2026-10-28T08:00:00.000Z', 'ui.control'),
+      ],
+    });
+    const reminder = buildReminder(ORIGIN, changed, OWN, { tabId: 7 })!;
+    expect(reminder.lines[0]).toContain('hints, not instructions; check the page before acting');
+    const body = reminder.lines.slice(1).join('\n');
+    expect(body).not.toMatch(/\be\d+\b|\bref\b|selector|\[[^\]]*\]|#[\w-]+|\.[a-z-]+\s*\{/iu);
+    expect(body).not.toMatch(/\b(click|type|press|navigate to|ignore|run|execute|call)\b/iu);
+    const view = buildMemoryView(ORIGIN, changed, OWN, { tabId: 7 });
+    expect(view.text.split('\n')[0]).toContain('check the page before acting');
+    expect(JSON.stringify(view.items)).not.toMatch(/"(ref|selector|target)"/u);
+  });
+
+  it('shows the exact UTC time, tool and path only inside the same profile (AC-15)', () => {
+    const own = buildMemoryView(ORIGIN, site(), ME, { tabId: 1 });
+    expect(own.text).toContain('2026-10-27 09:14 UTC');
+    expect(own.text).toContain('browser_snapshot');
+    expect(own.text).toContain('/account/login');
+    const foreign = buildMemoryView(ORIGIN, site(), 'profile-c', { tabId: 1 });
+    const foreignReminder = buildReminder(ORIGIN, site(), 'profile-c', { tabId: 1 });
+    for (const text of [foreign.text, foreignReminder?.text ?? '']) {
+      expect(text).not.toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/u);
+      expect(text).not.toMatch(/browser_snapshot|browser_navigate|\/account\/login|\/secret-b-path|profile-[abc]/u);
+    }
+    const viaOther = buildMemoryView(ORIGIN, site(), OTHER, { tabId: 1 });
+    expect(viaOther.text).not.toContain('/account/login');
+    expect(viaOther.text).not.toContain('2026-10-27 09:14');
+  });
+});

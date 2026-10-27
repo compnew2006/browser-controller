@@ -19,6 +19,7 @@ import { inspectElementTool } from './inspect-element.js';
 import { safetyTool } from './safety.js';
 import { vaultTool } from './vault.js';
 import { memoryTool } from './memory.js';
+import { memoryPolicyTool } from './memory-policy.js';
 
 /**
  * The tools, in the order tools/list shows them. Extension-backed ones forward
@@ -49,6 +50,7 @@ export const allTools: ToolDefinition[] = [
   safetyTool,
   vaultTool,
   memoryTool,
+  memoryPolicyTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

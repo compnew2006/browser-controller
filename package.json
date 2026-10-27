@@ -16,6 +16,7 @@
     "daemon:stop": "node scripts/daemon.mjs stop",
     "daemon:restart": "node scripts/daemon.mjs restart",
     "daemon:status": "node scripts/daemon.mjs status",
+    "memory": "node scripts/memory.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",

@@ -54,7 +54,7 @@ import { armIpcHelloTimer } from './ipc-hello-timer.js';
 import { VaultService, type VaultTransport } from './vault/service.js';
 import { routeVaultAwareCall } from './vault/daemon-routing.js';
 import { MemoryService } from './memory/service.js';
-import { routeMemoryTool } from './memory/tool-route.js';
+import { isMemoryTool, routeMemoryToolCall } from './memory/policy-tool-route.js';
 
 const SERVER_NAME = 'browser-controller-daemon';
 
@@ -449,8 +449,8 @@ class Daemon {
     // extension's tab-lock layer reads msg.sessionId, never params.__sessionId.
     const memoryCall = this.memory.beginCall(client.sessionId, msg.tool);
     try {
-      const outcome = msg.tool === 'browser_memory'
-        ? await routeMemoryTool(this.memory, this.bridge, client.sessionId, client.agentName, msg.params, controller.signal, (value) => this.vaultService.sanitizeForSession(client.sessionId, value, 'browser_memory'))
+      const outcome = isMemoryTool(msg.tool)
+        ? await routeMemoryToolCall(msg.tool, this.memory, this.bridge, client.sessionId, client.agentName, msg.params, controller.signal, (value) => this.vaultService.sanitizeForSession(client.sessionId, value, msg.tool))
         : await routeVaultAwareCall({
           bridge: this.bridge,
           vaultService: this.vaultService,

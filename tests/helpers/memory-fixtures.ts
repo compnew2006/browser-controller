@@ -53,6 +53,8 @@ export interface DaemonHandle {
   token: string;
   enrollmentSecret: string;
   proc: ChildProcess;
+  /** Everything the daemon wrote to stdout and stderr since this handle started it. */
+  logs: { stdout: string; stderr: string };
 }
 
 function socketPath(stateDir: string): string {
@@ -83,8 +85,9 @@ export async function startIsolatedDaemon(
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  let stderr = '';
-  proc.stderr?.on('data', (c) => { stderr += c.toString(); });
+  const logs = { stdout: '', stderr: '' };
+  proc.stdout?.on('data', (c) => { logs.stdout += c.toString(); });
+  proc.stderr?.on('data', (c) => { logs.stderr += c.toString(); });
 
   for (let i = 0; i < 100; i++) {
     const up = await new Promise<boolean>((resolve) => {
@@ -94,11 +97,11 @@ export async function startIsolatedDaemon(
     });
     if (up) {
       const { token, enrollmentSecret } = readTokenAndEnrollment(stateDir);
-      return { stateDir, sockPath, wsPort, token, enrollmentSecret, proc };
+      return { stateDir, sockPath, wsPort, token, enrollmentSecret, proc, logs };
     }
     await sleep(50);
   }
-  throw new Error(`daemon never came up. stderr:\n${stderr}`);
+  throw new Error(`daemon never came up. stderr:\n${logs.stderr}`);
 }
 
 export async function stopIsolatedDaemon(handle: DaemonHandle): Promise<void> {

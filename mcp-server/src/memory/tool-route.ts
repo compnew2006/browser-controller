@@ -1,10 +1,10 @@
 import type { RoutedCallResult } from '../vault/daemon-routing.js';
 
 /** The tab-context action the daemon sends to the extension; see DAEMON_ONLY_WIRE_TOOLS in wire-tools.ts. */
-const CONTEXT_ACTION = 'browser_memory_internal_context';
+export const CONTEXT_ACTION = 'browser_memory_internal_context';
 const KINDS = new Set(['all', 'facts', 'visits']);
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export interface MemoryToolBridge {
   callTool(tool: string, params: Record<string, unknown>, sessionId: string, signal: AbortSignal, agentName: string): Promise<unknown>;
@@ -20,7 +20,7 @@ export interface MemoryToolHost {
   handleTool(tool: string, params: Record<string, unknown>, sessionId: string, context: MemoryToolContext): Promise<unknown>;
 }
 
-const fail = (error: string): RoutedCallResult => ({ success: false, error });
+export const fail = (error: string): RoutedCallResult => ({ success: false, error });
 
 /** Validates the agent's arguments; IPC clients other than the MCP server skip the zod schema. */
 function parseArguments(params: Record<string, unknown>): { tabId: number; kind?: string; cursor?: string } | string {
@@ -34,7 +34,7 @@ function parseArguments(params: Record<string, unknown>): { tabId: number; kind?
 }
 
 /** Failure text for a refused or failed context read. Only the code survives; no page text. */
-function contextFailure(error: unknown): string {
+export function contextFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (/^TAB_LOCKED\b/.test(message)) return message.slice(0, 300);
   if (/Unknown tool/i.test(message)) return 'MEMORY_NOT_SUPPORTED: the browser extension does not support website memory';
