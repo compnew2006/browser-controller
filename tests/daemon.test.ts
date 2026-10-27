@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildIpcHello } from '../mcp-server/src/protocol.js';
+import { authenticatedHttpGet } from '../mcp-server/src/bridge-auth.js';
 
 /**
  * Integration tests for the daemon's client-lifecycle behavior:
@@ -90,8 +91,7 @@ async function startDaemon(): Promise<void> {
     });
     if (ok) {
       token = tokenFromDisk();
-      // the daemon also writes enrollment.json on start; read it so the
-      // HTTP helpers can send X-BC-Enrollment (required since the gate landed).
+      // The HTTP helper uses this local secret only for challenge verification.
       try {
         const eparsed = JSON.parse(fs.readFileSync(ENROLLMENT_FILE, 'utf8'));
         enrollment = eparsed.secret ?? '';
@@ -171,9 +171,13 @@ function connectClient(name: string, opts?: { replyToPing?: boolean }): Promise<
   });
 }
 
-function httpGet(pathAndQuery: string, opts?: { headers?: http.OutgoingHttpHeaders; raw?: boolean }): Promise<any> {
+async function httpGet(pathAndQuery: string, opts?: { headers?: http.OutgoingHttpHeaders; raw?: boolean }): Promise<any> {
+  if (!opts?.raw) {
+    const response = await authenticatedHttpGet(`http://127.0.0.1:${WS_PORT}`, pathAndQuery, enrollment);
+    try { return JSON.parse(response.body); } catch { return null; }
+  }
   return new Promise((resolve, reject) => {
-    const headers: http.OutgoingHttpHeaders = { 'X-BC-Enrollment': enrollment, ...(opts?.headers ?? {}) };
+    const headers: http.OutgoingHttpHeaders = opts.headers ?? {};
     const req = http.get(`http://127.0.0.1:${WS_PORT}${pathAndQuery}`, { headers }, (res) => {
       let data = '';
       res.on('data', (c) => (data += c));
@@ -598,9 +602,14 @@ describe('daemon enrollment gate (closes first-contact TOFU race)', { timeout: 3
   });
 
   // Local http helper (separate port/state from the shared daemon's httpGet).
-  function eHttp(pathAndQuery: string, opts?: { headers?: http.OutgoingHttpHeaders; raw?: boolean }): Promise<any> {
+  async function eHttp(pathAndQuery: string, opts?: { headers?: http.OutgoingHttpHeaders; raw?: boolean }): Promise<any> {
+    if (!opts?.raw) {
+      const response = await authenticatedHttpGet(`http://127.0.0.1:${E_PORT}`, pathAndQuery, eEnrollment);
+      try { return { status: response.status, body: response.body, json: JSON.parse(response.body) }; }
+      catch { return { status: response.status, body: response.body }; }
+    }
     return new Promise((resolve, reject) => {
-      const headers: http.OutgoingHttpHeaders = { 'X-BC-Enrollment': eEnrollment, ...(opts?.headers ?? {}) };
+      const headers: http.OutgoingHttpHeaders = opts.headers ?? {};
       const req = http.get(`http://127.0.0.1:${E_PORT}${pathAndQuery}`, { headers }, (res) => {
         let data = '';
         res.on('data', (c) => (data += c));
@@ -614,32 +623,32 @@ describe('daemon enrollment gate (closes first-contact TOFU race)', { timeout: 3
     });
   }
 
-  it('/pair WITHOUT the X-BC-Enrollment header is rejected (403)', async () => {
+  it('/pair without a fresh client proof is rejected (403)', async () => {
     const res = await eHttp('/pair', { headers: { 'X-BC-Enrollment': '' }, raw: true });
     expect(res.status).toBe(403);
     expect(res.body).not.toContain(eToken);
   });
 
-  it('/pair WITH a WRONG enrollment secret is rejected (403)', async () => {
+  it('/pair with an arbitrary secret header but no proof is rejected (403)', async () => {
     const res = await eHttp('/pair', { headers: { 'X-BC-Enrollment': 'wrong-secret' }, raw: true });
     expect(res.status).toBe(403);
     expect(res.body).not.toContain(eToken);
   });
 
-  it('/pair WITH the CORRECT enrollment secret returns the token', async () => {
-    const res = await eHttp('/pair', { headers: { 'X-BC-Enrollment': eEnrollment }, raw: true });
+  it('/pair returns the token only through an authenticated daemon exchange', async () => {
+    const res = await eHttp('/pair');
     expect(res.status).toBe(200);
-    expect(JSON.parse(res.body).token).toBe(eToken);
+    expect(res.json.token).toBe(eToken);
   });
 
-  it('/status and /kill also require the enrollment secret (no bypass via other routes)', async () => {
+  it('/status and /kill also require fresh request proofs', async () => {
     const statusNoKey = await eHttp('/status', { headers: { 'X-BC-Enrollment': '' }, raw: true });
     expect(statusNoKey.status).toBe(403);
 
     const killWrongKey = await eHttp('/kill?sessionId=s1', { headers: { 'X-BC-Enrollment': 'wrong' }, raw: true });
     expect(killWrongKey.status).toBe(403);
 
-    const statusOk = await eHttp('/status', { headers: { 'X-BC-Enrollment': eEnrollment }, raw: true });
+    const statusOk = await eHttp('/status');
     expect(statusOk.status).toBe(200);
   });
 
@@ -647,12 +656,12 @@ describe('daemon enrollment gate (closes first-contact TOFU race)', { timeout: 3
     // Simulate a hostile extension that reaches the daemon first with its OWN
     // chrome-extension://<hostile-id> Origin (which the browser would set for it
     // and which it cannot forge to be OUR id). It wins the pin. But it does NOT
-    // know the enrollment secret, so /pair must still reject it.
+    // know the enrollment secret, so /pair must still reject it without proof.
     const hostileOrigin = 'chrome-extension://hostileID';
     const res = await eHttp('/pair', {
       headers: {
         Origin: hostileOrigin,            // hostile wins the pin
-        'X-BC-Enrollment': '',            // but has no enrollment secret
+        'X-BC-Enrollment': '',            // an irrelevant header is not proof
       },
       raw: true,
     });

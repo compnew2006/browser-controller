@@ -15,6 +15,14 @@ import {
 } from './state.js';
 import { hideLockShield } from './overlay.js';
 import { buildExtensionHelloAck, OLDER_DAEMON_REASON, validateDaemonHello } from './protocol.js';
+import { daemonWebSocketUrl, defaultBrowserLabel, isDaemonListening } from './connection-transport.js';
+import {
+  authenticatedDaemonFetch,
+  createWebSocketClientProof,
+  DaemonAuthenticationError,
+  newAuthNonce,
+  verifyWebSocketDaemonProof,
+} from './daemon-auth.js';
 import { restoreVaultRuntimeState } from './vault-actions.js';
 import { VaultConnectionChannel } from './vault-connection.js';
 import {
@@ -29,12 +37,9 @@ import {
 } from './connection-policy.js';
 
 let wsPort = DEFAULT_WS_PORT;
-let wsToken = ''; // auth token (3.1); offered only in the WS subprotocol, never in the URL
-// Enrollment secret the daemon gates /pair behind. The popup owns the
-// user-facing entry of it; the background re-reads it from storage on every
-// service-worker recycle (MV3 kills the worker ~30s idle, so this re-load is
-// not optional) and sends it on /pair. Without this, the background's own
-// autoPairToken() 403s under the enrollment gate and reconnect dies.
+let wsToken = ''; // auth token used only to prove the extension's WebSocket handshake
+// Enrollment secret is re-read after each MV3 service-worker recycle and used
+// locally to verify daemon proofs; it is never sent over HTTP or WebSocket.
 let enrollmentSecret = '';
 /** The user set the port in the popup: the pairing host's port must not override it. */
 let portFromUser = false;
@@ -101,13 +106,16 @@ export function requestVaultUi(payload) {
  * token, or '' if the daemon isn't up yet (caller retries via reconnect loop).
  */
 async function autoPairToken() {
+  if (!enrollmentSecret) {
+    lastPairStatus = 403;
+    return '';
+  }
   try {
-    // The daemon gates /pair behind the enrollment secret (X-BC-Enrollment).
-    // Without this header the call 403s and we'd never pair — so this is the
-    // one daemon HTTP call the background makes, and it must carry the secret.
-    const headers = {};
-    if (enrollmentSecret) headers['X-BC-Enrollment'] = enrollmentSecret;
-    const res = await fetch(`http://127.0.0.1:${wsPort}/pair`, { cache: 'no-store', headers });
+    const res = await authenticatedDaemonFetch({
+      baseUrl: `http://127.0.0.1:${wsPort}`,
+      target: '/pair',
+      enrollmentSecret,
+    });
     lastPairStatus = res.status;
     if (!res.ok) return '';
     const data = await res.json();
@@ -118,9 +126,9 @@ async function autoPairToken() {
       }
       return data.token;
     }
-  } catch {
+  } catch (err) {
     // daemon not reachable yet
-    lastPairStatus = 0;
+    lastPairStatus = err instanceof DaemonAuthenticationError ? -1 : 0;
   }
   return '';
 }
@@ -176,13 +184,19 @@ async function nativePair() {
 }
 
 /**
- * Get a token. When the daemon refuses the enrollment secret (403: none
- * stored yet, or rotated), fetch it from the pairing host and retry once.
- * An unreachable daemon is left to the reconnect loop.
+ * Get a token. Fetch the enrollment secret from the pairing host when needed,
+ * and refresh it after an authentication failure. An unreachable daemon is
+ * left to the reconnect loop.
  */
 export async function ensurePairing() {
+  const pairedFromHost = !enrollmentSecret && await nativePair();
+  if (!enrollmentSecret) return '';
   const token = await autoPairToken();
-  if (token || lastPairStatus !== 403) return token;
+  if (token) {
+    if (pairedFromHost) notePairing('Paired automatically (enrollment secret from the local pairing host).');
+    return token;
+  }
+  if (lastPairStatus !== 403 && lastPairStatus !== -1) return '';
   if (!(await nativePair())) return '';
   const retried = await autoPairToken();
   if (retried) notePairing('Paired automatically (enrollment secret from the local pairing host).');
@@ -191,13 +205,6 @@ export async function ensurePairing() {
 
 /** This browser profile's identity for multi-browser routing (persisted). */
 let browserIdentity = {};
-
-function defaultBrowserLabel(id) {
-  const ua = navigator.userAgentData;
-  const brand = ua?.brands?.find((b) => !/Not.?A.?Brand|Chromium/i.test(b.brand))?.brand || 'Chrome';
-  const platform = ua?.platform || navigator.platform || '';
-  return `${brand}${platform ? ` on ${platform}` : ''} (${id.slice(0, 4)})`;
-}
 
 export async function initConnection() {
   await restoreVaultRuntimeState();
@@ -261,79 +268,48 @@ export function adoptDaemonInstance(instanceId) {
   return stale.length;
 }
 
-function wsUrl() {
-  // 127.0.0.1 (not 'localhost') so it matches the daemon's IPv4 bind.
-  // On macOS 'localhost' can resolve to IPv6 ::1 and refuse.
-  // No token here: query strings leak into access logs and history, so the
-  // token travels only in the subprotocol (see wsSubprotocols).
-  return `ws://127.0.0.1:${wsPort}`;
-}
-
-/**
- * Subprotocols to offer on the WS handshake. The daemon extracts the auth token
- * from the `bc-auth.<token>` offer (kept out of the URL query string) and ACKs
- * the bare `bc-auth` in return — so we MUST offer both: the token-bearing one
- * (for the daemon to read) AND the bare prefix (for the daemon to ACK without
- * echoing the token back to the page via ws.protocol). Offering only the
- * token-bearing one makes the server's `bc-auth` reply an invalid-subprotocol
- * error on the client side.
- */
-function wsSubprotocols() {
-  return wsToken ? [`bc-auth.${wsToken}`, 'bc-auth'] : [];
-}
-
 /**
  * Track whether the socket closed BEFORE opening (handshake destroyed). That's
  * the signature of a bad/missing token — so the next reconnect re-pairs first.
  */
 let lastWasHandshakeClose = false;
 
-/**
- * Is the daemon listening on its port? A WebSocket to a closed port makes Chrome
- * log "WebSocket connection … failed" as an error of the extension on every
- * retry, while a failed fetch is silent. Any HTTP answer means it is up, even the
- * bridge's 403 for a probe without the enrollment secret. The probe sends no
- * secret and no token; no answer within PROBE_TIMEOUT_MS means down.
- */
-async function daemonListening() {
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
-  try {
-    await fetch(`http://127.0.0.1:${wsPort}/status`, { cache: 'no-store', signal: abort.signal });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** One probe at a time: a second connect() during a probe would open a second socket. */
+/** One attempt at a time: a second connect() while probing or pairing would open a second socket. */
 let probing = false;
 
 export async function connect() {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   if (probing) return;
   probing = true;
-  let up;
-  try { up = await daemonListening(); } finally { probing = false; }
-  if (!up) {
-    lastError = `Daemon not running on port ${wsPort}`;
-    scheduleReconnect();
-    return;
-  }
+  try {
+    if (!(await isDaemonListening(wsPort, PROBE_TIMEOUT_MS))) {
+      lastError = `Daemon not running on port ${wsPort}`;
+      scheduleReconnect();
+      return;
+    }
 
-  // If the last attempt died mid-handshake, the token is likely stale/empty —
-  // re-fetch it before reconnecting so we don't loop on a bad token.
-  if (lastWasHandshakeClose) {
-    await ensurePairing();
-    lastWasHandshakeClose = false;
-  }
+    // If the last attempt died mid-handshake, the token is likely stale/empty —
+    // re-fetch it before reconnecting so we don't loop on a bad token.
+    if (lastWasHandshakeClose) {
+      await ensurePairing();
+      lastWasHandshakeClose = false;
+    }
+    if (!enrollmentSecret || !wsToken) {
+      await ensurePairing();
+      if (!enrollmentSecret || !wsToken) {
+        lastError = 'Pairing is required before connecting to the daemon';
+        scheduleReconnect();
+        return;
+      }
+    }
+  } finally { probing = false; }
 
   let opened = false;
+  let daemonAuthenticated = false;
+  let acknowledged = false;
+  const clientNonce = newAuthNonce();
   try {
-    const subs = wsSubprotocols();
-    const socket = subs.length ? new WebSocket(wsUrl(), subs) : new WebSocket(wsUrl());
+    const socket = new WebSocket(daemonWebSocketUrl(wsPort));
     ws = socket;
 
     socket.onopen = () => {
@@ -343,6 +319,7 @@ export async function connect() {
       lastError = null;
       updateBadge('disconnected');
       broadcastStatus('Connected transport; negotiating protocol');
+      socket.send(JSON.stringify({ type: 'authInit', clientNonce }));
       clearTimeout(handshakeTimeout);
       handshakeTimeout = setTimeout(() => {
         if (ws !== socket || socket.readyState !== WebSocket.OPEN || connected) return;
@@ -350,10 +327,11 @@ export async function connect() {
       }, HANDSHAKE_TIMEOUT_MS);
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (ws !== socket) return;
-      // closed before open = the daemon destroyed the upgrade (bad/no token)
-      if (!opened) lastWasHandshakeClose = true;
+      // closed before open = the daemon destroyed the upgrade; a 1002 after our
+      // helloAck = the daemon refused its proof (stale token). Either way re-pair first.
+      if (!opened || (acknowledged && event?.code === 1002)) lastWasHandshakeClose = true;
       connected = false;
       vaultChannel.setSupported(false);
       vaultChannel.failUiRequests();
@@ -397,10 +375,30 @@ export async function connect() {
             refuseDaemon(socket, compatibility.reason || 'Incompatible daemon protocol');
             return;
           }
-          // Before the ack and before any tool call: stale locks of a previous daemon go now.
+          const verified = await verifyWebSocketDaemonProof(enrollmentSecret, msg, clientNonce);
+          // The proof is checked asynchronously: the socket may have closed meanwhile.
+          if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+          if (!verified) {
+            lastWasHandshakeClose = true;
+            refuseDaemon(socket, 'Daemon authentication failed. Check the local pairing and restart the daemon.');
+            return;
+          }
+          const acknowledgement = {
+            ...buildExtensionHelloAck(chrome.runtime.getManifest().version, browserIdentity),
+            clientNonce,
+            instanceId: msg.instanceId,
+          };
+          acknowledgement.authProof = await createWebSocketClientProof(wsToken, msg, {
+            ...browserIdentity,
+            capabilities: acknowledgement.capabilities,
+          });
+          if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
+          socket.send(JSON.stringify(acknowledgement));
+          acknowledged = true;
+          daemonAuthenticated = true;
+          // Only a proven daemon may cause state adoption or vault negotiation.
           adoptDaemonInstance(msg.instanceId);
-          vaultChannel.setSupported(Array.isArray(msg.capabilities) && msg.capabilities.includes('credential-vault-v1'));
-          socket.send(JSON.stringify(buildExtensionHelloAck(chrome.runtime.getManifest().version, browserIdentity)));
+          vaultChannel.setSupported(msg.capabilities.includes('credential-vault-v1'));
           clearTimeout(handshakeTimeout);
           handshakeTimeout = null;
           connected = true;
@@ -410,6 +408,10 @@ export async function connect() {
           updateBadge('connected');
           broadcastStatus('Connected');
           vaultChannel.sendProtectionState();
+          return;
+        }
+        if (!daemonAuthenticated) {
+          refuseDaemon(socket, 'Daemon authentication is required before messages are accepted.');
           return;
         }
         if (msg.type === 'ping') {

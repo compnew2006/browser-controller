@@ -5,6 +5,7 @@
 // / unlockAll + daemon /pair /status /kill).
 import { escapeHtml, agentLabelFor, controlBadgeParts, openTabsSignature, renderOpenTabRows } from './open-tabs-view.js';
 import { bindVaultOpenButton } from './popup-vault.js';
+import { authenticatedDaemonFetch } from '../lib/daemon-auth.js';
 
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -109,23 +110,17 @@ function daemonHttpBase() {
   return `http://127.0.0.1:${portInput.value || 7225}`;
 }
 
-/**
- * Authenticated fetch wrapper: sends the enrollment secret in the
- * X-BC-Enrollment header on every daemon HTTP call. Without this, /pair
- * (and /status, /kill) return 403 — the daemon gates all HTTP behind the
- * secret to stop a co-installed hostile extension from obtaining the token
- * even if it wins the Origin-pin race. See SECURITY.md.
- */
 async function daemonFetch(pathAndQuery) {
-  return fetch(`${daemonHttpBase()}${pathAndQuery}`, {
-    cache: 'no-store',
-    headers: { 'X-BC-Enrollment': enrollment },
+  return authenticatedDaemonFetch({
+    baseUrl: daemonHttpBase(),
+    target: pathAndQuery,
+    enrollmentSecret: enrollment,
   });
 }
 
 /**
  * Auto-pair: fetch the daemon's token over localhost and hand it to the
- * background worker, which offers it in the WS subprotocol. Runs once on popup
+ * background worker, which proves it in the WS handshake. Runs once on popup
  * open; safe to re-run. Silent if the daemon isn't up yet (it'll retry).
  * Requires the enrollment secret — without it /pair returns 403.
  */
@@ -365,8 +360,8 @@ document.addEventListener('visibilitychange', () => {
 refreshStatus();
 startPolling();
 
-// On open: recall the enrollment secret from storage (required before any
-// daemon HTTP call, since the daemon gates /pair, /status, /kill behind it).
+// On open: recall the enrollment secret from storage before authenticating
+// popup requests to the local daemon.
 chrome.storage.local.get(['enrollmentSecret'], (stored) => {
   if (typeof stored.enrollmentSecret === 'string') {
     enrollment = stored.enrollmentSecret;
@@ -416,7 +411,7 @@ bindDebouncedInput(tokenInput, 600, () => {
 });
 
 // Enrollment secret: persists to chrome.storage.local so it survives popup
-// reopens. Changing it re-attempts /pair under the new secret — this is how
+// reopens. Changing it re-attempts authenticated /pair — this is how
 // the user recovers after pasting the wrong value or after rotating the
 // daemon's enrollment.json.
 bindDebouncedInput(enrollmentInput, 400, () => {

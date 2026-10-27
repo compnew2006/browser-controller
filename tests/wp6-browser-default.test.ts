@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
-import { buildExtensionHelloAck } from '../mcp-server/src/protocol.js';
+import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
 
 /**
  * WP6 item 3: the default browser is the EARLIEST-seen live browser. A browser
@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 async function startBridge() {
-  const bridge = new ExtensionBridge({ port: ++port, maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
+  const bridge = new ExtensionBridge({ port: ++port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
   bridges.push(bridge);
   await bridge.start();
   return { bridge, port };
@@ -45,12 +45,13 @@ async function fakeBrowser(p: number, browserId: string) {
   sockets.push(ws);
   ws.on('message', (data) => {
     const msg = JSON.parse(data.toString());
-    if (msg.type === 'hello') ws.send(JSON.stringify({ ...buildExtensionHelloAck('test'), browserId, browserLabel: `Chrome ${browserId}` }));
+    if (msg.type === 'hello') ws.send(authenticatedHelloAck(msg, { browserId, browserLabel: `Chrome ${browserId}` }));
     // browser_tabs answers with text, as the extension does: the bridge puts the browser lines in front of it.
     if (msg.tool === 'browser_tabs') ws.send(JSON.stringify({ id: msg.id, success: true, result: { from: browserId, text: `tabs of ${browserId}` } }));
     else if (msg.tool) ws.send(JSON.stringify({ id: msg.id, success: true, result: { from: browserId } }));
   });
   await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
+  sendAuthInit(ws);
   await new Promise((r) => setTimeout(r, 60));
   return ws;
 }

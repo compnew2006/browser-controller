@@ -17,6 +17,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const { authenticatedHttpGet } = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'bridge-auth.js')).href);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ensure = (condition, message) => { if (!condition) throw new Error(message); };
 const privateDiagnostics = { stage: 'setup', secrets: new Set(), logs: [] };
@@ -48,8 +49,7 @@ async function waitForDaemon(port, secret, child) {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error('isolated daemon exited before readiness');
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/status`, {
-        headers: { 'X-BC-Enrollment': secret },
+      const response = await authenticatedHttpGet(`http://127.0.0.1:${port}`, '/status', secret, {
         signal: AbortSignal.timeout(700),
       });
       if (response.ok) return;

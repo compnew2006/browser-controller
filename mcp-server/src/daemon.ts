@@ -118,8 +118,8 @@ class Daemon {
     // out the auth token). See SECURITY.md "First-contact TOFU window".
     this.enrollmentSecret = loadOrCreateEnrollment().secret;
     // Forward the token + enrollment secret to the bridge so the WS upgrade
-    // (subprotocol auth, plan 3.1) and the HTTP endpoints (X-BC-Enrollment auth)
-    // are both enforced. Without these the guards in bridge.ts are dead code.
+    // (challenge-response authentication) and HTTP endpoints (signed challenge,
+    // request proof, and response proof) are all enforced by the bridge.
     this.bridge = new ExtensionBridge({
       port: DEFAULT_WS_PORT,
       host: DEFAULT_WS_HOST,

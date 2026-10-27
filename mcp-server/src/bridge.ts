@@ -9,13 +9,17 @@ import {
   validateExtensionHelloAck,
 } from './protocol.js';
 import {
-  AUTH_PROTOCOL_PREFIX,
-  corsHeaders,
-  extractToken,
-  isAllowedOrigin,
   isDaemonResponsiveOnPort,
-  tokensMatch,
+  isAllowedOrigin,
 } from './bridge-security.js';
+import { createBridgeHttpHandler, type HttpRequestHandler } from './bridge-http.js';
+export type { HttpRequestHandler } from './bridge-http.js';
+import {
+  BridgeHttpAuthenticator,
+  isValidAuthNonce,
+  newAuthNonce,
+  verifyWebSocketClientProof,
+} from './bridge-auth.js';
 import {
   ExtensionConnections,
   newConnection,
@@ -27,12 +31,6 @@ import { VaultBridgeTransport } from './vault/bridge-transport.js';
 
 export { isDaemonResponsiveOnPort } from './bridge-security.js';
 export { MAX_WS_MESSAGE_BYTES } from './bridge-frames.js';
-
-/** Handler for daemon-owned HTTP endpoints served on the bridge port. */
-export type HttpRequestHandler = (
-  req: http.IncomingMessage,
-  url: URL,
-) => unknown | void | Promise<unknown | void>;
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -51,15 +49,13 @@ interface PendingRequest {
 interface BridgeOptions {
   port: number;
   host?: string;
-  /** Auth token the extension must present in the bc-auth subprotocol (task 3.1). Empty = open. */
-  token?: string;
+  /** Auth token used to verify the extension proof after daemon identity is established. */
+  token: string;
   /**
-   * Enrollment secret the extension popup must present via the X-BC-Enrollment
-   * header on EVERY HTTP endpoint. Gates /pair (which hands out the token) so a
-   * co-installed hostile extension that wins the Origin-pinning race still
-   * cannot obtain the token. Empty = no enrollment gate (for tests / opt-out).
+   * Enrollment secret used to prove daemon identity and authenticate HTTP
+   * challenges without sending the secret to the extension or port owner.
    */
-  enrollmentSecret?: string;
+  enrollmentSecret: string;
   maxRetries?: number;
   pingIntervalMs?: number;
   defaultTimeoutMs?: number;
@@ -80,6 +76,7 @@ export class ExtensionBridge {
   private host: string;
   private token: string;
   private enrollmentSecret: string;
+  private httpAuthenticator: BridgeHttpAuthenticator;
   private maxRetries: number;
   private pingIntervalMs: number;
   private defaultTimeoutMs: number;
@@ -104,8 +101,9 @@ export class ExtensionBridge {
     // macOS that resolves to IPv6 ::1 only, which then refuses IPv4 127.0.0.1
     // clients. The extension + popup both use 127.0.0.1, so bind that stack.)
     this.host = options.host ?? '127.0.0.1';
-    this.token = options.token ?? '';
-    this.enrollmentSecret = options.enrollmentSecret ?? '';
+    this.token = options.token;
+    this.enrollmentSecret = options.enrollmentSecret;
+    this.httpAuthenticator = new BridgeHttpAuthenticator(this.enrollmentSecret, DAEMON_INSTANCE_ID);
     this.maxRetries = options.maxRetries ?? 2;
     this.pingIntervalMs = options.pingIntervalMs ?? 10_000;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
@@ -187,137 +185,90 @@ export class ExtensionBridge {
 
   private tryListen(): Promise<void> {
     return new Promise((resolve, reject) => {
-      // One http.Server serves BOTH the WebSocket (extension) and short HTTP
-      // requests (popup fetching the token / agent list). Attaching the WS
-      // server with noServer lets us run auth on the upgrade ourselves.
-      const server = http.createServer(async (req, res) => {
-        // Origin gate (exact-match on the pinned extension ID). Computed first
-        // so the OPTIONS preflight also respects it and so the pinned origin
-        // propagates to corsHeaders() for ACAO reflection.
-        const decision = isAllowedOrigin(req, this.pinnedExtensionOrigin);
-        // Preflight proves only browser origin, not enrollment. Reflect a valid
-        // candidate for CORS, but pin it only after the authenticated GET.
-        if (req.method === 'OPTIONS') {
-          res.writeHead(204, corsHeaders(req, decision.origin)).end();
-          return;
-        }
-        if (!decision.ok) {
-          res.writeHead(403).end('Forbidden');
-          return;
-        }
-        // Enrollment gate (closes first-contact TOFU race). When an enrollment
-        // secret is configured, EVERY HTTP request must carry it in the
-        // X-BC-Enrollment header. This is the layer that stops a co-installed
-        // hostile extension — even one that won the Origin pin — from fetching
-        // /pair and obtaining the auth token: it cannot know the secret (delivered
-        // out-of-band via MCP-client terminal output + manual popup
-        // entry). Without this, the Origin gate alone would leave /pair open to
-        // whoever wins the first-contact race. Constant-time compare to avoid a
-        // timing oracle on the secret.
-        if (!this.enrollmentSecret) {
-          // Fail closed: without a configured enrollment secret the whole HTTP
-          // surface is refused — /pair hands out the raw auth token, and every
-          // legitimate client (popup + extension) always sends the header. An
-          // empty secret means the embedder skipped loadOrCreateEnrollment();
-          // silently serving open-gated HTTP is never the right recovery.
-          res.writeHead(503).end('Enrollment secret not configured — refusing HTTP request');
-          return;
-        }
-        const presented = req.headers['x-bc-enrollment'];
-        const presentedStr = Array.isArray(presented) ? presented[0] : presented;
-        if (typeof presentedStr !== 'string' || !tokensMatch(presentedStr, this.enrollmentSecret)) {
-          res.writeHead(403).end('Forbidden: invalid enrollment');
-          return;
-        }
-        if (decision.origin && !this.pinnedExtensionOrigin) {
-          this.pinnedExtensionOrigin = decision.origin;
-        }
-        if (req.method !== 'GET' || !this.httpHandler) {
-          res.writeHead(404, corsHeaders(req, this.pinnedExtensionOrigin)).end('Not found');
-          return;
-        }
-        try {
-          const url = new URL(req.url || '/', `http://${this.host}`);
-          const out = await this.httpHandler(req, url);
-          if (out === undefined) {
-            // No handler claimed this path — answer 404 instead of leaving the
-            // response open (the client would hang until its own timeout).
-            res.writeHead(404, corsHeaders(req, this.pinnedExtensionOrigin)).end('Not found');
-            return;
-          }
-          const body = typeof out === 'string' ? out : JSON.stringify(out);
-          res.writeHead(200, { 'Content-Type': typeof out === 'string' ? 'text/plain' : 'application/json', ...corsHeaders(req, this.pinnedExtensionOrigin) });
-          res.end(body);
-        } catch (err) {
-          res.writeHead(500, corsHeaders(req, this.pinnedExtensionOrigin)).end(String(err instanceof Error ? err.message : err));
-        }
-      });
+      // One server handles authenticated HTTP routes and the extension WebSocket.
+      const server = http.createServer(createBridgeHttpHandler({
+        host: this.host,
+        authenticator: this.httpAuthenticator,
+        getHandler: () => this.httpHandler,
+        getPinnedOrigin: () => this.pinnedExtensionOrigin,
+        pinOrigin: (origin) => { this.pinnedExtensionOrigin = origin; },
+      }));
       this.httpServer = server;
-
-      // handleProtocols picks the subprotocol to ACK in the handshake. The
-      // extension offers `bc-auth.<token>`; we answer with the bare `bc-auth`
-      // prefix (token stripped) so the browser completes the handshake cleanly
-      // without the token reaching its protocol list. If the client offered no
-      // bc-auth variant (legacy query-token flow), we return false and let ws
-      // fall back to no subprotocol. The actual TOKEN auth still happens in the
-      // upgrade handler below — handleProtocols only shapes the response.
-      const pickAuthProtocol = (protocols: Set<string>): string | false => {
-        for (const p of protocols) {
-          if (p.startsWith(AUTH_PROTOCOL_PREFIX) || p === 'bc-auth') return 'bc-auth';
-        }
-        return false;
-      };
 
       this.wss = new WebSocketServer({
         noServer: true,
-        handleProtocols: pickAuthProtocol,
         maxPayload: Math.max(this.maxWsPayloadBytes, WS_HARD_MAX_PAYLOAD_BYTES),
+        // Never echo client-offered subprotocols. Authentication happens only
+        // in the nonce-bound proof exchange after the upgrade.
+        handleProtocols: () => false,
       });
 
       server.on('upgrade', (req, socket, head) => {
-        // Authenticate BEFORE completing the WebSocket handshake. This way a bad
-        // token never produces an open socket the extension would treat as live.
-        // Origin gate: same exact-match-on-pinned-extension-ID policy as the HTTP
-        // endpoints (a co-installed hostile extension would carry its OWN origin
-        // and can't forge ours). WS upgrades carry the browser-set Origin too, so
-        // the gate works identically here.
+        // The WebSocket authentication proof is exchanged after opening, but no
+        // credential is sent in the upgrade headers or URL.
         const wsDecision = isAllowedOrigin(req, this.pinnedExtensionOrigin);
         if (!wsDecision.ok) {
           socket.destroy();
           return;
-        }
-        if (this.token) {
-          // Only the Sec-WebSocket-Protocol subprotocol carries the token (never logged, never in the URL).
-          const presented = extractToken(req);
-          if (!tokensMatch(presented, this.token)) {
-            console.error('[Bridge] Extension rejected: missing/invalid token');
-            socket.destroy();
-            return;
-          }
-        }
-        if (wsDecision.origin && !this.pinnedExtensionOrigin) {
-          this.pinnedExtensionOrigin = wsDecision.origin;
         }
         this.wss!.handleUpgrade(req, socket, head, (ws) => {
           this.wss!.emit('connection', ws, req);
         });
       });
 
-      this.wss.on('connection', (ws: WebSocket, _req) => {
+      this.wss.on('connection', (ws: WebSocket, req) => {
         // Every socket is its own connection (browser). A reconnect of the same
         // browser replaces the old socket once the new one finished its handshake.
         const conn = newConnection(ws);
         this.conns.add(conn);
+        let clientNonce = '';
+        let serverNonce = '';
+        let helloSent = false;
 
         ws.on('message', (data: Buffer) => {
           if (rejectOversizedFrame(data, this.maxWsPayloadBytes, this.pendingRequests, conn, (f) => this.handleResponse(f, conn))) return;
           try {
             const msg = JSON.parse(data.toString());
-            if (msg.type === 'helloAck') {
-              // No legacy acceptance: an explicit protocolVersion and the 3.0 capabilities, or refuse.
+            if (conn.state === 'pending') {
+              if (!helloSent) {
+                if (msg.type !== 'authInit' || !isValidAuthNonce(msg.clientNonce)) {
+                  this.rejectExtensionHandshake(conn, 'Extension authentication initialization failed.');
+                  return;
+                }
+                clientNonce = msg.clientNonce;
+                serverNonce = newAuthNonce();
+                helloSent = true;
+                ws.send(JSON.stringify(buildExtensionHello(APP_VERSION, DAEMON_INSTANCE_ID, {
+                  clientNonce,
+                  serverNonce,
+                  enrollmentSecret: this.enrollmentSecret,
+                })));
+                return;
+              }
+              if (msg.type !== 'helloAck') {
+                this.rejectExtensionHandshake(conn, 'Extension authentication is required before using this connection.');
+                return;
+              }
               const check = validateExtensionHelloAck(msg);
-              if (check.ok) this.markExtensionReady(conn, msg);
-              else this.rejectExtensionHandshake(conn, check.reason ?? 'Extension protocol handshake failed.');
+              if (!check.ok) {
+                this.rejectExtensionHandshake(conn, check.reason ?? 'Extension protocol handshake failed.');
+                return;
+              }
+              if (!verifyWebSocketClientProof(this.token, msg, clientNonce, DAEMON_INSTANCE_ID, serverNonce)) {
+                this.rejectExtensionHandshake(conn, 'Extension authentication proof is invalid.');
+                return;
+              }
+              if (req.headers.origin && !this.pinnedExtensionOrigin) {
+                this.pinnedExtensionOrigin = req.headers.origin;
+              }
+              this.markExtensionReady(conn, msg);
+              return;
+            }
+            // Only a ready socket exchanges tool, vault, ping, or result frames; a refused
+            // one keeps delivering whatever it sent before the close completes.
+            if (conn.state !== 'ready') return;
+            if (msg.type === 'helloAck') {
+              this.rejectExtensionHandshake(conn, 'Extension authentication was already completed.');
               return;
             }
             if (msg.type === 'pong') {
@@ -341,15 +292,9 @@ export class ExtensionBridge {
           console.error('[Bridge] Socket error:', err.message);
         });
 
-        // The extension must answer the hello with its 3.0 helloAck in time. A silent peer
-        // (a pre-3.0 build) is refused: it never gets tool calls.
-        setTimeout(() => {
-          if (!this.conns.has(conn) || ws.readyState !== WebSocket.OPEN) return;
-          ws.send(JSON.stringify(buildExtensionHello(APP_VERSION, DAEMON_INSTANCE_ID)));
-          conn.handshakeTimer = setTimeout(() => {
-            if (this.conns.has(conn) && conn.state === 'pending') this.rejectExtensionHandshake(conn, OLDER_EXTENSION_REASON);
-          }, this.handshakeGraceMs);
-        }, 0);
+        conn.handshakeTimer = setTimeout(() => {
+          if (this.conns.has(conn) && conn.state === 'pending') this.rejectExtensionHandshake(conn, OLDER_EXTENSION_REASON);
+        }, this.handshakeGraceMs);
       });
 
       server.on('listening', () => {

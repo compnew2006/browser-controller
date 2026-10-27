@@ -2,8 +2,9 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { WebSocket } from 'ws';
 import http from 'node:http';
 import { ExtensionBridge, isDaemonResponsiveOnPort } from '../mcp-server/src/bridge.js';
+import { authenticatedHttpGet } from '../mcp-server/src/bridge-auth.js';
 import { WS_HARD_MAX_PAYLOAD_BYTES } from '../mcp-server/src/bridge-frames.js';
-import { buildExtensionHelloAck } from '../mcp-server/src/protocol.js';
+import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials, TEST_BRIDGE_TOKEN, TEST_ENROLLMENT_SECRET } from './helpers/bridge-auth.js';
 
 let portCounter = 20_000 + (process.pid % 5_000);
 function nextPort() { return portCounter++; }
@@ -15,31 +16,42 @@ describe('isDaemonResponsiveOnPort', () => {
     servers = [];
   });
 
-  it('returns true when /pair answers with a token (a healthy daemon)', async () => {
+  it('returns true only when a daemon proves its identity on the occupied port', async () => {
     const port = nextPort();
-    const s = http.createServer((req, res) => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ token: 'abc123' }));
-    });
-    servers.push(s);
-    await new Promise<void>((r) => s.listen(port, '127.0.0.1', r));
-    await expect(isDaemonResponsiveOnPort('127.0.0.1', port)).resolves.toBe(true);
+    const bridge = new ExtensionBridge({ port, ...testBridgeCredentials() });
+    bridge.registerHttpHandler(() => ({ ok: true }));
+    await bridge.start();
+    try {
+      await expect(isDaemonResponsiveOnPort('127.0.0.1', port, 1200, TEST_ENROLLMENT_SECRET)).resolves.toBe(true);
+    } finally {
+      bridge.stop();
+    }
   });
 
   it('returns false when nothing is listening on the port', async () => {
     const port = nextPort(); // nothing bound
-    await expect(isDaemonResponsiveOnPort('127.0.0.1', port)).resolves.toBe(false);
+    await expect(isDaemonResponsiveOnPort('127.0.0.1', port, 1200, TEST_ENROLLMENT_SECRET)).resolves.toBe(false);
   });
 
   it('returns false when a non-daemon server holds the port (wrong body shape)', async () => {
     const port = nextPort();
-    const s = http.createServer((_req, res) => {
+    const seen: Array<{ url?: string; hasEnrollmentHeader: boolean; hasProofHeader: boolean }> = [];
+    const s = http.createServer((req, res) => {
+      seen.push({
+        url: req.url,
+        hasEnrollmentHeader: Boolean(req.headers['x-bc-enrollment']),
+        hasProofHeader: Boolean(req.headers['x-bc-client-proof']),
+      });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ hello: 'world' })); // no `token` field
     });
     servers.push(s);
     await new Promise<void>((r) => s.listen(port, '127.0.0.1', r));
-    await expect(isDaemonResponsiveOnPort('127.0.0.1', port)).resolves.toBe(false);
+    await expect(isDaemonResponsiveOnPort('127.0.0.1', port, 1200, TEST_ENROLLMENT_SECRET)).resolves.toBe(false);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].url).toMatch(/^\/auth\/challenge\?clientNonce=/);
+    expect(seen[0].hasEnrollmentHeader).toBe(false);
+    expect(seen[0].hasProofHeader).toBe(false);
   });
 
   it('returns false when the server hangs (timeout, no response)', async () => {
@@ -47,7 +59,7 @@ describe('isDaemonResponsiveOnPort', () => {
     const s = http.createServer(() => { /* never responds */ });
     servers.push(s);
     await new Promise<void>((r) => s.listen(port, '127.0.0.1', r));
-    await expect(isDaemonResponsiveOnPort('127.0.0.1', port, 300)).resolves.toBe(false);
+    await expect(isDaemonResponsiveOnPort('127.0.0.1', port, 300, TEST_ENROLLMENT_SECRET)).resolves.toBe(false);
   }, 5000);
 });
 
@@ -71,20 +83,20 @@ describe('ExtensionBridge', () => {
       port,
       maxRetries: opts?.maxRetries ?? 1,
       pingIntervalMs: 60_000,
-      token: opts?.token,
-      enrollmentSecret: opts?.enrollmentSecret,
+      token: opts?.token ?? TEST_BRIDGE_TOKEN,
+      enrollmentSecret: opts?.enrollmentSecret ?? TEST_ENROLLMENT_SECRET,
       maxWsPayloadBytes: opts?.maxWsPayloadBytes,
     });
     bridges.push(b);
     return b;
   }
 
-  /** Answer the daemon's hello the way a 3.0 extension does; the helloAck names the browser. */
+  /** Answer the authenticated daemon hello; credentials remain proof inputs, not wire fields. */
   function answerHello(client: WebSocket, browserId?: string): void {
     client.on('message', (data) => {
       const msg = JSON.parse(data.toString());
       if (msg.type === 'hello') {
-        client.send(JSON.stringify({ ...buildExtensionHelloAck('test'), ...(browserId ? { browserId, browserLabel: browserId } : {}) }));
+        client.send(authenticatedHelloAck(msg, browserId ? { browserId, browserLabel: browserId } : {}));
       }
     });
   }
@@ -97,6 +109,7 @@ describe('ExtensionBridge', () => {
       client.on('open', resolve);
       client.on('error', reject);
     });
+    sendAuthInit(client);
     await new Promise(r => setTimeout(r, 30));
     return client;
   }
@@ -140,12 +153,12 @@ describe('ExtensionBridge', () => {
 
   it('an oversized frame with no call to fail is dropped and the connection stays up', async () => {
     const port = nextPort();
-    // 200 bytes: the ~142-byte helloAck still fits, the 256-byte frame does not.
-    const bridge = createBridge(port, { maxWsPayloadBytes: 200 });
+    // 500 bytes fit the authenticated helloAck; the 600-byte frame does not.
+    const bridge = createBridge(port, { maxWsPayloadBytes: 500 });
     await bridge.start();
 
     const client = await connectClient(port);
-    client.send('x'.repeat(256));
+    client.send('x'.repeat(600));
     await new Promise((r) => setTimeout(r, 100));
     expect(bridge.isConnected()).toBe(true);
   });
@@ -267,109 +280,50 @@ describe('ExtensionBridge', () => {
     await expect(call).rejects.toThrow(/^NOT_CONNECTED: Extension disconnected; the call may still have run, so check the page before repeating it$/);
   });
 
-  // Task 3.1 regression guard: this test would have caught the daemon shipping
-  // with WS auth disabled (the token was loaded but never passed to the bridge).
-  it('with a token, REJECTS the right token when it is sent only in the ?token= query', async () => {
+  it('does not accept a token from a URL query as extension authentication', async () => {
     const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret' });
+    const bridge = createBridge(port, { token: 'server-token' });
     await bridge.start();
 
-    // The token travels only in the Sec-WebSocket-Protocol subprotocol (3.0 dropped the query fallback).
-    const client = new WebSocket(`ws://localhost:${port}?token=sekret`);
+    const client = new WebSocket(`ws://localhost:${port}?token=server-token`);
     clients.push(client);
-    client.on('error', () => { /* refused upgrade */ });
-    await new Promise<void>((resolve) => {
-      client.on('close', () => resolve());
-      client.on('error', () => resolve());
-      setTimeout(resolve, 300);
-    });
-    expect(bridge.isConnected()).toBe(false);
-  });
-
-  it('with a token, REJECTS a connection missing the token', async () => {
-    const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret' });
-    await bridge.start();
-
-    // The socket opens (handshake) then the server closes it for bad auth.
-    const client = new WebSocket(`ws://localhost:${port}`);
-    clients.push(client);
-    await new Promise<void>((resolve) => {
-      client.on('close', () => resolve());
-      client.on('error', () => resolve());
-    });
-    expect(bridge.isConnected()).toBe(false);
-  });
-
-  it('with a token, REJECTS a connection with a wrong token', async () => {
-    const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret' });
-    await bridge.start();
-
-    const client = new WebSocket(`ws://localhost:${port}?token=wrong`);
-    clients.push(client);
-    await new Promise<void>((resolve) => {
-      client.on('close', () => resolve());
-      client.on('error', () => resolve());
-    });
-    expect(bridge.isConnected()).toBe(false);
-  });
-
-  // --- Token via Sec-WebSocket-Protocol (token-out-of-URL hardening) --------
-  // The extension now sends the auth token in the subprotocol header so it
-  // never lands in the URL query (access logs / browser history). These guard
-  // the new path while keeping the legacy ?token= path working.
-  //
-  // The extension offers BOTH `bc-auth.<token>` (for the daemon to read the
-  // token) AND the bare `bc-auth` (so the daemon can ACK it without echoing the
-  // token back via ws.protocol). Tests mirror that dual-offer.
-  async function connectClientWithProtocol(
-    port: number,
-    subprotocols: string | string[],
-    path = '',
-  ): Promise<WebSocket> {
-    const client = new WebSocket(`ws://localhost:${port}${path}`, subprotocols);
-    clients.push(client);
-    answerHello(client);
     await new Promise<void>((resolve, reject) => {
-      client.on('open', resolve);
-      client.on('error', reject);
+      client.once('open', resolve);
+      client.once('error', reject);
     });
-    await new Promise(r => setTimeout(r, 30));
-    return client;
-  }
-
-  it('accepts a connection that presents the token via Sec-WebSocket-Protocol', async () => {
-    const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret' });
-    await bridge.start();
-
-    await connectClientWithProtocol(port, ['bc-auth.sekret', 'bc-auth']);
-    expect(bridge.isConnected()).toBe(true);
+    sendAuthInit(client);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(bridge.isConnected()).toBe(false);
+    client.close();
   });
 
-  it('REJECTS a token sent via subprotocol that does not match', async () => {
+  // --- Credentials are excluded from the WebSocket upgrade ---------------
+  it('rejects a subprotocol-bearing upgrade without echoing its offered credential', async () => {
     const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret' });
+    const bridge = createBridge(port);
     await bridge.start();
 
-    const client = new WebSocket(`ws://localhost:${port}`, ['bc-auth.wrong', 'bc-auth']);
+    const client = new WebSocket(`ws://localhost:${port}`, ['bc-auth.synthetic-secret', 'bc-auth']);
     clients.push(client);
     await new Promise<void>((resolve) => {
-      client.on('close', () => resolve());
-      client.on('error', () => resolve());
+      client.once('error', () => resolve());
+      client.once('close', () => resolve());
     });
     expect(bridge.isConnected()).toBe(false);
   });
 
-  it('reads only the subprotocol token: a conflicting ?token= query is ignored', async () => {
-    // The subprotocol token is the credential; the query string plays no part.
+  it('does not authenticate from a subprotocol even when its token text matches', async () => {
     const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret' });
+    const bridge = createBridge(port, { token: 'server-token' });
     await bridge.start();
 
-    await connectClientWithProtocol(port, ['bc-auth.sekret', 'bc-auth'], '?token=wrong');
-    expect(bridge.isConnected()).toBe(true);
+    const client = new WebSocket(`ws://localhost:${port}`, ['bc-auth.server-token', 'bc-auth']);
+    clients.push(client);
+    await new Promise<void>((resolve) => {
+      client.once('error', () => resolve());
+      client.once('close', () => resolve());
+    });
+    expect(bridge.isConnected()).toBe(false);
   });
 
   it('keeps the replacement extension connected when the old socket closes', async () => {
@@ -384,23 +338,6 @@ describe('ExtensionBridge', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(bridge.isConnected()).toBe(true);
-  });
-
-  it('honors a timing-safe match on tokens of equal length (constant-time path)', async () => {
-    // Two tokens that share a prefix but differ at the end must still reject.
-    // Guards against a regression where only a prefix or a non-constant compare
-    // would be used.
-    const port = nextPort();
-    const bridge = createBridge(port, { token: 'aaaaaaaaaa' });
-    await bridge.start();
-
-    const client = new WebSocket(`ws://localhost:${port}`, ['bc-auth.aaaaaXaaaa', 'bc-auth']);
-    clients.push(client);
-    await new Promise<void>((resolve) => {
-      client.on('close', () => resolve());
-      client.on('error', () => resolve());
-    });
-    expect(bridge.isConnected()).toBe(false);
   });
 
   // Regression (security review P2): a call is settled only by the browser it was sent to.
@@ -485,7 +422,7 @@ describe('ExtensionBridge', () => {
   it('forwards a cancel control message on timeout', async () => {
     const port = nextPort();
     // Non-idempotent tool with a tiny timeout so it fires deterministically.
-    const bridge = new ExtensionBridge({ port, maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 60 });
+    const bridge = new ExtensionBridge({ port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 60 });
     bridges.push(bridge);
     await bridge.start();
 
@@ -562,6 +499,41 @@ describe('ExtensionBridge', () => {
     });
   }
 
+  async function authenticatedGet(port: number, path: string, origin?: string, secret = TEST_ENROLLMENT_SECRET) {
+    const response = await authenticatedHttpGet(`http://127.0.0.1:${port}`, path, secret, {
+      fetchImpl: (input, init = {}) => fetch(input, {
+        ...init,
+        headers: { ...Object.fromEntries(new Headers(init.headers).entries()), ...(origin ? { Origin: origin } : {}) },
+      }),
+    });
+    return {
+      status: response.status,
+      body: response.body,
+      acao: response.headers.get('access-control-allow-origin') ?? undefined,
+    };
+  }
+
+  async function httpOptions(port: number, path: string, origin: string) {
+    return new Promise<{ status: number; acao?: string }>((resolve, reject) => {
+      const req = http.request(`http://127.0.0.1:${port}${path}`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: origin,
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'x-bc-client-nonce,x-bc-server-nonce,x-bc-client-proof',
+        },
+      }, (res) => {
+        res.resume();
+        res.on('end', () => resolve({
+          status: res.statusCode ?? 0,
+          acao: res.headers['access-control-allow-origin'] as string | undefined,
+        }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
   it('HTTP endpoints reject a web-page Origin (no token leak to sites)', async () => {
     const port = nextPort();
     const bridge = createBridge(port, { token: 'sekret' });
@@ -578,14 +550,11 @@ describe('ExtensionBridge', () => {
 
   it('HTTP endpoints accept the extension-popup Origin', async () => {
     const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret', enrollmentSecret: 'enroll-secret' });
+    const bridge = createBridge(port, { token: 'sekret', enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => ({ token: 'sekret' }));
     await bridge.start();
 
-    const res = await httpGet(port, '/pair', {
-      Origin: 'chrome-extension://abc123',
-      'X-BC-Enrollment': 'enroll-secret',
-    });
+    const res = await authenticatedGet(port, '/pair', 'chrome-extension://abc123');
     expect(res.status).toBe(200);
     expect(JSON.parse(res.body).token).toBe('sekret');
     // CORS reflects the extension origin so the browser exposes the body to it.
@@ -594,25 +563,16 @@ describe('ExtensionBridge', () => {
 
   it('HTTP endpoints accept a no-Origin local client (curl/scripts/tests)', async () => {
     const port = nextPort();
-    const bridge = createBridge(port, { enrollmentSecret: 'enroll-secret' });
+    const bridge = createBridge(port, { enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => ({ ok: true }));
     await bridge.start();
 
-    const res = await httpGet(port, '/status', { 'X-BC-Enrollment': 'enroll-secret' }); // no Origin header
+    const res = await authenticatedGet(port, '/status'); // no Origin header
     expect(res.status).toBe(200);
   });
 
   it('HTTP fails closed when no enrollment secret is configured', async () => {
-    // Defense-in-depth: a bridge constructed without an enrollment secret must
-    // refuse the whole HTTP surface — /pair hands out the raw auth token, and
-    // every legitimate client always sends the header. Never serve open-gated.
-    const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret' });
-    bridge.registerHttpHandler(() => ({ token: 'sekret' }));
-    await bridge.start();
-
-    const res = await httpGet(port, '/pair'); // no Origin, no enrollment header
-    expect(res.status).toBe(503);
+    expect(() => new ExtensionBridge({ port: nextPort(), token: 'sekret', enrollmentSecret: '' })).toThrow(/enrollment secret/i);
   });
 
   it('an unhandled path answers 404 instead of hanging (handler returns undefined)', async () => {
@@ -621,11 +581,11 @@ describe('ExtensionBridge', () => {
     // the response" — so no res.end() ever fired and the client hung until its
     // own timeout. Undefined must map to a real 404.
     const port = nextPort();
-    const bridge = createBridge(port, { enrollmentSecret: 'enroll-secret' });
+    const bridge = createBridge(port, { enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => undefined); // what Daemon.handleHttp does for unknown paths
     await bridge.start();
 
-    const res = await httpGet(port, '/nope', { 'X-BC-Enrollment': 'enroll-secret' });
+    const res = await authenticatedGet(port, '/nope');
     expect(res.status).toBe(404);
     expect(res.body).toBe('Not found');
   });
@@ -639,15 +599,12 @@ describe('ExtensionBridge', () => {
   // with `chrome-extension://`. This is the case a `startsWith` gate misses.
   it('rejects a second, different extension ID after the first is pinned', async () => {
     const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret', enrollmentSecret: 'enroll-secret' });
+    const bridge = createBridge(port, { token: 'sekret', enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => ({ ok: true }));
     await bridge.start();
 
     // First extension Origin → pinned (TOFU), request succeeds.
-    const first = await httpGet(port, '/status', {
-      Origin: 'chrome-extension://legitID',
-      'X-BC-Enrollment': 'enroll-secret',
-    });
+    const first = await authenticatedGet(port, '/status', 'chrome-extension://legitID');
     expect(first.status).toBe(200);
 
     // Different extension ID (a hostile co-installed extension) → must 403,
@@ -661,43 +618,45 @@ describe('ExtensionBridge', () => {
     const port = nextPort();
     const bridge = createBridge(port, {
       token: 'sekret',
-      enrollmentSecret: 'enroll-secret',
+      enrollmentSecret: TEST_ENROLLMENT_SECRET,
     });
     bridge.registerHttpHandler(() => ({ ok: true }));
     await bridge.start();
 
-    const hostile = await httpGet(port, '/status', {
-      Origin: 'chrome-extension://hostileID',
-      'X-BC-Enrollment': 'wrong',
-    });
+    const hostile = await httpGet(port, '/status', { Origin: 'chrome-extension://hostileID' });
     expect(hostile.status).toBe(403);
 
-    const legitimate = await httpGet(port, '/status', {
-      Origin: 'chrome-extension://legitID',
-      'X-BC-Enrollment': 'enroll-secret',
-    });
+    const legitimate = await authenticatedGet(port, '/status', 'chrome-extension://legitID');
     expect(legitimate.status).toBe(200);
     expect(legitimate.acao).toBe('chrome-extension://legitID');
   });
 
   it('keeps serving the pinned extension ID on subsequent requests', async () => {
     const port = nextPort();
-    const bridge = createBridge(port, { token: 'sekret', enrollmentSecret: 'enroll-secret' });
+    const bridge = createBridge(port, { token: 'sekret', enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => ({ ok: true }));
     await bridge.start();
 
-    const first = await httpGet(port, '/status', {
-      Origin: 'chrome-extension://legitID',
-      'X-BC-Enrollment': 'enroll-secret',
-    });
+    const first = await authenticatedGet(port, '/status', 'chrome-extension://legitID');
     expect(first.status).toBe(200);
 
     // Same ID again → still 200, and CORS reflects exactly that origin.
-    const again = await httpGet(port, '/status', {
-      Origin: 'chrome-extension://legitID',
-      'X-BC-Enrollment': 'enroll-secret',
-    });
+    const again = await authenticatedGet(port, '/status', 'chrome-extension://legitID');
     expect(again.status).toBe(200);
     expect(again.acao).toBe('chrome-extension://legitID');
+  });
+
+  it('rejects a CORS preflight from an extension id after another id was pinned', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    bridge.registerHttpHandler(() => ({ ok: true }));
+    await bridge.start();
+
+    const pinned = await authenticatedGet(port, '/status', 'chrome-extension://legitID');
+    expect(pinned.status).toBe(200);
+
+    const hostile = await httpOptions(port, '/status', 'chrome-extension://hostileID');
+    expect(hostile.status).toBe(403);
+    expect(hostile.acao).toBeUndefined();
   });
 });

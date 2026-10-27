@@ -1,11 +1,11 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import net from 'node:net';
-import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { authenticatedHttpGet } from '../mcp-server/src/bridge-auth.js';
 
 /**
  * Daemon restarts with real processes: the compiled daemon and thin MCP
@@ -83,16 +83,15 @@ function socketAnswers(state: State): Promise<boolean> {
   });
 }
 
-function status(state: State): Promise<{ pid: number; agents: Array<{ name: string }> } | null> {
-  return new Promise((resolve) => {
-    const req = http.get({ host: '127.0.0.1', port: state.port, path: '/status', headers: { 'X-BC-Enrollment': state.enrollment }, timeout: 1500 }, (res) => {
-      let body = '';
-      res.on('data', (c) => { body += c; });
-      res.on('end', () => { try { resolve(res.statusCode === 200 ? JSON.parse(body) : null); } catch { resolve(null); } });
+async function status(state: State): Promise<{ pid: number; agents: Array<{ name: string }> } | null> {
+  try {
+    const response = await authenticatedHttpGet(`http://127.0.0.1:${state.port}`, '/status', state.enrollment, {
+      signal: AbortSignal.timeout(1500),
     });
-    req.on('timeout', () => { req.destroy(); resolve(null); });
-    req.on('error', () => resolve(null));
-  });
+    return response.ok ? JSON.parse(response.body) : null;
+  } catch {
+    return null;
+  }
 }
 
 async function agentsPresent(state: State, names: string[]): Promise<boolean> {

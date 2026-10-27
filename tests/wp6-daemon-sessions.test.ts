@@ -7,6 +7,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { buildIpcHello, buildSessionId, newDaemonInstanceId } from '../mcp-server/src/protocol.js';
+import { newAuthNonce } from '../mcp-server/src/bridge-auth.js';
 
 /**
  * WP6 item 1a/1b (daemon side): session ids must not repeat across daemon
@@ -28,7 +29,7 @@ function sleep(ms: number): Promise<void> {
 
 let proc: ChildProcess | null = null;
 
-async function startDaemon(): Promise<string> {
+async function startDaemon(): Promise<{ token: string; enrollment: string }> {
   if (!fs.existsSync(DIST_DAEMON)) throw new Error(`${DIST_DAEMON} missing - run npm run build first`);
   proc = spawn(process.execPath, [DIST_DAEMON], {
     env: { ...process.env, BC_STATE_DIR: STATE, WS_PORT: String(WS_PORT), WS_HOST: '127.0.0.1' },
@@ -40,7 +41,12 @@ async function startDaemon(): Promise<string> {
       probe.once('connect', () => { probe.destroy(); resolve(true); });
       probe.once('error', () => resolve(false));
     });
-    if (up) return JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8')).token;
+    if (up) {
+      return {
+        token: JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8')).token,
+        enrollment: JSON.parse(fs.readFileSync(path.join(STATE, 'enrollment.json'), 'utf8')).secret,
+      };
+    }
     await sleep(50);
   }
   throw new Error('daemon never came up');
@@ -75,9 +81,9 @@ function ipcSessionId(token: string): Promise<string> {
 }
 
 /** The fake extension's view: the instance id in the daemon's hello. */
-function extensionHello(token: string): Promise<{ instanceId?: string }> {
+function extensionHello(enrollment: string): Promise<{ instanceId?: string }> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${WS_PORT}`, [`bc-auth.${token}`, 'bc-auth']);
+    const ws = new WebSocket(`ws://127.0.0.1:${WS_PORT}`);
     const timer = setTimeout(() => { ws.close(); reject(new Error('no hello within 5s')); }, 5000);
     ws.once('message', (data) => {
       clearTimeout(timer);
@@ -85,6 +91,7 @@ function extensionHello(token: string): Promise<{ instanceId?: string }> {
       resolve(JSON.parse(data.toString()));
     });
     ws.once('error', reject);
+    ws.once('open', () => ws.send(JSON.stringify({ type: 'authInit', clientNonce: newAuthNonce() })));
   });
 }
 
@@ -107,14 +114,14 @@ describe('instance and session id helpers', () => {
 
 describe('daemon restart (integration, built daemon)', { timeout: 30_000 }, () => {
   it('session ids and the extension hello instance id change across a restart', async () => {
-    const token1 = await startDaemon();
-    const session1 = await ipcSessionId(token1);
-    const hello1 = await extensionHello(token1);
+    const daemon1 = await startDaemon();
+    const session1 = await ipcSessionId(daemon1.token);
+    const hello1 = await extensionHello(daemon1.enrollment);
     await stopDaemon();
 
-    const token2 = await startDaemon();
-    const session2 = await ipcSessionId(token2);
-    const hello2 = await extensionHello(token2);
+    const daemon2 = await startDaemon();
+    const session2 = await ipcSessionId(daemon2.token);
+    const hello2 = await extensionHello(daemon2.enrollment);
 
     expect(session1).toMatch(/^s-[0-9a-z]{8}-1$/);
     expect(session2).toMatch(/^s-[0-9a-z]{8}-1$/);

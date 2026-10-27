@@ -1,5 +1,5 @@
-/** Keep in sync with mcp-server/src/protocol.ts (guarded by protocol tests). */
-export const PROTOCOL_VERSION = 1;
+/** Keep in sync with EXTENSION_PROTOCOL_VERSION in mcp-server/src/protocol.ts. */
+export const PROTOCOL_VERSION = 2;
 
 export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   'tool-dispatch',
@@ -30,14 +30,21 @@ export function validateDaemonHello(message) {
     return { ok: false, legacy: false, reason: OLDER_DAEMON_REASON };
   }
   if (message.protocolVersion !== PROTOCOL_VERSION) {
+    // The port owner is not authenticated yet and the popup shows this reason: name a number, never its text.
+    const received = Number.isSafeInteger(message.protocolVersion) ? ` ${String(message.protocolVersion)}` : '';
     return {
       ok: false,
       legacy: false,
-      reason: `Unsupported protocol version ${String(message.protocolVersion)}; expected ${PROTOCOL_VERSION}. Restart the daemon and reload the extension.`,
+      reason: `Unsupported protocol version${received}; expected ${PROTOCOL_VERSION}. Restart the daemon and reload the extension.`,
     };
   }
   if (!Array.isArray(message.capabilities)) {
     return { ok: false, legacy: false, reason: OLDER_DAEMON_REASON };
+  }
+  if (typeof message.instanceId !== 'string' || !message.instanceId ||
+      typeof message.clientNonce !== 'string' || !message.clientNonce ||
+      typeof message.authProof !== 'string' || !message.authProof) {
+    return { ok: false, legacy: false, reason: 'Daemon authentication failed. Reload the extension and restart the daemon.' };
   }
   const missing = REQUIRED_DAEMON_CAPABILITIES.filter((capability) => !message.capabilities.includes(capability));
   if (missing.length && missing.includes(TOOLS_V3_CAPABILITY)) {

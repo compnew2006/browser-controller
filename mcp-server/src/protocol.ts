@@ -1,7 +1,14 @@
 import { randomInt } from 'node:crypto';
+import {
+  createWebSocketDaemonProof,
+  createWebSocketClientProof,
+  WS_AUTH_PROTOCOL_VERSION,
+} from './bridge-auth.js';
 
 /** Wire-protocol contract shared by the thin client, daemon, and extension. */
 export const PROTOCOL_VERSION = 1;
+/** Version for extension WebSocket authentication; IPC remains at PROTOCOL_VERSION. */
+export const EXTENSION_PROTOCOL_VERSION = WS_AUTH_PROTOCOL_VERSION;
 
 /** Random id: 8 base36 characters. */
 export function newDaemonInstanceId(): string {
@@ -109,8 +116,15 @@ export function validateExtensionHelloAck(message: { protocolVersion?: unknown; 
   if (message.protocolVersion === undefined || message.protocolVersion === null) {
     return { ok: false, legacy: false, reason: OLDER_EXTENSION_REASON };
   }
-  const version = validateProtocolVersion(message.protocolVersion);
-  if (!version.ok) return version;
+  if (message.protocolVersion !== EXTENSION_PROTOCOL_VERSION) {
+    // The peer is not authenticated yet and agents read this reason: name a number, never its text.
+    const received = Number.isSafeInteger(message.protocolVersion) ? ` ${String(message.protocolVersion)}` : '';
+    return {
+      ok: false,
+      legacy: false,
+      reason: `Unsupported extension protocol version${received}; expected ${EXTENSION_PROTOCOL_VERSION}. Reload the extension and restart the daemon.`,
+    };
+  }
   return validateExtensionCapabilities(message.capabilities);
 }
 
@@ -161,22 +175,56 @@ export function buildIpcWelcome(sessionId: string) {
   };
 }
 
-export function buildExtensionHello(appVersion: string, instanceId?: string) {
-  return {
+export function buildExtensionHello(
+  appVersion: string,
+  instanceId?: string,
+  auth?: { clientNonce: string; serverNonce: string; enrollmentSecret: string },
+) {
+  const hello = {
     type: 'hello' as const,
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: EXTENSION_PROTOCOL_VERSION,
     appVersion,
     capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
     // Optional: a daemon from before instance ids sends none.
     ...(instanceId ? { instanceId } : {}),
+    ...(auth ? { clientNonce: auth.clientNonce, serverNonce: auth.serverNonce } : {}),
   };
+  return auth && instanceId
+    ? { ...hello, authProof: createWebSocketDaemonProof(auth.enrollmentSecret, {
+      protocolVersion: EXTENSION_PROTOCOL_VERSION,
+      clientNonce: auth.clientNonce,
+      serverNonce: auth.serverNonce,
+      instanceId,
+      capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
+    }) }
+    : hello;
 }
 
-export function buildExtensionHelloAck(appVersion?: string) {
-  return {
+export function buildExtensionHelloAck(
+  appVersion?: string,
+  auth?: { token: string; clientNonce: string; serverNonce: string; instanceId: string; browserId?: string; browserLabel?: string },
+) {
+  const acknowledgement = {
     type: 'helloAck' as const,
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: EXTENSION_PROTOCOL_VERSION,
     ...(appVersion ? { appVersion } : {}),
     capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
+    ...(auth ? {
+      clientNonce: auth.clientNonce,
+      instanceId: auth.instanceId,
+      ...(auth.browserId ? { browserId: auth.browserId } : {}),
+      ...(auth.browserLabel ? { browserLabel: auth.browserLabel } : {}),
+    } : {}),
   };
+  return auth
+    ? { ...acknowledgement, authProof: createWebSocketClientProof(auth.token, {
+      protocolVersion: EXTENSION_PROTOCOL_VERSION,
+      clientNonce: auth.clientNonce,
+      serverNonce: auth.serverNonce,
+      instanceId: auth.instanceId,
+      browserId: auth.browserId,
+      browserLabel: auth.browserLabel,
+      capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
+    }) }
+    : acknowledgement;
 }

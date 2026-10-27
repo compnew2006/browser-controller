@@ -8,7 +8,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
-import http from 'node:http';
 import net from 'node:net';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -29,19 +28,22 @@ function pidAlive(pid) {
 function enrollmentSecret() {
   try { return JSON.parse(fs.readFileSync(path.join(stateDir, 'enrollment.json'), 'utf8')).secret || null; } catch { return null; }
 }
-/** GET /status from the daemon's HTTP port (enrollment-gated); null when nothing answers. */
-function daemonStatus(info, timeoutMs = 1500) {
+/** GET /status only after the recorded daemon proves its identity; null otherwise. */
+async function daemonStatus(info, timeoutMs = 1500) {
   const secret = enrollmentSecret();
-  if (!info?.port || !secret) return Promise.resolve(null);
-  return new Promise((resolve) => {
-    const req = http.get({ host: info.host || '127.0.0.1', port: info.port, path: '/status', headers: { 'X-BC-Enrollment': secret }, timeout: timeoutMs }, (res) => {
-      let body = '';
-      res.on('data', (c) => { body += c; });
-      res.on('end', () => { try { resolve(res.statusCode === 200 ? JSON.parse(body) : null); } catch { resolve(null); } });
-    });
-    req.on('timeout', () => { req.destroy(); resolve(null); });
-    req.on('error', () => resolve(null));
-  });
+  if (!info?.port || !secret) return null;
+  try {
+    const { authenticatedHttpGet } = await import(pathToFileURL(path.join(root, 'mcp-server', 'dist', 'bridge-auth.js')).href);
+    const response = await authenticatedHttpGet(
+      `http://${info.host || '127.0.0.1'}:${info.port}`,
+      '/status',
+      secret,
+      { signal: AbortSignal.timeout(timeoutMs) },
+    );
+    return response.ok ? JSON.parse(response.body) : null;
+  } catch {
+    return null;
+  }
 }
 /** Does a Browser Controller daemon answer on the IPC socket? (Any protocol frame back proves it.) */
 function ipcAnswers(socketPath, timeoutMs = 1500) {
@@ -105,7 +107,7 @@ async function start() {
   const info = await waitForStart();
   console.log(`daemon started (pid ${info.pid})`);
   console.log(`MCP stdio entry: ${path.join(root, 'mcp-server', 'dist', 'index.js')}`);
-  console.log(`daemon endpoints: http/ws://${info.host}:${info.port} (WS + /pair /status /kill); IPC ${info.socket}`);
+  console.log(`daemon endpoints: http/ws://${info.host}:${info.port} (authenticated WS + /pair /status /kill); IPC ${info.socket}`);
 }
 async function stop() {
   const info = readInfo();

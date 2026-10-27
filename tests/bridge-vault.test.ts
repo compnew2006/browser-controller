@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
-import { CREDENTIAL_VAULT_CAPABILITY, buildExtensionHelloAck } from '../mcp-server/src/protocol.js';
+import { CREDENTIAL_VAULT_CAPABILITY, EXTENSION_PROTOCOL_CAPABILITIES } from '../mcp-server/src/protocol.js';
+import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
 
 let port = 31_000 + (process.pid % 3_000);
 const sockets: WebSocket[] = [];
@@ -16,7 +17,7 @@ afterEach(async () => {
 });
 
 function startBridge() {
-  const bridge = new ExtensionBridge({ port: ++port, maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 150 });
+  const bridge = new ExtensionBridge({ port: ++port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 150 });
   bridges.push(bridge);
   return bridge.start().then(() => bridge);
 }
@@ -31,11 +32,15 @@ async function connectExtension(
   socket.on('message', (data) => {
     const message = JSON.parse(data.toString());
     if (message.type === 'hello') {
-      const ack = buildExtensionHelloAck('test');
       const capabilities = options.vault === false
-        ? ack.capabilities.filter((capability) => capability !== CREDENTIAL_VAULT_CAPABILITY)
-        : ack.capabilities;
-      socket.send(JSON.stringify({ ...ack, capabilities, browserId, browserLabel: `Fixture ${browserId}` }));
+        ? EXTENSION_PROTOCOL_CAPABILITIES.filter((capability) => capability !== CREDENTIAL_VAULT_CAPABILITY)
+        : undefined;
+      const ack = authenticatedHelloAck(message, {
+        browserId,
+        browserLabel: `Fixture ${browserId}`,
+        ...(capabilities ? { capabilities } : {}),
+      });
+      socket.send(ack);
       return;
     }
     options.onFrame?.(socket, message);
@@ -44,6 +49,7 @@ async function connectExtension(
     socket.once('open', resolve);
     socket.once('error', reject);
   });
+  sendAuthInit(socket);
   await new Promise((resolve) => setTimeout(resolve, 35));
   return socket;
 }

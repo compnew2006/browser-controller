@@ -161,13 +161,10 @@ export const TOKEN_FILE = path.join(STATE_DIR, 'token.json');
 
 /**
  * Enrollment secret file. A one-time out-of-band secret the legitimate
- * extension must present (via the X-BC-Enrollment header) on EVERY HTTP
- * endpoint — most importantly /pair, which is how it first obtains the auth
- * token. This closes the first-contact TOFU race: even if a co-installed
- * hostile extension wins the Origin-pinning race, it cannot obtain the token
- * because it does not know the enrollment secret (delivered to the user via
- * MCP-client terminal output and entered manually in the popup
- * once). See SECURITY.md "First-contact TOFU window".
+ * extension uses to authenticate signed daemon challenges and WebSocket
+ * hellos. The secret itself is never sent over HTTP or WebSocket. It is
+ * delivered to the user via MCP-client terminal output and entered in the
+ * popup, or returned by the Chrome-gated native pairing host.
  */
 export const ENROLLMENT_FILE = path.join(STATE_DIR, 'enrollment.json');
 

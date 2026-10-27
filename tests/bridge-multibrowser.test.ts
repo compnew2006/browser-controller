@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
-import { buildExtensionHelloAck } from '../mcp-server/src/protocol.js';
+import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
 import { buildExtensionHelloAck as extensionHelloAck } from '../extension/lib/protocol.js';
 
 let port = 26_000 + (process.pid % 3_000);
@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 async function startBridge() {
-  const bridge = new ExtensionBridge({ port: ++port, maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
+  const bridge = new ExtensionBridge({ port: ++port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
   bridges.push(bridge);
   await bridge.start();
   return { bridge, port };
@@ -30,7 +30,7 @@ async function fakeBrowser(p: number, browserId: string, opts: { silent?: boolea
   const calls: string[] = [];
   ws.on('message', (data) => {
     const msg = JSON.parse(data.toString());
-    if (msg.type === 'hello') ws.send(JSON.stringify({ ...buildExtensionHelloAck('test'), browserId, browserLabel: `Chrome ${browserId}` }));
+    if (msg.type === 'hello') ws.send(authenticatedHelloAck(msg, { browserId, browserLabel: `Chrome ${browserId}` }));
     if (msg.tool) {
       calls.push(msg.tool);
       // silent: never answers a call, except a browser_tabs list (the bridge selects the browser before it lists).
@@ -43,6 +43,7 @@ async function fakeBrowser(p: number, browserId: string, opts: { silent?: boolea
     }
   });
   await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject); });
+  sendAuthInit(ws);
   await new Promise((r) => setTimeout(r, 60));
   return { ws, calls };
 }

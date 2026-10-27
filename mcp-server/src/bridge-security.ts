@@ -1,7 +1,8 @@
 import http from 'node:http';
-import crypto from 'node:crypto';
+import { authenticatedHttpGet } from './bridge-auth.js';
 
 const ALLOWED_METHODS = 'GET, OPTIONS';
+const ALLOWED_HEADERS = 'X-BC-Client-Nonce, X-BC-Server-Nonce, X-BC-Client-Proof';
 const EXTENSION_ORIGIN_PREFIX = 'chrome-extension://';
 
 /** Build restrictive CORS headers for the one pinned extension origin. */
@@ -14,13 +15,15 @@ export function corsHeaders(
     return {
       'Access-Control-Allow-Origin': origin,
       'Access-Control-Allow-Methods': ALLOWED_METHODS,
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': ALLOWED_HEADERS,
+      'Access-Control-Expose-Headers': 'X-BC-Response-Proof',
       Vary: 'Origin',
     };
   }
   return {
     'Access-Control-Allow-Methods': ALLOWED_METHODS,
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': ALLOWED_HEADERS,
+    'Access-Control-Expose-Headers': 'X-BC-Response-Proof',
   };
 }
 
@@ -37,50 +40,24 @@ export function isAllowedOrigin(
   return { ok: !pinnedOrigin || origin === pinnedOrigin, origin };
 }
 
-/** Prefix used to transport the auth token without putting it in the URL. */
-export const AUTH_PROTOCOL_PREFIX = 'bc-auth.';
-
-/**
- * The auth token comes only from the `bc-auth.<token>` WebSocket subprotocol. A
- * ?token= query is never read: query strings reach access logs and history.
- */
-export function extractToken(req: http.IncomingMessage): string {
-  const header = req.headers['sec-websocket-protocol'];
-  if (header) {
-    const offers = Array.isArray(header) ? header : String(header).split(',');
-    for (const raw of offers) {
-      const protocol = raw.trim();
-      if (protocol.startsWith(AUTH_PROTOCOL_PREFIX)) {
-        return protocol.slice(AUTH_PROTOCOL_PREFIX.length);
-      }
-    }
-  }
-  return '';
-}
-
-/** Compare credentials in constant time while preserving exact string equality. */
-export function tokensMatch(presented: string, expected: string): boolean {
-  if (!presented || !expected) return false;
-  const actual = crypto.createHash('sha256').update(presented, 'utf8').digest();
-  const wanted = crypto.createHash('sha256').update(expected, 'utf8').digest();
-  return crypto.timingSafeEqual(actual, wanted);
-}
-
-/** Probe the authenticated daemon endpoint without trusting the port owner. */
+/** Verify the daemon's proof on the occupied port without sending a raw secret. */
 export async function isDaemonResponsiveOnPort(
   host: string,
   port: number,
   timeoutMs = 1200,
   enrollmentSecret = '',
 ): Promise<boolean> {
+  if (!enrollmentSecret) return false;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const headers = enrollmentSecret ? { 'X-BC-Enrollment': enrollmentSecret } : undefined;
   try {
-    const response = await fetch(`http://${host}:${port}/pair`, { signal: controller.signal, headers });
-    if (!response.ok) return false;
-    const body = (await response.json()) as { token?: unknown };
-    return typeof body?.token === 'string' && body.token.length > 0;
+    const response = await authenticatedHttpGet(
+      `http://${host}:${port}`,
+      '/status',
+      enrollmentSecret,
+      { signal: controller.signal },
+    );
+    return response.ok;
   } catch {
     return false;
   } finally {
