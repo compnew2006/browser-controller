@@ -2,8 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { allTools } from './tools/index.js';
-import { parseToolParams } from './tools/params.js';
-import { codedMessageOf } from './tools/types.js';
+import { prepareToolParams } from './tools/params.js';
+import { codedMessageOf, withNotes } from './tools/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from './tools/types.js';
 import { attachSafetyController } from './tools/action-support.js';
 
@@ -32,13 +32,14 @@ function codedResult(result: ToolResult): ToolResult {
 function wrapHandler(tool: ToolDefinition, host: ToolHost) {
   return async (params: Record<string, unknown>): Promise<ToolResult> => {
     let parsed: Record<string, unknown>;
+    let notes: string[];
     try {
-      parsed = parseToolParams(tool, params);
+      ({ params: parsed, notes } = prepareToolParams(tool, params));
     } catch (err) {
       return failure(err instanceof Error ? err.message : String(err));
     }
     try {
-      return codedResult(await tool.handler(host, parsed));
+      return withNotes(codedResult(await tool.handler(host, parsed)), notes);
     } catch (err) {
       return failure(err instanceof Error ? err.message : String(err));
     }

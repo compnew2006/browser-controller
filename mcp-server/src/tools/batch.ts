@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
-import { tabIdParam, textResult, failureResult, rawResultOf, codedMessageOf } from './types.js';
-import { parseToolParams } from './params.js';
+import { tabIdParam, textResult, failureResult, rawResultOf, codedMessageOf, withNotes } from './types.js';
+import { prepareToolParams } from './params.js';
 import { BATCH_BUDGET_MS, BATCH_MAX_DELAY_MS, BATCH_MAX_STEPS, NOT_BATCHABLE, NO_DEFAULT_TAB } from './batch-limits.js';
 
 /**
@@ -104,6 +104,8 @@ export const batchTool: ToolDefinition = {
     const deadline = Date.now() + BATCH_BUDGET_MS;
     let last: ToolResult = textResult('');
     const receipts: Array<Record<string, unknown>> = [];
+    // The batch answers with its last step: every step's notes go there, each with its step label.
+    const notes: string[] = [];
     const withReceipts = (result: ToolResult, success: boolean): ToolResult => receipts.length
       ? { ...result, structuredContent: { success, steps: receipts } }
       : result;
@@ -124,7 +126,9 @@ export const batchTool: ToolDefinition = {
           stepParams.tabId = tabId;
         }
         try {
-          const parsed = parseToolParams(def, stepParams);
+          const prepared = prepareToolParams(def, stepParams);
+          const parsed = prepared.params;
+          notes.push(...prepared.notes.map((note) => `${label}: ${note}`));
           const outcome = await untilDeadline(runStep(def, host, parsed, deadline), deadline);
           if (outcome === BUDGET_USED) {
             // A cut write step may have completed in the page: say so, as VAULT_OUTCOME_UNKNOWN does.
@@ -152,6 +156,6 @@ export const batchTool: ToolDefinition = {
       }
       last = result;
     }
-    return withReceipts(last, true);
+    return withReceipts(withNotes(last, notes), true);
   },
 };

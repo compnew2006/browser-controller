@@ -116,8 +116,18 @@ export function parseToolParams(tool: ToolDefinition, params: Record<string, unk
   } catch (err) {
     if (err instanceof z.ZodError) {
       const problems = err.issues.flatMap((issue) => describeIssue(issue, params));
+      // An unknown top-level name: list the tool's own, so the first retry is right.
+      if (err.issues.some((issue) => issue.code === 'unrecognized_keys' && issue.path.length === 0)) {
+        problems.push(`${tool.name} takes: ${Object.keys(tool.inputSchema.shape).join(', ')}`);
+      }
       throw new Error(`INVALID_ARGUMENT: ${problems.join('; ')}`, { cause: err });
     }
     throw err;
   }
+}
+
+/** Read the tool's borrowed names (ToolDefinition.normalize), then validate: the params and the result's note lines. */
+export function prepareToolParams(tool: ToolDefinition, params: Record<string, unknown>): { params: Record<string, unknown>; notes: string[] } {
+  const read = tool.normalize ? tool.normalize(params) : { params, notes: [] };
+  return { params: parseToolParams(tool, read.params), notes: read.notes };
 }

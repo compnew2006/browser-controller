@@ -374,7 +374,8 @@ describe('wait', () => {
   it('a timeout that is not met says so with the condition', async () => {
     expect(await handleWait({ tabId: 1, target: '#nope', timeout: 300 })).toEqual({
       success: false,
-      error: 'TIMEOUT: target #nope visible not met after 300 ms',
+      // The selector matched nothing in the page: the text says so, so the agent fixes the selector.
+      error: 'TIMEOUT: target #nope visible not met after 300 ms (it matched nothing: check the selector or take a snapshot)',
     });
   });
 

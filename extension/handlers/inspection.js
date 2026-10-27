@@ -118,7 +118,8 @@ export async function handleWait(params, _sessionId, _agentName, signal) {
   }
   // The last look found the ref's element gone: say so, so the agent takes a new snapshot instead of waiting again.
   const refGone = last?.refGone && parsed ? ` (ref ${parsed.ref} is no longer on the page)` : '';
-  return { success: false, error: `TIMEOUT: ${condition} not met after ${timeout} ms${refGone}` };
+  const miss = gone ? '' : { NOT_FOUND: ' (it matched nothing: check the selector or take a snapshot)', ELEMENT_HIDDEN: ' (it matched only hidden elements)' }[last?.miss] || '';
+  return { success: false, error: `TIMEOUT: ${condition} not met after ${timeout} ms${refGone}${miss}` };
 }
 
 /** The position line of a scroll reply: `x: 40 y: 1234 atEnd: false` (x only when scrolled sideways). */

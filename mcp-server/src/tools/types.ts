@@ -70,6 +70,12 @@ export interface ToolDefinition {
    * the tool's own time budget, not a transport timeout.
    */
   timeoutMs?: number;
+  /**
+   * Reads names an agent brings from other browser tools (Playwright's `text`, a screenshot
+   * `scale`) as this tool's own, before validation. Returns the params to validate and the
+   * note lines the result carries, so the agent learns the 3.0 form without a failed call.
+   */
+  normalize?: (params: Record<string, unknown>) => { params: Record<string, unknown>; notes: string[] };
 }
 
 export function textResult(text: string): ToolResult {
@@ -152,6 +158,18 @@ const rawResults = new WeakMap<ToolResult, unknown>();
 export function rawResultOf(result: ToolResult): Record<string, unknown> | undefined {
   const raw = rawResults.get(result);
   return raw !== null && typeof raw === "object" ? (raw as Record<string, unknown>) : undefined;
+}
+
+/** The result with note lines added to its last text; its machine fields stay attached. */
+export function withNotes(result: ToolResult, notes: string[]): ToolResult {
+  if (!notes.length) return result;
+  const last = result.content.map((item) => item.type).lastIndexOf("text");
+  const content: ToolResult["content"] = last < 0
+    ? [...result.content, { type: "text", text: notes.join("\n") }]
+    : result.content.map((item, i) => (i === last && item.type === "text" ? { ...item, text: `${item.text}\n${notes.join("\n")}` } : item));
+  const next: ToolResult = { ...result, content };
+  if (rawResults.has(result)) rawResults.set(next, rawResults.get(result));
+  return next;
 }
 
 /**

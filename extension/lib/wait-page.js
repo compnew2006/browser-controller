@@ -20,5 +20,7 @@ export function waitPage(_t, _fb, _gone, _urlText, _urlRe) {
     refGone: r.error === 'REF_GONE',
     // A ref re-found by its snapshot descriptor: the reply says so.
     rebound: r.via === 'fallback' ? _t.ref : null,
+    // Why the target is not visible, for the TIMEOUT text: a selector matching nothing is a wrong selector.
+    miss: r.error && /^(NOT_FOUND|ELEMENT_HIDDEN)/.test(r.error) ? r.error.split(':')[0] : null,
   };
 }

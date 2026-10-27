@@ -19,6 +19,28 @@ export const waitTool: ToolDefinition = {
       ctx.addIssue({ code: 'custom', path: ['target'], message: 'Give exactly one of target, url or ms' });
     }
   }),
+  // Playwright's browser_wait_for names (text, textGone, time in seconds) and a bare selector.
+  normalize: (params) => {
+    const out = { ...params };
+    const notes: string[] = [];
+    if (out.target === undefined) {
+      const [key] = ['text', 'textGone', 'selector'].filter((name) => typeof out[name] === 'string');
+      if (key) {
+        out.target = key === 'selector' ? out[key] : `text=${String(out[key])}`;
+        delete out[key];
+        if (key === 'textGone') out.gone = true;
+        notes.push(`note: ${key} is read as target "${String(out.target)}"${key === 'textGone' ? ' with gone: true' : ''}`);
+      }
+    }
+    if (out.ms === undefined && typeof out.time === 'number') {
+      out.ms = Math.round(out.time * 1000);
+      delete out.time;
+      // A delay must fit the timeout (10 s by default): a longer one asks for that much.
+      if (out.timeout === undefined && (out.ms as number) > 10_000) out.timeout = out.ms;
+      notes.push(`note: time is read as ms: ${String(out.ms)} (seconds to ms)`);
+    }
+    return { params: out, notes };
+  },
   // Waits can run up to the 50 s cap, so the transport must outlive it.
   timeoutMs: 55_000,
   handler: forwardHandler('browser_wait'),

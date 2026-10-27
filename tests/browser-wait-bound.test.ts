@@ -69,3 +69,23 @@ describe('browser_wait bound (F8-5)', () => {
     expect(exec.execDom.mock.calls.length).toBe(calls);
   });
 });
+
+describe('browser_wait TIMEOUT says what the target matched', () => {
+  afterEach(() => { vi.useRealTimers(); exec.execDom.mockReset(); });
+
+  it('a selector that matched nothing says so (a wrong selector, not a slow page)', async () => {
+    vi.useFakeTimers();
+    exec.execDom.mockResolvedValue({ met: false, miss: 'NOT_FOUND' });
+    const p = handleWait({ tabId: 1, target: '#nope', timeout: 1_000 });
+    await vi.advanceTimersByTimeAsync(1_200);
+    expect((await p as { error: string }).error).toBe('TIMEOUT: target #nope visible not met after 1000 ms (it matched nothing: check the selector or take a snapshot)');
+  });
+
+  it('a target that matched only hidden elements says so', async () => {
+    vi.useFakeTimers();
+    exec.execDom.mockResolvedValue({ met: false, miss: 'ELEMENT_HIDDEN' });
+    const p = handleWait({ tabId: 1, target: '.spinner', timeout: 1_000 });
+    await vi.advanceTimersByTimeAsync(1_200);
+    expect((await p as { error: string }).error).toBe('TIMEOUT: target .spinner visible not met after 1000 ms (it matched only hidden elements)');
+  });
+});
