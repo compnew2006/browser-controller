@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.1.0
 
 ### Added
 - Website memory, off by default: agents sharing one Chrome profile can reuse a small set of allowlisted facts about a site (page language, search box, login form, well-known control names), stored locally under `<state dir>/memory/`. See README "Website memory".
