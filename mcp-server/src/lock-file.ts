@@ -21,6 +21,8 @@ export interface LockIdentity {
 /** Test seam: runs between the staleness judgement and the takeover. */
 export interface ReclaimHooks {
   beforeRename?: () => void;
+  /** Runs after the takeover rename, before a wrongly displaced lock is put back. */
+  beforeRestore?: () => void;
 }
 
 /** EPERM means the process exists under another user, so only ESRCH is dead. */
@@ -43,9 +45,18 @@ export function reclaimLock(lockPath: string, judged: LockIdentity, hooks: Recla
     same = moved.dev === judged.dev && moved.ino === judged.ino && moved.mtimeMs === judged.mtimeMs;
   } catch { /* tombstone vanished: nothing to restore */ }
   if (!same) {
-    // We displaced a lock that was not the stale one: give it back. link()
-    // fails if a newer lock already exists, which is the lesser harm.
-    try { fs.linkSync(tombstone, lockPath); } catch { /* lock already recreated */ }
+    // We displaced a lock that was not the stale one: give it back. link() fails when another
+    // starter created a lock in the gap. Then the tombstone is the only copy of the displaced
+    // (possibly running) lock, so it is KEPT rather than deleted: an orphan file is harmless and
+    // lets an operator see what happened, while deleting it would silently lose a live lock. The
+    // lock file is only advisory: the real single-instance guard is binding the port, so two
+    // claimants cannot both serve even if the file ends up naming only one of them.
+    hooks.beforeRestore?.();
+    try {
+      fs.linkSync(tombstone, lockPath);
+    } catch {
+      return false;
+    }
   }
   try { fs.unlinkSync(tombstone); } catch { /* already gone */ }
   return same;

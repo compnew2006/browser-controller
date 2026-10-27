@@ -157,6 +157,20 @@ export async function acquireDaemonLock(): Promise<void> {
   }
 }
 
+/**
+ * Remove daemon.lock only when it is demonstrably stale, by the same judgement the daemon uses
+ * to start (live pid, startup grace, IPC probe). Used by `scripts/daemon.mjs stop`.
+ *  - 'absent': there was no lock.
+ *  - 'held': a live or still-starting daemon holds it, or a fresh lock replaced the stale one.
+ *  - 'reclaimed': the stale lock was removed.
+ */
+export async function reclaimStaleDaemonLock(): Promise<'reclaimed' | 'held' | 'absent'> {
+  const { holder, judged } = await inspectDaemonLock();
+  if (!judged) return 'absent';
+  if (holder !== null) return 'held';
+  return reclaimLock(DAEMON_LOCK_FILE, judged, daemonLockReclaimHooks) ? 'reclaimed' : 'held';
+}
+
 export function releaseDaemonLock(): void {
   try {
     if (JSON.parse(fs.readFileSync(DAEMON_LOCK_FILE, 'utf8')).pid === process.pid) {

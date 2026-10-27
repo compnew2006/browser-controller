@@ -9,67 +9,21 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
-import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const entry = path.join(root, 'mcp-server', 'dist', 'daemon.js');
 const stateDir = process.env.BC_STATE_DIR || path.join(os.homedir(), '.browser-controller');
 const infoFile = path.join(stateDir, 'daemon.json');
-const lockFile = path.join(stateDir, 'daemon.lock');
+const daemonConfigModule = path.join(root, 'mcp-server', 'dist', 'daemon-config.js');
 const bridgeAuthModule = path.join(root, 'mcp-server', 'dist', 'bridge-auth.js');
 const buildMissingMessage = 'daemon build missing; run `npm run build` first';
-/** Window between openSync('wx') and the write that fills a new lock (daemon-config.ts LOCK_WRITE_GRACE_MS). */
-const LOCK_WRITE_GRACE_MS = 5000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-/**
- * Who holds the lock, as inspectDaemonLock in daemon-config.ts judges it:
- * holder is a live pid, 0 for a lock still being written, or null when the
- * lock is stale. judged is the identity of the file read (null when absent).
- */
-function inspectLock(lockPath) {
-  let judged;
-  let raw;
-  try {
-    const st = fs.lstatSync(lockPath);
-    judged = { dev: st.dev, ino: st.ino, mtimeMs: st.mtimeMs };
-    raw = fs.readFileSync(lockPath, 'utf8');
-  } catch { return { holder: null, judged: null }; }
-  let ownerPid = 0;
-  try { ownerPid = JSON.parse(raw).pid ?? 0; } catch { /* empty or corrupt */ }
-  if (ownerPid > 0) return { holder: pidAlive(ownerPid) ? ownerPid : null, judged };
-  return { holder: Date.now() - judged.mtimeMs < LOCK_WRITE_GRACE_MS ? 0 : null, judged };
-}
-/** Identity of the lock when it is stale (dead owner, or unfilled past the grace window); null otherwise. */
-export function judgeStaleLock(lockPath) {
-  const { holder, judged } = inspectLock(lockPath);
-  return holder === null ? judged : null;
-}
-/**
- * Remove the lock at `lockPath` only if it is still the file judged stale
- * (same device, inode and mtime). Mirrors reclaimLock in
- * mcp-server/src/lock-file.ts: rename to a unique tombstone (atomic, one
- * racer wins), compare, and put a different lock back. A plain unlink after a
- * liveness check could delete the fresh lock of a daemon starting meanwhile.
- */
-export function reclaimStaleLock(lockPath, judged, hooks = {}) {
-  hooks.beforeRename?.();
-  const tombstone = `${lockPath}.stale.${process.pid}.${crypto.randomBytes(6).toString('hex')}`;
-  try { fs.renameSync(lockPath, tombstone); } catch { return false; }
-  let same = false;
-  try {
-    const moved = fs.lstatSync(tombstone);
-    same = moved.dev === judged.dev && moved.ino === judged.ino && moved.mtimeMs === judged.mtimeMs;
-  } catch { /* tombstone vanished: nothing to restore */ }
-  if (!same) { try { fs.linkSync(tombstone, lockPath); } catch { /* lock already recreated */ } }
-  try { fs.unlinkSync(tombstone); } catch { /* already gone */ }
-  return same;
-}
 function readInfo() {
   try { return JSON.parse(fs.readFileSync(infoFile, 'utf8')); } catch { return null; }
 }
-/** EPERM means the process exists under another user, so only ESRCH is dead (as lock-file.ts pidAlive). */
+/** EPERM means the process exists under another user, so only ESRCH is dead. */
 function pidAlive(pid) {
   if (!pid) return false;
   try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
@@ -162,12 +116,12 @@ async function stop() {
   // Without the build the identity proof cannot run; cleaning up "stale" files here could hit a live daemon.
   if (!fs.existsSync(bridgeAuthModule)) throw new Error(buildMissingMessage);
   const info = readInfo();
-  // Judge the lock before the liveness check, so only that exact stale file is removed afterwards.
-  const { holder, judged } = inspectLock(lockFile);
   if (!(await live(info))) {
     try { fs.unlinkSync(infoFile); } catch {}
-    if (holder === null && judged) reclaimStaleLock(lockFile, judged);
-    else if (holder !== null) console.log(`lock held by ${holder ? `live pid ${holder}` : 'a daemon still writing it'} (a daemon may be starting); left untouched`);
+    // One judgement for the lock, shared with the daemon (same BC_STATE_DIR): only a stale file goes.
+    if (!fs.existsSync(daemonConfigModule)) throw new Error(buildMissingMessage);
+    const { reclaimStaleDaemonLock } = await import(pathToFileURL(daemonConfigModule).href);
+    if (await reclaimStaleDaemonLock() === 'held') console.log('lock held by a live or starting daemon (a daemon may be starting); left untouched');
     console.log(`daemon is not running${staleNote(info)}`);
     return;
   }

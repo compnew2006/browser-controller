@@ -117,4 +117,77 @@ describe('reclaimLock', () => {
     expect(fs.existsSync(lockFile)).toBe(true);
     expect(fs.readdirSync(path.dirname(lockFile)).filter((name) => name.includes('.stale.'))).toEqual([]);
   });
+
+  it('keeps the displaced lock when a competing lock appears before the restore (AC-W3)', async () => {
+    const { reclaimLock } = await import('../mcp-server/src/lock-file.js');
+    writeLock(JSON.stringify({ pid: DEAD_PID }));
+    const stale = fs.lstatSync(lockFile);
+    const hooks = {
+      // a racer replaces the stale lock with a RUNNING daemon's lock before the takeover rename
+      beforeRename: () => {
+        fs.unlinkSync(lockFile);
+        writeLock(JSON.stringify({ pid: process.pid, who: 'racer-1' }));
+        const t = new Date(Date.now() + 5_000);
+        fs.utimesSync(lockFile, t, t);
+      },
+      // a third starter creates its own lock in the gap between the rename and the restore
+      beforeRestore: () => {
+        fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, who: 'racer-2' }));
+      },
+    };
+
+    expect(reclaimLock(lockFile, { dev: stale.dev, ino: stale.ino, mtimeMs: stale.mtimeMs }, hooks)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(lockFile, 'utf8')).who).toBe('racer-2');
+    const tombstones = fs.readdirSync(path.dirname(lockFile)).filter((name) => name.includes('.stale.'));
+    expect(tombstones).toHaveLength(1); // the displaced running lock is not deleted blindly
+    expect(JSON.parse(fs.readFileSync(path.join(path.dirname(lockFile), tombstones[0]), 'utf8')).who).toBe('racer-1');
+  });
+});
+
+describe('reclaimStaleDaemonLock (used by scripts/daemon.mjs stop, AC-W4)', () => {
+  it('reports absent when there is no lock', async () => {
+    expect(await mod.reclaimStaleDaemonLock()).toBe('absent');
+  });
+
+  it('reclaims a lock whose pid is dead', async () => {
+    writeLock(JSON.stringify({ pid: DEAD_PID }));
+    expect(await mod.reclaimStaleDaemonLock()).toBe('reclaimed');
+    expect(fs.existsSync(lockFile)).toBe(false);
+  });
+
+  it('reclaims an empty lock past the write grace', async () => {
+    writeLock('', 60_000);
+    expect(await mod.reclaimStaleDaemonLock()).toBe('reclaimed');
+  });
+
+  it('reclaims a live pid past the startup grace when no daemon answers the IPC socket', async () => {
+    writeLock(JSON.stringify({ pid: process.ppid }), 60_000);
+    expect(await mod.reclaimStaleDaemonLock()).toBe('reclaimed');
+  });
+
+  it('keeps a live pid inside the startup grace', async () => {
+    writeLock(JSON.stringify({ pid: process.ppid }), 2_000);
+    expect(await mod.reclaimStaleDaemonLock()).toBe('held');
+    expect(fs.existsSync(lockFile)).toBe(true);
+  });
+
+  it('keeps an empty lock that was just created', async () => {
+    writeLock('', 0);
+    expect(await mod.reclaimStaleDaemonLock()).toBe('held');
+    expect(fs.existsSync(lockFile)).toBe(true);
+  });
+
+  it('keeps a fresh lock that replaced the stale one during the check', async () => {
+    writeLock(JSON.stringify({ pid: DEAD_PID }));
+    mod.daemonLockReclaimHooks.beforeRename = () => {
+      mod.daemonLockReclaimHooks.beforeRename = undefined;
+      fs.unlinkSync(lockFile);
+      fs.writeFileSync(lockFile, JSON.stringify({ pid: process.ppid, who: 'fresh' }));
+      const t = new Date(Date.now() + 5_000);
+      fs.utimesSync(lockFile, t, t);
+    };
+    expect(await mod.reclaimStaleDaemonLock()).toBe('held');
+    expect(JSON.parse(fs.readFileSync(lockFile, 'utf8')).who).toBe('fresh');
+    expect(fs.readdirSync(stateDir).filter((f) => f.includes('.stale.'))).toEqual([]);
+  });
 });
