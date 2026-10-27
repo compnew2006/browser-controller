@@ -381,7 +381,7 @@ async function daemonLooksAlive(): Promise<boolean> {
 /** Whether a daemon answers, is starting (daemon.lock names a live pid), or neither. */
 async function daemonState(): Promise<DaemonState> {
   if (await daemonLooksAlive()) return 'up';
-  return daemonLockHolder() === null ? 'down' : 'starting';
+  return (await daemonLockHolder()) === null ? 'down' : 'starting';
 }
 
 /**

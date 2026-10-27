@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { ipcAnswers } from './ipc-probe.js';
 import { pidAlive, reclaimLock, type LockIdentity, type ReclaimHooks } from './lock-file.js';
 
 /**
@@ -77,6 +78,9 @@ export const DAEMON_LOCK_FILE = path.join(STATE_DIR, 'daemon.lock');
 /** A lock file younger than this that cannot be read is still being written by the daemon that created it. */
 const LOCK_WRITE_GRACE_MS = 5_000;
 
+/** A live pid is trusted this long after the lock was written; the IPC socket may not be listening yet. */
+const LOCK_STARTUP_GRACE_MS = 10_000;
+
 /** Test seam for the stale-lock race; empty in production. */
 export const daemonLockReclaimHooks: ReclaimHooks = {};
 
@@ -99,12 +103,12 @@ export class DaemonLockHeldError extends Error {
  * stale. A thin client that sees a holder waits for that daemon instead of
  * starting a competitor.
  */
-export function daemonLockHolder(): number | null {
-  return inspectDaemonLock().holder;
+export async function daemonLockHolder(): Promise<number | null> {
+  return (await inspectDaemonLock()).holder;
 }
 
 /** Holder plus the identity of the lock file judged, so takeover can target exactly that file. */
-function inspectDaemonLock(): { holder: number | null; judged: LockIdentity | null } {
+async function inspectDaemonLock(): Promise<{ holder: number | null; judged: LockIdentity | null }> {
   let judged: LockIdentity;
   let mtimeMs: number;
   let raw: string;
@@ -116,7 +120,15 @@ function inspectDaemonLock(): { holder: number | null; judged: LockIdentity | nu
   } catch { return { holder: null, judged: null }; }
   let ownerPid = 0;
   try { ownerPid = JSON.parse(raw).pid ?? 0; } catch { /* empty or corrupt */ }
-  if (ownerPid > 0) return { holder: pidAlive(ownerPid) ? ownerPid : null, judged };
+  if (ownerPid > 0) {
+    if (!pidAlive(ownerPid)) return { holder: null, judged };
+    // A pid can be reused after a crash: past the startup grace the holder
+    // must also answer on the IPC socket, or the lock is stale (audit F1-5).
+    if (Date.now() - mtimeMs < LOCK_STARTUP_GRACE_MS || await ipcAnswers(IPC_SOCKET_PATH)) {
+      return { holder: ownerPid, judged };
+    }
+    return { holder: null, judged };
+  }
   // openSync('wx') creates the file before writeFileSync fills it: a daemon
   // that reads it in between must not take a fresh lock for a stale one.
   return { holder: Date.now() - mtimeMs < LOCK_WRITE_GRACE_MS ? 0 : null, judged };
@@ -126,7 +138,7 @@ function inspectDaemonLock(): { holder: number | null; judged: LockIdentity | nu
  * Acquire the runtime lock, removing only a demonstrably stale lock. Throws
  * DaemonLockHeldError when another daemon holds it.
  */
-export function acquireDaemonLock(): void {
+export async function acquireDaemonLock(): Promise<void> {
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   for (;;) {
     try {
@@ -136,7 +148,7 @@ export function acquireDaemonLock(): void {
       return;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      const { holder, judged } = inspectDaemonLock();
+      const { holder, judged } = await inspectDaemonLock();
       if (holder !== null) throw new DaemonLockHeldError(holder, { cause: err });
       // Compare-before-remove: only the file judged stale goes, never a
       // lock another starter created after our judgement.

@@ -49,6 +49,7 @@ import {
   validateIpcHandshake,
 } from './protocol.js';
 import { ExtensionBridge } from './bridge.js';
+import { isKnownWireTool } from './wire-tools.js';
 import { armIpcHelloTimer } from './ipc-hello-timer.js';
 import { VaultService, type VaultTransport } from './vault/service.js';
 import { routeVaultAwareCall } from './vault/daemon-routing.js';
@@ -144,7 +145,7 @@ class Daemon {
 
   async start(): Promise<void> {
     fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-    acquireDaemonLock();
+    await acquireDaemonLock();
 
     try {
       // 1) extension-facing WS server (task 1.0).
@@ -387,6 +388,10 @@ class Daemon {
 
   private async routeCall(client: IpcClient, msg: IpcClientMessage & { kind: 'call' }): Promise<void> {
     if (msg.kind !== 'call') return;
+    if (!isKnownWireTool(msg.tool)) {
+      this.sendToClient(client, { kind: 'result', id: msg.id, success: false, error: `UNKNOWN_TOOL: ${String(msg.tool).slice(0, 80)}` });
+      return;
+    }
 
     // Rate limit (per-session, fixed 60s window). Refuse the call outright when
     // the budget is exhausted — no AbortController, no bridge hop, no per-tab

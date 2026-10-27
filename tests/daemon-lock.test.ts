@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -33,31 +34,33 @@ afterEach(() => {
 });
 
 describe('daemon lock', () => {
-  it('reclaims a lock whose pid is dead', () => {
+  it('reclaims a lock whose pid is dead', async () => {
     writeLock(JSON.stringify({ pid: DEAD_PID, startedAt: 1 }));
-    mod.acquireDaemonLock();
+    await mod.acquireDaemonLock();
     expect(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pid).toBe(process.pid);
   });
 
-  it('does not reclaim a lock held by a live pid', () => {
-    writeLock(JSON.stringify({ pid: process.ppid, startedAt: 1 }));
-    expect(() => mod.acquireDaemonLock()).toThrow(mod.DaemonLockHeldError);
+  // Fresh lock (inside the startup grace): a live pid is trusted without a probe.
+  // Was aged 60s; with F1-5 an aged lock needs an answering socket (tests below).
+  it('does not reclaim a lock held by a live pid', async () => {
+    writeLock(JSON.stringify({ pid: process.ppid, startedAt: 1 }), 0);
+    await expect(mod.acquireDaemonLock()).rejects.toThrow(mod.DaemonLockHeldError);
     expect(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pid).toBe(process.ppid);
   });
 
-  it('keeps an empty lock inside the write grace period', () => {
+  it('keeps an empty lock inside the write grace period', async () => {
     writeLock('', 0);
-    expect(() => mod.acquireDaemonLock()).toThrow(mod.DaemonLockHeldError);
-    expect(mod.daemonLockHolder()).toBe(0);
+    await expect(mod.acquireDaemonLock()).rejects.toThrow(mod.DaemonLockHeldError);
+    expect(await mod.daemonLockHolder()).toBe(0);
   });
 
-  it('reclaims an empty lock after the grace period', () => {
+  it('reclaims an empty lock after the grace period', async () => {
     writeLock('', 60_000);
-    mod.acquireDaemonLock();
+    await mod.acquireDaemonLock();
     expect(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pid).toBe(process.pid);
   });
 
-  it('two acquirers on one stale lock: the loser must not remove the winner lock', () => {
+  it('two acquirers on one stale lock: the loser must not remove the winner lock', async () => {
     writeLock(JSON.stringify({ pid: DEAD_PID, startedAt: 1 }));
     // Starter B finishes its takeover between A's staleness judgement and A's removal.
     // The new file is built beside the old one first so the inode cannot be reused.
@@ -67,9 +70,36 @@ describe('daemon lock', () => {
       fs.writeFileSync(winner, JSON.stringify({ pid: process.ppid, startedAt: 2 }), { mode: 0o600 });
       fs.renameSync(winner, lockFile);
     };
-    expect(() => mod.acquireDaemonLock()).toThrow(mod.DaemonLockHeldError);
+    await expect(mod.acquireDaemonLock()).rejects.toThrow(mod.DaemonLockHeldError);
     expect(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pid).toBe(process.ppid);
     expect(fs.readdirSync(stateDir).filter((f) => f.includes('.stale.'))).toEqual([]);
+  });
+
+  // F1-5: a recycled pid is alive but is not a daemon.
+  it('reclaims a live pid past the startup grace when no daemon answers the IPC socket', async () => {
+    writeLock(JSON.stringify({ pid: process.ppid, startedAt: 1 }), 60_000);
+    expect(await mod.daemonLockHolder()).toBeNull();
+    await mod.acquireDaemonLock();
+    expect(JSON.parse(fs.readFileSync(lockFile, 'utf8')).pid).toBe(process.pid);
+  });
+
+  it('holds a live pid inside the startup grace even with no socket', async () => {
+    writeLock(JSON.stringify({ pid: process.ppid, startedAt: 1 }), 2_000);
+    expect(await mod.daemonLockHolder()).toBe(process.ppid);
+  });
+
+  it('holds a live pid past the grace when a daemon answers the IPC socket', async () => {
+    writeLock(JSON.stringify({ pid: process.ppid, startedAt: 1 }), 60_000);
+    const server = net.createServer((sock) => {
+      sock.on('data', () => sock.write(JSON.stringify({ kind: 'denied', reason: 'first frame must be hello', ok: false }) + '\n'));
+    });
+    await new Promise<void>((resolve) => server.listen(mod.IPC_SOCKET_PATH, resolve));
+    try {
+      expect(await mod.daemonLockHolder()).toBe(process.ppid);
+      await expect(mod.acquireDaemonLock()).rejects.toThrow(mod.DaemonLockHeldError);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });
 
