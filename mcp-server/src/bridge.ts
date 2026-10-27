@@ -62,6 +62,8 @@ interface BridgeOptions {
   maxWsPayloadBytes?: number;
   /** How long a peer may take to answer our hello with its helloAck before it is refused. */
   handshakeGraceMs?: number;
+  /** How long callTool waits for an extension to connect before failing with NOT_CONNECTED. */
+  connectionWaitMs?: number;
 }
 
 
@@ -82,8 +84,14 @@ export class ExtensionBridge {
   private defaultTimeoutMs: number;
   private maxWsPayloadBytes: number;
   private handshakeGraceMs: number;
-  /** Reason of the latest failed extension handshake, until some browser connects fine. */
+  private connectionWaitMs: number;
+  /** Reason a connection that had been ready was refused, until some browser connects fine. Fails calls fast. */
   private handshakeError: string | null = null;
+  /**
+   * Reason a connection was refused before it proved itself. Any local process can open the
+   * socket, so this is only a diagnostic for a timed-out wait: it never fails a call early.
+   */
+  private lastRefusal: string | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private connectionWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
   /** Optional HTTP handler (set by the daemon) for /pair, /status, etc. */
@@ -109,6 +117,7 @@ export class ExtensionBridge {
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 30_000;
     this.maxWsPayloadBytes = options.maxWsPayloadBytes ?? MAX_WS_MESSAGE_BYTES;
     this.handshakeGraceMs = options.handshakeGraceMs ?? 3_000;
+    this.connectionWaitMs = options.connectionWaitMs ?? 5_000;
   }
 
   private markExtensionReady(conn: ExtensionConnection, info?: { browserId?: unknown; browserLabel?: unknown; capabilities?: unknown }): void {
@@ -119,6 +128,7 @@ export class ExtensionBridge {
       try { other.ws.close(); } catch { /* already closing */ }
     }
     this.handshakeError = null;
+    this.lastRefusal = null;
     this.startPingLoop();
     this.connectionWaiters.forEach((waiter) => waiter.resolve());
     this.connectionWaiters = [];
@@ -128,9 +138,16 @@ export class ExtensionBridge {
   private rejectExtensionHandshake(conn: ExtensionConnection, reason: string): void {
     if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
     conn.handshakeTimer = null;
+    const wasReady = conn.state === 'ready';
     conn.state = 'incompatible';
-    this.handshakeError = reason;
     try { conn.ws.close(1002, 'incompatible protocol'); } catch { /* already closing */ }
+    if (!wasReady) {
+      // An unproven peer cannot be told from an attacker: keep the reason, fail nobody early.
+      this.lastRefusal = reason;
+      this.rejectAllPending(reason, conn);
+      return;
+    }
+    this.handshakeError = reason;
     if (this.conns.live().length === 0) {
       const error = new Error(reason);
       this.connectionWaiters.forEach((waiter) => waiter.reject(error));
@@ -264,9 +281,9 @@ export class ExtensionBridge {
               this.markExtensionReady(conn, msg);
               return;
             }
-            // Only a ready socket exchanges tool, vault, ping, or result frames; a refused
-            // one keeps delivering whatever it sent before the close completes.
-            if (conn.state !== 'ready') return;
+            // Only a registered, ready socket exchanges tool, vault, ping, or result frames; a
+            // refused or replaced one keeps delivering whatever it sent before the close completes.
+            if (conn.state !== 'ready' || !this.conns.has(conn)) return;
             if (msg.type === 'helloAck') {
               this.rejectExtensionHandshake(conn, 'Extension authentication was already completed.');
               return;
@@ -406,11 +423,12 @@ export class ExtensionBridge {
     if (tool === 'browser_tabs' && !skipTabs) return tabsAcrossBrowsers(this.conns, params, sessionId, (p) => this.callTool(tool, p, sessionId, signal, agentName, true));
     if (!this.isConnected()) {
       try {
-        await this.waitForConnection(5_000);
+        await this.waitForConnection(this.connectionWaitMs);
       } catch (error) {
         // Every "no extension" failure reads with the NOT_CONNECTED code the agent acts on.
         const wait = error instanceof Error ? error.message : String(error);
-        if (this.handshakeError) throw new Error(`NOT_CONNECTED: ${this.handshakeError}`, { cause: error });
+        const refusal = this.handshakeError ?? this.lastRefusal;
+        if (refusal) throw new Error(`NOT_CONNECTED: ${refusal}`, { cause: error });
         if (wait.startsWith('NOT_CONNECTED: ')) throw error;
         throw new Error(/protocol|capabilit/i.test(wait)
           ? `NOT_CONNECTED: ${wait}`

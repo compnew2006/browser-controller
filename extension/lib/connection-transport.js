@@ -24,3 +24,19 @@ export function defaultBrowserLabel(id) {
   const platform = ua?.platform || navigator.platform || '';
   return `${brand}${platform ? ` on ${platform}` : ''} (${id.slice(0, 4)})`;
 }
+
+/** Longest a pairing request (/pair, the native pairing host) may stay unanswered. */
+export const PAIRING_TIMEOUT_MS = 5_000;
+
+/**
+ * Run `run(signal)` but give up after `ms`: abort the signal and reject. Races the timer too,
+ * because a native message or an uncooperative fetch never looks at the signal.
+ */
+export function withTimeout(run, ms = PAIRING_TIMEOUT_MS) {
+  const abort = new AbortController();
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => { abort.abort(); reject(new Error('request timed out')); }, ms);
+  });
+  return Promise.race([run(abort.signal), expired]).finally(() => clearTimeout(timer));
+}

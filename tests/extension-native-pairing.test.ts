@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BridgeHttpAuthenticator } from '../mcp-server/src/bridge-auth.js';
+import { PAIRING_TIMEOUT_MS } from '../extension/lib/connection-transport.js';
 
 /**
  * Zero-touch pairing obtains the enrollment secret through Chrome native
@@ -171,5 +172,58 @@ describe('zero-touch pairing (native messaging)', () => {
     expect(httpCalls.every((call) => !call.enrollmentHeader && !call.url.includes('still-wrong'))).toBe(true);
     expect(httpCalls.some((call) => new URL(call.url).port === '9000')).toBe(true);
     expect(nativeCalls).toHaveLength(1);
+  });
+
+  // connect() holds its probing guard through pairing: a request that never settles must not wedge it.
+  describe('a pairing request that never settles', () => {
+    // Earlier tests leave connect() chains running; let them settle on real timers before faking time.
+    beforeEach(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    const statusProbes = () => httpCalls.filter((call) => call.url.endsWith('/status')).length;
+
+    it('times out a native message, then lets a later connect() proceed', async () => {
+      vi.useFakeTimers();
+      (globalThis as any).chrome.runtime.sendNativeMessage = () => new Promise(() => {});
+      const conn = await load();
+
+      const first = conn.connect();
+      await vi.advanceTimersByTimeAsync(10);
+      void conn.connect(); // ignored while the first attempt holds the guard
+      expect(statusProbes()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(PAIRING_TIMEOUT_MS + 10);
+      await first;
+      await conn.connect();
+      expect(statusProbes()).toBe(2);
+    });
+
+    it('times out /pair, then lets a later connect() pair and proceed', async () => {
+      store.enrollmentSecret = 'good';
+      daemonEnrollmentSecret = 'good';
+      authenticator = new BridgeHttpAuthenticator(daemonEnrollmentSecret, 'pairing-test-daemon');
+      daemon = () => ({ status: 200, body: { token: 'tok' } });
+      const conn = await load();
+      await conn.initConnection();
+      expect(store.wsToken).toBe('tok');
+
+      vi.useFakeTimers();
+      const realFetch = (globalThis as any).fetch;
+      let hangPair = true;
+      (globalThis as any).fetch = (input: string | URL, init?: unknown) => (
+        hangPair && new URL(String(input)).pathname === '/pair' ? new Promise(() => {}) : realFetch(input, init)
+      );
+      httpCalls = [];
+      store.wsToken = '';
+      conn.applyToken(''); // resets the socket and starts a connect() that must pair
+      await vi.advanceTimersByTimeAsync(10);
+      expect(statusProbes()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(PAIRING_TIMEOUT_MS + 10);
+      hangPair = false;
+      await conn.connect();
+      expect(statusProbes()).toBe(2);
+      expect(store.wsToken).toBe('tok');
+    });
   });
 });

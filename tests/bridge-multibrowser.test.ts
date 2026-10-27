@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
@@ -93,6 +93,29 @@ describe('multi-browser bridge', () => {
     await firstClosed;
     const browsers = await browsersSeen(bridge, 's1');
     expect(browsers.map((b) => b.browserId).sort()).toEqual(['home', 'work']);
+  });
+
+  // Contract step 5: only a registered, ready socket is read. A replaced sibling is out of the registry.
+  it('ignores result and vault frames from a replaced sibling that is still closing', async () => {
+    const { bridge, port: p } = await startBridge();
+    const internals = bridge as unknown as {
+      conns: { all: () => Array<{ ws: WebSocket }> };
+      vaultTransport: { handleMessage: (...args: unknown[]) => boolean };
+      handleResponse: (...args: unknown[]) => void;
+    };
+    const first = await fakeBrowser(p, 'work');
+    // Keep the old server-side socket open so its frames still arrive after the replacement.
+    for (const conn of internals.conns.all()) conn.ws.close = () => {};
+    const vaultMessages = vi.spyOn(internals.vaultTransport, 'handleMessage');
+    const results = vi.spyOn(internals, 'handleResponse');
+    await fakeBrowser(p, 'work');
+
+    first.ws.send(JSON.stringify({ type: 'vaultUiClosed' }));
+    first.ws.send(JSON.stringify({ id: 'forged', success: true, result: {} }));
+    await new Promise((r) => setTimeout(r, 60));
+
+    expect(vaultMessages).not.toHaveBeenCalled();
+    expect(results).not.toHaveBeenCalled();
   });
 
   it('one browser disconnecting fails only its own calls', async () => {

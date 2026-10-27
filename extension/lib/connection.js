@@ -15,7 +15,7 @@ import {
 } from './state.js';
 import { hideLockShield } from './overlay.js';
 import { buildExtensionHelloAck, OLDER_DAEMON_REASON, validateDaemonHello } from './protocol.js';
-import { daemonWebSocketUrl, defaultBrowserLabel, isDaemonListening } from './connection-transport.js';
+import { daemonWebSocketUrl, defaultBrowserLabel, isDaemonListening, withTimeout } from './connection-transport.js';
 import {
   authenticatedDaemonFetch,
   createWebSocketClientProof,
@@ -111,14 +111,13 @@ async function autoPairToken() {
     return '';
   }
   try {
-    const res = await authenticatedDaemonFetch({
-      baseUrl: `http://127.0.0.1:${wsPort}`,
-      target: '/pair',
-      enrollmentSecret,
+    // Bounded: connect() holds its attempt guard through pairing.
+    const { res, data } = await withTimeout(async (signal) => {
+      const res = await authenticatedDaemonFetch({ baseUrl: `http://127.0.0.1:${wsPort}`, target: '/pair', enrollmentSecret, signal });
+      return { res, data: res.ok ? await res.json() : null };
     });
     lastPairStatus = res.status;
     if (!res.ok) return '';
-    const data = await res.json();
     if (data && typeof data.token === 'string' && data.token) {
       if (data.token !== wsToken) {
         wsToken = data.token;
@@ -161,7 +160,7 @@ async function nativePair() {
   nativePairAt = Date.now();
   let reply;
   try {
-    reply = await chrome.runtime.sendNativeMessage(NATIVE_PAIRING_HOST, { type: 'pairing' });
+    reply = await withTimeout(() => chrome.runtime.sendNativeMessage(NATIVE_PAIRING_HOST, { type: 'pairing' }));
   } catch (err) {
     notePairing(nativePairingHint(err?.message || String(err)));
     return false;

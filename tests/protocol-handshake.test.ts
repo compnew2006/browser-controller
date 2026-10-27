@@ -241,6 +241,8 @@ describe('ExtensionBridge protocol handshake', () => {
       pingIntervalMs: 60_000,
       defaultTimeoutMs: opts?.defaultTimeoutMs ?? 250,
       handshakeGraceMs: opts?.handshakeGraceMs,
+      // Production waits 5 s for an extension; the refusal reason surfaces when this wait ends.
+      connectionWaitMs: 300,
     });
     bridges.push(bridge);
     return bridge;
@@ -298,6 +300,53 @@ describe('ExtensionBridge protocol handshake', () => {
     client.send(JSON.stringify({ type: 'helloAck', protocolVersion: EXTENSION_PROTOCOL_VERSION + 1, capabilities: [] }));
 
     await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(/unsupported extension protocol/i);
+  });
+
+  // Any local process can open the socket, so a refusal before the proof must not fail agents' calls.
+  it('keeps a pending call alive when an unauthenticated socket fails its handshake, and routes it to a genuine extension', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const call = bridge.callTool('browser_snapshot', { tabId: 1 });
+    let settled = false;
+    call.then(() => { settled = true; }, () => { settled = true; });
+
+    const intruder = new WebSocket(`ws://localhost:${port}`);
+    clients.push(intruder);
+    await new Promise<void>((resolve, reject) => {
+      intruder.once('open', () => resolve());
+      intruder.once('error', reject);
+    });
+    const intruderClosed = new Promise<void>((resolve) => intruder.once('close', () => resolve()));
+    intruder.send(JSON.stringify({ type: 'hello-there' })); // a bad first frame, not authInit
+    await intruderClosed;
+    await sleep(40);
+    expect(settled).toBe(false);
+
+    const { client, hello } = await connectWs(port);
+    client.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.tool) client.send(JSON.stringify({ id: msg.id, success: true, result: { survived: true } }));
+    });
+    client.send(authenticatedHelloAck(await hello));
+
+    await expect(call).resolves.toEqual({ survived: true });
+  });
+
+  it('does not fail a later call fast after an unauthenticated refusal, and reports the reason on timeout', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port);
+    await bridge.start();
+
+    const { client, hello } = await connectWs(port);
+    await hello;
+    client.send(JSON.stringify({ type: 'helloAck', protocolVersion: EXTENSION_PROTOCOL_VERSION + 1, capabilities: [] }));
+    await sleep(40);
+
+    const started = Date.now();
+    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(/NOT_CONNECTED: .*unsupported extension protocol/i);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(250);
   });
 
   it('rejects a browser control frame before the peer proves the extension token', async () => {
