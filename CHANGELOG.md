@@ -17,6 +17,9 @@ After updating: run `npm run build`, restart the daemon (`npm run daemon:restart
 - A malformed HTTP request target no longer crashes the daemon; it gets 400.
 - Four transitive advisories under the MCP SDK are cleared (`npm audit` reports 0).
 
+### Added
+- `browser_navigate` with `incognito: true` opens the new tab in a private window: an open one, else a new background window. It needs "Allow in Incognito" for the extension at `chrome://extensions`; without it the call fails `INCOGNITO_NOT_ALLOWED`. The window stays open when the session ends. `browser_tabs` marks private tabs with `incognito`, and a normal new tab never opens in a private window the user has focused. Extension reload needed.
+
 ### Changed
 - `browser_wait` reads the names other browser tools use: `text` (a `text=` target), `textGone` (the same with `gone: true`), `time` (seconds) and `selector`. `browser_screenshot` ignores `scale`, `format` and `quality`. Each result says how the name was read, so the next call can use the 3.0 form. Any other unknown parameter fails as before, and the error now lists the parameters the tool takes.
 - A `browser_wait` `TIMEOUT` says when the target matched nothing (a wrong selector) or only hidden elements.

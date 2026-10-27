@@ -316,6 +316,7 @@ Failure codes:
 | `TAB_WEDGED` | The tab does not answer: an input stalls for 5 s, or a screenshot for 8 s. | Navigate the tab (it is replaced), reload it, or close it. |
 | `TAB_REPLACED` | The tab id was replaced by another tab: a frozen tab that `browser_navigate` swapped out, or one Chrome replaced (discard, prerender). The lock and control moved to the new tab. | Use the tab id the message names. |
 | `TAB_NOT_FOUND` | The tab is closed, or the id never named a tab. | Call `browser_tabs` list to see the open tabs. |
+| `INCOGNITO_NOT_ALLOWED` | `browser_navigate` with `incognito: true`, but the extension may not use private windows. | Ask the user to turn on "Allow in Incognito" for Browser Controller at `chrome://extensions` (Details). |
 | `DEBUGGER_UNAVAILABLE` | The debugger cannot attach. Input has no fallback. | Retry. The next call attaches again. |
 | `SCRIPT_ERROR` | The JavaScript threw, or the source was refused before it ran (it closes its wrapper early). | Fix the expression. |
 | `NAVIGATION_FAILED` | The page did not load, for example `net::ERR_…`. | Check the address. |
@@ -660,6 +661,7 @@ Only the read-only tools are **retried on timeout**: `browser_snapshot`, `browse
 | `MCP_AGENT_NAME` | (auto: IDE name) | Override the agent name shown in the popup (same as `--agent`) |
 | `BROWSER_CONTROLLER_DAEMON_MODE` | `spawn` | `connect` (or `managed`): the MCP client only connects to a daemon that a supervisor runs; it never starts one. See `deploy/systemd/` |
 | `BC_RATE_LIMIT_PER_MIN` | `120` | Calls per minute per session; `0` disables the limit |
+| `BC_RECONNECT_WAIT_MS` | `15000` | Within 60 s of the daemon start or of an extension drop, how long a call waits for the extension before `NOT_CONNECTED` (otherwise 5 s); `0` keeps the 5 s wait |
 | `BC_MAX_WS_MESSAGE_BYTES` | `1000000` | Largest extension frame; a bigger response fails that call with `RESPONSE_TOO_LARGE` |
 
 ### Daemon state files

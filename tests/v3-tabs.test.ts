@@ -25,13 +25,17 @@ vi.mock('../extension/handlers/inspection.js', async (importOriginal) => ({
 }));
 
 type Listener = (...args: any[]) => void;
-type Tab = { id: number; windowId: number; index: number; url: string; title: string; active: boolean; status: string };
+type Tab = { id: number; windowId: number; index: number; url: string; title: string; active: boolean; status: string; incognito?: boolean };
 
 const FOCUSED_WINDOW = 1;
 const tabStore = new Map<number, Tab>();
 const windowUpdates: Array<[number, Record<string, unknown>]> = [];
 const tabUpdates: Array<[number, Record<string, unknown>]> = [];
 const created: Array<Record<string, unknown>> = [];
+const windowsCreated: Array<Record<string, unknown>> = [];
+/** Window id -> incognito. Windows 1 and 2 are normal; a test adds a private one. */
+const windowStore = new Map<number, boolean>();
+let incognitoAllowed = true;
 const removed: number[] = [];
 const reloads: number[] = [];
 const debuggerCalls: Array<[string, unknown]> = [];
@@ -58,9 +62,11 @@ const tabOf = (id: number) => {
     create: async (o: Record<string, unknown>) => {
       created.push(o);
       const id = nextTabId++;
+      const windowId = (o.windowId as number) ?? FOCUSED_WINDOW;
       tabStore.set(id, {
-        id, windowId: (o.windowId as number) ?? FOCUSED_WINDOW, index: 0,
+        id, windowId, index: 0,
         url: String(o.url ?? 'about:blank'), title: '', active: o.active !== false, status: 'complete',
+        incognito: windowStore.get(windowId) ?? false,
       });
       return tabOf(id);
     },
@@ -85,7 +91,17 @@ const tabOf = (id: number) => {
   windows: {
     update: async (id: number, u: Record<string, unknown>) => { windowUpdates.push([id, u]); return { id, ...u }; },
     get: async () => ({ width: 1280, height: 900 }),
+    getAll: async () => [...windowStore].map(([id, incognito]) => ({ id, incognito, type: 'normal' })),
+    create: async (o: Record<string, unknown>) => {
+      windowsCreated.push(o);
+      const windowId = 100 + windowsCreated.length;
+      windowStore.set(windowId, o.incognito === true);
+      const id = nextTabId++;
+      tabStore.set(id, { id, windowId, index: 0, url: String(o.url), title: '', active: true, status: 'complete', incognito: o.incognito === true });
+      return { id: windowId, incognito: o.incognito === true, tabs: [tabOf(id)] };
+    },
   },
+  extension: { isAllowedIncognitoAccess: async () => incognitoAllowed },
   webRequest: {
     onHeadersReceived: { addListener: (fn: Listener) => headerListeners.add(fn), removeListener: (fn: Listener) => headerListeners.delete(fn) },
     onErrorOccurred: { addListener: (fn: Listener) => errorListeners.add(fn), removeListener: (fn: Listener) => errorListeners.delete(fn) },
@@ -149,6 +165,11 @@ beforeEach(async () => {
   windowUpdates.length = 0;
   tabUpdates.length = 0;
   created.length = 0;
+  windowsCreated.length = 0;
+  windowStore.clear();
+  windowStore.set(1, false);
+  windowStore.set(2, false);
+  incognitoAllowed = true;
   removed.length = 0;
   reloads.length = 0;
   debuggerCalls.length = 0;
@@ -169,6 +190,51 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await detachCdp(4);
+});
+
+describe('browser_navigate incognito: true (a private window)', () => {
+  it('opens a private window when there is none, owns its tab, and says incognito in the result', async () => {
+    reactTo = answerWith(200);
+    const res = await handleNavigate({ url: 'example.com', incognito: true }, 'session-a');
+    expect(windowsCreated).toEqual([{ incognito: true, url: 'about:blank', focused: false }]);
+    expect(created).toEqual([]);
+    expect(tabLocks.owner(60)).toBe('session-a');
+    expect(res).toMatchObject({ success: true, tabId: 60, incognito: true });
+    expect(res.text).toBe('tabId: 60\nurl: https://example.com\nincognito: true\nstatus: 200');
+  });
+
+  it('reuses an open private window as a background tab', async () => {
+    reactTo = answerWith(200);
+    windowStore.set(9, true);
+    await handleNavigate({ url: 'example.com', incognito: true }, 'session-a');
+    expect(windowsCreated).toEqual([]);
+    expect(created).toEqual([{ url: 'about:blank', active: false, windowId: 9 }]);
+  });
+
+  it('without "Allow in Incognito" it fails INCOGNITO_NOT_ALLOWED and opens nothing', async () => {
+    incognitoAllowed = false;
+    await expect(handleNavigate({ url: 'example.com', incognito: true }, 'session-a')).rejects.toThrow(/^INCOGNITO_NOT_ALLOWED: .*Allow in Incognito/);
+    expect(windowsCreated).toEqual([]);
+    expect(created).toEqual([]);
+  });
+
+  it('applies to a new tab only', async () => {
+    await expect(handleNavigate({ url: 'example.com', tabId: 2, incognito: true }, 'session-a')).rejects.toThrow(/^INVALID_ARGUMENT: incognito/);
+  });
+
+  it('a normal open never lands in the private window the user has focused', async () => {
+    reactTo = answerWith(200);
+    windowStore.set(1, true);
+    tabStore.get(1)!.incognito = true;
+    await handleNavigate({ url: 'example.com' }, 'session-a');
+    expect(created).toEqual([{ url: 'about:blank', active: false, windowId: 2 }]);
+  });
+
+  it('browser_tabs marks private tabs', async () => {
+    tabStore.get(2)!.incognito = true;
+    const res = await handleTabs({ action: 'list' }, 'session-a');
+    expect(String(res.text).split('\n')).toContain('2 [other, incognito] "Docs" docs.example.com/a');
+  });
 });
 
 describe('browser_navigate without tabId', () => {

@@ -56,17 +56,32 @@ async function settleNewTab(tabId) {
 }
 
 /**
+ * A window of the wanted kind (private or not) for a new tab: the last focused one when it is
+ * that kind, else any open one, else null (a window must be created).
+ */
+async function windowFor(incognito) {
+  const focused = await getActiveTab().catch(() => null);
+  if (focused && !!focused.incognito === incognito) return focused.windowId;
+  const windows = await chrome.windows.getAll({ windowTypes: ['normal'] }).catch(() => []);
+  return windows.find((w) => !!w.incognito === incognito)?.id ?? null;
+}
+
+/**
  * The new tab for a call that names none: a background tab in the user's last
  * focused window, owned by the calling session until it closes or the session
- * ends.
+ * ends. `incognito` puts it in a private window (an open one, else a new one);
+ * the window is left open when the session ends. A normal tab never opens in a
+ * private window, even when the user has one focused.
  */
-async function openSessionTab(sessionId) {
-  const focused = await getActiveTab().catch(() => null);
-  const tab = await chrome.tabs.create({
-    url: 'about:blank',
-    active: false,
-    ...(focused ? { windowId: focused.windowId } : {}),
-  });
+async function openSessionTab(sessionId, incognito = false) {
+  // Chrome lets an extension into private windows only when the user allows it.
+  if (incognito && !(await chrome.extension?.isAllowedIncognitoAccess?.())) {
+    throw new Error('INCOGNITO_NOT_ALLOWED: turn on "Allow in Incognito" for Browser Controller at chrome://extensions (Details), then try again.');
+  }
+  const windowId = await windowFor(incognito);
+  const tab = windowId == null && incognito
+    ? (await chrome.windows.create({ incognito: true, url: 'about:blank', focused: false })).tabs[0]
+    : await chrome.tabs.create({ url: 'about:blank', active: false, ...(windowId != null ? { windowId } : {}) });
   if (sessionId) {
     await lockTabUi(tab.id, sessionId, `Tab ${tab.id} opened and locked by ${sessionAgentNames.get(sessionId) || 'an agent'}`);
   }
@@ -330,6 +345,7 @@ async function stepHistory(tab, step, cancelRace) {
 /** The lines the agent reads about one navigation. */
 function navigationLines(out, title) {
   const lines = [`tabId: ${out.tabId}`, `url: ${out.url}`];
+  if (out.incognito) lines.push('incognito: true');
   if (out.status !== undefined) lines.push(`status: ${out.status}`);
   if (title) lines.push(`title: ${title}`);
   if (out.download) lines.push(`download: true${out.filename ? ` (file ${out.filename})` : ''}; the tab did not navigate`);
@@ -388,7 +404,8 @@ async function navigateTab(params, sessionId, signal, state) {
     throw new Error(`INVALID_ARGUMENT: "${params.url}" moves a tab that is already open: pass its tabId.`);
   }
   const opened = tabId == null;
-  let tab = opened ? await openSessionTab(sessionId) : await resolveTab(tabId);
+  if (params.incognito && !opened) throw new Error('INVALID_ARGUMENT: incognito applies to a new tab only: leave out tabId.');
+  let tab = opened ? await openSessionTab(sessionId, params.incognito === true) : await resolveTab(tabId);
   const before = tab.url;
 
   // A frozen page (TAB_WEDGED) would hold the navigation hostage: replace the tab.
@@ -445,6 +462,7 @@ async function navigateTab(params, sessionId, signal, state) {
         ...(typeof facts.status === 'number' ? { status: facts.status } : {}),
         ...(facts.download ? { download: true } : { noContent: true }),
         ...(facts.filename ? { filename: facts.filename } : {}),
+        ...(tab.incognito ? { incognito: true } : {}),
         ...replacedData,
       };
       return { ...out, text: navigationLines(out).join('\n') };
@@ -464,6 +482,7 @@ async function navigateTab(params, sessionId, signal, state) {
     ...(typeof facts?.status === 'number' ? { status: facts.status } : {}),
     ...(url && finalUrl !== url ? { requestedUrl: url } : {}),
     ...(timedOut ? { loading: true } : {}),
+    ...(tab.incognito ? { incognito: true } : {}),
     ...replacedData,
   };
   const lines = navigationLines(out, landed?.title);

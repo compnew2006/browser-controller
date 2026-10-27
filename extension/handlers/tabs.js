@@ -60,7 +60,7 @@ async function listTabs(sessionId) {
     else if (tab.id === focusedId) user.push(tab);
     else rest.push(tab);
   }
-  const line = (tab, role) => `${tab.id} [${role}] ${titleOf(tab)} ${addressOf(tab.url)}`;
+  const line = (tab, role) => `${tab.id} [${role}${tab.incognito ? ', incognito' : ''}] ${titleOf(tab)} ${addressOf(tab.url)}`;
   const lines = [
     ...own.map((t) => line(t, 'own')),
     ...user.map((t) => line(t, 'user, focused')),
