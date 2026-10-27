@@ -49,6 +49,7 @@ import {
   validateIpcHandshake,
 } from './protocol.js';
 import { ExtensionBridge } from './bridge.js';
+import { armIpcHelloTimer } from './ipc-hello-timer.js';
 import { VaultService, type VaultTransport } from './vault/service.js';
 import { routeVaultAwareCall } from './vault/daemon-routing.js';
 
@@ -89,6 +90,8 @@ const HEARTBEAT_MAX_MISSED = envInt('BC_HEARTBEAT_MAX_MISSED', 3);
 const RATE_LIMIT_WINDOW_MS = 60_000;
 // min 0: 0 disables the limiter (documented opt-out for tests / power users).
 const RATE_LIMIT_PER_MIN = envInt('BC_RATE_LIMIT_PER_MIN', 120, 0);
+// An IPC socket that sends no valid hello within this grace is destroyed (F1-2).
+const IPC_HELLO_GRACE_MS = envInt('BC_IPC_HELLO_MS', 10_000, 1);
 export const MAX_IPC_LINE_BYTES = envInt('BC_MAX_IPC_LINE_BYTES', 1_000_000, 1024);
 
 class Daemon {
@@ -208,6 +211,9 @@ class Daemon {
     };
 
     socket.setEncoding('utf8');
+    const disarmHelloTimer = armIpcHelloTimer(socket, IPC_HELLO_GRACE_MS, () => {
+      console.error(`[${SERVER_NAME}] IPC socket sent no hello within ${IPC_HELLO_GRACE_MS} ms; closing it`);
+    });
     // Enable TCP keepalive so the kernel surfaces half-open sockets faster
     // (e.g. IDE killed mid-session). This complements the application-level
     // heartbeat below.
@@ -256,6 +262,7 @@ class Daemon {
             return;
           }
           authed = true;
+          disarmHelloTimer();
           const name = msg.agentName || 'agent';
           const sessionId = buildSessionId(DAEMON_INSTANCE_ID, ++this.sessionIdCounter);
           // Liveness-based dedup by agentName. When an IDE respawns the MCP
