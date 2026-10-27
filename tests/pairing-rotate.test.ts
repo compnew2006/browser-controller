@@ -64,6 +64,7 @@ describe('pairing rotate', () => {
     const freshToken = readJson('token.json').token as string;
     for (const v of [OLD_SECRET, OLD_TOKEN, fresh, freshToken]) expect(out).not.toContain(v);
     expect(out).toContain('npm run daemon:restart');
+    expect(out).toMatch(/MCP clients re-read the new token/);
   });
 
   it('fails clearly and creates nothing when the state dir is missing', () => {

@@ -310,6 +310,7 @@ function main() {
     console.log('Enrollment secret rotated.');
     console.log(r.tokenRotated ? 'Daemon auth token rotated.' : 'No daemon auth token file yet; nothing else to rotate.');
     console.log('\nNext: restart the daemon so it drops the old values: npm run daemon:restart');
+    console.log('Running MCP clients re-read the new token on their next reconnect; no need to restart them.');
     console.log('The extension then pairs itself again through the native pairing host (reload it if pairing was never set up: npm run setup:pairing).');
     return;
   }

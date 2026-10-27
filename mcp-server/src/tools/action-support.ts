@@ -71,7 +71,6 @@ function targetSummary(value: unknown): string | undefined {
 interface Classification {
   site: string;
   categories: string[];
-  fingerprint: string;
   fingerprints: string[];
 }
 
@@ -87,7 +86,6 @@ async function classify(host: ToolHost, tool: string, params: Record<string, unk
   return {
     site: raw.site.toLowerCase(),
     categories: evaluating ? ['evaluate'] : raw.categories.filter((value): value is string => typeof value === 'string'),
-    fingerprint: JSON.stringify(fingerprints),
     fingerprints,
   };
 }
@@ -159,7 +157,7 @@ export async function runActionSafety(
     const current = await classify(host, tool, params);
     const before = [...classification.categories].sort().join(',');
     const after = [...current.categories].sort().join(',');
-    if (current.site !== classification.site || after !== before || current.fingerprint !== classification.fingerprint) {
+    if (current.site !== classification.site || after !== before || current.fingerprints.length !== classification.fingerprints.length || current.fingerprints.some((value, i) => value !== classification.fingerprints[i])) {
       return { refusal: refuse('SAFETY_TARGET_CHANGED: the page action changed while confirmation was open; no action was dispatched. Review the page and try again.') };
     }
     return wire(current.fingerprints);

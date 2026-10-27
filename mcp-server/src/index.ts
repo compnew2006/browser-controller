@@ -56,6 +56,7 @@ import { buildIpcHello, OLDER_DAEMON_IPC_REASON, validateIpcHandshake } from './
 import { allTools } from './tools/index.js';
 import { registerTools } from './register-tools.js';
 import { Reconnector, type DaemonState } from './daemon-reconnect.js';
+import { ClientToken } from './daemon-token.js';
 import {
   APP_VERSION,
   DAEMON_INFO_FILE,
@@ -117,12 +118,14 @@ class DaemonClient {
   /** Why the daemon's welcome was refused; set before the socket is dropped, so connect() reports it. */
   private refusal: string | null = null;
   private readonly ipcPath: string;
-  private readonly token: string;
+  private readonly tokens: ClientToken;
+  /** The token the current attempt's hello carried; a denial is judged against it. */
+  private sentToken = '';
   private readonly agentName: string;
 
   constructor(ipcPath: string, token: string, agentName: string) {
     this.ipcPath = ipcPath;
-    this.token = token;
+    this.tokens = new ClientToken(token);
     this.agentName = agentName;
   }
 
@@ -138,6 +141,9 @@ class DaemonClient {
     this.buf = '';
     this.refusal = null;
     this.welcomed = false;
+    // pairing:rotate rewrites token.json under running clients: each connect sends the file's current token.
+    this.tokens.refresh();
+    this.sentToken = this.tokens.value;
     const socket = net.createConnection(this.ipcPath);
     this.socket = socket;
     await new Promise<void>((resolve, reject) => {
@@ -182,7 +188,7 @@ class DaemonClient {
     });
 
     // authenticate
-    socket.write(JSON.stringify(buildIpcHello(this.token, this.agentName)) + '\n');
+    socket.write(JSON.stringify(buildIpcHello(this.sentToken, this.agentName)) + '\n');
 
     try {
       await this.waitForWelcome();
@@ -226,6 +232,12 @@ class DaemonClient {
         break;
       case 'denied':
         console.error(`[${SERVER_NAME}] daemon denied: ${msg.reason}`);
+        // A rotated token.json is picked up by the reconnect; exit only when the file has nothing newer.
+        if (this.tokens.shouldRetryAfterDenial(this.sentToken)) {
+          this.refusal = 'daemon denied the old token; retrying with the rotated one';
+          this.socket?.destroy();
+          break;
+        }
         process.exit(1);
         break;
       case 'ping':
