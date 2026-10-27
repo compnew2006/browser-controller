@@ -66,6 +66,12 @@ async function runStep(def: ToolDefinition, host: ToolHost, params: Record<strin
   }
 }
 
+/** The `memory` lines the daemon added to a forwarded result; none when absent or malformed. */
+function memoryLinesOf(result: ToolResult): string[] {
+  const memory = rawResultOf(result)?.memory;
+  return Array.isArray(memory) ? memory.filter((line): line is string => typeof line === 'string') : [];
+}
+
 /** The step's failure text: its CODE: message string. */
 function messageOf(result: ToolResult): string {
   const first = result.content[0];
@@ -149,6 +155,10 @@ export const batchTool: ToolDefinition = {
       if (structured && typeof structured === 'object' && 'receipt' in structured) {
         const receipt = (structured as Record<string, unknown>).receipt;
         if (receipt && typeof receipt === 'object') receipts.push({ step: i + 1, tool: step.tool, ...(receipt as Record<string, unknown>) });
+      }
+      // A navigate's memory lines reach the agent through the batch's last step; earlier steps put them in the notes.
+      if (!result.isError && step.tool === 'browser_navigate' && i < actions.length - 1) {
+        notes.push(...memoryLinesOf(result).map((line) => `${label}: memory: ${line}`));
       }
       if (result.isError) {
         // A message that ends its sentence loses the full stop: "…nothing was clicked; 0 skipped", not ".;".

@@ -250,6 +250,8 @@ export async function connectFakeExtension(
     if (msg.tool) {
       calls.push({ tool: msg.tool, params: msg.params ?? {} });
       const custom = opts.onCall?.(msg.tool, msg.params ?? {});
+      // An Error answers as a failed call (an unreachable port, a closed tab), the way the real extension does.
+      if (custom instanceof Error) { ws.send(JSON.stringify({ id: msg.id, success: false, error: custom.message })); return; }
       if (custom !== undefined) { ws.send(JSON.stringify({ id: msg.id, success: true, result: custom })); return; }
 
       const wantsObserve = (msg.params ?? {}).observe === true;

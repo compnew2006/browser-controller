@@ -87,6 +87,7 @@ Source checked: root `constitution.md` SHA-256 `2b2d4700e6364c1e898c90ddaff59233
 4. Confirm or change the proposed thresholds after the baseline run (R-18).
 5. Set the implementation token budget (constitution Art. 24, proposed). **Approved 2026-10-27: 2,000,000 tokens total for Phases 2–8 (T013–T074)** — Phase 2 (daemon memory core: store.ts, queue.ts, policy) ~500K, Phase 3 (extension site-context + IPC wiring) ~400K, Phase 4 (`browser_memory`/`browser_memory_policy` tools) ~350K, Phase 5 (tests: protocol/boundaries/policy-tool) ~450K, Phases 6–8 (docs sync, optional Mnemon experiment, polish) ~300K. Usage recorded per phase in this file as work proceeds; `UNAVAILABLE` where no figure exists.
    - **Phase 2 usage**: 6 forks reported `subagent_tokens` of 189,346 + 199,192 + 201,068 + 180,763 + 252,933 + 279,305 = 1,302,607, against a ~500K allocation. The figure is the harness's per-agent total and probably counts the conversation context each fork inherits, so it overstates new work; the main session's own usage is `UNAVAILABLE`. Treat the Phase 2 allocation as exceeded and review the remaining split with the owner before Phase 3.
+   - **Phase 3 usage**: 2 forks reported 272,400 + 315,824 = 588,224 `subagent_tokens` (same caveat), against ~400K (extension/IPC wiring) + ~350K (tools) allocated. Cumulative forks: 1,890,831 of the 2,000,000 total, with Phases 4–8 still to do. The main session's own usage is `UNAVAILABLE`. The owner has not yet answered the budget question; the remaining phases need a revised budget.
 
 ## Project Structure
 

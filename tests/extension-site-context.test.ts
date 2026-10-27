@@ -70,7 +70,7 @@ const chromeMock: Record<string, unknown> = {
 (globalThis as unknown as { chrome: unknown }).chrome = chromeMock;
 
 const siteContext = await import('../extension/lib/site-context.js');
-const { dispatch } = await import('../extension/dispatch/router.js');
+const { dispatch, dispatchedTools } = await import('../extension/dispatch/router.js');
 
 const root = path.resolve(__dirname, '..');
 const allowlist = JSON.parse(
@@ -398,5 +398,40 @@ describe('router attaches siteContext only on observe:true', () => {
     expect(snap).toMatchObject({ success: true, text: snapResult.text });
     expect(snap.siteContext).toMatchObject({ anonymous: null, anonymityReason: 'unavailable', stable: false });
     tabsGet.mockImplementation(async (id: number) => ({ id, url: tabState.urls[0]!, incognito: false }));
+  });
+});
+
+describe('browser_memory_internal_context (T037)', () => {
+  it('returns the tab\'s siteContext without touching the page handlers', async () => {
+    setWorld({ urls: ['https://example.com/'], password: 'visible' });
+    const out = await dispatch('browser_memory_internal_context', { tabId: 7 }, 's1', 'a');
+    expect(out).toMatchObject({
+      success: true,
+      siteContext: { url: 'https://example.com/', topLevel: true, stable: true, passwordField: true, anonymous: true, anonymityReason: 'ok' },
+    });
+    expect(navigateHandler).not.toHaveBeenCalled();
+    expect(snapshotHandler).not.toHaveBeenCalled();
+    expect(textHandler).not.toHaveBeenCalled();
+    expect(reads.values).toBe(0);
+  });
+
+  it('reports an unstable tab as anonymous:null, as navigate and snapshot do', async () => {
+    for (const url of ['https://example.com/a', 'https://example.com/b', 'https://example.com/b']) {
+      tabsGet.mockResolvedValueOnce({ id: 7, url, incognito: false });
+    }
+    const out = await dispatch('browser_memory_internal_context', { tabId: 7 }, 's1', 'a');
+    expect(out.siteContext).toMatchObject({ stable: false, anonymous: null, anonymityReason: 'unstable' });
+  });
+
+  it('fails for a missing tab or a bad tabId', async () => {
+    tabsGet.mockRejectedValueOnce(new Error('No tab with id 7'));
+    expect(await dispatch('browser_memory_internal_context', { tabId: 7 }, 's1', 'a')).toMatchObject({ success: false, error: expect.stringMatching(/^TAB_NOT_FOUND: /) });
+    for (const params of [{}, { tabId: '7' }, { tabId: -1 }, { tabId: 1.5 }]) {
+      expect(await dispatch('browser_memory_internal_context', params, 's1', 'a'), JSON.stringify(params)).toMatchObject({ success: false, error: expect.stringMatching(/^INVALID_ARGUMENT: /) });
+    }
+  });
+
+  it('is an internal action: handled by dispatch, absent from the public tool list', () => {
+    expect(dispatchedTools).not.toContain('browser_memory_internal_context');
   });
 });

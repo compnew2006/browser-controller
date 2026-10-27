@@ -8,7 +8,8 @@ import {
 import { OBSERVABLE_TOOLS } from '../bridge-frames.js';
 import type { MemoryObservation } from '../vault/daemon-routing.js';
 import { SITE_CONTEXT_CAPABILITY } from '../protocol.js';
-import { controlFact, languageFact, loginFact, searchFact, type CandidateFact } from './allowlist.js';
+import { collectFacts, extractSnapshotFacts, MAX_CANDIDATES } from './facts.js';
+import { MemoryCursorError, buildMemoryView, buildReminder, unavailableLine, type MemoryView } from './output.js';
 import {
   MemoryPolicyError,
   canonicalOrigin,
@@ -23,12 +24,14 @@ import {
   type MemoryPolicy,
 } from './policy.js';
 import { MemoryQueue, type CaptureOp, type DropReason } from './queue.js';
-import { decideScope, type ScopeSiteContext } from './scope.js';
-import { JsonMemoryStore, MemoryStoreError, type MemoryStore } from './store.js';
+import { decideScope, type ScopeDecision, type ScopeSiteContext } from './scope.js';
+import { JsonMemoryStore, MemoryStoreError, type MemoryStore, type SiteRecord } from './store.js';
+
+export { extractSnapshotFacts };
 
 const MAX_PATH = 120;
-const MAX_CANDIDATES = 64;
-const SNAPSHOT_LINE = /^\s*(?:-\s+)?([a-z]+) "([^"\n]*)"(?:\s|$)/u;
+const REMINDER_TIMEOUT_MS = 500;
+const TOOL_KINDS: readonly string[] = ['all', 'facts', 'visits'];
 
 /** Identity of the extension connection that serves a session; `ambiguous` means another live connection has the same browserId. */
 export interface MemoryConnection {
@@ -46,7 +49,17 @@ export interface MemoryServiceDeps {
   now?: () => number;
   /** Test seam; the default is a JSON store under `memoryDir`. */
   store?: MemoryStore;
+  /** Longest wait for the store when building a navigate reminder. */
+  reminderTimeoutMs?: number;
 }
+
+/** What the daemon hands `handleTool` besides the validated agent arguments. */
+export interface MemoryToolContext {
+  /** The tab's `siteContext` from the extension (internal action `browser_memory_internal_context`, under the tab lock), or null. Never agent-supplied. */
+  siteContext: unknown;
+}
+
+export type MemoryToolResult = ({ success: true } & MemoryView) | { success: false; error: string };
 
 /** State taken before the browser call and handed back to `afterCall`. */
 export interface MemoryCall {
@@ -73,19 +86,6 @@ interface ParsedSiteContext extends ScopeSiteContext {
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-
-/** Candidate facts from snapshot lines `<role> "<name>"`. A line counts only when role and whole name are on the allowlist; nothing is truncated. */
-export function extractSnapshotFacts(text: string): CandidateFact[] {
-  const found = new Map<string, CandidateFact>();
-  for (const line of text.split('\n')) {
-    const match = SNAPSHOT_LINE.exec(line);
-    if (!match) continue;
-    const fact = searchFact(match[1], match[2]) ?? controlFact(match[1], match[2]);
-    if (fact && !found.has(fact.factId)) found.set(fact.factId, fact);
-    if (found.size >= MAX_CANDIDATES) break;
-  }
-  return [...found.values()];
-}
 
 function parseSiteContext(raw: unknown): ParsedSiteContext | null {
   if (!isRecord(raw) || typeof raw.url !== 'string') return null;
@@ -118,6 +118,16 @@ function sameDocument(a: unknown, b: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Validates the `browser_memory` input; a string result is the reason it is invalid. */
+function parseToolInput(params: Record<string, unknown>): { tabId: number; kind: 'all' | 'facts' | 'visits'; cursor?: string } | string {
+  for (const key of Object.keys(params)) if (key !== 'tabId' && key !== 'kind' && key !== 'cursor') return `unknown parameter ${key}`;
+  const { tabId, kind, cursor } = params;
+  if (typeof tabId !== 'number' || !Number.isInteger(tabId) || tabId < 0) return 'tabId must be a non-negative integer';
+  if (kind !== undefined && (typeof kind !== 'string' || !TOOL_KINDS.includes(kind))) return 'kind must be all, facts or visits';
+  if (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 64)) return 'cursor must be a string of at most 64 characters';
+  return { tabId, kind: (kind as 'all' | 'facts' | 'visits' | undefined) ?? 'all', ...(cursor === undefined ? {} : { cursor }) };
 }
 
 function errorCode(error: unknown): string {
@@ -194,18 +204,22 @@ export class MemoryService {
     }
   }
 
-  private capture(call: MemoryCall, outcome: MemoryCallOutcome, observation: MemoryObservation): void {
+  /** One scope decision for the call the daemon just finished, shared by capture and reminder. Throws when the session has no connection. */
+  private scopeFor(
+    purpose: 'capture' | 'reminder',
+    call: MemoryCall,
+    outcome: MemoryCallOutcome,
+    observation: MemoryObservation,
+  ): { decision: ScopeDecision; context: ParsedSiteContext | null; result: Record<string, unknown> } {
     const policy = readPolicy(this.memoryDir);
     const after = this.deps.connection(outcome.sessionId);
     const result = isRecord(outcome.result) ? outcome.result : {};
     const parsed = parseSiteContext(observation.siteContext);
     const tabId = typeof result.tabId === 'number' ? result.tabId : typeof outcome.params.tabId === 'number' ? outcome.params.tabId : undefined;
-    const navigated = outcome.tool === 'browser_navigate';
     // A navigate whose result URL differs from the tab's URL cannot be attributed to one document.
-    const context: ParsedSiteContext | null = parsed && navigated && !sameDocument(result.url, parsed.url) ? { ...parsed, stable: false } : parsed;
-
+    const context: ParsedSiteContext | null = parsed && outcome.tool === 'browser_navigate' && !sameDocument(result.url, parsed.url) ? { ...parsed, stable: false } : parsed;
     const decision = decideScope({
-      purpose: 'capture',
+      purpose,
       policy,
       browserId: call.browserId ?? '',
       liveConnectionsForBrowserId: after.ambiguous ? 2 : 1,
@@ -216,8 +230,14 @@ export class MemoryService {
       siteContext: context,
       sanitizedUnchanged: observation.sanitizedUnchanged,
     });
+    return { decision, context, result };
+  }
+
+  private capture(call: MemoryCall, outcome: MemoryCallOutcome, observation: MemoryObservation): void {
+    const { decision, context, result } = this.scopeFor('capture', call, outcome, observation);
     if (!decision.in || !context) return;
 
+    const navigated = outcome.tool === 'browser_navigate';
     const { scope } = decision;
     const at = this.iso();
     const base = { profileId: scope.browserId, origin: scope.origin, at, enqueuedAt: at };
@@ -225,28 +245,116 @@ export class MemoryService {
 
     const snapshotted = outcome.tool === 'browser_snapshot' || (navigated && outcome.params.snapshot === true);
     if (!snapshotted || scope.anonymous !== true) return;
-    const facts = new Map<string, CandidateFact>();
-    const add = (fact: CandidateFact | null) => {
-      if (fact && !facts.has(fact.factId)) facts.set(fact.factId, fact);
-    };
-    add(languageFact(context.lang, context.dir));
-    add(loginFact(context.passwordField, scope.path));
-    if (typeof result.text === 'string') for (const fact of extractSnapshotFacts(result.text)) add(fact);
-    if (facts.size === 0) return;
+    const facts = collectFacts({
+      text: typeof result.text === 'string' ? result.text : null,
+      lang: context.lang,
+      dir: context.dir,
+      passwordField: context.passwordField,
+      path: scope.path,
+    });
+    if (facts.length === 0) return;
     const op: CaptureOp = {
       ...base,
       opId: navigated ? `${outcome.daemonCallId}#facts` : outcome.daemonCallId,
       type: 'facts',
-      facts: [...facts.values()].slice(0, MAX_CANDIDATES),
+      facts: facts.slice(0, MAX_CANDIDATES),
       tool: outcome.tool as 'browser_navigate' | 'browser_snapshot',
       ...(scope.path.length <= MAX_PATH ? { path: scope.path } : {}),
     };
     this.queue.enqueue(op);
   }
 
-  /** The `browser_memory` tool is not part of this build yet; the daemon does not route to it. */
-  async handleTool(_tool: string, _params: Record<string, unknown>, _sessionId: string): Promise<{ success: false; error: string }> {
-    return { success: false, error: 'MEMORY_UNAVAILABLE: browser_memory is not available in this build' };
+  /**
+   * The result the agent receives for a successful `browser_navigate`: the bounded, labeled reminder is appended to
+   * `text` and added as the `memory` array (FR-011, AC-25). It shows what was stored before this call. Without a
+   * reminder (memory off, origin excluded, scope unknown, nothing stored) the same result object comes back. A store
+   * failure adds only `memory: unavailable (<CODE>)`. Never throws, and waits at most the reminder timeout (R-15).
+   */
+  async withReminder(call: MemoryCall, outcome: MemoryCallOutcome): Promise<unknown> {
+    const { result, observation } = outcome;
+    if (!call.observe || outcome.tool !== 'browser_navigate' || !observation || !isRecord(result)) return result;
+    try {
+      const { decision } = this.scopeFor('reminder', call, outcome, observation);
+      if (!decision.in) return result;
+      const lines = await this.reminderLines(decision.scope.origin, decision.scope.browserId, typeof result.tabId === 'number' ? result.tabId : undefined);
+      if (!lines) return result;
+      return { ...result, ...(typeof result.text === 'string' ? { text: `${result.text}\n${lines.join('\n')}` } : {}), memory: lines };
+    } catch (error) {
+      this.noteError(errorCode(error));
+      return result;
+    }
+  }
+
+  private async reminderLines(origin: string, profileId: string, tabId: number | undefined): Promise<string[] | null> {
+    try {
+      const site = await this.readSite(origin, this.deps.reminderTimeoutMs ?? REMINDER_TIMEOUT_MS);
+      return buildReminder(origin, site, profileId, { tabId })?.lines ?? null;
+    } catch (error) {
+      const code = errorCode(error);
+      this.noteError(code);
+      return [unavailableLine(code)];
+    }
+  }
+
+  private async readSite(origin: string, timeoutMs: number): Promise<SiteRecord | null> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new MemoryStoreError('MEMORY_UNAVAILABLE', 'the store did not answer in time')), timeoutMs);
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([this.store.getSite(origin), expired]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * `browser_memory {tabId, kind?, cursor?}` for the verified profile and the origin of the tab's current page. The
+   * profile and origin come from the connection and the extension, never from the parameters (AC-26). Failures are
+   * `CODE: message`; none names a policy command or carries page content (R-12).
+   */
+  async handleTool(tool: string, params: Record<string, unknown>, sessionId: string, context: MemoryToolContext): Promise<MemoryToolResult> {
+    const fail = (code: string, message: string): MemoryToolResult => ({ success: false, error: `${code}: ${message}` });
+    try {
+      if (tool !== 'browser_memory') return fail('INVALID_ARGUMENT', `unknown memory tool ${tool}`);
+      const input = parseToolInput(params);
+      if (typeof input === 'string') return fail('INVALID_ARGUMENT', input);
+
+      const policy = readPolicy(this.memoryDir);
+      if (!policy.enabled) return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
+      const before = this.deps.connection(sessionId);
+      if (!before.supportsSiteContext) return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
+
+      const after = this.deps.connection(sessionId);
+      const siteContext = parseSiteContext(context.siteContext);
+      const decision = decideScope({
+        purpose: 'reminder',
+        policy,
+        browserId: before.browserId,
+        liveConnectionsForBrowserId: after.ambiguous ? 2 : 1,
+        connectionIdBefore: before.connectionId,
+        connectionIdAfter: after.connectionId,
+        extensionCapabilities: after.supportsSiteContext ? [SITE_CONTEXT_CAPABILITY] : [],
+        vault: this.deps.vault.memoryEligibility(before.browserId, input.tabId),
+        siteContext,
+        sanitizedUnchanged: true,
+      });
+      if (!decision.in) {
+        if (decision.outcome === 'disabled') return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
+        if (decision.outcome === 'excluded') return fail('MEMORY_EXCLUDED', 'this site is excluded from website memory.');
+        if (decision.reason === 'no_site_context_capability') return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
+        return fail('MEMORY_SCOPE_UNKNOWN', "this tab's profile, site or privacy state could not be verified, so no memory is shown.");
+      }
+      const site = await this.readSite(decision.scope.origin, this.deps.reminderTimeoutMs ?? REMINDER_TIMEOUT_MS * 4);
+      const view = buildMemoryView(decision.scope.origin, site, decision.scope.browserId, input);
+      return { success: true, ...view };
+    } catch (error) {
+      if (error instanceof MemoryCursorError) return fail('INVALID_ARGUMENT', 'cursor is not valid.');
+      const code = errorCode(error);
+      this.noteError(code);
+      return fail(code === 'MEMORY_CORRUPT' ? 'MEMORY_CORRUPT' : 'MEMORY_UNAVAILABLE', 'website memory could not be read.');
+    }
   }
 
   /** Tombstones the queue has drained past are removed through the one policy writer. */

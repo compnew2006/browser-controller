@@ -54,6 +54,7 @@ import { armIpcHelloTimer } from './ipc-hello-timer.js';
 import { VaultService, type VaultTransport } from './vault/service.js';
 import { routeVaultAwareCall } from './vault/daemon-routing.js';
 import { MemoryService } from './memory/service.js';
+import { routeMemoryTool } from './memory/tool-route.js';
 
 const SERVER_NAME = 'browser-controller-daemon';
 
@@ -448,19 +449,23 @@ class Daemon {
     // extension's tab-lock layer reads msg.sessionId, never params.__sessionId.
     const memoryCall = this.memory.beginCall(client.sessionId, msg.tool);
     try {
-      const outcome = await routeVaultAwareCall({
-        bridge: this.bridge,
-        vaultService: this.vaultService,
-        sessionId: client.sessionId,
-        agentName: client.agentName,
-        tool: msg.tool,
-        params: msg.params,
-        signal: controller.signal,
-        observe: memoryCall.observe,
-      });
+      const outcome = msg.tool === 'browser_memory'
+        ? await routeMemoryTool(this.memory, this.bridge, client.sessionId, client.agentName, msg.params, controller.signal, (value) => this.vaultService.sanitizeForSession(client.sessionId, value, 'browser_memory'))
+        : await routeVaultAwareCall({
+          bridge: this.bridge,
+          vaultService: this.vaultService,
+          sessionId: client.sessionId,
+          agentName: client.agentName,
+          tool: msg.tool,
+          params: msg.params,
+          signal: controller.signal,
+          observe: memoryCall.observe,
+        });
       const { observation, ...agentOutcome } = outcome;
+      const memoryOutcome = { sessionId: client.sessionId, tool: msg.tool, params: msg.params, daemonCallId, result: agentOutcome.result, observation };
+      if (agentOutcome.success) agentOutcome.result = await this.memory.withReminder(memoryCall, memoryOutcome);
       this.sendToClient(client, { kind: 'result', id: msg.id, ...agentOutcome });
-      this.memory.afterCall(memoryCall, { sessionId: client.sessionId, tool: msg.tool, params: msg.params, daemonCallId, result: agentOutcome.result, observation });
+      this.memory.afterCall(memoryCall, memoryOutcome);
     } catch (err) {
       this.sendToClient(client, {
         kind: 'result',

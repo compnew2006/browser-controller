@@ -95,6 +95,7 @@ export const TRUSTED_TOOL_RESULT_FIELDS: Readonly<Record<string, readonly string
   browser_mock: ['tabId', 'active', 'rules'],
   browser_inspect_element: ['tabId', 'element', 'details'],
   browser_safety: ['content', 'structuredContent', 'settings', 'isError'],
+  browser_memory: ['origin', 'items', 'next'],
   browser_vault: [
     'status', 'code', 'message', 'requestId', 'purpose', 'origin', 'handle', 'accounts',
     'browserLabel', 'grantId', 'backups', 'backupId', 'createdAt', 'filled_fields', 'success', 'error',

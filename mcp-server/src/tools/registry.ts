@@ -18,6 +18,7 @@ import { mockTool } from './mock.js';
 import { inspectElementTool } from './inspect-element.js';
 import { safetyTool } from './safety.js';
 import { vaultTool } from './vault.js';
+import { memoryTool } from './memory.js';
 
 /**
  * The tools, in the order tools/list shows them. Extension-backed ones forward
@@ -47,6 +48,7 @@ export const allTools: ToolDefinition[] = [
   inspectElementTool,
   safetyTool,
   vaultTool,
+  memoryTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

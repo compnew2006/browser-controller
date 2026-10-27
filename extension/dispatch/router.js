@@ -26,6 +26,7 @@ import { handleInspectElement } from '../handlers/inspect.js';
 import { handleClassifyAction } from '../handlers/action-safety.js';
 import { handleVaultAction, isPrivateVaultTab } from '../lib/vault-actions.js';
 import { buildSiteContext, captureTabUrl } from '../lib/site-context.js';
+import { handleMemoryContext } from '../handlers/memory-context.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -66,15 +67,20 @@ const HANDLERS = {
   browser_mock: handleMock,
   browser_inspect_element: handleInspectElement,
   browser_classify_action: handleClassifyAction,
+  browser_memory_internal_context: handleMemoryContext,
 };
+
+/** Handlers that are not MCP tools; the daemon sends them itself. */
+const INTERNAL_ONLY = new Set(['browser_classify_action', 'browser_memory_internal_context']);
 
 /**
  * Public wire tools (exported for the drift-guard test); internal preflight stays private.
  * browser_classify_action is deliberately in HANDLERS but not here: it is not an MCP tool, yet
  * the server's action-safety gate (mcp-server/src/tools/action-support.ts) calls it through the
  * bridge before every click/type/fill, so dispatch must keep reaching it. It only reads the page.
+ * browser_memory_internal_context is the daemon's read of a tab's siteContext for browser_memory.
  */
-export const dispatchedTools = Object.freeze(Object.keys(HANDLERS).filter((name) => name !== 'browser_classify_action'));
+export const dispatchedTools = Object.freeze(Object.keys(HANDLERS).filter((name) => !INTERNAL_ONLY.has(name)));
 
 export async function dispatch(tool, params, sessionId, agentName, signal, observe = false) {
   const handler = HANDLERS[tool];
