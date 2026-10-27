@@ -9,7 +9,7 @@
 
 ## Architecture and Security
 
-MCP clients connect to a local daemon that validates calls and routes them over authenticated WebSockets to the paired extension. Keep schemas under `mcp-server/src/tools/`, registration in `register-tools.ts`, and browser behavior in matching handlers. Preserve timeouts and tab ownership. Pairing grants trusted clients powerful, unsandboxed browser control. Never commit secrets/private configuration; report vulnerabilities through `SECURITY.md`. Vault fill never clicks Submit, though site handlers may submit on input.
+MCP clients connect to a local daemon that validates calls and routes them over authenticated WebSockets to the paired extension. Keep schemas under `mcp-server/src/tools/`, registration in `mcp-server/src/tools/registry.ts`, and browser behavior in matching handlers. Preserve timeouts and tab ownership. Pairing grants trusted clients powerful, unsandboxed browser control. Never commit secrets/private configuration; report vulnerabilities through `SECURITY.md`. Vault fill never clicks Submit, though site handlers may submit on input.
 
 ## Build, Test, and Development
 
@@ -17,6 +17,8 @@ MCP clients connect to a local daemon that validates calls and routes them over 
 - `npm test` runs Vitest; focus one with `npm test -- tests/v3-mock.test.ts`.
 - CI runs `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:coverage`, `npm run security:audit`, and `npm run context:lint` on Node 20 and 22.
 - `npm run smoke:real-chrome` requires a built server and enrolled extension; it restarts the daemon and uses the normal Chrome profile.
+- Code-graph indexes are machine-local output: `.codebase-memory/` and `graphify-out/` stay uncommitted, and a clone that still tracks the former clears it once with `rm -rf .codebase-memory` before pulling past `8777e78`. The tool rebuilds the index on the next run.
+- A release is an annotated tag `vX.Y.Z` on the commit that sets that version, with notes read from the tagged tree's `CHANGELOG.md` section, never from the working tree.
 
 ## Style and Testing
 

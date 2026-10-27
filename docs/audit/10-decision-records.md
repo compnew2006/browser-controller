@@ -121,9 +121,11 @@ An existing extension-side path already replaces a rotated secret when the store
 - codebase-memory-mcp: symbol search, call paths and code snippets (`search_graph`, `trace_path`, `get_code_snippet`). Its index is committed under `.codebase-memory/`.
 - graphify: blast radius (`graphify affected`) and a post-commit refresh hook. The hook is machine-local: on the Owner's machine it is installed by `graphify hook install` through the global `core.hooksPath`, not in this clone's `.git/hooks`, so a fresh clone has no hook. Its output, `graphify-out/`, is gitignored.
 
+**Status update (2026-10-28).** Superseded on one point by commit `8777e78`: the codebase-memory index is no longer committed. It is machine-local and gitignored under `.codebase-memory/`, so a fresh clone starts with no graph until the tool indexes once, and the "committed index" cost below no longer applies to a decision to drop the tool. Both maps remain, for the same jobs as above.
+
 Source, configuration and tests win over either map. Every claim taken from a graph is checked against source.
 
-**Alternatives.** Drop graphify: loses the blast-radius query and the hook. Drop codebase-memory: loses symbol and call-path search and the committed index.
+**Alternatives.** Drop graphify: loses the blast-radius query and the hook. Drop codebase-memory: loses symbol and call-path search and, until `8777e78`, the committed index.
 
 **Consequences.** Positive: each tool covers the other's gap. Negative: the two maps can disagree, because they parse differently and refresh on different triggers. Two indexes must be kept fresh. Risk accepted: a decision made from a stale or disagreeing map. Mitigation: source wins, and a disagreement is reported, not averaged.
 

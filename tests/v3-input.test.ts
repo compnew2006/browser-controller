@@ -986,4 +986,24 @@ describe('a file chooser that agent input opens is intercepted, not shown', () =
     await graceOver();
     expect(chooserCalls()).toEqual([{ enabled: true, cancel: true }]);
   });
+
+  it('a switch-off Chrome refuses keeps the hold recorded, and the next release retries it', async () => {
+    uploadButton();
+    cdpReply = (method, params) => {
+      if (method === 'Page.setInterceptFileChooserDialog' && params.enabled === false) throw new Error('Session with given id not found');
+      return browserReply(method, params);
+    };
+    await handleClick({ tabId: 1, target: '#up' });
+    await graceOver();
+    // Refused once is not forgotten: the tab is still intercepted, so the entry stays.
+    expect(chooserCalls()).toEqual([{ enabled: true, cancel: true }, { enabled: false }]);
+    // The next input shares that hold (no second switch-on) and its release tries again.
+    await handleClick({ tabId: 1, target: '#up' });
+    await graceOver();
+    expect(chooserCalls()).toEqual([
+      { enabled: true, cancel: true },
+      { enabled: false },
+      { enabled: false },
+    ]);
+  });
 });

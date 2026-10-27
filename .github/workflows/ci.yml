@@ -16,6 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Machine-local generated output (code-graph indexes, browser scratch, coverage).
+      # .gitignore cannot protect a path once it is tracked, so assert that here.
+      - name: generated indexes stay untracked
+        run: |
+          tracked=$(git ls-files -- .codebase-memory graphify-out .serena .playwright-mcp .playwright-cli .changes .agents .native-host coverage mcp-server/dist)
+          test -z "$tracked" || { echo "generated output is tracked again:"; echo "$tracked"; exit 1; }
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}

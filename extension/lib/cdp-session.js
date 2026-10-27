@@ -156,7 +156,8 @@ const CHOOSER_SETUP_MS = 1_000;
  * first dispatch; release() ends the hold, and once no hold is left the interception goes
  * off after CHOOSER_GRACE_MS (a page that opens the chooser a little after the click), so
  * the user's own clicks show the dialog again. A Chrome that refuses the switch shows the
- * dialog as before.
+ * dialog as before, and a switch-off Chrome refuses keeps the hold recorded so the next
+ * release tries it again.
  */
 export function holdFileChooser(tabId, send) {
   let h = chooserHolds.get(tabId);
@@ -178,8 +179,19 @@ export function holdFileChooser(tabId, send) {
       if (h.holds > 0) return;
       h.timer = setTimeout(async () => {
         if (chooserHolds.get(tabId) !== h || h.holds > 0) return;
-        chooserHolds.delete(tabId);
-        if (await h.ready) send('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
+        if (!(await h.ready)) {
+          // Chrome never took the switch on: there is nothing to switch off.
+          chooserHolds.delete(tabId);
+          return;
+        }
+        try {
+          await send('Page.setInterceptFileChooserDialog', { enabled: false });
+          chooserHolds.delete(tabId);
+        } catch {
+          // Keep the hold: the entry is the record that interception is still on, and the
+          // next release retries the switch. Dropping it here would leave the tab cancelling
+          // the user's own file dialogs with nothing left to turn that off.
+        }
       }, CHOOSER_GRACE_MS);
     },
   };

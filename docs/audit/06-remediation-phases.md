@@ -31,6 +31,7 @@ safely (its five steps touch disjoint files).
    npx eslint mcp-server/src tests extension vitest.config.ts eslint.config.js
    npm test                    # expect 89 test files, 1133 tests
    ```
+   Re-recorded 2026-10-28: commit `8777e78` untracked and gitignored `.codebase-memory/`, so a Phase 0 baseline taken from that commit onward expects a clean tree.
 2. Record the structural baseline with the audit extractor (it writes only gitignored JSON, into `docs/audit/tools/`):
    ```
    node docs/audit/tools/extract2.cjs "$PWD" docs/audit/tools
