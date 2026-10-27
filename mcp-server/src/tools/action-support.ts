@@ -75,10 +75,10 @@ interface Classification {
 }
 
 async function classify(host: ToolHost, tool: string, params: Record<string, unknown>): Promise<Classification> {
-  // Page JS cannot be classified. Ask the classifier for the tab's host only (a request with no
-  // target inspects no element), and treat every evaluate as one category: the site's effective action.
+  // Page JS cannot be classified. Ask the classifier for the tab's host only (the extension probes no
+  // element for browser_evaluate), and treat every evaluate as one category: the site's effective action.
   const evaluating = tool === 'browser_evaluate';
-  const raw = await host.callTool('browser_classify_action', evaluating ? { tabId: params.tabId, action: 'browser_click' } : classificationParams(tool, params)) as Record<string, unknown>;
+  const raw = await host.callTool('browser_classify_action', evaluating ? { tabId: params.tabId, action: 'browser_evaluate' } : classificationParams(tool, params)) as Record<string, unknown>;
   if (raw?.success !== true || typeof raw.site !== 'string' || !Array.isArray(raw.categories)) {
     throw new Error(typeof raw?.error === 'string' ? raw.error : 'classifier returned an invalid result');
   }

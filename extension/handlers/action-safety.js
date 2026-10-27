@@ -6,7 +6,7 @@
 import { resolveTab, execDom, getFallback } from '../lib/page-exec.js';
 import { parseTarget } from '../lib/target.js';
 
-const ACTIONS = new Set(['browser_click', 'browser_type', 'browser_fill']);
+const ACTIONS = new Set(['browser_click', 'browser_type', 'browser_fill', 'browser_evaluate']);
 const DELETE_INTENT = /\b(delete|remove|destroy|erase|revoke|unsubscribe|cancel\s+(?:plan|account|subscription))\b/i;
 const SUBMIT_INTENT = /\b(submit|save|send|confirm|apply|place\s+order|checkout|pay|purchase|sign\s+in|log\s+in|register)\b/i;
 const ENTER_KEY = /(?:^|\s|\+)enter(?:$|\s)/i;
@@ -78,7 +78,8 @@ export async function handleClassifyAction(params) {
   let categories = [];
   let fingerprints = [];
 
-  if (!hover) {
+  // Page JS cannot be classified: evaluate reports the site only, with no target and no page probe.
+  if (!hover && action !== 'browser_evaluate') {
     if (action === 'browser_type' && (submit === true || ENTER_KEY.test(String(key || '')))) categories.push('submit');
     const targetValues = action === 'browser_fill'
       ? (Array.isArray(fields) ? fields.slice(0, 50).map((field) => field?.target) : [])

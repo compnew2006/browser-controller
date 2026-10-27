@@ -244,7 +244,7 @@ describe("browser_evaluate follows the site's action while safety is on", () => 
     const res = await evaluateTool.handler(s.host, evalParams);
     expect(res.isError).toBeUndefined();
     expect(evals(s)).toHaveLength(1);
-    expect(s.classified[0]).toEqual({ tabId: 1, action: "browser_click" }); // host lookup only: no target, no expression
+    expect(s.classified[0]).toEqual({ tabId: 1, action: "browser_evaluate" }); // host lookup only: no target, no expression
   });
 
   it("site rule overrides the default", async () => {
