@@ -61,6 +61,13 @@ export const REQUIRED_EXTENSION_CAPABILITIES = Object.freeze(['tool-dispatch', '
 export const OLDER_EXTENSION_REASON =
   'The Browser Controller extension is older than 3.0: reload it at chrome://extensions.';
 
+/**
+ * A peer that never answered the hello: a pre-3.0 extension, a service worker recycled
+ * mid-handshake or any silent local socket. The daemon cannot tell which, so it says so.
+ */
+export const HANDSHAKE_TIMEOUT_REASON =
+  'A browser connection did not finish the handshake in time. If the extension is older than 3.0, reload it at chrome://extensions.';
+
 export interface ProtocolCheck {
   ok: boolean;
   legacy: boolean;

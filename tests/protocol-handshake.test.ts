@@ -21,6 +21,7 @@ import {
   OLDER_CLIENT_IPC_REASON,
   OLDER_DAEMON_IPC_REASON,
   OLDER_EXTENSION_REASON,
+  HANDSHAKE_TIMEOUT_REASON,
   REQUIRED_EXTENSION_CAPABILITIES,
   validateExtensionCapabilities,
   validateCapabilities,
@@ -568,8 +569,29 @@ describe('ExtensionBridge protocol handshake', () => {
     await bridge.start();
 
     const { client } = await connectWs(port);
-    // A pre-3.0 build never acknowledges the hello; it must not be treated as ready.
+    // A pre-3.0 build never acknowledges the hello; neither does a silent local socket or a service
+    // worker recycled mid-handshake. It must not be treated as ready, and the reason must not claim
+    // which of them it was: it names the timeout and keeps the reload hint for an older extension.
     client.on('message', () => { /* swallow the hello */ });
+
+    await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(`NOT_CONNECTED: ${HANDSHAKE_TIMEOUT_REASON}`);
+    expect(OLDER_EXTENSION_REASON).not.toBe(HANDSHAKE_TIMEOUT_REASON);
+    expect(bridge.isConnected()).toBe(false);
+  });
+
+  it('a silent peer never overwrites the reason a peer actually sent', async () => {
+    const port = nextPort();
+    const bridge = createBridge(port, { handshakeGraceMs: 50 });
+    await bridge.start();
+
+    const first = await connectWs(port);
+    await first.hello;
+    const closed = new Promise((resolve) => first.client.once('close', resolve));
+    first.client.send(JSON.stringify({ type: 'helloAck', protocolVersion: EXTENSION_PROTOCOL_VERSION }));
+    await closed;
+    const silent = await connectWs(port);
+    silent.client.on('message', () => { /* swallow the hello */ });
+    await new Promise((resolve) => silent.client.once('close', resolve));
 
     await expect(bridge.callTool('browser_snapshot', { tabId: 1 })).rejects.toThrow(`NOT_CONNECTED: ${OLDER_EXTENSION_REASON}`);
     expect(bridge.isConnected()).toBe(false);

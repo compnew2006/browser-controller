@@ -5,7 +5,7 @@ import { APP_VERSION } from './daemon-config.js';
 import {
   DAEMON_INSTANCE_ID,
   buildExtensionHello,
-  OLDER_EXTENSION_REASON,
+  HANDSHAKE_TIMEOUT_REASON,
   validateExtensionHelloAck,
 } from './protocol.js';
 import {
@@ -158,7 +158,7 @@ export class ExtensionBridge {
     }
   }
 
-  private rejectExtensionHandshake(conn: ExtensionConnection, reason: string): void {
+  private rejectExtensionHandshake(conn: ExtensionConnection, reason: string, peerSentFrame = true): void {
     if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
     conn.handshakeTimer = null;
     const wasReady = conn.state === 'ready';
@@ -166,7 +166,9 @@ export class ExtensionBridge {
     try { conn.ws.close(1002, 'incompatible protocol'); } catch { /* already closing */ }
     if (!wasReady) {
       // An unproven peer cannot be told from an attacker: keep the reason, fail nobody early.
-      this.lastRefusal = reason;
+      // A silent peer sent no frame: its timeout never replaces a reason a peer actually sent.
+      if (peerSentFrame) this.lastRefusal = reason;
+      else this.lastRefusal ??= reason;
       this.rejectAllPending(reason, conn);
       return;
     }
@@ -333,7 +335,7 @@ export class ExtensionBridge {
         });
 
         conn.handshakeTimer = setTimeout(() => {
-          if (this.conns.has(conn) && conn.state === 'pending') this.rejectExtensionHandshake(conn, OLDER_EXTENSION_REASON);
+          if (this.conns.has(conn) && conn.state === 'pending') this.rejectExtensionHandshake(conn, HANDSHAKE_TIMEOUT_REASON, false);
         }, this.handshakeGraceMs);
       });
 

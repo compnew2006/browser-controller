@@ -32,7 +32,14 @@ export function createBridgeHttpHandler(options: BridgeHttpHandlerOptions): http
       return;
     }
 
-    const url = new URL(req.url || '/', `http://${options.host}`);
+    // A malformed request-target must answer 400, never throw out of the async listener (daemon crash).
+    let url: URL;
+    try {
+      url = new URL(req.url || '/', `http://${options.host}`);
+    } catch {
+      res.writeHead(400, corsHeaders(req, decision.origin)).end('Bad request');
+      return;
+    }
     if (req.method === 'GET' && url.pathname === HTTP_AUTH_CHALLENGE_PATH) {
       try {
         const challenge = options.authenticator.issueChallenge(url.searchParams.get('clientNonce') || '');
