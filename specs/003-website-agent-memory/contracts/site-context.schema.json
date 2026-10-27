@@ -7,7 +7,7 @@
     "requestAddition": {
       "type": "object",
       "properties": {
-        "observe": { "type": "boolean", "description": "Top-level field of ExtensionRequest, next to sessionId; never inside params." }
+        "observe": { "type": "boolean", "description": "Carried as params.observe on browser_navigate and browser_snapshot requests only (bridge.ts forwards params untouched, so no bridge change is needed). The daemon strips any agent-supplied value and sets it only while memory is enabled." }
       }
     },
     "siteContext": {

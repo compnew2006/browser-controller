@@ -25,6 +25,7 @@ import { handleMock, releaseMock } from '../handlers/mock.js';
 import { handleInspectElement } from '../handlers/inspect.js';
 import { handleClassifyAction } from '../handlers/action-safety.js';
 import { handleVaultAction, isPrivateVaultTab } from '../lib/vault-actions.js';
+import { buildSiteContext, captureTabUrl } from '../lib/site-context.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -75,10 +76,30 @@ const HANDLERS = {
  */
 export const dispatchedTools = Object.freeze(Object.keys(HANDLERS).filter((name) => name !== 'browser_classify_action'));
 
-export async function dispatch(tool, params, sessionId, agentName, signal) {
+export async function dispatch(tool, params, sessionId, agentName, signal, observe = false) {
   const handler = HANDLERS[tool];
   if (!handler) throw new Error(`Unknown tool: ${tool}`);
-  return withDialogLine(params?.tabId, withFileChooserLine(params?.tabId, await handler(params, sessionId, agentName, signal)));
+  const watching = observe === true && OBSERVED_TOOLS.has(tool);
+  const urlBefore = watching && typeof params?.tabId === 'number' ? await captureTabUrl(params.tabId).catch(() => null) : null;
+  const result = await handler(params, sessionId, agentName, signal);
+  const observed = watching ? await withSiteContext(tool, params, urlBefore, result) : result;
+  return withDialogLine(params?.tabId, withFileChooserLine(params?.tabId, observed));
+}
+
+/** The calls that report siteContext when the daemon asks for it (specs/003-website-agent-memory R-05). */
+const OBSERVED_TOOLS = new Set(['browser_navigate', 'browser_snapshot']);
+
+/**
+ * Add siteContext to a successful navigate or snapshot result. The block is built after the
+ * handler, from the tab the call used (a navigate without tabId opens its own: result.tabId).
+ * Observation never changes the outcome of the call.
+ */
+async function withSiteContext(tool, params, urlBefore, result) {
+  if (!result || result.success === false) return result;
+  const tabId = typeof params?.tabId === 'number' ? params.tabId : result.tabId;
+  if (typeof tabId !== 'number') return result;
+  const siteContext = await buildSiteContext(tabId, { urlBefore, navigated: tool === 'browser_navigate' });
+  return { ...result, siteContext };
 }
 
 /**
@@ -392,6 +413,7 @@ export async function handleMessage(msg) {
         sessionId,
         agentName,
         controller.signal,
+        p?.observe === true,
       );
       sendToolResponse(id, result);
     } catch (err) {
@@ -433,7 +455,7 @@ export async function handleMessage(msg) {
         try {
           // The shield step above can take a while: check again before the handler sends anything.
           if (controller.signal.aborted) throw cancelledError();
-          const result = await dispatch(tool, p, sessionId, agentName, controller.signal);
+          const result = await dispatch(tool, p, sessionId, agentName, controller.signal, p?.observe === true);
           sendToolResponse(id, result);
           noteTabSetting(tool, p, sessionId, result);
         } catch (err) {

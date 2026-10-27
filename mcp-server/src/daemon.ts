@@ -53,6 +53,7 @@ import { isKnownWireTool } from './wire-tools.js';
 import { armIpcHelloTimer } from './ipc-hello-timer.js';
 import { VaultService, type VaultTransport } from './vault/service.js';
 import { routeVaultAwareCall } from './vault/daemon-routing.js';
+import { MemoryService } from './memory/service.js';
 
 const SERVER_NAME = 'browser-controller-daemon';
 
@@ -100,6 +101,7 @@ export const MAX_IPC_LINE_BYTES = envInt('BC_MAX_IPC_LINE_BYTES', 1_000_000, 102
 class Daemon {
   private bridge: ExtensionBridge;
   private vaultService: VaultService;
+  private memory: MemoryService;
   private ipcServer: net.Server | null = null;
   private clients = new Map<net.Socket, IpcClient>();
   /** daemon-global call id counter -> { client, clientId } to route the reply. */
@@ -141,6 +143,11 @@ class Daemon {
     };
     this.vaultService = new VaultService(STATE_DIR, vaultTransport, (sessionId) => this.isSessionLive(sessionId));
     this.bridge.vaultTransport.setService(this.vaultService);
+    this.memory = new MemoryService({
+      memoryDir: path.join(STATE_DIR, 'memory'),
+      vault: this.vaultService,
+      connection: (sessionId) => this.bridge.vaultTransport.getBrowserContext(sessionId),
+    });
   }
 
   private isSessionLive(sessionId: string): boolean {
@@ -304,7 +311,7 @@ class Daemon {
             rateWindowStart: Date.now(),
           };
           this.clients.set(socket, client);
-          safeSend(buildIpcWelcome(client.sessionId));
+          safeSend(buildIpcWelcome(client.sessionId, { memoryAdmin: true }));
           console.error(`[${SERVER_NAME}] client connected: ${client.sessionId} (${client.agentName})`);
           return;
         }
@@ -312,6 +319,11 @@ class Daemon {
         // Heartbeat reply — reset the miss counter. No further action.
         if (msg.kind === 'pong' && client) {
           client.missedPongs = 0;
+          continue;
+        }
+
+        if (msg.kind === 'memory-admin' && client) {
+          void this.memory.adminFromWire(msg).then(safeSend);
           continue;
         }
 
@@ -434,6 +446,7 @@ class Daemon {
     // which forwards it as a top-level field on the WS message — NOT injected
     // into params. The daemon stays a pure {tool, params} multiplexer; the
     // extension's tab-lock layer reads msg.sessionId, never params.__sessionId.
+    const memoryCall = this.memory.beginCall(client.sessionId, msg.tool);
     try {
       const outcome = await routeVaultAwareCall({
         bridge: this.bridge,
@@ -443,8 +456,11 @@ class Daemon {
         tool: msg.tool,
         params: msg.params,
         signal: controller.signal,
+        observe: memoryCall.observe,
       });
-      this.sendToClient(client, { kind: 'result', id: msg.id, ...outcome });
+      const { observation, ...agentOutcome } = outcome;
+      this.sendToClient(client, { kind: 'result', id: msg.id, ...agentOutcome });
+      this.memory.afterCall(memoryCall, { sessionId: client.sessionId, tool: msg.tool, params: msg.params, daemonCallId, result: agentOutcome.result, observation });
     } catch (err) {
       this.sendToClient(client, {
         kind: 'result',

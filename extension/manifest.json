@@ -16,7 +16,8 @@
     "webNavigation",
     "storage",
     "alarms",
-    "nativeMessaging"
+    "nativeMessaging",
+    "cookies"
   ],
   "host_permissions": [
     "<all_urls>",

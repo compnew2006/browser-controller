@@ -212,17 +212,92 @@ export const ENROLLMENT_FILE = path.join(STATE_DIR, 'enrollment.json');
 
 // --- IPC / WS protocol message shapes --------------------------------------
 
+export const MEMORY_ADMIN_COMMANDS = ['status', 'enable', 'disable', 'exclude', 'include', 'inspect', 'export', 'delete'] as const;
+export type MemoryAdminCommand = (typeof MEMORY_ADMIN_COMMANDS)[number];
+
+/** Owner CLI -> daemon, after the token hello. Shape: contracts/memory-admin-ipc.schema.json. */
+export interface MemoryAdminRequest {
+  kind: 'memory-admin';
+  id: string;
+  command: MemoryAdminCommand;
+  origin?: string;
+  all?: boolean;
+}
+
+export interface MemoryAdminStatus {
+  enabled: boolean;
+  origins: number;
+  bytes: number;
+  queueDepth: number;
+  dropped: Record<string, number>;
+  lastError: { code: string; at: string } | null;
+  quarantined: number;
+}
+
+export interface MemoryAdminResult {
+  kind: 'memory-admin-result';
+  id: string;
+  success: boolean;
+  /** `CODE: message` (INVALID_ARGUMENT, MEMORY_UNAVAILABLE, MEMORY_CORRUPT). */
+  error?: string;
+  status?: Partial<MemoryAdminStatus>;
+  /** inspect/export: SiteRecord objects as stored. Owner-only full view. */
+  records?: unknown[];
+}
+
 export type IpcClientMessage =
   | { kind: 'hello'; token: string; agentName?: string; protocolVersion?: number; capabilities?: string[] }
   | { kind: 'call'; id: string; tool: string; params: Record<string, unknown> }
+  | MemoryAdminRequest
   | { kind: 'pong' }; // heartbeat reply — daemon evicts a silent client after 3 missed pings
 
 export type IpcDaemonMessage =
   | { kind: 'welcome'; sessionId: string; ok: true; protocolVersion: number; capabilities: readonly string[] }
   | { kind: 'denied'; reason: string; ok: false }
   | { kind: 'result'; id: string; success: boolean; result?: unknown; error?: string }
+  | MemoryAdminResult
   | { kind: 'status'; connectionState: string; connectedSince: number | null }
   | { kind: 'ping' }; // heartbeat probe — client must reply with { kind: 'pong' }
+
+const MEMORY_ADMIN_ORIGIN = /^https?:\/\/[^/?#\s]+$/;
+const MEMORY_ADMIN_ORIGIN_COMMANDS: ReadonlySet<string> = new Set(['exclude', 'include', 'inspect']);
+
+/**
+ * Validates an untrusted `memory-admin` line against the contract. Unknown fields are rejected.
+ * `origin` is required for exclude/include/inspect, and for delete unless `all` is true; it is
+ * refused where it has no meaning. The origin is returned as given: canonicalizing is the store's job.
+ */
+export function parseMemoryAdminRequest(raw: unknown): { ok: true; request: MemoryAdminRequest } | { ok: false; error: string } {
+  const bad = (message: string) => ({ ok: false as const, error: `INVALID_ARGUMENT: ${message}` });
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return bad('memory-admin request must be an object');
+  const msg = raw as Record<string, unknown>;
+  for (const key of Object.keys(msg)) {
+    if (!['kind', 'id', 'command', 'origin', 'all'].includes(key)) return bad(`unknown field ${key.slice(0, 40)}`);
+  }
+  if (msg.kind !== 'memory-admin') return bad('kind must be memory-admin');
+  if (typeof msg.id !== 'string' || msg.id.length === 0 || msg.id.length > 64) return bad('id must be a string of 1-64 characters');
+  const command = MEMORY_ADMIN_COMMANDS.find((candidate) => candidate === msg.command);
+  if (!command) return bad('unknown command');
+  if (msg.all !== undefined && typeof msg.all !== 'boolean') return bad('all must be a boolean');
+  if (msg.all === true && command !== 'delete') return bad('all is only valid with delete');
+  if (msg.origin !== undefined) {
+    if (typeof msg.origin !== 'string' || msg.origin.length > 300 || !MEMORY_ADMIN_ORIGIN.test(msg.origin)) return bad('origin must be an http(s) origin');
+    if (!MEMORY_ADMIN_ORIGIN_COMMANDS.has(command) && command !== 'delete') return bad(`origin is not valid with ${command}`);
+    if (command === 'delete' && msg.all === true) return bad('delete takes an origin or all, not both');
+  } else if (MEMORY_ADMIN_ORIGIN_COMMANDS.has(command) || (command === 'delete' && msg.all !== true)) {
+    return bad(`${command} needs an origin${command === 'delete' ? ' or all' : ''}`);
+  }
+  return {
+    ok: true,
+    request: {
+      kind: 'memory-admin',
+      id: msg.id,
+      command,
+      ...(msg.origin !== undefined ? { origin: msg.origin as string } : {}),
+      ...(msg.all !== undefined ? { all: msg.all as boolean } : {}),
+    },
+  };
+}
 
 /**
  * Message the daemon forwards to the extension. `sessionId` is included so the

@@ -124,6 +124,19 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
     return this.redaction.sanitize(scope, value, { toolName });
   }
 
+  /**
+   * Read-only gate for website memory (R-06). Suppression is profile-wide: any protected document in the
+   * browser profile, or a scope whose protection state could not be recovered, blocks capture and
+   * reminders. `tabId` is accepted for the call site but does not narrow the answer.
+   */
+  memoryEligibility(browserId: string, _tabId?: number): 'clear' | 'protected' | 'unknown' {
+    if (!browserId) return 'unknown';
+    const scope = scopeForBrowser(browserId);
+    if (this.protectionUnknownScopes.has(scope)) return 'unknown';
+    if ((this.protectedDocuments.get(scope)?.size ?? 0) > 0) return 'protected';
+    return 'clear';
+  }
+
   async assertToolAllowed(sessionId: string, tool: string, params: Record<string, unknown>): Promise<void> {
     let browserId: string | undefined;
     try {

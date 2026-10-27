@@ -48,6 +48,7 @@ export interface VaultBrowserContext {
   connectionId: string;
   agentName?: string;
   supportsVault: boolean;
+  supportsSiteContext?: boolean;
   ambiguous?: boolean;
 }
 

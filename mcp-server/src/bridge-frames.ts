@@ -48,3 +48,24 @@ export function rejectOversizedFrame(
   }
   return true;
 }
+
+/** Tools whose result may carry a `siteContext` block when the daemon sets `observe` (website memory). */
+export const OBSERVABLE_TOOLS: ReadonlySet<string> = new Set(['browser_navigate', 'browser_snapshot']);
+
+/**
+ * Request flag asking the extension for a `siteContext` block. It travels in `params` because the
+ * frame sent by bridge.ts is a pure {tool, params} multiplexer. Only the daemon sets it: agent-supplied
+ * values are dropped by `withObserve`, as with `expectFingerprints`.
+ */
+export const OBSERVE_FLAG = 'observe';
+
+/**
+ * Params for an extension request. For an observable tool any caller-supplied `observe` is dropped, then
+ * set only when `observe` is true. Other tools keep their params untouched (action tools have their own
+ * `observe: 'diff'`).
+ */
+export function withObserve(tool: string, params: Record<string, unknown>, observe: boolean): Record<string, unknown> {
+  if (!OBSERVABLE_TOOLS.has(tool)) return params;
+  const { [OBSERVE_FLAG]: _callerFlag, ...rest } = params;
+  return observe ? { ...rest, [OBSERVE_FLAG]: true } : rest;
+}

@@ -110,13 +110,13 @@ Single project at the repository root:
 
 ### Tests first
 
-- [ ] T013 [P] Write tests/memory-allowlist.test.ts:
+- [X] T013 [P] Write tests/memory-allowlist.test.ts:
   - normalization: NFKC, lower case, whitespace collapsed to one space, trimmed, trailing `. : …` removed;
   - only exact allowlist entries pass, and a non-matching candidate is discarded, not truncated;
   - path segments and the primary language tag `^[a-z]{2,3}$`;
   - fact identity keys `site.language`, `ui.search`, `ui.login`, `ui.control:<role>:<name>`;
   - a parity check that mcp-server/src/memory/allowlist.ts equals contracts/fact-allowlist.json.
-- [ ] T014 [P] Write tests/memory-store.test.ts:
+- [X] T014 [P] Write tests/memory-store.test.ts:
   - atomic replace (temp, fsync, rename, directory fsync) with a kill between the temp write and the rename;
   - temp files cleaned at start;
   - a file whose `origin` does not hash to its name is quarantined as `<name>.corrupt-<ts>`;
@@ -126,14 +126,14 @@ Single project at the repository root:
   - the win32 path skips the mode-bit check and retries `rename` 3 times on `EPERM`/`EBUSY`/`EACCES` with 50 ms back-off;
   - POSIX files are `0o600` in a `0o700` directory;
   - AC-17, AC-18, AC-23.
-- [ ] T015 [P] Write tests/memory-queue.test.ts:
+- [X] T015 [P] Write tests/memory-queue.test.ts:
   - a bound of 256 operations, and drop with `MEMORY_QUEUE_FULL` when full;
   - a commit over 2 s is abandoned and its temp file removed (`MEMORY_UNAVAILABLE`);
   - an `opId` dedupe LRU of 1,024;
   - each commit re-reads the policy;
   - `disable`, `exclude` and `delete` drop queued work (AC-11, AC-19);
   - the drop reasons `disabled`, `excluded`, `deleted`, `duplicate`, `queue_full`, `timeout`, `capacity`, `io_error`, `corrupt`.
-- [ ] T016 [P] Write tests/memory-scope.test.ts. These cases fail closed with `MEMORY_SCOPE_UNKNOWN` (AC-08, AC-09):
+- [X] T016 [P] Write tests/memory-scope.test.ts. These cases fail closed with `MEMORY_SCOPE_UNKNOWN` (AC-08, AC-09):
   - `browserId` is `default`;
   - two live connections carry one id;
   - the `connectionId` changed during the call;
@@ -145,7 +145,7 @@ Single project at the repository root:
   - sanitizing changed the result.
 
   Also test that a different port is a different origin.
-- [ ] T017 [P] Write tests/extension-site-context.test.ts:
+- [X] T017 [P] Write tests/extension-site-context.test.ts:
   - `anonymous` is true only when every cookie name (HttpOnly included), every `localStorage`/`sessionStorage` key name is on the allowlist, `indexedDB.databases()` is empty, and the URL has no userinfo, query or fragment;
   - values are never read;
   - pre/post URL mismatch gives `anonymous:null`, `anonymityReason:"unstable"`;
@@ -155,23 +155,23 @@ Single project at the repository root:
 
 ### Implementation
 
-- [ ] T018 [P] Implement mcp-server/src/memory/allowlist.ts: the reviewed allowlist as code, with normalization and lexicon matchers, so that T013 passes.
-- [ ] T019 [P] Implement mcp-server/src/memory/policy.ts: read and write `memory/policy.json`.
+- [X] T018 [P] Implement mcp-server/src/memory/allowlist.ts: the reviewed allowlist as code, with normalization and lexicon matchers, so that T013 passes.
+- [X] T019 [P] Implement mcp-server/src/memory/policy.ts: read and write `memory/policy.json`.
   - Fields: `schemaVersion: 1`, `enabled` ("Missing file or field → false"), `enabledAt`, `excluded` ("≤ 5,000 entries, canonical origins, unique"), `deletions` (tombstones, `"*"` = delete all, pruned after the queue drains past them), `updatedAt`.
-- [ ] T020 Implement mcp-server/src/memory/store.ts:
+- [X] T020 Implement mcp-server/src/memory/store.ts:
   - the `MemoryStore` interface and the JSON record store `memory/sites/<sha256(origin)>.json`;
   - atomic replace, quarantine, an LRU cache updated only after the rename;
   - the capacity limits from T014, plus "≤ 5,000 origins, ≤ 32 MiB in total";
   - the Windows rename retry;
   - so that T014 passes. Depends on T019.
-- [ ] T021 Implement mcp-server/src/memory/queue.ts: a bounded single-writer queue that rechecks the policy, `enabledAt` and tombstones at commit, with `opId` = `daemonCallId`, so that T015 passes. Depends on T019 and T020.
-- [ ] T022 [P] Implement extension/lib/site-context.js: the `siteContext` block `{url, incognito, topLevel, stable, lang, dir, passwordField, anonymous, anonymityReason}`, per contracts/site-context.schema.json, with anonymity names kept equal to the contract. Make T017 pass.
-- [ ] T023 Add `"cookies"` to the `permissions` in extension/manifest.json, only after T008. Advertise capability `site-context` in extension/lib/protocol.js.
-- [ ] T024 In extension/dispatch/router.js, attach `siteContext` to `browser_navigate` and `browser_snapshot` results only when the request carries `observe: true`. Take the URL before and after the handler. Depends on T022.
-- [ ] T025 [P] Add capability names `site-context` and `memory-admin` to mcp-server/src/protocol.ts, the `memory-admin` IPC message types to mcp-server/src/daemon-config.ts, and the `observe` request flag to mcp-server/src/bridge-frames.ts. Make no logic change in mcp-server/src/bridge.ts (593 lines).
-- [ ] T026 [P] Add a read-only `memoryEligibility(browserId, tabId)` to mcp-server/src/vault/service-protection.ts, returning `clear`, `protected` or `unknown` (R-06). In mcp-server/src/vault/daemon-routing.ts, pass `observe` and remove `siteContext` from the result before sanitizing, keeping a digest before and after sanitizing.
-- [ ] T027 Implement mcp-server/src/memory/scope.ts: the scope decision from data-model.md "Scope decision", using `memoryEligibility`, the R-04 identity rules and `siteContext`. Make T016 pass. Depends on T025 and T026.
-- [ ] T028 Implement the `MemoryService` facade (`afterCall`, `handleTool`, `admin`, `status`) in mcp-server/src/memory/service.ts. Construct it in mcp-server/src/daemon.ts with call-site hooks only (574 lines; keep it under the 600-line cap in tests/architecture-maintenance.test.ts). All memory work runs after the browser outcome is final, inside `try/catch` (R-15). Depends on T021 and T027.
+- [X] T021 Implement mcp-server/src/memory/queue.ts: a bounded single-writer queue that rechecks the policy, `enabledAt` and tombstones at commit, with `opId` = `daemonCallId`, so that T015 passes. Depends on T019 and T020.
+- [X] T022 [P] Implement extension/lib/site-context.js: the `siteContext` block `{url, incognito, topLevel, stable, lang, dir, passwordField, anonymous, anonymityReason}`, per contracts/site-context.schema.json, with anonymity names kept equal to the contract. Make T017 pass.
+- [X] T023 Add `"cookies"` to the `permissions` in extension/manifest.json, only after T008. Advertise capability `site-context` in extension/lib/protocol.js.
+- [X] T024 In extension/dispatch/router.js, attach `siteContext` to `browser_navigate` and `browser_snapshot` results only when the request carries `observe: true`. Take the URL before and after the handler. Depends on T022.
+- [X] T025 [P] Add capability names `site-context` and `memory-admin` to mcp-server/src/protocol.ts, the `memory-admin` IPC message types to mcp-server/src/daemon-config.ts, and the `observe` request flag to mcp-server/src/bridge-frames.ts. Make no logic change in mcp-server/src/bridge.ts (593 lines).
+- [X] T026 [P] Add a read-only `memoryEligibility(browserId, tabId)` to mcp-server/src/vault/service-protection.ts, returning `clear`, `protected` or `unknown` (R-06). In mcp-server/src/vault/daemon-routing.ts, pass `observe` and remove `siteContext` from the result before sanitizing, keeping a digest before and after sanitizing.
+- [X] T027 Implement mcp-server/src/memory/scope.ts: the scope decision from data-model.md "Scope decision", using `memoryEligibility`, the R-04 identity rules and `siteContext`. Make T016 pass. Depends on T025 and T026.
+- [X] T028 Implement the `MemoryService` facade (`afterCall`, `handleTool`, `admin`, `status`) in mcp-server/src/memory/service.ts. Construct it in mcp-server/src/daemon.ts with call-site hooks only (574 lines; keep it under the 600-line cap in tests/architecture-maintenance.test.ts). All memory work runs after the browser outcome is final, inside `try/catch` (R-15). Depends on T021 and T027.
 
 **Checkpoint**: the store, queue and scope pass their suites; the daemon starts with memory off and the existing suite still passes.
 

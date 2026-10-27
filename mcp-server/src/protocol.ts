@@ -32,6 +32,13 @@ export function buildSessionId(instanceId: string, seq: number): string {
 /** The 3.0 tool contract. A peer without it is a 2.x build. */
 export const TOOLS_V3_CAPABILITY = 'tools-v3';
 export const CREDENTIAL_VAULT_CAPABILITY = 'credential-vault-v1';
+/** Extension reports a `siteContext` block when a request carries `observe` (website memory). */
+export const SITE_CONTEXT_CAPABILITY = 'site-context';
+/**
+ * The daemon accepts `memory-admin` IPC messages from the owner CLI. Daemon-only: it is
+ * not in IPC_PROTOCOL_CAPABILITIES, which both sides must send, so older clients still connect.
+ */
+export const MEMORY_ADMIN_CAPABILITY = 'memory-admin';
 
 /**
  * IPC (thin client <-> daemon). The socket had no version before 3.0 and both sides
@@ -53,6 +60,9 @@ export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   'tab-locks',
   'tools-v3',
   CREDENTIAL_VAULT_CAPABILITY,
+  // Additive: not in REQUIRED_EXTENSION_CAPABILITIES, so an extension without it still connects
+  // and website memory fails closed for it (MEMORY_SCOPE_UNKNOWN).
+  SITE_CONTEXT_CAPABILITY,
 ]);
 
 /** What the daemon needs from the extension's helloAck. */
@@ -172,13 +182,14 @@ export function buildIpcHello(token: string, agentName?: string) {
   };
 }
 
-export function buildIpcWelcome(sessionId: string) {
+/** `memoryAdmin: true` only when the daemon can really serve `memory-admin` messages. */
+export function buildIpcWelcome(sessionId: string, options: { memoryAdmin?: boolean } = {}) {
   return {
     kind: 'welcome' as const,
     sessionId,
     ok: true as const,
     protocolVersion: PROTOCOL_VERSION,
-    capabilities: IPC_PROTOCOL_CAPABILITIES,
+    capabilities: options.memoryAdmin ? [...IPC_PROTOCOL_CAPABILITIES, MEMORY_ADMIN_CAPABILITY] : IPC_PROTOCOL_CAPABILITIES,
   };
 }
 
