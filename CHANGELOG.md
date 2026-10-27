@@ -17,6 +17,11 @@ After updating: run `npm run build`, restart the daemon (`npm run daemon:restart
 - A malformed HTTP request target no longer crashes the daemon; it gets 400.
 - Four transitive advisories under the MCP SDK are cleared (`npm audit` reports 0).
 
+### Changed
+- `browser_wait` reads the names other browser tools use: `text` (a `text=` target), `textGone` (the same with `gone: true`), `time` (seconds) and `selector`. `browser_screenshot` ignores `scale`, `format` and `quality`. Each result says how the name was read, so the next call can use the 3.0 form. Any other unknown parameter fails as before, and the error now lists the parameters the tool takes.
+- A `browser_wait` `TIMEOUT` says when the target matched nothing (a wrong selector) or only hidden elements.
+- Right after the daemon starts, and within 60 s of an extension dropping, a call waits up to 15 s for the extension to reconnect, instead of failing `NOT_CONNECTED` after 5 s. With no extension seen for longer, the wait stays 5 s.
+
 ### Fixed
 - `browser_fill` uploads to a hidden file input, as on Odoo. Target the input by selector (`input[type=file]`), its label, or the visible upload button, with absolute paths. No page fetch and no Chrome "Local network access" prompt is involved. The safety policy treats such a fill as an upload. Extension reload needed.
 - With safety mode on, click, type and fill on an element failed in real pages: the classifier used patterns that Chrome does not send with the page function. Extension reload needed.
