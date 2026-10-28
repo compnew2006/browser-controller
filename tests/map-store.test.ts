@@ -113,6 +113,22 @@ describe('JsonMapStore (T009)', () => {
     expect(fs.existsSync(path.join(dir.memoryDir, 'map-counters.json.corrupt-7'))).toBe(true);
   });
 
+  it('reports a counters read error without setting the file aside', async () => {
+    if (process.platform === 'win32') return;
+    const store = new JsonMapStore(dir.memoryDir, { now: () => 7 });
+    await store.putCounters({ schemaVersion: 1, profiles: {} } as never);
+    const file = path.join(dir.memoryDir, 'map-counters.json');
+    const original = fs.promises.readFile;
+    fs.promises.readFile = (() => Promise.reject(Object.assign(new Error('too many open files'), { code: 'EMFILE' }))) as typeof original;
+    try {
+      await rejectsWith(store.getCounters(), 'MEMORY_UNAVAILABLE');
+    } finally {
+      fs.promises.readFile = original;
+    }
+    expect(fs.existsSync(file)).toBe(true);
+    expect(fs.existsSync(`${file}.corrupt-7`)).toBe(false);
+  });
+
   it('removes temp files a crash left behind', async () => {
     const store = new JsonMapStore(dir.memoryDir);
     await store.putMap(withPage('browser-a', A));

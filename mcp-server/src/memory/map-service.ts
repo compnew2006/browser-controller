@@ -292,7 +292,24 @@ export class MapService {
     try {
       const input = parseLookup(params);
       if (typeof input === 'string') return fail('INVALID_ARGUMENT', input);
-      const { memory, map } = this.readPolicies();
+      // Read the two policies apart, so the owner is sent to the reset that fixes the file that failed.
+      const policyFailure = (error: unknown, message: string): MapLookupResult => {
+        const code = mapErrorCode(error);
+        this.noteError(code);
+        return error instanceof MemoryPolicyError && code === 'MEMORY_CORRUPT' ? fail('MEMORY_CORRUPT', message) : fail('MAP_UNAVAILABLE', 'the site map could not be read.');
+      };
+      let memory: MemoryPolicy;
+      let map: MapPolicy;
+      try {
+        memory = readPolicy(this.memoryDir);
+      } catch (error) {
+        return policyFailure(error, 'the memory policy could not be read; the owner can reset it.');
+      }
+      try {
+        map = readMapPolicy(this.memoryDir);
+      } catch (error) {
+        return policyFailure(error, 'the site map policy could not be read; the owner can reset it with map disable or map delete --all.');
+      }
       if (!memory.enabled) return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
       let profile: string;
       let candidates: string[];

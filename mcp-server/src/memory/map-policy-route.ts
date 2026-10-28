@@ -60,6 +60,8 @@ function adminRequest(action: MapPolicyAction, profile: string, origin: string |
     case 'map_disable': return { command: 'disable', browser: profile };
     case 'map_exclude_path': return { command: 'exclude-path', origin, path };
     case 'map_include_path': return { command: 'include-path', origin, path };
+    // Admin `export` covers every site of the profile, so a site-scoped request runs `inspect` to stay on that site;
+    // either way the agent gets the outline only (RV-15).
     case 'map_inspect':
     case 'map_export': return origin ? { command: 'inspect', browser: profile, origin } : { command: 'export', browser: profile };
     case 'map_delete': return origin ? { command: 'delete', browser: profile, origin, ...(path ? { path } : {}) } : { command: 'delete', browser: profile, all: true };

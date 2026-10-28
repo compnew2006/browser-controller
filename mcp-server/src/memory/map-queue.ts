@@ -4,7 +4,7 @@
  * each commit reads once, re-checks the policy for every op, applies, bounds and writes once. Counter changes
  * from decided uses and lookups fold per profile into one counters write per drain round. Local only.
  */
-import { COUNTER_FIELDS, emptyCounters, type CounterField, type JsonMapStore, type MapCountersFile } from './map-store.js';
+import { COUNTER_FIELDS, type CounterField, type JsonMapStore, type MapCountersFile } from './map-store.js';
 import { mapVerdict, readMapPolicy, type MapPolicy, type MapVerdict } from './map-policy.js';
 import { emptyMapRecord, type MapRecord } from './map-record.js';
 import { applyMapOp, enforceMapLimits, sanitizeRecord, viaChain, type ApplyResult, type MapRecordOp, type SanitizePolicy } from './map-reconcile.js';
@@ -487,8 +487,11 @@ export class MapQueue {
     let counters: MapCountersFile;
     try {
       counters = await this.store.getCounters();
-    } catch {
-      counters = emptyCounters();
+    } catch (error) {
+      // An unreadable file is not an empty one: writing now would zero every profile's counters.
+      const reason = storeDrop(error);
+      for (const op of allowed) this.drop(op, reason);
+      return;
     }
     for (const op of allowed) {
       const entry = counters.profiles[op.profile] ?? { ...Object.fromEntries(COUNTER_FIELDS.map((field) => [field, 0])), since: op.at };

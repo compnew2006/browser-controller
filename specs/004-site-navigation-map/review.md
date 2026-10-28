@@ -233,3 +233,18 @@ Each finding was fixed with a regression test, or recorded as an accepted deviat
 Checks after the fixes: `npm test` (149 files, 2,266 tests), `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:coverage` and `npm run context:lint` all exited 0 on Node 22.23.1 and on Node 20.20.2. Node 20 was the official nodejs.org build, checked against its SHA-256 and run from a scratch folder. `npm run security:audit` found 0 vulnerabilities. `node scripts/map-bench.mjs --iterations 200 --routes 20 --write` rewrote `baseline.md`, and its numbers stay within noise of the first run. Not run: `smoke:real-chrome` (see plan.md, owner instruction after the review).
 
 Updated verdict: all findings are fixed or recorded. The owner delegated the decisions on gate 4, RV-16 and RV-18, and plan.md records them so the owner can reverse any of them. The extension changes need an extension reload, and no real-Chrome run has checked them.
+
+## Second review (session code review, 2026-10-28)
+
+A second review ran on `git diff HEAD` (95 files). It found no critical issues. Its findings, checked against the source:
+
+| Finding | Outcome | Change | Test |
+|---|---|---|---|
+| W1: a click that raises a JavaScript dialog or starts a download is scored as a decided use, against R-08 | Fixed | `map-capture.ts` `captureClick` sets `undecided` when the click result has `dialog` or `download`. Both fields survive the vault sanitizer, which keeps root keys and scrubs only values. | `map-service.test.ts` (fails without the fix) |
+| W2: a counters read error makes the next commit write zeros over `map-counters.json` | Fixed | `map-queue.ts` `commitCounters` drops the deltas (`io_error`) and does not write when the read fails. `map-store.ts` `getCounters` treats a read error as `MEMORY_UNAVAILABLE` and quarantines only unparsable content, as map files already do. | `map-queue.test.ts`, `map-store.test.ts` (both fail without the fix) |
+| W3: a corrupt `map-policy.json` is reported as the memory policy, which sends the owner to the wrong reset | Fixed | `map-service.ts` `lookup` reads the two policies apart. A corrupt map policy names `map disable` or `map delete --all`. | `map-service.test.ts` (fails without the fix) |
+| S4: two synchronous policy reads on every observed call | Not changed | The measured call-path p95 is at most 1.7 ms with both reads (`baseline.md`). A parsed-policy cache would miss edits made outside the daemon. Revisit if a slow memory directory shows up in practice. | — |
+| S5: a site-scoped `map_export` runs `inspect` | Not changed (comment added) | Admin `export` ignores `origin` and returns every site of the profile, so the suggested change would widen a site-scoped request to all sites. The agent gets the outline either way. | — |
+| S6: `browser_site_map` arguments are validated three times | Not changed | `map-service.ts` `parseLookup` already requires exactly one of `tabId` and `origin`, so `{tabId, origin}` is refused on every path. | existing `memory-service.test.ts` (service path) and `map-tool.test.ts` (tool route) |
+
+Checks after the fixes: `npm test` (149 files, 2,270 tests) on Node 22.23.1 and Node 20.20.2, plus `npm run lint`, `typecheck`, `build`, `test:coverage` and `context:lint` on Node 22, all exited 0.

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MemoryService, type MemoryCall, type MemoryConnection } from '../mcp-server/src/memory/service.js';
 import { defaultPolicy, enablePolicy, excludeOrigin, writePolicy } from '../mcp-server/src/memory/policy.js';
@@ -249,6 +251,32 @@ describe('MapService — controls and use feedback, US2 (T025)', () => {
     expect(profile?.parent).toBe(account?.key);
     const signOut = root?.controls.find((control) => control.name === 'Sign out');
     expect(signOut?.dataChanging).toBe(true);
+  });
+
+  it('a click that raised a JavaScript dialog or a download is not scored as a use (R-08)', async () => {
+    await enableAll();
+    await learnHome();
+    const extras = [{ dialog: { type: 'confirm', message: 'Leave?' } }, { download: { url: `${ORIGIN}/guide.pdf`, filename: 'guide.pdf' } }];
+    for (const extra of extras) {
+      await run(navigateOutcome({ url: `${ORIGIN}/`, snapshot: true, text: navigateWithSnapshot(homeText()) }));
+      // Help used to lead to /help; this time it lands elsewhere or stays, but a dialog or download explains why.
+      await run(clickOutcome({ target: 'e3', fromUrl: `${ORIGIN}/`, url: extra.dialog ? `${ORIGIN}/login` : `${ORIGIN}/`, extra }));
+    }
+    const help = page(await map(), '/')?.controls.find((control) => control.name === 'Help');
+    expect(help?.lastUse ?? null).toBeNull();
+    expect(help?.useCount).toBe(0);
+    const counters = (await service.map.store.getCounters()).profiles[PROFILE];
+    expect(counters?.usesFailed ?? 0).toBe(0);
+    expect(counters?.usesWorked ?? 0).toBe(0);
+  });
+
+  it('names the policy file that failed, so the owner resets the right one', async () => {
+    await enableAll();
+    await learnHome();
+    fs.writeFileSync(path.join(dir.memoryDir, 'map-policy.json'), '{"schemaVersion":9}', { mode: 0o600 });
+    expect(await lookup({ origin: ORIGIN })).toMatchObject({ success: false, error: expect.stringMatching(/^MEMORY_CORRUPT: the site map policy could not be read; the owner can reset it with map disable/u) });
+    fs.writeFileSync(path.join(dir.memoryDir, 'policy.json'), '{"schemaVersion":9}', { mode: 0o600 });
+    expect(await lookup({ origin: ORIGIN })).toMatchObject({ success: false, error: expect.stringMatching(/^MEMORY_CORRUPT: the memory policy could not be read/u) });
   });
 
   it('a dialog already open before the click is not credited to the clicked control (RV-14)', async () => {

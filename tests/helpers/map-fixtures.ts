@@ -219,7 +219,7 @@ export function snapshotOutcome(input: { url: string; text: string; tabId?: numb
   };
 }
 
-export function clickOutcome(input: { target: unknown; fromUrl: string; url: string; tabId?: number; error?: string; navigated?: boolean; sessionId?: string; id?: string }): OutcomeShape {
+export function clickOutcome(input: { target: unknown; fromUrl: string; url: string; tabId?: number; error?: string; navigated?: boolean; sessionId?: string; id?: string; extra?: Record<string, unknown> }): OutcomeShape {
   const tabId = input.tabId ?? 7;
   const params = { tabId, target: input.target };
   if (input.error) {
@@ -230,7 +230,7 @@ export function clickOutcome(input: { target: unknown; fromUrl: string; url: str
     tool: 'browser_click',
     params,
     daemonCallId: input.id ?? nextId(),
-    result: { success: true, tabId, url: input.url, navigated: input.navigated ?? input.url !== input.fromUrl },
+    result: { success: true, tabId, url: input.url, navigated: input.navigated ?? input.url !== input.fromUrl, ...input.extra },
     observation: { siteContext: siteContext({ url: input.url, fromUrl: input.fromUrl, light: true }), sanitizedUnchanged: true },
   };
 }

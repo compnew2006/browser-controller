@@ -280,10 +280,17 @@ export class JsonMapStore {
     }
     assertPrivate(st, 'file', this.platform);
     if (st.size > MAX_COUNTERS_BYTES) return this.quarantineCounters();
+    let text: string;
     try {
-      return validateCounters(JSON.parse(await fsp.readFile(file, 'utf8')), 'read');
+      text = await fsp.readFile(file, 'utf8');
     } catch (error) {
       if (errorCode(error) === 'ENOENT') return emptyCounters();
+      // A read error is not corruption: the file stays where it is (as for map files).
+      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map counters could not be read');
+    }
+    try {
+      return validateCounters(JSON.parse(text), 'read');
+    } catch {
       return this.quarantineCounters();
     }
   }

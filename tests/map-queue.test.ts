@@ -126,6 +126,27 @@ describe('MapQueue (T011, R-03)', () => {
     expect((await store.getCounters()).profiles.p.lookups).toBe(2);
   });
 
+  it('does not overwrite the counters file when it cannot be read', async () => {
+    const store = new JsonMapStore(dir.memoryDir);
+    const q = queue(store);
+    q.count({ opId: 'k1', profile: 'p', at: new Date(NOW).toISOString(), field: 'lookups', delta: 5 });
+    await q.drain();
+    const read = store.getCounters.bind(store);
+    let writes = 0;
+    const write = store.putCounters.bind(store);
+    store.getCounters = () => Promise.reject(new MemoryStoreError('MEMORY_UNAVAILABLE', 'map counters could not be read'));
+    store.putCounters = (counters) => {
+      writes += 1;
+      return write(counters);
+    };
+    q.count({ opId: 'k2', profile: 'p', at: new Date(NOW).toISOString(), field: 'lookups', delta: 1 });
+    await q.drain();
+    expect(writes).toBe(0);
+    expect(q.stats().dropped.io_error).toBe(1);
+    store.getCounters = read;
+    expect((await store.getCounters()).profiles.p.lookups).toBe(5);
+  });
+
   it('counts decided uses and the labeled estimates', async () => {
     const store = new JsonMapStore(dir.memoryDir);
     const q = queue(store);

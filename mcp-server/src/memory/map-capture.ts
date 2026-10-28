@@ -296,6 +296,8 @@ function captureClick(cache: TabReadCache, input: CaptureInput, context: Capture
     else if (afterMasked) destination = input.isExcluded(entry.origin, after.rawPath, afterMasked.path) ? { excluded: true } : { path: afterMasked.path };
   }
   const base = { profile: input.profile, origin: entry.origin, at: input.at };
+  // A JavaScript dialog or a download says nothing about whether the control works: learn, decide no use (R-08).
+  const undecided = Boolean(input.result.dialog) || Boolean(input.result.download);
   const hub: QueuedMapOp = {
     type: 'read',
     opId: `${input.daemonCallId}#hub`,
@@ -323,6 +325,7 @@ function captureClick(cache: TabReadCache, input: CaptureInput, context: Capture
     navigated,
     destination,
     destinationAddressable: !!afterMasked && !afterMasked.masked && !after?.query,
+    ...(undecided ? { undecided: true } : {}),
     rawPaths: [entry.rawPath],
   };
   if (navigated) leaveStub(!!after && after.origin === entry.origin);
