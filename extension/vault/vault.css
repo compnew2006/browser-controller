@@ -105,6 +105,13 @@ input:disabled { opacity: .6; }
 .grant-row .button, .backup-row .button { min-height: 30px; padding: 4px 8px; }
 .backup-list:empty { display: none; }
 .muted { color: var(--ink-3); font-size: 11.5px; }
+.section-note { max-width: 68ch; margin: -4px 0 11px; color: var(--ink-3); font-size: 12px; }
+.site-list { display: grid; gap: 9px; }
+.list-title { margin: 22px 0 4px; color: var(--ink-2); font-size: 13px; }
+.list-title + .section-note { margin-top: 0; }
+.allow-form { display: flex; align-items: end; gap: 8px; margin-top: 11px; }
+.allow-form label { display: grid; flex: 1 1 260px; gap: 5px; min-width: 0; color: var(--ink-2); font-size: 11.5px; font-weight: 600; }
+.allow-form .button { flex: none; min-height: 38px; }
 @media (max-width: 540px) {
   .shell { width: min(100% - 22px, 900px); padding-top: 18px; }
   .header { gap: 10px; }
@@ -112,6 +119,8 @@ input:disabled { opacity: .6; }
   .account-row, .grant-row, .backup-row { align-items: start; }
   .account-row { flex-direction: column; }
   .account-actions { align-self: end; }
+  .allow-form { flex-direction: column; align-items: stretch; }
+  .allow-form .button { align-self: start; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }

@@ -363,6 +363,24 @@ describe('admin', () => {
     expect(Object.keys(readPolicy(memoryDir).deletions)).toEqual([ORIGIN]);
   });
 
+  it('keeps a tombstone through a drain that ends in its own millisecond, so work from that millisecond stays deleted', async () => {
+    await ask('enable');
+    clock += 1000;
+    run(service.beginCall('s1', 'browser_navigate'));
+    await service.flush();
+
+    clock += 1000;
+    run(service.beginCall('s1', 'browser_navigate'));
+    await ask('delete', { origin: ORIGIN });
+    // The queue empties at the tombstone's own time; the prune it triggers must not remove the tombstone.
+    await service.flush();
+    expect(Object.keys(readPolicy(memoryDir).deletions)).toEqual([ORIGIN]);
+
+    run(service.beginCall('s1', 'browser_navigate'));
+    await service.flush();
+    expect(record()).toBeNull();
+  });
+
   it('deletes everything with the "*" tombstone, and prunes tombstones once the queue drains past them', async () => {
     await ask('enable');
     clock += 1000;

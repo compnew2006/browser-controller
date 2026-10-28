@@ -194,10 +194,14 @@ export function recordDeletion(policy: MemoryPolicy, origin: string, now: string
   return { ...policy, deletions: { ...policy.deletions, [key]: time }, updatedAt: now };
 }
 
-/** Drop tombstones at or before `drainedThrough`, once the queue has drained past them. Returns the same object when nothing is pruned. */
+/**
+ * Drop tombstones older than `drainedThrough`, once the queue has drained past them. A tombstone from the drain's own
+ * millisecond stays: an operation enqueued in that millisecond is still covered by it (`queuedAt <= deletedAt`).
+ * Returns the same object when nothing is pruned.
+ */
 export function pruneDeletions(policy: MemoryPolicy, drainedThrough: string, now: string): MemoryPolicy {
   const limit = Date.parse(drainedThrough);
-  const keep = Object.entries(policy.deletions).filter(([, time]) => Date.parse(time) > limit);
+  const keep = Object.entries(policy.deletions).filter(([, time]) => Date.parse(time) >= limit);
   if (keep.length === Object.keys(policy.deletions).length) return policy;
   return { ...policy, deletions: Object.fromEntries(keep), updatedAt: now };
 }

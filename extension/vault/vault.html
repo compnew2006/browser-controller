@@ -39,6 +39,19 @@
       <button class="button secondary add-button" id="addEntry" type="button" hidden>Add account</button>
     </section>
 
+    <section class="section" aria-labelledby="sitesTitle" id="sitesSection" hidden>
+      <div class="section-heading"><h2 id="sitesTitle">Site access</h2></div>
+      <p class="section-note">An allowed site lets every agent in this browser profile list and fill its saved sign-ins, without asking again, until the vault locks.</p>
+      <div class="site-list" id="siteGrants"></div>
+      <h3 class="list-title" id="allowlistTitle">Always allowed</h3>
+      <p class="section-note">These sites are allowed again on their first request after each unlock.</p>
+      <div class="site-list" id="allowlist" aria-labelledby="allowlistTitle"></div>
+      <form class="allow-form" id="allowForm">
+        <label>Site address<input name="site" type="text" required maxlength="2048" placeholder="example.com" autocomplete="off" spellcheck="false" inputmode="url"></label>
+        <button class="button" type="submit">Always allow</button>
+      </form>
+    </section>
+
     <section class="section" aria-labelledby="accessTitle">
       <div class="section-heading"><h2 id="accessTitle">Vault settings</h2></div>
       <div class="access-row" id="accessActions"></div>

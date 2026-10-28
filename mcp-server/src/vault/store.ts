@@ -2,9 +2,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
-import { VaultDataSchema, VaultEnvelopeSchema, VAULT_MAX_AUDIT_EVENTS, VAULT_VERSION, randomId, type VaultCredential, type VaultData, type VaultEnvelope } from './types.js';
+import {
+  VaultAllowlistEntrySchema, VaultDataSchema, VaultEnvelopeSchema, VAULT_MAX_ALLOWLIST, VAULT_MAX_AUDIT_EVENTS, VAULT_VERSION, randomId,
+  type VaultAllowlistEntry, type VaultCredential, type VaultData, type VaultEnvelope,
+} from './types.js';
 import { pidAlive, reclaimLock, type ReclaimHooks } from '../lock-file.js';
 import { VaultStorageError, fileError } from './store-errors.js';
+import { assertOwnerMode, readSafeFile, syncDirectory, writeExclusive } from './store-files.js';
 import { backupsToPrune, dataFromEnvelope, envelopeFor, parseBackup, parseJson, type BackupPackage, type RestoreJournal } from './store-format.js';
 
 export { VaultStorageError } from './store-errors.js';
@@ -34,19 +38,6 @@ interface StoreOptions {
   beforeLockSync?: () => void | Promise<void>;
   /** Test seam for the stale-lock takeover race. */
   lockReclaimHooks?: ReclaimHooks;
-}
-
-function currentUid(): number | undefined {
-  return typeof process.getuid === 'function' ? process.getuid() : undefined;
-}
-
-function assertOwnerMode(stat: Awaited<ReturnType<typeof fs.lstat>>, kind: 'directory' | 'file', label: string): void {
-  if (stat.isSymbolicLink() || (kind === 'directory' ? !stat.isDirectory() : !stat.isFile())) {
-    throw fileError('VAULT_STORAGE_INVALID', `${label} is not a safe ${kind}`);
-  }
-  const uid = currentUid();
-  if (uid !== undefined && stat.uid !== uid) throw fileError('VAULT_STORAGE_INVALID', `${label} is owned by another user`);
-  if ((Number(stat.mode) & 0o077) !== 0) throw fileError('VAULT_STORAGE_INVALID', `${label} permissions allow other users`);
 }
 
 /**
@@ -111,7 +102,7 @@ export class CredentialVaultStore {
       }
       const key = crypto.randomBytes(KEY_BYTES);
       try {
-        await this.writeExclusive(this.keyPath, key);
+        await writeExclusive(this.keyPath, key);
         await this.atomicWrite(this.storePath, Buffer.from(JSON.stringify(envelopeFor({ version: VAULT_VERSION, entries: [], audit: [] }, this.namespace, key)), 'utf8'), MAX_STORE_BYTES);
         this.key = Buffer.from(key);
       } catch (error) {
@@ -176,6 +167,39 @@ export class CredentialVaultStore {
     return removed;
   }
 
+  /** The owner's allowlisted origins, oldest first. */
+  async allowlist(): Promise<VaultAllowlistEntry[]> {
+    return ((await this.readData()).allowlist ?? []).map((entry) => ({ ...entry }));
+  }
+
+  /** Adds an origin to the allowlist; false when it was already there. */
+  async allowlistAdd(origin: string, at: number): Promise<boolean> {
+    const parsed = VaultAllowlistEntrySchema.safeParse({ origin, addedAt: at });
+    if (!parsed.success) throw new VaultStorageError('INVALID_ARGUMENT', 'the site origin is invalid');
+    let added = false;
+    await this.mutate((data) => {
+      const list = data.allowlist ?? [];
+      if (list.some((entry) => entry.origin === parsed.data.origin)) return;
+      if (list.length >= VAULT_MAX_ALLOWLIST) throw new VaultStorageError('VAULT_STORAGE_INVALID', 'allowlist limit reached');
+      data.allowlist = [...list, parsed.data];
+      added = true;
+    });
+    return added;
+  }
+
+  /** Removes an origin; an emptied list leaves the data file in its earlier shape. */
+  async allowlistRemove(origin: string): Promise<boolean> {
+    let removed = false;
+    await this.mutate((data) => {
+      const list = data.allowlist ?? [];
+      const next = list.filter((entry) => entry.origin !== origin);
+      removed = next.length !== list.length;
+      if (next.length) data.allowlist = next;
+      else delete data.allowlist;
+    });
+    return removed;
+  }
+
   async audit(event: VaultData['audit'][number]): Promise<void> {
     await this.mutate((data) => {
       data.audit.push(event);
@@ -218,7 +242,7 @@ export class CredentialVaultStore {
       for (const name of names) {
         if (!/^bkp_[a-f0-9]{32}\.json$/.test(name)) continue;
         const file = path.join(this.backups, name);
-        const bytes = await this.readSafeFile(file, MAX_BACKUP_BYTES).catch(() => null);
+        const bytes = await readSafeFile(file, MAX_BACKUP_BYTES).catch(() => null);
         if (!bytes) continue;
         const backup = parseBackup(parseJson(bytes, 'VAULT_STORAGE_INVALID', 'backup metadata is invalid'), this.namespace);
         if (backup) result.push({ id: name.slice(0, -5), createdAt: backup.createdAt });
@@ -240,7 +264,7 @@ export class CredentialVaultStore {
         await this.rollbackRestore(pending);
       }
       const backupPath = path.join(this.backups, `${id}.json`);
-      const backupBytes = await this.readSafeFile(backupPath, MAX_BACKUP_BYTES);
+      const backupBytes = await readSafeFile(backupPath, MAX_BACKUP_BYTES);
       const backup = parseBackup(parseJson(backupBytes, 'VAULT_STORAGE_INVALID', 'backup file is invalid'), this.namespace);
       if (!backup || backup.namespace !== this.namespace) throw new VaultStorageError('VAULT_STORAGE_INVALID', 'backup belongs to another browser namespace');
       const backupKey = Buffer.from(backup.key, 'base64');
@@ -295,8 +319,8 @@ export class CredentialVaultStore {
       const stagedStorePath = path.join(this.directory, journal.stagedStore);
       let journalWritten = false;
       try {
-        await this.writeExclusive(stagedKeyPath, backupKey);
-        await this.writeExclusive(stagedStorePath, Buffer.from(JSON.stringify(nextEnvelope), 'utf8'));
+        await writeExclusive(stagedKeyPath, backupKey);
+        await writeExclusive(stagedStorePath, Buffer.from(JSON.stringify(nextEnvelope), 'utf8'));
         await this.atomicWrite(this.restoreJournalPath, Buffer.from(JSON.stringify(journal), 'utf8'), 4_096, true);
         journalWritten = true;
         await this.commitRestore(journal);
@@ -339,7 +363,7 @@ export class CredentialVaultStore {
   }
 
   private async readRawEnvelope(): Promise<VaultEnvelope> {
-    const bytes = await this.readSafeFile(this.storePath, MAX_STORE_BYTES);
+    const bytes = await readSafeFile(this.storePath, MAX_STORE_BYTES);
     const envelope = parseJson(bytes, 'VAULT_STORAGE_INVALID', 'encrypted vault file is invalid');
     const parsed = VaultEnvelopeSchema.safeParse(envelope);
     if (!parsed.success || parsed.data.namespace !== this.namespace) {
@@ -349,7 +373,7 @@ export class CredentialVaultStore {
   }
 
   private async readKey(): Promise<Buffer> {
-    const bytes = await this.readSafeFile(this.keyPath, KEY_BYTES);
+    const bytes = await readSafeFile(this.keyPath, KEY_BYTES);
     if (bytes.length !== KEY_BYTES) throw new VaultStorageError('VAULT_KEY_MISSING', 'the vault key is invalid; existing data was preserved');
     return Buffer.from(bytes);
   }
@@ -361,7 +385,7 @@ export class CredentialVaultStore {
 
   private async readRestoreJournal(): Promise<RestoreJournal | null> {
     let value: unknown;
-    try { value = parseJson(await this.readSafeFile(this.restoreJournalPath, 4_096), 'VAULT_STORAGE_INVALID', 'restore journal is invalid'); }
+    try { value = parseJson(await readSafeFile(this.restoreJournalPath, 4_096), 'VAULT_STORAGE_INVALID', 'restore journal is invalid'); }
     catch { return null; }
     if (!value || typeof value !== 'object') return null;
     const journal = value as Partial<RestoreJournal>;
@@ -391,11 +415,11 @@ export class CredentialVaultStore {
       if (journal.hadStore && await this.exists(this.storePath) && !await this.exists(previousStore)) await fs.rename(this.storePath, previousStore);
       if (!await this.exists(this.keyPath)) await fs.rename(stagedKey, this.keyPath);
       if (!await this.exists(this.storePath)) await fs.rename(stagedStore, this.storePath);
-      await this.syncDirectory(this.directory);
+      await syncDirectory(this.directory);
       const key = await this.readKey();
       try { await this.readEnvelope(key); } finally { key.fill(0); }
       await fs.unlink(this.restoreJournalPath);
-      await this.syncDirectory(this.directory);
+      await syncDirectory(this.directory);
       await Promise.all([fs.unlink(previousKey).catch(() => {}), fs.unlink(previousStore).catch(() => {})]);
       await Promise.all([fs.unlink(stagedKey).catch(() => {}), fs.unlink(stagedStore).catch(() => {})]);
     } catch {
@@ -419,7 +443,7 @@ export class CredentialVaultStore {
     }
     await Promise.all([fs.unlink(stagedKey).catch(() => {}), fs.unlink(stagedStore).catch(() => {})]);
     await fs.unlink(this.restoreJournalPath).catch(() => {});
-    await this.syncDirectory(this.directory);
+    await syncDirectory(this.directory);
   }
 
   private async exists(file: string): Promise<boolean> {
@@ -456,40 +480,6 @@ export class CredentialVaultStore {
     }
   }
 
-  private async readSafeFile(file: string, maxBytes: number): Promise<Buffer> {
-    let before;
-    try { before = await fs.lstat(file); }
-    catch { throw fileError('VAULT_STORAGE_INVALID', 'vault file is unavailable'); }
-    assertOwnerMode(before, 'file', 'vault file');
-    if (before.size > maxBytes) throw new VaultStorageError('VAULT_STORAGE_INVALID', 'vault file exceeds the supported size limit');
-    let handle;
-    try {
-      handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-      const after = await handle.stat();
-      assertOwnerMode(after, 'file', 'vault file');
-      if (after.size > maxBytes) throw new VaultStorageError('VAULT_STORAGE_INVALID', 'vault file exceeds the supported size limit');
-      return await handle.readFile();
-    } catch (error) {
-      if (error instanceof VaultStorageError) throw error;
-      throw fileError('VAULT_STORAGE_INVALID', 'vault file could not be read safely');
-    } finally {
-      await handle?.close().catch(() => {});
-    }
-  }
-
-  private async writeExclusive(file: string, data: Buffer): Promise<void> {
-    let handle;
-    try {
-      handle = await fs.open(file, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
-      await handle.writeFile(data);
-      await handle.sync();
-    } catch (error) {
-      throw fileError('VAULT_STORAGE_INVALID', 'vault file could not be created safely');
-    } finally {
-      await handle?.close().catch(() => {});
-    }
-  }
-
   private async atomicWrite(file: string, data: Buffer, maxBytes: number, exclusive = false): Promise<void> {
     if (data.length > maxBytes) throw new VaultStorageError('VAULT_STORAGE_INVALID', 'vault file exceeds the supported size limit');
     const parent = path.dirname(file);
@@ -513,23 +503,13 @@ export class CredentialVaultStore {
       await this.beforeCommit?.(file);
       await fs.rename(temporary, file);
       committed = true;
-      await this.syncDirectory(parent);
+      await syncDirectory(parent);
     } catch (error) {
       await handle?.close().catch(() => {});
       await fs.unlink(temporary).catch(() => {});
       if (committed) throw new VaultStorageError('VAULT_RECOVERY_REQUIRED', 'vault replacement completed but durability could not be confirmed');
       if (error instanceof VaultStorageError) throw error;
       throw fileError('VAULT_STORAGE_INVALID', 'atomic vault write failed before replacement');
-    }
-  }
-
-  private async syncDirectory(directory: string): Promise<void> {
-    try {
-      const handle = await fs.open(directory, constants.O_RDONLY);
-      try { await handle.sync(); } finally { await handle.close(); }
-    } catch (error) {
-      if (process.platform === 'win32') return;
-      throw fileError('VAULT_STORAGE_INVALID', 'vault directory could not be synchronized');
     }
   }
 
@@ -586,7 +566,7 @@ export class CredentialVaultStore {
     // A crash between the O_EXCL create and the pid write leaves an empty or
     // torn lock; past the grace period it has no live owner, so it is stale.
     let pid: unknown;
-    try { pid = (parseJson(await this.readSafeFile(this.lockPath, 1024), 'VAULT_STORAGE_INVALID', 'vault lock is invalid') as { pid?: unknown } | null)?.pid; }
+    try { pid = (parseJson(await readSafeFile(this.lockPath, 1024), 'VAULT_STORAGE_INVALID', 'vault lock is invalid') as { pid?: unknown } | null)?.pid; }
     catch { pid = undefined; }
     if (Number.isInteger(pid) && (pid as number) >= 1 && pidAlive(pid as number)) return;
     reclaimLock(this.lockPath, judged, this.lockReclaimHooks);

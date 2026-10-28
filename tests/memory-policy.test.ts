@@ -253,14 +253,20 @@ describe('transitions', () => {
     expect(codeOf(() => recordDeletion(defaultPolicy(), 'garbage', T1))).toBe('INVALID_ARGUMENT');
   });
 
-  it('pruneDeletions removes tombstones at or before the drained time', () => {
+  it('pruneDeletions removes tombstones older than the drained time', () => {
     let policy = recordDeletion(defaultPolicy(), 'https://a.example', T1);
     policy = recordDeletion(policy, 'https://b.example', T2);
     policy = recordDeletion(policy, '*', T3);
-    const pruned = pruneDeletions(policy, T2, T3);
+    const pruned = pruneDeletions(policy, '2026-10-27T11:30:00.000Z', T3);
     expect(pruned.deletions).toEqual({ '*': T3 });
     expect(pruned.updatedAt).toBe(T3);
     expect(pruneDeletions(policy, '2000-01-01T00:00:00.000Z', T3)).toBe(policy);
+  });
+
+  it('pruneDeletions keeps a tombstone from the drain\'s own millisecond, which still covers work enqueued then', () => {
+    let policy = recordDeletion(defaultPolicy(), 'https://a.example', T1);
+    policy = recordDeletion(policy, 'https://b.example', T2);
+    expect(pruneDeletions(policy, T2, T3).deletions).toEqual({ 'https://b.example': T2 });
   });
 
   it('never mutates its input', () => {

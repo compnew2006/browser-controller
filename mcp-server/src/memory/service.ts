@@ -219,6 +219,7 @@ export class MemoryService {
    * first and shares the one scope decision; it also sees a failed click, which has no observation (004 R-08).
    */
   afterCall(call: MemoryCall, outcome: MemoryCallOutcome): void {
+    this.map.noteCall(outcome.sessionId, outcome.tool, outcome.params, outcome.result);
     if (!call.observe) return;
     const { observation } = outcome;
     let scoped: ReturnType<MemoryService['scopeFor']> | null | undefined;

@@ -5,7 +5,7 @@
  * changed or failed by the map, apart from one `map: unavailable (<CODE>)` reminder line. Local only.
  */
 import { randomUUID } from 'node:crypto';
-import { captureMapOps, TabReadCache, type CaptureContext } from './map-capture.js';
+import { captureMapOps, noteTabAction, TabReadCache, type CaptureContext } from './map-capture.js';
 import { buildMapLookup, buildMapOutline, buildMapReminder, MapCursorError, mapUnavailableLine, type MapLookup } from './map-output.js';
 import {
   defaultMapPolicy,
@@ -24,6 +24,16 @@ import { maskPath, normalizeForMatch } from './map-text.js';
 import { MemoryPolicyError, canonicalOrigin, readPolicy, type MemoryPolicy } from './policy.js';
 import type { ScopeDecision } from './scope.js';
 import { MemoryStoreError } from './site-record.js';
+
+/**
+ * Calls that leave the page as it is, or that capture already handles (navigate, snapshot, click). Any other call on
+ * a tab is an action that ends a click's wait for a late address change (specs/005-direct-site-routing FR-003).
+ */
+const NOT_TAB_ACTIONS: ReadonlySet<string> = new Set([
+  'browser_navigate', 'browser_snapshot', 'browser_click', 'browser_text', 'browser_screenshot', 'browser_wait', 'browser_tabs',
+  'browser_inspect_element', 'browser_logs', 'browser_site_map', 'browser_memory', 'browser_memory_policy', 'browser_safety',
+]);
+const VAULT_READS: ReadonlySet<unknown> = new Set(['status', 'list']);
 
 const LOOKUP_TIMEOUT_MS = 200;
 const REMINDER_TIMEOUT_MS = 50;
@@ -178,6 +188,18 @@ export class MapService {
   /** Any policy change or delete clears the tab cache (data-model "TabReadCache"). */
   invalidate(): void {
     this.cache.clear();
+  }
+
+  /** Every finished daemon call, observed or not. Synchronous, never throws, touches the tab cache only. */
+  noteCall(sessionId: string, tool: string, params: Record<string, unknown>, result: unknown): void {
+    if (this.cache.size === 0 || NOT_TAB_ACTIONS.has(tool) || (tool === 'browser_vault' && VAULT_READS.has(params.action))) return;
+    try {
+      const tabId = isRecord(result) && typeof result.tabId === 'number' ? result.tabId : typeof params.tabId === 'number' ? params.tabId : undefined;
+      if (tabId === undefined) return;
+      noteTabAction(this.cache, this.deps.connection(sessionId).connectionId, tabId);
+    } catch {
+      // No connection: nothing is cached for it either.
+    }
   }
 
   /** Capture after the browser outcome is final. Synchronous, never throws, and only enqueues. */

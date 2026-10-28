@@ -7,7 +7,9 @@ export const VAULT_PENDING_TTL_MS = 5 * 60_000;
 /** Total active budget for both frame inspections, resolution, fill and final audit. */
 export const VAULT_FILL_OPERATION_TIMEOUT_MS = 30_000;
 export const TERMINAL_RETENTION_MS = 15 * 60_000;
-const INTERNAL_ACTIONS = new Set(['inspect', 'fill', 'openUi']);
+/** How long a public list or fill that drew an in-page card waits for the owner (specs/006 FR-008). */
+export const VAULT_CARD_WAIT_MS = 40_000;
+const INTERNAL_ACTIONS = new Set(['inspect', 'fill', 'openUi', 'prompt', 'promptClose']);
 export const PROTECTED_ALLOWED_TOOLS = new Set([
   'browser_snapshot', 'browser_text', 'browser_wait', 'browser_scroll',
   'browser_click', 'browser_type', 'browser_tabs', 'browser_navigate',
@@ -49,6 +51,8 @@ export interface VaultBrowserContext {
   agentName?: string;
   supportsVault: boolean;
   supportsSiteContext?: boolean;
+  /** The extension draws in-page approval cards and fills the username field (specs/006). */
+  supportsSiteApproval?: boolean;
   ambiguous?: boolean;
 }
 
@@ -62,12 +66,18 @@ export interface VaultInspection {
   frameId: number;
   nonce: string;
   suitable: boolean;
+  /** `identifier`: a first sign-in step with a username field and no password field (specs/006 FR-012). */
+  mode?: 'password' | 'identifier';
+  /** The inspected password form also has one unambiguous username field. */
+  identifierField?: boolean;
   reasonCode?: string;
 }
 
 export interface VaultTransport {
   getBrowserContext(sessionId: string): Promise<VaultBrowserContext>;
   callVaultAction(action: string, params: Record<string, unknown>, sessionId: string, signal?: AbortSignal, agentName?: string): Promise<unknown>;
+  /** Takes an approval card down through the connection that drew it, whether or not its session still lasts. */
+  closeCard(connectionId: string, params: { tabId: number; requestId: string }, sessionId: string): Promise<unknown>;
 }
 
 export type ProtectedDocumentState = 'active' | 'recovery_required';
@@ -88,6 +98,17 @@ export interface InternalPending {
   agentName: string;
   metadata?: { label: string; identifier: string };
   terminalAt?: number;
+  /** Where the owner is asked: the in-page card or the private vault page (specs/006 D4). */
+  surface?: 'card' | 'page';
+  /** For a request that joined another request's card: that request's id. */
+  cardOf?: string;
+  /**
+   * A card whose own request ended with its session: it stays up for the site decision until the owner
+   * decides, it expires, or its connection or vault scope ends (specs/006 edge cases).
+   */
+  held?: boolean;
+  /** The fill the private page ran when it approved this request, returned to a waiting call instead of a second fill. */
+  outcome?: Record<string, unknown>;
 }
 
 export interface PrivateConnection {
@@ -97,8 +118,20 @@ export interface PrivateConnection {
 }
 
 export interface LiveGrant extends VaultGrant {
+  kind?: undefined;
   claimedBy?: string;
   consumed?: boolean;
+}
+
+/** One approval for one exact site in one browser profile, for every session (specs/006 D1). In memory only. */
+export interface SiteGrant {
+  kind: 'site';
+  grantId: string;
+  browserScope: string;
+  origin: string;
+  via: 'card' | 'page' | 'allowlist';
+  createdAt: number;
+  revoked: boolean;
 }
 
 export interface PendingOperation {
@@ -150,6 +183,7 @@ export function safeMessage(code: string): string {
     VAULT_LOCKED: 'Unlock the vault in its private extension page.',
     VAULT_BUSY: 'Another vault operation is still running. Try again shortly.',
     VAULT_USER_ACTION_REQUIRED: 'Continue in the private Browser Controller vault page.',
+    VAULT_APPROVAL_PENDING: 'The owner is deciding on a vault approval card on this tab. Wait for the decision, then call browser_vault again.',
     VAULT_REQUEST_EXPIRED: 'This private request expired. Start a new request.',
     VAULT_DECLINED: 'The private request was declined.',
     VAULT_OUTCOME_UNKNOWN: 'The fill result is uncertain. Inspect the page before making another explicit attempt.',

@@ -268,6 +268,16 @@ describe('D.deepActiveElement: one walk for the classifier and pageLocate', () =
     expect(D().deepActiveElement()).toBe(inner);
   });
 
+  it('never enters the vault approval card’s closed root (specs/006 FR-005)', () => {
+    const host = doc.el('bc-vault-approval', {});
+    (host as any).__bcVaultHost = true;
+    const allow = doc.el('button', {});
+    doc.body.append(host);
+    closedRoot(host, allow);
+    doc.activeElement = host;
+    expect(D().deepActiveElement()).toBe(host);
+  });
+
   it('enters an open shadow root and a same-origin frame with focus', () => {
     const host = doc.el('div', {});
     const inner = doc.el('input', { type: 'text' });

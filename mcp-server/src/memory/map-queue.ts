@@ -5,7 +5,7 @@
  * from decided uses and lookups fold per profile into one counters write per drain round. Local only.
  */
 import { COUNTER_FIELDS, type CounterField, type JsonMapStore, type MapCountersFile } from './map-store.js';
-import { mapVerdict, readMapPolicy, type MapPolicy, type MapVerdict } from './map-policy.js';
+import { isPathExcluded, mapVerdict, readMapPolicy, tombstoneBlocks, type MapPolicy, type MapVerdict } from './map-policy.js';
 import { emptyMapRecord, type MapRecord } from './map-record.js';
 import { applyMapOp, enforceMapLimits, sanitizeRecord, viaChain, type ApplyResult, type MapRecordOp, type SanitizePolicy } from './map-reconcile.js';
 import { MemoryPolicyError, readPolicy, type MemoryPolicy } from './policy.js';
@@ -98,7 +98,21 @@ export function sanitizePolicyFor(memory: MemoryPolicy, map: MapPolicy, profile:
     const at = Object.hasOwn(memory.deletions, key) ? memory.deletions[key] : undefined;
     if (at !== undefined) tombstones.push({ at });
   }
-  return { excludedPrefixes: map.excludedPaths[origin] ?? [], tombstones };
+  return { excludedPrefixes: map.excludedPaths[origin] ?? [], tombstones, entranceBlocked: (source, path, at) => entranceBlocked(memory, map, profile, source, path, at) };
+}
+
+/**
+ * An entrance names another site's page (specs/005-direct-site-routing FR-009): it goes when website memory excludes
+ * that site, the map excludes the path, or a delete of that site or page is newer than the entrance.
+ */
+function entranceBlocked(memory: MemoryPolicy, map: MapPolicy, profile: string, origin: string, path: string, at: string): boolean {
+  if (memory.excluded.includes(origin) || isPathExcluded(map, origin, path)) return true;
+  const seen = Date.parse(at);
+  for (const key of [origin, '*']) {
+    const deleted = Object.hasOwn(memory.deletions, key) ? memory.deletions[key] : undefined;
+    if (deleted !== undefined && Date.parse(deleted) >= seen) return true;
+  }
+  return tombstoneBlocks(map, { profile, origin, path, at });
 }
 
 export class MapQueue {
@@ -314,6 +328,13 @@ export class MapQueue {
       if (verdict === 'excluded') return { ...op, destination: { excluded: true } };
       if (verdict === 'deleted') return { ...op, destination: null, undecided: true };
     }
+    if (op.type === 'read' && op.entrance) {
+      const { rawPath, ...entrance } = op.entrance;
+      // The other site is checked as if this were its own observation: off, excluded or deleted drops the entrance (005 FR-009).
+      const verdict = mapVerdict(memory, map, { profile: op.profile, origin: entrance.origin, path: entrance.path, ...(rawPath !== undefined ? { rawPath } : {}), at: op.at });
+      const { entrance: _dropped, ...rest } = op;
+      return verdict === 'ok' ? { ...rest, entrance } : rest;
+    }
     if (op.type === 'open' && op.landingPath !== undefined) {
       const verdict = mapVerdict(memory, map, { profile: op.profile, origin: op.origin, path: op.landingPath, at: op.at });
       if (verdict !== 'ok') {
@@ -399,7 +420,7 @@ export class MapQueue {
         applied.push(index);
       }
       sanitizeRecord(record, sanitizePolicyFor(policies.memory, policies.map, group.profile, group.origin));
-      if (record.pages.length === 0) {
+      if (record.pages.length === 0 && !record.entrances?.length) {
         // Nothing structural is left (or was ever observed): no file for this pair.
         if (existing) await this.store.deleteMap(group.profile, group.origin);
         for (const index of applied) outcomes[index] = null;
@@ -424,7 +445,7 @@ export class MapQueue {
       }
       // An owner change that landed during the apply is honoured before the write.
       sanitizeRecord(record, sanitizePolicyFor(recheck.memory, recheck.map, group.profile, group.origin));
-      if (record.pages.length === 0) {
+      if (record.pages.length === 0 && !record.entrances?.length) {
         if (existing) await this.store.deleteMap(group.profile, group.origin);
         for (const index of applied) outcomes[index] = null;
         return null;

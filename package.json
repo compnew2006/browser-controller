@@ -22,6 +22,7 @@
     "test:watch": "vitest",
     "smoke:real-chrome": "node scripts/smoke-real-chrome.mjs",
     "smoke:vault-isolated": "node scripts/smoke-vault-isolated.mjs",
+    "smoke:vault-card": "node scripts/smoke-vault-card.mjs",
     "lint": "eslint mcp-server/src tests extension vitest.config.ts eslint.config.js",
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "typecheck": "tsc -p mcp-server/tsconfig.json --noEmit",

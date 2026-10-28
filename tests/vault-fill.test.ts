@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { FillWorkflow } from '../mcp-server/src/vault/fill.js';
 import { GrantRegistry } from '../mcp-server/src/vault/grants.js';
 import { OperationRegistry } from '../mcp-server/src/vault/operations.js';
-import type { CredentialVaultStore } from '../mcp-server/src/vault/store.js';
+import { scopeForBrowser, type CredentialVaultStore } from '../mcp-server/src/vault/store.js';
 import type { ProtectedDocument, VaultBrowserContext, VaultInspection } from '../mcp-server/src/vault/service-common.js';
 
 const ORIGIN = 'https://example.test';
@@ -131,5 +131,83 @@ describe('fill workflow', () => {
     const result = await run(w);
     expect(result).toMatchObject({ success: false, code: 'VAULT_PERMISSION_DENIED' });
     expect(w.fillPage).not.toHaveBeenCalled();
+  });
+
+  describe('username field and site approvals (specs/006)', () => {
+    const scope = scopeForBrowser(context.browserId);
+    const runWith = (w: ReturnType<typeof workflow>, page: VaultInspection, grantId = w.grant.grantId) =>
+      w.flow.run(context, 'session-1', 7, page, HANDLE, undefined, grantId);
+
+    it('writes the username alone on a first sign-in step, with no password, redaction or protection', async () => {
+      const page: VaultInspection = { ...inspection, mode: 'identifier' };
+      const registerSecret = vi.fn();
+      const fillPage = vi.fn(async (_params: Record<string, unknown>) => ({ success: true, filled_fields: 1, identifier_filled: true }));
+      const w = workflow({ inspectPage: async () => page, registerSecret, fillPage });
+      const result = await runWith(w, page);
+
+      expect(result).toEqual({ success: true, status: 'filled', filled_fields: 1, origin: ORIGIN, identifier_filled: true, password_filled: false });
+      const sent = fillPage.mock.calls[0][0];
+      expect(sent).toMatchObject({ identifier: 'fixture' });
+      expect(sent).not.toHaveProperty('password');
+      expect(registerSecret).not.toHaveBeenCalled();
+      expect(w.protectedDocuments).toEqual([]);
+    });
+
+    it('fails an identifier-only fill that wrote nothing as an unsafe target, without protecting the page', async () => {
+      const page: VaultInspection = { ...inspection, mode: 'identifier' };
+      const w = workflow({ inspectPage: async () => page, fillPage: async () => ({ success: true, filled_fields: 1, identifier_filled: false }) });
+      expect(await runWith(w, page)).toMatchObject({ success: false, code: 'VAULT_TARGET_UNSAFE' });
+      expect(w.protectedDocuments).toEqual([]);
+    });
+
+    it('protects the page when the username carries the password, even on an identifier-only step', async () => {
+      const page: VaultInspection = { ...inspection, mode: 'identifier' };
+      const registerSecret = vi.fn();
+      const store = { isUnlocked: true, get: vi.fn(async () => ({ ...entry, identifier: 'x-synthetic-passphrase-x' })) };
+      const w = workflow({
+        inspectPage: async () => page,
+        storeFor: () => store,
+        registerSecret,
+        fillPage: async () => ({ success: true, filled_fields: 1, identifier_filled: true }),
+      });
+      expect(await runWith(w, page)).toMatchObject({ success: true, status: 'filled' });
+      expect(registerSecret).toHaveBeenCalledWith(scope, 'synthetic-passphrase', 'doc-1');
+      expect(w.protectedDocuments).toEqual([expect.objectContaining({ state: 'active' })]);
+    });
+
+    it('writes username and password together when the form has both, and counts two fields', async () => {
+      const page: VaultInspection = { ...inspection, identifierField: true };
+      const fillPage = vi.fn(async (_params: Record<string, unknown>) => ({ success: true, filled_fields: 2, identifier_filled: true }));
+      const w = workflow({ inspectPage: async () => page, fillPage });
+      expect(await runWith(w, page)).toEqual({
+        success: true, status: 'filled', filled_fields: 2, origin: ORIGIN, identifier_filled: true, password_filled: true,
+      });
+      expect(fillPage.mock.calls[0][0]).toMatchObject({ identifier: 'fixture', password: 'synthetic-passphrase' });
+      expect(w.protectedDocuments).toEqual([expect.objectContaining({ state: 'active' })]);
+    });
+
+    it('accepts a password-only write when the username field was left alone, and refuses a count that does not match', async () => {
+      const page: VaultInspection = { ...inspection, identifierField: true };
+      const left = workflow({ inspectPage: async () => page, fillPage: async () => ({ success: true, filled_fields: 1, identifier_filled: false }) });
+      expect(await runWith(left, page)).toMatchObject({ status: 'filled', filled_fields: 1, identifier_filled: false, password_filled: true });
+
+      const mismatch = workflow({ inspectPage: async () => page, fillPage: async () => ({ success: true, filled_fields: 1, identifier_filled: true }) });
+      expect(await runWith(mismatch, page)).toMatchObject({ success: false, code: 'VAULT_OUTCOME_UNKNOWN' });
+      expect(mismatch.protectedDocuments.map((document) => document.state)).toEqual(['active', 'recovery_required']);
+    });
+
+    it('fills under a site approval for any session, and stops once that approval is revoked', async () => {
+      const w = workflow();
+      const site = w.grants.createSite(scope, ORIGIN, 'card');
+      expect(await w.flow.run(context, 'session-9', 7, inspection, HANDLE, undefined, site.grantId)).toMatchObject({ status: 'filled' });
+
+      const other = w.grants.createSite(scopeForBrowser('browser-b'), ORIGIN, 'card');
+      expect(await w.flow.run(context, 'session-9', 7, inspection, HANDLE, undefined, other.grantId))
+        .toMatchObject({ success: false, code: 'VAULT_PERMISSION_DENIED' });
+
+      w.grants.revoke(site.grantId);
+      expect(await w.flow.run(context, 'session-9', 7, inspection, HANDLE, undefined, site.grantId))
+        .toMatchObject({ success: false, code: 'VAULT_PERMISSION_DENIED' });
+    });
   });
 });

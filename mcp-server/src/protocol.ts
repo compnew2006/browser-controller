@@ -36,6 +36,8 @@ export const CREDENTIAL_VAULT_CAPABILITY = 'credential-vault-v1';
 export const SITE_CONTEXT_CAPABILITY = 'site-context';
 /** Extension reports the light `siteContext` for an observed `browser_click` (specs/004-site-navigation-map R-06). */
 export const SITE_MAP_CAPABILITY = 'site-map';
+/** Extension draws in-page vault approval cards and fills the username field too (specs/006-vault-site-approval). */
+export const VAULT_SITE_APPROVAL_CAPABILITY = 'vault-site-approval';
 /**
  * The daemon accepts `memory-admin` IPC messages from the owner CLI. Daemon-only: it is
  * not in IPC_PROTOCOL_CAPABILITIES, which both sides must send, so older clients still connect.
@@ -67,6 +69,8 @@ export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   SITE_CONTEXT_CAPABILITY,
   // Additive too: without it clicks are not observed, and the site map learns from reads only.
   SITE_MAP_CAPABILITY,
+  // Additive: without it, vault approvals open the private page and fills write the password only.
+  VAULT_SITE_APPROVAL_CAPABILITY,
 ]);
 
 /** What the daemon needs from the extension's helloAck. */

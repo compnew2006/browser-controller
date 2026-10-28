@@ -32,8 +32,13 @@ export async function deleteMapsWithMemory(map: MapService, key: string): Promis
   const affects = (origin: string): boolean => key === '*' || origin === key;
   map.queue.dropPending('deleted', (op) => key === '*' || ('origin' in op && op.origin === key));
   await map.queue.settle(affects);
-  if (key === '*') await map.store.deleteAll();
-  else await map.store.deleteOrigin(key, await knownMapProfiles(map));
+  if (key === '*') {
+    await map.store.deleteAll();
+  } else {
+    const profiles = await knownMapProfiles(map);
+    await map.store.deleteOrigin(key, profiles);
+    await scrubEntrances(map, key, profiles, map.iso());
+  }
   map.invalidate();
 }
 
@@ -88,19 +93,34 @@ export async function mapProfileStatus(map: MapService, browser?: string): Promi
 }
 
 /**
- * Bring each listed profile's map of `origin` in line with the policy now, through the one writer. When a rewrite
- * did not land, the command fails: the change is saved and reads already apply it, but the file still holds the
- * entries until the next commit to it (RV-06).
+ * Bring each listed map file in line with the policy now, through the one writer. When a rewrite did not land, the
+ * command fails: the change is saved and reads already apply it, but the file still holds the entries until the next
+ * commit to it (RV-06).
  */
-async function sanitizeNow(map: MapService, origin: string, profiles: readonly string[], at: string): Promise<void> {
-  for (const profile of profiles) map.queue.enqueue({ type: 'sanitize', opId: `sanitize-${randomUUID()}`, profile, origin, at });
+async function sanitizeMaps(map: MapService, files: ReadonlyArray<{ profile: string; origin: string }>, at: string): Promise<void> {
+  if (files.length === 0) return;
+  for (const { profile, origin } of files) map.queue.enqueue({ type: 'sanitize', opId: `sanitize-${randomUUID()}`, profile, origin, at });
   await map.queue.drain();
-  for (const profile of profiles) {
+  for (const { profile, origin } of files) {
     const record = await map.store.getMap(profile, origin, { afterWrites: true });
     if (record && map.applyPolicy(record)) {
       throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'the change is saved and lookups no longer show the entries, but the map file could not be rewritten yet; run the command again');
     }
   }
+}
+
+const sanitizeNow = (map: MapService, origin: string, profiles: readonly string[], at: string): Promise<void> =>
+  sanitizeMaps(map, profiles.map((profile) => ({ profile, origin })), at);
+
+/**
+ * Entrances on other sites' maps that name `source` (specs/005-direct-site-routing FR-009). Reads already hide them
+ * once the delete or exclusion is saved; the rewrite keeps a pruned tombstone from bringing one back.
+ */
+async function scrubEntrances(map: MapService, source: string, profiles: readonly string[], at: string): Promise<void> {
+  const files = (await map.store.listMaps())
+    .filter((record) => profiles.includes(record.profile) && record.origin !== source && record.entrances?.some((entry) => entry.origin === source))
+    .map((record) => ({ profile: record.profile, origin: record.origin }));
+  await sanitizeMaps(map, files, at);
 }
 
 async function resetCounters(map: MapService, profile: string): Promise<void> {
@@ -133,11 +153,13 @@ async function deleteMaps(map: MapService, request: MapAdminRequest, at: string)
   await map.mutateMapPolicy((policy) => addMapTombstone(policy, { profile: profile ?? '*', origin, ...(pagePath !== undefined ? { path: pagePath } : {}), at }));
   if (pagePath !== undefined) {
     await sanitizeNow(map, origin, profiles, at);
+    await scrubEntrances(map, origin, profiles, at);
     return;
   }
   map.queue.dropPending('deleted', (op) => 'origin' in op && op.origin === origin && (profile === undefined || op.profile === profile));
   await map.queue.settle((inFlight) => inFlight === origin);
   await map.store.deleteOrigin(origin, profiles);
+  await scrubEntrances(map, origin, profiles, at);
 }
 
 async function inspect(map: MapService, request: MapAdminRequest): Promise<MapRecord[]> {
@@ -182,7 +204,9 @@ export async function runMapAdmin(map: MapService, id: string, request: MapAdmin
         const origin = requireOrigin(request.origin);
         const prefix = requirePrefix(request.path);
         await map.mutateMapPolicy((policy) => addMapTombstone(excludeMapPath(policy, origin, prefix, at), { profile: '*', origin, pathPrefix: prefix, at }));
-        await sanitizeNow(map, origin, await knownMapProfiles(map), at);
+        const profiles = await knownMapProfiles(map);
+        await sanitizeNow(map, origin, profiles, at);
+        await scrubEntrances(map, origin, profiles, at);
         return await done();
       }
       case 'include-path': {

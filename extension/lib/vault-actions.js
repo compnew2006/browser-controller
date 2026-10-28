@@ -1,97 +1,33 @@
-import { wedgedError } from './page-exec.js';
-import { wedgedTabs } from './state.js';
+import {
+  canonicalOrigin, clearPrivateVaultTabs, executeVaultScript, getMainDocument, isPrivateVaultTab, isPrivateVaultUrl,
+  openPrivateVault, registerPrivateVaultTab, safeFailure, VAULT_PAGE_EXEC_TIMEOUT_MS,
+} from './vault-exec.js';
+import { clearPasswordInspection, fillInspectedPassword, inspectPasswordField } from './vault-page-scripts.js';
+import { promptAction, promptCloseAction } from './vault-prompt.js';
+
+export {
+  forgetPrivateVaultTab, isPrivateVaultSender, isPrivateVaultTab, isPrivateVaultUrl, openPrivateVault, registerPrivateVaultTab,
+} from './vault-exec.js';
+export { fillInspectedPassword, inspectPasswordField } from './vault-page-scripts.js';
+export { closeAllApprovalCards, closeApprovalCard, closeStaleApprovalCards } from './vault-prompt.js';
 
 /**
  * Private credential-vault browser actions and in-memory document protection.
  * Passwords pass through this module only for the duration of one fill call.
  */
 
-const VAULT_PAGE = 'vault/vault.html';
 const VAULT_STATE_KEY = 'bcVaultRuntimeState';
 const VAULT_MAY_PROTECT_KEY = 'bcVaultMayHaveSensitiveContext';
 const INSPECTION_TTL_MS = 60_000;
-const VAULT_PAGE_EXEC_TIMEOUT_MS = 8_000;
 const VAULT_PAGE_WRITE_WINDOW_MS = 7_000;
 const inspections = new Map();
 const protectedDocuments = new Map();
-const privateVaultTabs = new Set();
 const unknownProtectedTabs = new Set();
 const pendingRemovals = [];
 let protectionSequence = 0;
 let protectionStateTrusted = false;
 let unrecoverableProtectionState = false;
 
-export function isPrivateVaultUrl(raw) {
-  try {
-    const url = new URL(raw);
-    return url.origin === new URL(chrome.runtime.getURL('')).origin && url.pathname === '/vault/vault.html';
-  } catch {
-    return false;
-  }
-}
-
-function safeFailure(code) {
-  const messages = {
-    VAULT_TARGET_UNSAFE: 'The page does not have one verified editable password field.',
-    VAULT_ORIGIN_UNSUPPORTED: 'This page is not a supported vault target: fills work only on HTTPS sites and on loopback HTTP.',
-    VAULT_PAGE_UNRESPONSIVE: 'The page did not respond before the vault action timed out.',
-    VAULT_ORIGIN_MISMATCH: 'The page origin changed before the fill.',
-    VAULT_DOCUMENT_CHANGED: 'The page changed before the fill.',
-    VAULT_PERMISSION_DENIED: 'The private browser action is no longer valid.',
-    VAULT_CONTEXT_PROTECTED: 'This page is protected by the credential vault.',
-    INVALID_ARGUMENT: 'The private browser action is invalid.',
-    VAULT_OUTCOME_UNKNOWN: 'The fill result is uncertain. Inspect the page before another explicit attempt.',
-    VAULT_RECOVERY_REQUIRED: 'The browser protection state could not be saved. The page was left untouched.',
-  };
-  return { success: false, code, error: messages[code] || 'The private browser action could not be completed safely.' };
-}
-
-function canonicalOrigin(raw) {
-  let url;
-  try { url = new URL(raw); } catch { throw new Error('VAULT_ORIGIN_UNSUPPORTED'); }
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
-    throw new Error('VAULT_ORIGIN_UNSUPPORTED');
-  }
-  if (url.username || url.password) throw new Error('VAULT_ORIGIN_UNSUPPORTED');
-  return url.origin;
-}
-
-async function getMainDocument(tabId) {
-  const [tab, frame] = await Promise.all([
-    chrome.tabs.get(tabId),
-    chrome.webNavigation.getFrame({ tabId, frameId: 0 }),
-  ]);
-  if (!tab || typeof tab.url !== 'string' || !frame || typeof frame.documentId !== 'string' || !frame.documentId) {
-    throw new Error('VAULT_DOCUMENT_CHANGED');
-  }
-  return { tab, frame, origin: canonicalOrigin(tab.url) };
-}
-
-async function executeVaultScript(request, signal, timeoutMs = VAULT_PAGE_EXEC_TIMEOUT_MS) {
-  const tabId = request.target.tabId;
-  if (signal?.aborted) throw new Error('VAULT_PERMISSION_DENIED');
-  const execution = chrome.scripting.executeScript(request);
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      if (error) reject(error);
-      else if (signal?.aborted) reject(new Error('VAULT_PERMISSION_DENIED'));
-      else resolve(value);
-    };
-    const timer = setTimeout(() => {
-      wedgedTabs.set(tabId, Date.now());
-      finish(wedgedError(tabId, timeoutMs));
-    }, timeoutMs);
-    const onAbort = () => finish(new Error('VAULT_PERMISSION_DENIED'));
-    signal?.addEventListener('abort', onAbort, { once: true });
-    if (signal?.aborted) onAbort();
-    Promise.resolve(execution).then((value) => finish(null, value), (error) => finish(error));
-  });
-}
 
 async function getSameOriginFrames(tabId, expectedOrigin) {
   const frames = await chrome.webNavigation.getAllFrames({ tabId });
@@ -130,94 +66,6 @@ async function clearInspectionsInFrames(tabId, frames, nonce) {
     func: clearPasswordInspection,
     args: [nonce],
   }, undefined, 500)));
-}
-
-/** Runs in one document's isolated world and retains only the element identity. */
-export function inspectPasswordField(nonce, deadline) {
-  // Chrome serializes only this function when using chrome.scripting. Keep all
-  // page-side helpers nested so no extension module scope is required.
-  const collect = (root, fields = []) => {
-    for (const field of root.querySelectorAll?.('input[type="password"]') ?? []) if (!fields.includes(field)) fields.push(field);
-    for (const element of root.querySelectorAll?.('*') ?? []) if (element.shadowRoot) collect(element.shadowRoot, fields);
-    return fields;
-  };
-  const visible = (field) => {
-    if (!(field instanceof HTMLInputElement) || field.type.toLowerCase() !== 'password'
-      || field.disabled || field.readOnly || !field.isConnected || field.ownerDocument !== document) return false;
-    const autocomplete = String(field.autocomplete || field.getAttribute('autocomplete') || '').trim().toLowerCase().split(/\s+/);
-    if (autocomplete.includes('new-password')) return false;
-    const fieldContext = [
-      field.name || field.getAttribute('name'), field.id || field.getAttribute('id'),
-      field.placeholder || field.getAttribute('placeholder'), field.getAttribute('aria-label'),
-      ...(field.labels ? [...field.labels].map((label) => label.textContent || '') : []),
-      field.form?.name, field.form?.id, field.form?.getAttribute?.('autocomplete'),
-    ].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/[_-]+/g, ' ');
-    const submitIntent = [...(field.form?.querySelectorAll?.('button, input[type="submit"], input[type="button"]') ?? [])]
-      .map((control) => control.innerText || control.textContent || control.value || control.getAttribute?.('aria-label') || '')
-      .join(' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/[_-]+/g, ' ');
-    const passwordChange = /\b(?:new|confirm(?:ation)?|repeat|reset|register|signup|sign\s+up|create|change|update)\s+(?:your\s+)?password\b|\bpassword\s+(?:reset|confirmation|confirm|again)\b/;
-    const accountCreation = /\b(?:register|sign\s+up|create\s+(?:an?\s+)?account|reset\s+password|change\s+password|update\s+password)\b/;
-    if (passwordChange.test(fieldContext) || accountCreation.test(submitIntent)) return false;
-    const style = getComputedStyle(field);
-    const rect = field.getBoundingClientRect();
-    return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0
-      && rect.width > 0 && rect.height > 0 && field.getClientRects().length > 0;
-  };
-  const candidates = collect(document).filter(visible);
-  if (Date.now() > deadline) return { suitable: false, candidateCount: 0, documentOrigin: location.origin };
-  if (candidates.length !== 1) return { suitable: false, candidateCount: candidates.length, documentOrigin: location.origin };
-  globalThis.__bcVaultInspection = { nonce, field: candidates[0] };
-  return { suitable: true, candidateCount: 1, documentOrigin: location.origin };
-}
-
-function clearPasswordInspection(nonce) {
-  if (globalThis.__bcVaultInspection?.nonce === nonce) delete globalThis.__bcVaultInspection;
-  return true;
-}
-
-/** Runs once in the same isolated document and never submits the surrounding form. */
-export function fillInspectedPassword(nonce, password, expectedOrigin, deadline) {
-  if (location.origin !== expectedOrigin) return { success: false, code: 'VAULT_ORIGIN_MISMATCH' };
-  if (Date.now() > deadline) return { success: false, code: 'VAULT_PERMISSION_DENIED' };
-  const collect = (root, fields = []) => {
-    for (const field of root.querySelectorAll?.('input[type="password"]') ?? []) if (!fields.includes(field)) fields.push(field);
-    for (const element of root.querySelectorAll?.('*') ?? []) if (element.shadowRoot) collect(element.shadowRoot, fields);
-    return fields;
-  };
-  const visible = (field) => {
-    if (!(field instanceof HTMLInputElement) || field.type.toLowerCase() !== 'password'
-      || field.disabled || field.readOnly || !field.isConnected || field.ownerDocument !== document) return false;
-    const autocomplete = String(field.autocomplete || field.getAttribute('autocomplete') || '').trim().toLowerCase().split(/\s+/);
-    if (autocomplete.includes('new-password')) return false;
-    const context = [
-      field.name || field.getAttribute('name'), field.id || field.getAttribute('id'),
-      field.placeholder || field.getAttribute('placeholder'), field.getAttribute('aria-label'),
-      ...(field.labels ? [...field.labels].map((label) => label.textContent || '') : []),
-      field.form?.name, field.form?.id, field.form?.getAttribute?.('autocomplete'),
-      field.form?.innerText, field.form?.textContent,
-    ].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/[_-]+/g, ' ');
-    if (/\b(?:new|confirm(?:ation)?|repeat|reset|register|signup|sign\s+up|create|change|update)\s+(?:your\s+)?password\b|\bpassword\s+(?:reset|confirmation|confirm|again)\b/.test(context)) return false;
-    const style = getComputedStyle(field);
-    const rect = field.getBoundingClientRect();
-    return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0
-      && rect.width > 0 && rect.height > 0 && field.getClientRects().length > 0;
-  };
-  const saved = globalThis.__bcVaultInspection;
-  if (!saved || saved.nonce !== nonce || !saved.field || !saved.field.isConnected
-    || saved.field.ownerDocument !== document || !visible(saved.field)) {
-    return { success: false, code: 'VAULT_DOCUMENT_CHANGED' };
-  }
-  const candidates = collect(document).filter(visible);
-  if (candidates.length !== 1 || candidates[0] !== saved.field) return { success: false, code: 'VAULT_TARGET_UNSAFE' };
-  if (Date.now() > deadline || location.origin !== expectedOrigin) return { success: false, code: 'VAULT_PERMISSION_DENIED' };
-  const field = saved.field;
-  delete globalThis.__bcVaultInspection;
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-  if (!setter) return { success: false, code: 'VAULT_TARGET_UNSAFE' };
-  setter.call(field, password);
-  field.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-  field.dispatchEvent(new Event('change', { bubbles: true }));
-  return { success: field.value === password, retained: field.value === password, filled_fields: 1 };
 }
 
 function protectionSnapshot() {
@@ -289,7 +137,7 @@ export async function restoreVaultRuntimeState() {
     pendingRemovals.splice(0);
     unknownProtectedTabs.clear();
     unrecoverableProtectionState = false;
-    privateVaultTabs.clear();
+    clearPrivateVaultTabs();
     const state = stored?.[VAULT_STATE_KEY];
     const statePresent = !!state && Number.isSafeInteger(state.protectionSequence) && state.protectionSequence >= 0
       && Array.isArray(state.protectedDocuments) && state.protectedDocuments.every((document) =>
@@ -339,7 +187,7 @@ export async function restoreVaultRuntimeState() {
       if (!(await saveRuntimeState())) protectionStateTrusted = false;
     }
     const tabs = await chrome.tabs.query({});
-    for (const tab of tabs) if (tab.id != null && isPrivateVaultUrl(tab.url)) privateVaultTabs.add(tab.id);
+    for (const tab of tabs) if (tab.id != null && isPrivateVaultUrl(tab.url)) registerPrivateVaultTab(tab.id);
   } catch {
     protectionStateTrusted = false;
   }
@@ -356,37 +204,6 @@ export async function acknowledgeVaultRemoval(sequence) {
   if (remaining.length === pendingRemovals.length) return;
   pendingRemovals.splice(0, pendingRemovals.length, ...remaining);
   await saveRuntimeState();
-}
-
-export function isPrivateVaultTab(tabId) {
-  return privateVaultTabs.has(tabId);
-}
-
-export function isPrivateVaultSender(sender) {
-  return !!sender && sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL(VAULT_PAGE);
-}
-
-export async function openPrivateVault(_requestId) {
-  const url = chrome.runtime.getURL(VAULT_PAGE);
-  const matches = await chrome.tabs.query({ url });
-  const existing = matches.find((tab) => Number.isInteger(tab.id));
-  if (existing) {
-    privateVaultTabs.add(existing.id);
-    await chrome.tabs.update(existing.id, { active: true });
-    if (existing.windowId != null) await chrome.windows.update(existing.windowId, { focused: true }).catch(() => {});
-  } else {
-    const created = await chrome.tabs.create({ url, active: true });
-    if (Number.isInteger(created.id)) privateVaultTabs.add(created.id);
-  }
-  return { success: true };
-}
-
-export function registerPrivateVaultTab(tabId) {
-  if (Number.isInteger(tabId)) privateVaultTabs.add(tabId);
-}
-
-export function forgetPrivateVaultTab(tabId) {
-  return privateVaultTabs.delete(tabId);
 }
 
 export async function removeProtectedTab(tabId) {
@@ -429,7 +246,9 @@ export async function markDocumentCurrent(tabId, documentId) {
 }
 
 async function inspectAction(params, signal) {
-  if (!Number.isInteger(params.tabId) || Object.keys(params).some((key) => key !== 'tabId')) return safeFailure('INVALID_ARGUMENT');
+  if (!Number.isInteger(params.tabId) || Object.keys(params).some((key) => key !== 'tabId' && key !== 'withIdentifier')
+    || (params.withIdentifier !== undefined && params.withIdentifier !== true)) return safeFailure('INVALID_ARGUMENT');
+  const withIdentifier = params.withIdentifier === true;
   pruneInspections();
   const { tab, frame, origin } = await getMainDocument(params.tabId);
   if (signal?.aborted) return safeFailure('VAULT_PERMISSION_DENIED');
@@ -446,7 +265,7 @@ async function inspectAction(params, signal) {
         target: { tabId: params.tabId, documentIds: [item.documentId] },
         world: 'ISOLATED',
         func: inspectPasswordField,
-        args: [nonce, deadline],
+        args: withIdentifier ? [nonce, deadline, true] : [nonce, deadline],
       }, signal, Math.max(1, deadline - Date.now()));
       if (signal?.aborted) throw new Error('VAULT_PERMISSION_DENIED');
       const result = results?.find((entry) => entry.documentId === item.documentId && entry.frameId === item.frameId)?.result;
@@ -472,17 +291,30 @@ async function inspectAction(params, signal) {
     return safeFailure('VAULT_DOCUMENT_CHANGED');
   }
   const totalCandidates = inspectedFrames.reduce((sum, item) => sum + item.candidateCount, 0);
-  const targetFrame = totalCandidates === 1 ? inspectedFrames.find((item) => item.suitable) : undefined;
+  let targetFrame = totalCandidates === 1 ? inspectedFrames.find((item) => item.suitable) : undefined;
+  let identifierMode = false;
+  if (withIdentifier && totalCandidates === 0
+    && inspectedFrames.reduce((sum, item) => sum + (Number.isInteger(item.identifierCount) ? item.identifierCount : 0), 0) === 1) {
+    // No password field anywhere and one username field: a first sign-in step (specs/006 FR-012).
+    targetFrame = inspectedFrames.find((item) => item.identifierCount === 1);
+    identifierMode = !!targetFrame;
+  }
   const suitable = !!targetFrame;
-  if (suitable) inspections.set(nonce, {
-    tabId: params.tabId,
-    origin,
-    documentId: frame.documentId,
-    targetDocumentId: targetFrame.documentId,
-    frameId: targetFrame.frameId,
-    expiresAt: Date.now() + INSPECTION_TTL_MS,
-  });
-  else await clearInspectionsInFrames(params.tabId, frames, nonce);
+  const identifierField = suitable && !identifierMode && targetFrame.identifierField === true;
+  if (suitable) {
+    inspections.set(nonce, {
+      tabId: params.tabId,
+      origin,
+      documentId: frame.documentId,
+      targetDocumentId: targetFrame.documentId,
+      frameId: targetFrame.frameId,
+      mode: identifierMode ? 'identifier' : 'password',
+      identifierField,
+      expiresAt: Date.now() + INSPECTION_TTL_MS,
+    });
+    // A username-only page in another frame kept a field of its own: only the target keeps one.
+    if (withIdentifier) await clearInspectionsInFrames(params.tabId, frames.filter((item) => item.documentId !== targetFrame.documentId), nonce);
+  } else await clearInspectionsInFrames(params.tabId, frames, nonce);
   return {
     success: true,
     tabId: params.tabId,
@@ -492,6 +324,8 @@ async function inspectAction(params, signal) {
     frameId: targetFrame?.frameId ?? 0,
     nonce,
     suitable,
+    ...(identifierMode ? { mode: 'identifier' } : {}),
+    ...(identifierField ? { identifierField: true } : {}),
     ...(!suitable ? { reasonCode: 'VAULT_TARGET_UNSAFE' } : {}),
   };
 }
@@ -504,11 +338,14 @@ async function markRecoveryRequired(protectedDocument) {
 }
 
 async function fillAction(params, signal) {
-  const allowed = ['tabId', 'origin', 'documentId', 'targetDocumentId', 'frameId', 'nonce', 'password'];
+  const allowed = ['tabId', 'origin', 'documentId', 'targetDocumentId', 'frameId', 'nonce', 'password', 'identifier'];
   if (Object.keys(params).some((key) => !allowed.includes(key)) || !Number.isInteger(params.tabId)
     || typeof params.origin !== 'string' || typeof params.documentId !== 'string'
     || typeof params.targetDocumentId !== 'string' || !Number.isInteger(params.frameId)
-    || params.frameId < 0 || typeof params.nonce !== 'string' || typeof params.password !== 'string' || !params.password) {
+    || params.frameId < 0 || typeof params.nonce !== 'string'
+    || (params.password !== undefined && (typeof params.password !== 'string' || !params.password))
+    || (params.identifier !== undefined && (typeof params.identifier !== 'string' || !params.identifier))
+    || (params.password === undefined && params.identifier === undefined)) {
     return safeFailure('INVALID_ARGUMENT');
   }
   pruneInspections();
@@ -517,7 +354,15 @@ async function fillAction(params, signal) {
   if (!inspected || inspected.tabId !== params.tabId || inspected.origin !== params.origin
     || inspected.documentId !== params.documentId || inspected.targetDocumentId !== params.targetDocumentId
     || inspected.frameId !== params.frameId) return safeFailure('VAULT_PERMISSION_DENIED');
+  // The fill must match what the inspection found: the username alone on a first sign-in step, else a
+  // password, with a username only where the inspection kept that field.
+  const identifierOnly = inspected.mode === 'identifier';
+  if (identifierOnly ? (params.password !== undefined || params.identifier === undefined)
+    : (params.password === undefined || (params.identifier !== undefined && !inspected.identifierField))) {
+    return safeFailure('INVALID_ARGUMENT');
+  }
   if (signal?.aborted) return safeFailure('VAULT_PERMISSION_DENIED');
+  if (identifierOnly) return fillIdentifierOnly(params, inspected, signal);
   if (!protectionStateTrusted) return safeFailure('VAULT_RECOVERY_REQUIRED');
 
   const { tab, frame, origin } = await getMainDocument(params.tabId);
@@ -557,7 +402,9 @@ async function fillAction(params, signal) {
       target: { tabId: params.tabId, documentIds: [inspected.targetDocumentId] },
       world: 'ISOLATED',
       func: fillInspectedPassword,
-      args: [params.nonce, params.password, inspected.origin, deadline],
+      args: params.identifier === undefined
+        ? [params.nonce, params.password, inspected.origin, deadline]
+        : [params.nonce, params.password, inspected.origin, deadline, params.identifier],
     }, signal, VAULT_PAGE_EXEC_TIMEOUT_MS);
     const fresh = await getMainDocument(params.tabId);
     if (signal?.aborted) throw new Error('VAULT_PERMISSION_DENIED');
@@ -569,21 +416,54 @@ async function fillAction(params, signal) {
       return safeFailure('VAULT_DOCUMENT_CHANGED');
     }
     const outcome = result?.[0]?.result;
-    if (signal?.aborted || outcome?.success !== true || outcome.retained !== true || outcome.filled_fields !== 1) {
+    const identifierFilled = params.identifier !== undefined && outcome?.identifier_filled === true;
+    if (signal?.aborted || outcome?.success !== true || outcome.retained !== true || outcome.filled_fields !== (identifierFilled ? 2 : 1)) {
       await markRecoveryRequired(protectedDocuments.get(frame.documentId));
       return safeFailure(signal?.aborted ? 'VAULT_OUTCOME_UNKNOWN' : (outcome?.code || 'VAULT_TARGET_UNSAFE'));
     }
-    return { success: true, filled_fields: 1 };
+    return {
+      success: true, filled_fields: identifierFilled ? 2 : 1,
+      ...(params.identifier !== undefined ? { identifier_filled: identifierFilled } : {}),
+    };
   } catch {
     await markRecoveryRequired(protectedDocuments.get(frame.documentId));
     return safeFailure('VAULT_OUTCOME_UNKNOWN');
   }
 }
 
+/**
+ * A first sign-in step: only the username is written, so no secret reaches the page and the document
+ * is not protected. The same document checks as a password fill run before the write.
+ */
+async function fillIdentifierOnly(params, inspected, signal) {
+  const { tab, frame, origin } = await getMainDocument(params.tabId);
+  if (signal?.aborted) return safeFailure('VAULT_PERMISSION_DENIED');
+  if (frame.documentId !== inspected.documentId) return safeFailure('VAULT_DOCUMENT_CHANGED');
+  if (origin !== inspected.origin || origin !== params.origin) return safeFailure('VAULT_ORIGIN_MISMATCH');
+  if (isPrivateVaultTab(tab.id) || isPrivateVaultUrl(tab.url)) return safeFailure('VAULT_CONTEXT_PROTECTED');
+  const frames = await getSameOriginFrames(params.tabId, origin);
+  if (signal?.aborted) return safeFailure('VAULT_PERMISSION_DENIED');
+  if (!frames.some((item) => item.frameId === inspected.frameId && item.documentId === inspected.targetDocumentId)) return safeFailure('VAULT_DOCUMENT_CHANGED');
+  const result = await executeVaultScript({
+    target: { tabId: params.tabId, documentIds: [inspected.targetDocumentId] },
+    world: 'ISOLATED',
+    func: fillInspectedPassword,
+    args: [params.nonce, null, inspected.origin, Date.now() + VAULT_PAGE_WRITE_WINDOW_MS, params.identifier],
+  }, signal, VAULT_PAGE_EXEC_TIMEOUT_MS);
+  if (signal?.aborted) return safeFailure('VAULT_OUTCOME_UNKNOWN');
+  const outcome = result?.[0]?.result;
+  if (outcome?.success !== true || outcome.retained !== true || outcome.filled_fields !== 1 || outcome.identifier_filled !== true) {
+    return safeFailure(outcome?.code || 'VAULT_TARGET_UNSAFE');
+  }
+  return { success: true, filled_fields: 1, identifier_filled: true };
+}
+
 export async function handleVaultAction(action, params, signal) {
   try {
     if (action === 'inspect') return await inspectAction(params, signal);
     if (action === 'fill') return await fillAction(params, signal);
+    if (action === 'prompt') return await promptAction(params);
+    if (action === 'promptClose') return await promptCloseAction(params);
     if (action === 'openUi') {
       if (Object.keys(params).some((key) => key !== 'requestId') || typeof params.requestId !== 'string') return safeFailure('INVALID_ARGUMENT');
       return await openPrivateVault(params.requestId);

@@ -6,13 +6,15 @@
 import { MAP_LIMITS } from './map-allowlist.js';
 import type { QueuedMapOp } from './map-queue.js';
 import { LOCATOR_FAILURES, type LocatorFailure, type OpenResultKind, type ReadContext } from './map-record.js';
-import type { MapReadOp, ObservedControl } from './map-reconcile.js';
+import type { MapClickOp, MapReadOp, ObservedControl } from './map-reconcile.js';
 import { parseMapSnapshot } from './map-snapshot.js';
 import { boundTitle, maskPath, normalizeForMatch } from './map-text.js';
 import { canonicalOrigin } from './policy.js';
 
 const ERROR_WINDOW_MS = MAP_LIMITS.errorAttributionSeconds * 1_000;
 const LANG = /^[a-z]{2,8}$/u;
+/** A path segment that names a sign-in page (specs/005-direct-site-routing FR-005). */
+const SIGN_IN_PATH = /(?:^|\/)(?:log-?in|sign-?in|auth|sso|oauth2?|session\/new|accounts?\/login)(?:[/._-]|$)/iu;
 
 export type CachedControl = ObservedControl & { ref: string | null };
 
@@ -32,12 +34,25 @@ export interface TabRead {
   atMs: number;
   /** A click on this page that did not navigate, waiting for the read that shows what it opened. */
   pendingClick: { controlKey: string; context: ReadContext; atMs: number } | null;
+  /**
+   * The same click, waiting for a late address change (specs/005-direct-site-routing FR-003). Unlike `pendingClick`
+   * it survives reads of the same page; another action in the tab, a navigate or the window ends it.
+   */
+  lateClick?: { control: ObservedControl; fromPath: string; rawFromPath: string; lang: string | null; context: ReadContext; atMs: number };
+  /** Set on a stub after a click left another site: the next read here records that page as an entrance (005 FR-004). */
+  entranceFrom?: NonNullable<MapReadOp['entrance']>;
   /** Dialogs and menus this read printed: their count and control keys, so a later click is credited only with new ones (RV-14). */
   openedBefore?: { containers: number; keys: Set<string> };
   /** Set after a click navigated here: no read yet, so nothing on it can be attributed. */
   stub?: true;
   /** The click that led here was attributed to a stored control, so the first read here is that click's destination. */
   attributed?: true;
+  /**
+   * The tab came here through a content link (a click on a page the map read whose target is no stored control; R-10,
+   * RV-01), or from another site (RV-05). Reads of this page record no `read` entry (005 FR-001, SC-004) until the
+   * agent opens it by address.
+   */
+  noReadEntry?: true;
 }
 
 /** At most 64 tabs, least recently used first; keyed by connection and tab. */
@@ -173,27 +188,59 @@ function openResult(context: CaptureContext, landed: ParsedUrl, landedPath: stri
   if (landed.origin !== requested.origin) return { result: 'other_origin', landingOrigin: landed.origin };
   const moved = landedPath !== requestedPath ? { landingPath: landedPath } : {};
   if (context.passwordField || status === 401 || status === 403) return { result: 'sign_in', ...moved };
+  // A redirect to a page whose path names a sign-in step (005 FR-005): the page still exists, the session does not.
+  if (landedPath !== requestedPath && SIGN_IN_PATH.test(landed.rawPath)) return { result: 'sign_in', ...moved };
   if (status === 404 || status === 410) return { result: 'not_found' };
   if (status !== undefined && status >= 400) return { result: 'error', statusClass: status >= 500 ? '5xx' : '4xx' };
   return landedPath === requestedPath ? { result: 'same' } : { result: 'elsewhere', landingPath: landedPath };
+}
+
+/** Another site's page a click left, as an entrance: its masked path, unless the map excludes it (005 FR-004). */
+function entranceOf(input: CaptureInput, from: ParsedUrl): TabRead['entranceFrom'] {
+  const masked = maskPath(from.rawPath);
+  if (!masked || input.isExcluded(from.origin, from.rawPath, masked.path)) return undefined;
+  return { origin: from.origin, path: masked.path, addressable: !masked.masked && !from.query, rawPath: from.rawPath };
+}
+
+/** The click op for a click whose address changed only after it returned (005 FR-003). */
+function lateClickOp(input: CaptureInput, source: TabRead, late: NonNullable<TabRead['lateClick']>, destination: MapClickOp['destination'], destinationAddressable: boolean): QueuedMapOp {
+  return {
+    type: 'click',
+    opId: `${input.daemonCallId}#late`,
+    profile: input.profile,
+    origin: source.origin,
+    at: input.at,
+    fromPath: late.fromPath,
+    control: late.control,
+    lang: late.lang,
+    sourceContext: late.context,
+    navigated: true,
+    destination,
+    destinationAddressable,
+    rawPaths: [late.rawFromPath],
+  };
 }
 
 /** A navigate or snapshot that is in scope: one read op (and, for a navigate, one open op); the cache takes the read. */
 function captureRead(cache: TabReadCache, input: CaptureInput, context: CaptureContext): QueuedMapOp[] {
   const page = parseUrl(context.url);
   const masked = page ? maskPath(page.rawPath) : null;
+  const navigated = input.tool === 'browser_navigate';
+  const previous = cache.get(input.connectionId, input.tabId);
+  // A click that did not navigate, now on another address with no other tab action since (005 FR-003). A navigate is the agent's own open.
+  const waiting = !navigated && previous?.lateClick && input.nowMs - previous.lateClick.atMs <= ERROR_WINDOW_MS ? previous.lateClick : null;
+  const late = waiting && previous && page && masked && (previous.origin !== page.origin || previous.path !== masked.path) ? waiting : null;
   if (!page || !masked || input.isExcluded(page.origin, page.rawPath, masked.path)) {
     cache.delete(input.connectionId, input.tabId);
-    return [];
+    // The click still led somewhere: keep the use, not the excluded path (R-13).
+    return late && previous && page && previous.origin === page.origin ? [lateClickOp(input, previous, late, { excluded: true }, false)] : [];
   }
-  const navigated = input.tool === 'browser_navigate';
   const text = typeof input.result.text === 'string' ? input.result.text : '';
   const withSnapshot = input.tool === 'browser_snapshot' || input.params.snapshot === true;
   const scoped = input.tool === 'browser_snapshot' && (input.params.query !== undefined || input.params.target !== undefined);
   const parsed = parseMapSnapshot(text, { scoped, truncated: input.result.truncated === true });
   const readContext = readContextOf(context.anonymous);
   const lang = langOf(context.lang);
-  const previous = cache.get(input.connectionId, input.tabId);
   const pending = !navigated && previous?.pendingClick && previous.origin === page.origin && previous.path === masked.path && input.nowMs - previous.pendingClick.atMs <= ERROR_WINDOW_MS ? previous.pendingClick : null;
 
   // Opened menus and dialogs are recorded only under the click that opened them (R-10). One already printed in the
@@ -228,6 +275,26 @@ function captureRead(cache: TabReadCache, input: CaptureInput, context: CaptureC
     cache.delete(input.connectionId, input.tabId);
     return ops;
   }
+  let entrance = previous?.stub && previous.entranceFrom && previous.origin === page.origin ? previous.entranceFrom : undefined;
+  if (late && previous) {
+    if (previous.origin === page.origin) {
+      ops.push(lateClickOp(input, previous, late, { path: masked.path }, addressable));
+      // As for a click that navigated at once: the first read here is the click's destination (R-11).
+      if (reason === 'refresh') reason = 'destination';
+    } else {
+      ops.push(lateClickOp(input, previous, late, { origin: page.origin }, false));
+      entrance ??= input.isExcluded(previous.origin, late.rawFromPath, late.fromPath) ? undefined : { origin: previous.origin, path: late.fromPath, addressable: previous.addressable, rawPath: late.rawFromPath };
+    }
+  }
+  // Any complete read of a page in scope records it, so a later agent can open it directly (005 FR-001), except a page
+  // the tab reached through a content link (R-10, RV-01; its address can name the content) or from another site,
+  // by a click or a redirect (RV-05: a sign-in flow through another origin records that origin, never its path).
+  const unrecorded =
+    (!navigated && previous?.noReadEntry === true && previous.origin === page.origin && previous.path === masked.path) ||
+    (requested !== null && requested.origin !== page.origin) ||
+    (late !== null && previous?.origin !== page.origin);
+  if (reason === 'refresh' && withSnapshot && parsed.complete && !unrecorded) reason = 'read';
+  const carry = waiting && !late && previous?.origin === page.origin && previous.path === masked.path ? waiting : undefined;
   const read: QueuedMapOp = {
     type: 'read',
     opId: navigated ? `${input.daemonCallId}#read` : input.daemonCallId,
@@ -246,6 +313,7 @@ function captureRead(cache: TabReadCache, input: CaptureInput, context: CaptureC
     reason,
     ...(landingOf !== undefined ? { landingOf } : {}),
     ...(opened && pending ? { openedBy: { controlKey: pending.controlKey, opens: parsed.controls.some((control) => fresh(control) && control.opened === 'dialog') ? ('dialog' as const) : ('menu' as const), context: pending.context } } : {}),
+    ...(entrance ? { entrance } : {}),
     rawPaths: [page.rawPath],
   };
   ops.push(read);
@@ -264,6 +332,8 @@ function captureRead(cache: TabReadCache, input: CaptureInput, context: CaptureC
     refs: withSnapshot ? parsed.refs : new Map(),
     atMs: input.nowMs,
     pendingClick: null,
+    ...(carry ? { lateClick: carry } : {}),
+    ...(unrecorded ? { noReadEntry: true as const } : {}),
     ...(withSnapshot ? { openedBefore: { containers: parsed.openedContainers, keys: new Set(parsed.controls.filter((control) => control.opened).map((control) => control.key)) } } : {}),
   });
   return ops;
@@ -272,13 +342,18 @@ function captureRead(cache: TabReadCache, input: CaptureInput, context: CaptureC
 /** A successful click: a hub read from the cache and the click op, when the target and the source page are known (R-07). */
 function captureClick(cache: TabReadCache, input: CaptureInput, context: CaptureContext): QueuedMapOp[] {
   const entry = cache.get(input.connectionId, input.tabId);
+  // A new click ends the wait of an earlier one for a late address change (005 FR-003).
+  if (entry) entry.lateClick = undefined;
   const from = parseUrl(context.fromUrl);
   const after = parseUrl(context.url);
   const afterMasked = after ? maskPath(after.rawPath) : null;
   const navigated = !!after && !!from && (after.origin !== from.origin || after.rawPath !== from.rawPath);
-  const leaveStub = (attributed = false): void => {
+  const leaveStub = (attributed = false, viaContent = false): void => {
     if (!navigated || !after || !afterMasked) return;
-    cache.set(input.connectionId, input.tabId, { origin: after.origin, rawPath: after.rawPath, path: afterMasked.path, addressable: false, title: null, context: entry?.context ?? 'unknown', lang: null, dir: null, complete: false, readChars: 0, controls: [], refs: new Map(), atMs: input.nowMs, pendingClick: null, stub: true, ...(attributed ? { attributed: true as const } : {}) });
+    // Leaving for another site: the next read there records where the tab came from, resolved control or not (005 FR-004).
+    const crossOrigin = !!from && after.origin !== from.origin;
+    const entranceFrom = from && crossOrigin ? entranceOf(input, from) : undefined;
+    cache.set(input.connectionId, input.tabId, { origin: after.origin, rawPath: after.rawPath, path: afterMasked.path, addressable: false, title: null, context: entry?.context ?? 'unknown', lang: null, dir: null, complete: false, readChars: 0, controls: [], refs: new Map(), atMs: input.nowMs, pendingClick: null, stub: true, ...(attributed ? { attributed: true as const } : {}), ...(viaContent || crossOrigin ? { noReadEntry: true as const } : {}), ...(entranceFrom ? { entranceFrom } : {}) });
   };
   if (!entry || entry.stub || !from || entry.origin !== from.origin || entry.rawPath !== from.rawPath) {
     if (entry && !navigated) cache.delete(input.connectionId, input.tabId);
@@ -287,7 +362,8 @@ function captureClick(cache: TabReadCache, input: CaptureInput, context: Capture
   }
   const control = resolveTarget(entry, input.params.target);
   if (!control) {
-    leaveStub();
+    // On a page the map has read, a target that is no stored control is content (or not eligible); without a read it is unknown (E3).
+    leaveStub(false, entry.readChars > 0);
     return [];
   }
   let destination: { path?: string; origin?: string; excluded?: true } | null = null;
@@ -328,9 +404,19 @@ function captureClick(cache: TabReadCache, input: CaptureInput, context: Capture
     ...(undecided ? { undecided: true } : {}),
     rawPaths: [entry.rawPath],
   };
-  if (navigated) leaveStub(!!after && after.origin === entry.origin);
-  else entry.pendingClick = { controlKey: control.key, context: entry.context, atMs: input.nowMs };
+  if (navigated) {
+    leaveStub(!!after && after.origin === entry.origin);
+  } else {
+    entry.pendingClick = { controlKey: control.key, context: entry.context, atMs: input.nowMs };
+    if (!undecided) entry.lateClick = { control: strip(control), fromPath: entry.path, rawFromPath: entry.rawPath, lang: entry.lang, context: entry.context, atMs: input.nowMs };
+  }
   return [hub, click];
+}
+
+/** Any other action in a tab (typing, keys, scrolling, script, …) ends a click's wait for a late address change (005 FR-003). */
+export function noteTabAction(cache: TabReadCache, connectionId: string, tabId: number): void {
+  const entry = cache.get(connectionId, tabId);
+  if (entry) entry.lateClick = undefined;
 }
 
 /** A failed click names its code only; it is attributed through the cache alone (≤ 120 s, same connection; R-08). */

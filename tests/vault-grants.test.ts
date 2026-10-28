@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GrantRegistry } from '../mcp-server/src/vault/grants.js';
+import { scopeForBrowser } from '../mcp-server/src/vault/store.js';
 import type { PrivateConnection, VaultBrowserContext } from '../mcp-server/src/vault/service-common.js';
 
 const ORIGIN = 'https://example.test';
@@ -109,5 +110,69 @@ describe('grant registry', () => {
 
     grants.clear();
     expect(grants.activeFor(kept.browserScope, 'conn-2')).toEqual([]);
+  });
+
+  describe('site approvals (specs/006)', () => {
+    const scope = scopeForBrowser(context.browserId);
+
+    it('answers a list or fill for any session and connection of the profile, for that exact origin only', () => {
+      const grants = registryAt();
+      const site = grants.createSite(scope, ORIGIN, 'card');
+      expect(grants.find(context, 'session-1', ORIGIN, 'list')).toBe(site);
+      expect(grants.find(context, 'session-2', ORIGIN, 'fill', 'cred_any')).toBe(site);
+      expect(grants.find({ ...context, connectionId: 'conn-9' }, 'session-3', ORIGIN, 'fill', 'cred_any')).toBe(site);
+      expect(grants.find(context, 'session-1', 'https://sub.example.test', 'list')).toBeUndefined();
+      expect(grants.find({ ...context, browserId: 'browser-b' }, 'session-1', ORIGIN, 'list')).toBeUndefined();
+    });
+
+    it('keeps one approval per profile and site, as first given', () => {
+      const grants = registryAt();
+      const first = grants.createSite(scope, ORIGIN, 'page');
+      expect(grants.createSite(scope, ORIGIN, 'allowlist')).toBe(first);
+      expect(first.via).toBe('page');
+      expect(grants.activeSitesFor(scope)).toEqual([first]);
+    });
+
+    it('prefers a session grant that matches, then falls back to the site approval', () => {
+      const grants = registryAt();
+      const session = grants.create(connection, 'session-1', ORIGIN, 'fill', 'cred_fixture');
+      const site = grants.createSite(scope, ORIGIN, 'card');
+      expect(grants.find(context, 'session-1', ORIGIN, 'fill', 'cred_fixture')).toBe(session);
+      expect(grants.find(context, 'session-1', ORIGIN, 'fill', 'cred_other')).toBe(site);
+    });
+
+    it('outlives session, connection and account revocation, and ends with its scope, its own revocation or clear', () => {
+      const grants = registryAt();
+      const site = grants.createSite(scope, ORIGIN, 'card');
+      grants.revokeSession('session-1');
+      grants.revokeConnection(scope, 'conn-1');
+      grants.revokeCredential(scope, 'cred_fixture');
+      expect(grants.findSite(scope, ORIGIN)).toBe(site);
+
+      grants.revokeScope(scope);
+      expect(site.revoked).toBe(true);
+      expect(grants.findSite(scope, ORIGIN)).toBeUndefined();
+
+      const second = grants.createSite(scope, ORIGIN, 'page');
+      expect(grants.getSite(second.grantId)).toBe(second);
+      grants.revoke(second.grantId);
+      expect(second.revoked).toBe(true);
+      expect(grants.getSite(second.grantId)).toBeUndefined();
+
+      const third = grants.createSite(scope, ORIGIN, 'page');
+      grants.clear();
+      expect(third.revoked).toBe(true);
+      expect(grants.activeSitesFor(scope)).toEqual([]);
+    });
+
+    it('ends only the approvals an allowlist entry gave when that entry is removed', () => {
+      const grants = registryAt();
+      const fromAllowlist = grants.createSite(scope, ORIGIN, 'allowlist');
+      const other = grants.createSite(scope, 'https://other.test', 'card');
+      expect(grants.revokeSiteVia(scope, 'https://other.test', 'allowlist')).toEqual([]);
+      expect(grants.revokeSiteVia(scope, ORIGIN, 'allowlist')).toEqual([fromAllowlist]);
+      expect(fromAllowlist.revoked).toBe(true);
+      expect(grants.activeSitesFor(scope)).toEqual([other]);
+    });
   });
 });

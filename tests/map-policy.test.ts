@@ -108,7 +108,9 @@ describe('map policy transitions', () => {
     // Drained past both, but both are recent: kept, so reads still hide what a failed rewrite left behind.
     expect(pruneMapTombstones(policy, T2, '2026-10-28T12:00:00.000Z').deletions).toHaveLength(2);
     // Eight days later: only the one the queue has drained past goes.
-    expect(pruneMapTombstones(policy, T1, '2026-11-05T12:00:00.000Z').deletions).toHaveLength(1);
+    expect(pruneMapTombstones(policy, '2026-10-28T10:30:00.000Z', '2026-11-05T12:00:00.000Z').deletions).toHaveLength(1);
+    // A drain that ends in a tombstone's own millisecond has not drained past it.
+    expect(pruneMapTombstones(policy, T1, '2026-11-05T12:00:00.000Z').deletions).toHaveLength(2);
   });
 
   it('keeps an exact page tombstone apart from a prefix and refuses both at once (RV-08)', () => {

@@ -108,7 +108,7 @@
         "lang": { "type": ["string", "null"] },
         "dir": { "enum": ["ltr", "rtl", null] },
         "addressable": { "type": "boolean" },
-        "reason": { "enum": ["root", "destination", "hub", "landing"] },
+        "reason": { "enum": ["root", "destination", "hub", "landing", "read"], "$comment": "read: a complete read of the page (specs/005-direct-site-routing FR-001)" },
         "via": {
           "oneOf": [
             { "type": "null" },
@@ -154,6 +154,22 @@
         "profile": { "type": "string" },
         "origin": { "type": "string" },
         "pages": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/page" } },
+        "entrances": {
+          "$comment": "Optional (specs/005-direct-site-routing FR-004): other sites' pages an agent's click entered this site from, newest first, unique by origin and path. Never this record's own origin; never a control name.",
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["origin", "path", "addressable", "at"],
+            "properties": {
+              "origin": { "type": "string" },
+              "path": { "type": "string", "pattern": "^/", "maxLength": 200 },
+              "addressable": { "type": "boolean" },
+              "at": { "$ref": "#/$defs/time" }
+            }
+          }
+        },
         "commitSeq": { "type": "integer", "minimum": 0 },
         "updatedAt": { "$ref": "#/$defs/time" }
       }

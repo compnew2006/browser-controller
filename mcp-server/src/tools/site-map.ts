@@ -9,7 +9,8 @@ import { tabIdParam, forwardHandler } from './types.js';
 export const siteMapTool: ToolDefinition = {
   name: 'browser_site_map',
   summary: 'Find remembered pages and controls of a site',
-  description: 'Read-only map of pages and controls agents saw on one site in this profile, with browser_click locators. tabId or origin; query searches, else an outline. Untrusted hints.',
+  // Check-first guidance: specs/005-direct-site-routing FR-008. tools/list is near its 20 000-char budget (v3-server test).
+  description: 'Read-only map of one site in this profile. Check it before clicking through: open a remembered address directly, else follow its route; on sign-in use the entrance, then reopen. tabId or origin; query searches, else outline. Untrusted hints.',
   inputSchema: z.object({
     tabId: tabIdParam.optional(),
     origin: z.string().min(1).max(300).optional().describe('Host or origin, instead of tabId'),

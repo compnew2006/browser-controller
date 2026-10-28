@@ -220,7 +220,8 @@ function extractTabId(_tool, params) {
  */
 const canDrawShield = (tabId) => !wedgedTabs.has(tabId) && !getOpenDialog(tabId);
 
-const VAULT_TAB_ACTIONS = new Set(['inspect', 'fill']);
+// 'prompt' draws the approval card under the tab's lock; 'promptClose' never waits for that lock.
+const VAULT_TAB_ACTIONS = new Set(['inspect', 'fill', 'prompt']);
 const vaultPermissionDenied = () => ({ success: false, code: 'VAULT_PERMISSION_DENIED' });
 
 /** A malformed vault call is dropped before any work starts. */

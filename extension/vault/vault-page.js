@@ -4,6 +4,10 @@ const requestsEl = $('#requests');
 const accountsEl = $('#accounts');
 const accessEl = $('#accessActions');
 const backupsEl = $('#backups');
+const sitesSection = $('#sitesSection');
+const siteGrantsEl = $('#siteGrants');
+const allowlistEl = $('#allowlist');
+const allowForm = $('#allowForm');
 const form = $('#entryForm');
 const addButton = $('#addEntry');
 let state = null;
@@ -39,11 +43,12 @@ function explain(response) {
     VAULT_KEY_MISSING: 'The local encryption key is missing. Existing data was preserved.',
     VAULT_STORAGE_INVALID: 'The local vault could not be read or written safely.',
     VAULT_LOCKED: 'Unlock the vault in this page first.',
+    VAULT_APPROVAL_PENDING: 'An approval card for this site is open on the page. Decide there, or open the request here.',
     VAULT_BUSY: 'The vault is busy. Try again shortly.',
     VAULT_REQUEST_EXPIRED: 'This request expired. Ask the agent to start a new request.',
     VAULT_DECLINED: 'The request was declined.',
     VAULT_OUTCOME_UNKNOWN: 'The fill result is uncertain. Inspect the page before another explicit attempt.',
-    INVALID_ARGUMENT: 'Check the form fields and try again.',
+    INVALID_ARGUMENT: 'Check the form fields and try again. A site address is a host such as example.com, or a full https:// address.',
     NOT_CONNECTED: 'The daemon connection is unavailable. Reconnect the Browser Controller and refresh.',
   };
   return messages[response?.code] || 'The vault could not complete that action safely.';
@@ -110,6 +115,7 @@ function renderState() {
   $('#requestCount').textContent = String(state?.requests?.length || 0);
   renderRequests(Array.isArray(state?.requests) ? state.requests : []);
   renderAccounts(Array.isArray(state?.entries) ? state.entries : []);
+  renderSites();
   renderAccess();
 }
 
@@ -128,7 +134,7 @@ function renderRequests(requests) {
   for (const request of requests) {
     wanted.add(request.requestId);
     const signature = request.purpose === 'save' ? 'save'
-      : JSON.stringify([request.purpose, request.state, state?.status, request.handle, request.account?.label, request.account?.identifier]);
+      : JSON.stringify([request.purpose, request.state, state?.status, request.handle, request.account?.label, request.account?.identifier, request.onCard === true]);
     let card = requestCards.get(request.requestId);
     if (!card || requestSignatures.get(request.requestId) !== signature) {
       card?.remove();
@@ -170,6 +176,7 @@ function renderRequest(request) {
   if (request.tabId !== undefined) meta.append(element('span', '', `Tab ${request.tabId}`));
   if (request.expiresAt) meta.append(element('span', '', `Expires ${new Date(request.expiresAt).toLocaleTimeString()}`));
   card.append(meta);
+  if (request.onCard) card.append(element('p', 'subtle', 'Also shown as an approval card on that tab. A choice here closes the card.'));
 
   if (request.purpose === 'save') card.append(renderSaveRequest(request));
   else if (request.purpose === 'unlock') {
@@ -183,9 +190,9 @@ function renderRequest(request) {
     card.append(element('p', 'subtle', account ? `Account: ${account.label} · ${account.identifier}` : 'Unlock the vault to review this saved account.'));
     const actions = actionRow();
     if (state?.status === 'ready' && account) {
-      actions.append(actionButton('Approve and fill once', 'primary', () => invoke({
+      actions.append(actionButton('Allow this site and fill', 'primary', () => invoke({
         operation: 'approve', requestId: request.requestId, credentialId: request.handle, purpose: 'fill',
-      }, 'The fill request was handled.')));
+      }, 'The site was allowed until the vault locks, and the fill request was handled.')));
     } else if (state?.status !== 'ready') {
       actions.append(actionButton('Unlock vault', 'primary', () => invoke({ operation: 'unlock' }, 'Vault unlocked. Review the request before approving it.')));
     }
@@ -242,10 +249,10 @@ function renderSaveRequest(request) {
   const label = field('Account name', 'text', { name: 'label', maxLength: 120, placeholder: 'Personal account' });
   const identifier = field('Username or email', 'text', { name: 'identifier', maxLength: 320, autocomplete: 'username' });
   const password = field('Password', 'password', { name: 'password', maxLength: 4096, autocomplete: 'new-password' });
-  const allow = checkbox('Allow this session to use this account on this site, including this fill');
+  const allow = checkbox('Allow agents to use sign-ins on this site until the vault locks');
   const actions = element('div', 'button-row');
   const save = actionButton('Save account', 'primary', null);
-  const fill = actionButton('Save and fill using this session', '', null);
+  const fill = actionButton('Save, allow this site, and fill', '', null);
   save.type = 'submit';
   fill.type = 'button';
   actions.append(save, fill, declineButton(request));
@@ -254,7 +261,7 @@ function renderSaveRequest(request) {
     event?.preventDefault();
     if (!saveForm.reportValidity()) return;
     if (saveAndFill && !allow.input.checked) {
-      setNotice('Check the session access box before saving and filling.', 'error');
+      setNotice('Check the site access box before saving and filling.', 'error');
       allow.input.focus();
       return;
     }
@@ -266,7 +273,9 @@ function renderSaveRequest(request) {
     password.input.value = '';
     save.disabled = true;
     fill.disabled = true;
-    const result = await invoke(payload, saveAndFill ? 'The account was saved, session access was granted, and one fill was attempted.' : 'The account was saved.');
+    const result = await invoke(payload, saveAndFill
+      ? 'The account was saved, the site was allowed until the vault locks, and one fill was attempted.'
+      : allow.input.checked ? 'The account was saved, and the site was allowed until the vault locks.' : 'The account was saved.');
     payload.password = '';
     if (result?.success === true) saveForm.reset();
   };
@@ -285,11 +294,11 @@ function renderApprovalRequest(request) {
     ));
     return container;
   }
-  container.append(element('p', 'subtle', 'Allow this session to view account names and usernames saved for this exact site. Fill access needs its own request.'));
+  container.append(element('p', 'subtle', 'Lets every agent in this browser profile list and fill the sign-ins saved for this exact site until the vault locks.'));
   container.append(actionRow(
-    actionButton('Allow session account list', 'primary', () => invoke({
+    actionButton('Allow this site', 'primary', () => invoke({
       operation: 'approve', requestId: request.requestId, purpose: 'list',
-    }, 'Account metadata access was approved.')),
+    }, 'The site was allowed until the vault locks.')),
     declineButton(request),
   ));
   return container;
@@ -374,11 +383,58 @@ function renderAccounts(entries) {
   restoreAccountFocus(focusedAccount, ready);
 }
 
+const SITE_GRANT_SOURCES = {
+  card: 'Allowed on the page’s approval card',
+  page: 'Allowed on this page',
+  allowlist: 'Allowed from the always-allowed list',
+};
+
+function siteRow(origin, detail, button) {
+  const row = element('div', 'grant-row');
+  const details = element('div', 'account-copy');
+  details.append(element('strong', '', origin), element('span', '', detail));
+  row.append(details, button);
+  return row;
+}
+
+/** Approved sites and the always-allowed list: both exist only while the vault is unlocked. */
+function renderSites() {
+  const ready = state?.status === 'ready';
+  sitesSection.hidden = !ready;
+  if (!ready) return;
+  const grants = Array.isArray(state?.grants) ? state.grants.filter((grant) => grant.purpose === 'site') : [];
+  siteGrantsEl.replaceChildren();
+  if (!grants.length) siteGrantsEl.append(element('p', 'empty', 'No site is allowed right now.'));
+  for (const grant of grants) {
+    siteGrantsEl.append(siteRow(grant.origin, `${SITE_GRANT_SOURCES[grant.via] || 'Allowed'} · every agent session`,
+      actionButton('Revoke', 'danger', () => invoke({ operation: 'revoke', grantId: grant.grantId }, `${grant.origin} is no longer allowed.`))));
+  }
+  const allowlist = Array.isArray(state?.allowlist) ? state.allowlist : [];
+  allowlistEl.replaceChildren();
+  if (!allowlist.length) allowlistEl.append(element('p', 'empty', 'No site is always allowed.'));
+  for (const entry of allowlist) {
+    const added = Number.isFinite(entry.addedAt) ? `Added ${new Date(entry.addedAt).toLocaleDateString()}` : 'Always allowed';
+    allowlistEl.append(siteRow(entry.origin, added,
+      actionButton('Remove', 'danger', () => invoke({ operation: 'allowlistRemove', origin: entry.origin },
+        `${entry.origin} was removed from the always-allowed list, and its automatic approval was revoked.`))));
+  }
+}
+
+allowForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (busy || !allowForm.reportValidity()) return;
+  const input = allowForm.elements.namedItem('site');
+  const result = await invoke({ operation: 'allowlistAdd', origin: input.value.trim() }, 'The site is always allowed.');
+  if (result?.success !== true) return;
+  setNotice(result.status === 'unchanged' ? `${result.origin} was already always allowed.` : `${result.origin} is always allowed.`, 'success');
+  allowForm.reset();
+});
+
 function renderAccess() {
   accessEl.replaceChildren();
   const ready = state?.status === 'ready';
   if (ready) {
-    accessEl.append(actionButton('Lock vault', '', () => invoke({ operation: 'lock' }, 'Vault locked. All session grants were revoked.')));
+    accessEl.append(actionButton('Lock vault', '', () => invoke({ operation: 'lock' }, 'Vault locked. Every site approval and session grant was revoked.')));
     accessEl.append(actionButton('Create protected recovery snapshot', '', async () => {
       const result = await invoke({ operation: 'backup' }, 'Protected local recovery snapshot created. Anyone with a copy can recover the accounts.');
       if (result?.success) await loadBackups();
@@ -401,7 +457,8 @@ function renderAccess() {
   if (!ready) accessEl.append(element('span', 'muted', 'Unlock changes access for Browser Controller on this device. It does not ask for a master password.'));
 
   if (ready && state?.grants?.length) {
-    for (const grant of state.grants) {
+    // Site approvals are listed under Site access; these are one session's own grants.
+    for (const grant of state.grants.filter((item) => item.purpose !== 'site')) {
       const row = element('div', 'grant-row');
       const details = element('div', 'account-copy');
       details.append(element('strong', '', `${grant.oneShot ? 'One fill' : grant.purpose === 'fill' ? 'Session fill' : 'Session list'} · ${grant.origin}`));

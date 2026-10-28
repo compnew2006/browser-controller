@@ -116,6 +116,8 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
   /** Open or closed shadow root (closed ones via chrome.dom in the isolated world). */
   function shadowOf(el) {
     if (!el || el.nodeType !== 1) return null;
+    // The vault approval card (vault/vault-card.js) is the owner's: agents never read, focus or aim at it.
+    if (el.__bcVaultHost === true) return null;
     if (el.shadowRoot) return el.shadowRoot;
     try {
       if (typeof chrome !== 'undefined' && chrome.dom && chrome.dom.openOrClosedShadowRoot) return chrome.dom.openOrClosedShadowRoot(el) || null;

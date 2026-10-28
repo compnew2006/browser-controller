@@ -141,6 +141,7 @@ class Daemon {
     const vaultTransport: VaultTransport = {
       getBrowserContext: async (sessionId) => this.bridge.vaultTransport.getBrowserContext(sessionId),
       callVaultAction: (action, params, sessionId, signal, agentName) => this.bridge.vaultTransport.callAction(action, params, sessionId, signal, agentName),
+      closeCard: (connectionId, params, sessionId) => this.bridge.vaultTransport.closeCard(connectionId, params, sessionId),
     };
     this.vaultService = new VaultService(STATE_DIR, vaultTransport, (sessionId) => this.isSessionLive(sessionId));
     this.bridge.vaultTransport.setService(this.vaultService);

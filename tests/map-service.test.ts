@@ -212,7 +212,9 @@ describe('MapService — capture gates (AC-11, AC-13)', () => {
     expect(await map()).toBeNull();
   });
 
-  it('records no page entries for 100 articles opened by address, while 003 still records the visit (AC-27)', async () => {
+  // specs/005-direct-site-routing FR-001 reverses AC-27 on purpose (owner decision, 005 Clarifications): a complete
+  // read of a page opened by address records it, so a later agent can open it directly.
+  it('records a read page entry for each of 100 articles opened by address, and 003 still records the visit (005 FR-001, was AC-27)', async () => {
     await enableAll();
     await run(navigateOutcome({ url: `${ORIGIN}/`, snapshot: true, text: navigateWithSnapshot(homeText()) }));
     for (let index = 0; index < 100; index += 1) {
@@ -220,7 +222,8 @@ describe('MapService — capture gates (AC-11, AC-13)', () => {
       await run(navigateOutcome({ url, snapshot: true, text: navigateWithSnapshot(articleText(`story-${index}`)) }));
     }
     const record = await map();
-    expect(record?.pages.map((entry) => entry.path)).toEqual(['/']);
+    expect(record?.pages).toHaveLength(101);
+    expect(page(record, '/news/story-42')).toMatchObject({ reason: 'read', addressable: true });
     const memory = await service.handleTool('browser_memory', { tabId: 7, kind: 'visits' }, 's1', tabContext(`${ORIGIN}/`));
     expect(memory).toMatchObject({ success: true });
   });
@@ -234,9 +237,12 @@ describe('MapService — controls and use feedback, US2 (T025)', () => {
     const privacy = page(await map(), '/')?.controls.find((control) => control.name === 'Privacy');
     expect(privacy?.destinations.public).toMatchObject({ origin: 'https://legal.example' });
     expect(privacy?.destinations.public?.path).toBeUndefined();
-    // Reading the page on the other origin does not give that origin a page entry with its path (RV-05).
+    // Reading the page on the other origin does not give that origin a page entry with its path (RV-05). Since
+    // specs/005-direct-site-routing FR-004 that origin's map records where the tab came from: an entrance only.
     await run(snapshotOutcome({ url: 'https://legal.example/privacy', text: snapshotText('Privacy policy', 'https://legal.example/privacy', []) }));
-    expect(await map(PROFILE, 'https://legal.example')).toBeNull();
+    const legal = await map(PROFILE, 'https://legal.example');
+    expect(legal?.pages).toEqual([]);
+    expect(legal?.entrances).toEqual([{ origin: ORIGIN, path: '/', addressable: true, at: expect.any(String) }]);
   });
 
   it('a click without navigation, then a read with the open menu, gives the parent and opens: menu (AC-08)', async () => {

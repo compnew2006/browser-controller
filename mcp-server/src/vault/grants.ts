@@ -1,6 +1,6 @@
 import { scopeForBrowser } from './store.js';
 import { randomId } from './types.js';
-import type { LiveGrant, PrivateConnection, VaultBrowserContext } from './service-common.js';
+import type { LiveGrant, PrivateConnection, SiteGrant, VaultBrowserContext } from './service-common.js';
 
 /**
  * Every grant the vault has issued, and the whole rule for when one may be
@@ -9,9 +9,15 @@ import type { LiveGrant, PrivateConnection, VaultBrowserContext } from './servic
  * A grant is the user saying "this browser, this site, this account, this
  * session" — nothing about it needs a store, a transport or a request, so the
  * predicate in {@link find} can be exercised on its own (ADR-02).
+ *
+ * A site approval (specs/006-vault-site-approval D1) says less: "this browser
+ * profile, this exact site". It covers listing and filling every account of the
+ * site for any session and survives reconnects; only scope revocation (lock,
+ * restore), its own revocation and {@link clear} end it.
  */
 export class GrantRegistry {
   private readonly grants = new Map<string, LiveGrant>();
+  private readonly siteGrants = new Map<string, SiteGrant>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -19,6 +25,7 @@ export class GrantRegistry {
    * The one rule for using a grant: unexpired, unrevoked, unconsumed, issued to
    * this session on this connection for this origin, and wide enough for the
    * purpose asked for. A `list` purpose also accepts a reusable `fill` grant.
+   * Without such a grant, a site approval for this profile and origin answers.
    */
   find(
     context: VaultBrowserContext,
@@ -26,16 +33,54 @@ export class GrantRegistry {
     origin: string,
     purpose: 'list' | 'fill',
     credentialId?: string,
-  ): LiveGrant | undefined {
+  ): LiveGrant | SiteGrant | undefined {
     const scope = scopeForBrowser(context.browserId);
     return [...this.grants.values()].find((grant) => !grant.revoked && !grant.consumed && grant.expiresAt > this.now()
       && grant.sessionId === sessionId && grant.browserScope === scope && grant.connectionId === context.connectionId && grant.origin === origin
       && (grant.purpose === purpose || (purpose === 'list' && grant.purpose === 'fill' && !grant.oneShot))
-      && (purpose === 'list' || !grant.credentialId || grant.credentialId === credentialId));
+      && (purpose === 'list' || !grant.credentialId || grant.credentialId === credentialId))
+      ?? this.findSite(scope, origin);
   }
 
   get(grantId: string): LiveGrant | undefined {
     return this.grants.get(grantId);
+  }
+
+  /** The standing site approval for one profile scope and exact origin. */
+  findSite(scope: string, origin: string): SiteGrant | undefined {
+    return [...this.siteGrants.values()].find((grant) => !grant.revoked && grant.browserScope === scope && grant.origin === origin);
+  }
+
+  getSite(grantId: string): SiteGrant | undefined {
+    return this.siteGrants.get(grantId);
+  }
+
+  /** Approves a site for a profile; an existing approval is kept as it was given. */
+  createSite(scope: string, origin: string, via: SiteGrant['via']): SiteGrant {
+    const existing = this.findSite(scope, origin);
+    if (existing) return existing;
+    const grant: SiteGrant = { kind: 'site', grantId: randomId('grant'), browserScope: scope, origin, via, createdAt: this.now(), revoked: false };
+    this.siteGrants.set(grant.grantId, grant);
+    return grant;
+  }
+
+  /** The site approvals of one profile scope, oldest first. */
+  activeSitesFor(scope: string): SiteGrant[] {
+    return [...this.siteGrants.values()]
+      .filter((grant) => grant.browserScope === scope && !grant.revoked)
+      .sort((left, right) => left.createdAt - right.createdAt);
+  }
+
+  /** Ends the site approvals one origin received from the allowlist. */
+  revokeSiteVia(scope: string, origin: string, via: SiteGrant['via']): SiteGrant[] {
+    const revoked: SiteGrant[] = [];
+    for (const [id, grant] of this.siteGrants) {
+      if (grant.browserScope !== scope || grant.origin !== origin || grant.via !== via) continue;
+      grant.revoked = true;
+      this.siteGrants.delete(id);
+      revoked.push(grant);
+    }
+    return revoked;
   }
 
   create(
@@ -90,11 +135,21 @@ export class GrantRegistry {
 
   revoke(grantId: string): void {
     this.grants.delete(grantId);
+    const site = this.siteGrants.get(grantId);
+    if (site) {
+      site.revoked = true;
+      this.siteGrants.delete(grantId);
+    }
   }
 
-  /** Every grant issued for one browser scope: locking or restoring the store retires all of them. */
+  /** Every grant issued for one browser scope: locking or restoring the store retires all of them, site approvals included. */
   revokeScope(scope: string): void {
     for (const [id, grant] of this.grants) if (grant.browserScope === scope) this.grants.delete(id);
+    for (const [id, grant] of this.siteGrants) {
+      if (grant.browserScope !== scope) continue;
+      grant.revoked = true;
+      this.siteGrants.delete(id);
+    }
   }
 
   /** Removing an account retires the grants that were issued for it. */
@@ -113,5 +168,7 @@ export class GrantRegistry {
 
   clear(): void {
     for (const grantId of this.grants.keys()) this.grants.delete(grantId);
+    for (const grant of this.siteGrants.values()) grant.revoked = true;
+    this.siteGrants.clear();
   }
 }

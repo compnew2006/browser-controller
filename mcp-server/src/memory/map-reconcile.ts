@@ -6,9 +6,11 @@ import type { MapArea, MapRole } from './map-allowlist.js';
 import { MAP_LIMITS } from './map-allowlist.js';
 import {
   MAX_MAP_CONTROLS,
+  MAX_MAP_ENTRANCES,
   MAX_MAP_PAGES,
   type ControlEntry,
   type Destination,
+  type Entrance,
   type LocatorFailure,
   type MapRecord,
   type OpenResultKind,
@@ -46,12 +48,14 @@ export interface MapReadOp extends OpBase {
   complete: boolean;
   readChars: number;
   controls: ObservedControl[];
-  /** `refresh` never creates a page (R-11). */
-  reason: 'root' | 'destination' | 'hub' | 'landing' | 'refresh';
+  /** `refresh` never creates a page (R-11); `read` is a complete read, which does (specs/005-direct-site-routing FR-001). */
+  reason: 'root' | 'destination' | 'hub' | 'landing' | 'read' | 'refresh';
   /** For `landing`: the requested path; the landing page is recorded only when that path has an entry (R-08). */
   landingOf?: string;
   /** A click that did not navigate and whose menu or dialog this read shows (R-11, CHK005). */
   openedBy?: { controlKey: string; opens: 'menu' | 'dialog'; context: ReadContext };
+  /** The other site's page an agent's click left to arrive here (005 FR-004). `rawPath` is for the policy check only and is never stored. */
+  entrance?: { origin: string; path: string; addressable: boolean; rawPath?: string };
 }
 
 export interface MapClickOp extends OpBase {
@@ -96,6 +100,7 @@ export interface ApplyResult {
 }
 
 const NONE: ApplyResult = { changed: false, use: null, usedPath: null, usedKind: null };
+const CHANGED: ApplyResult = { changed: true, use: null, usedPath: null, usedKind: null };
 const FAILED_OPENS: ReadonlySet<OpenResultKind> = new Set(['elsewhere', 'other_origin', 'not_found']);
 const time = (value: string | undefined): number => (value ? Date.parse(value) : 0);
 const latest = (current: string | undefined, next: string): string => (current && time(current) > time(next) ? current : next);
@@ -147,11 +152,21 @@ function newControl(observed: ObservedControl, lang: string | null, at: string):
 /** Controls inside a menu or dialog are only visible while it is open, so a read without them proves nothing. */
 const markable = (control: ControlEntry): boolean => control.area !== 'menu' && control.area !== 'dialog' && control.parent === null;
 
+/** Newest first, one per source page, at most MAX_MAP_ENTRANCES (005 FR-004). */
+function addEntrance(record: MapRecord, entrance: NonNullable<MapReadOp['entrance']>, at: string): void {
+  const kept = (record.entrances ?? []).filter((entry) => entry.origin !== entrance.origin || entry.path !== entrance.path);
+  const next: Entrance = { origin: entrance.origin, path: entrance.path, addressable: entrance.addressable, at };
+  record.entrances = [next, ...kept].sort((a, b) => time(b.at) - time(a.at)).slice(0, MAX_MAP_ENTRANCES);
+}
+
 function applyRead(record: MapRecord, op: MapReadOp): ApplyResult {
+  const entered = !!op.entrance && op.entrance.origin !== record.origin;
+  if (entered && op.entrance) addEntrance(record, op.entrance, op.at);
+  const skipped = entered ? CHANGED : NONE;
   let page = findPage(record, op.path);
   if (!page) {
-    if (op.reason === 'refresh') return NONE;
-    if (op.reason === 'landing' && (op.landingOf === undefined || !findPage(record, op.landingOf))) return NONE;
+    if (op.reason === 'refresh') return skipped;
+    if (op.reason === 'landing' && (op.landingOf === undefined || !findPage(record, op.landingOf))) return skipped;
     page = newPage(op.path, op.reason, op.addressable, op.at);
     record.pages.push(page);
   } else {
@@ -196,7 +211,7 @@ function applyRead(record: MapRecord, op: MapReadOp): ApplyResult {
     const opener = page.controls.find((entry) => entry.key === op.openedBy?.controlKey);
     if (opener) opener.destinations[op.openedBy.context] = { opens: op.openedBy.opens, at: op.at };
   }
-  return { changed: true, use: null, usedPath: null, usedKind: null };
+  return CHANGED;
 }
 
 function sameDestination(expected: Destination, actual: Omit<Destination, 'at'>): boolean {
@@ -395,6 +410,8 @@ export interface SanitizePolicy {
   excludedPrefixes: readonly string[];
   /** Tombstones that match this record's profile and origin: a prefix, one page, or the whole map. */
   tombstones: ReadonlyArray<{ pathPrefix?: string; path?: string; at: string }>;
+  /** True when an entrance from that other site's page must go: excluded, or deleted after it was seen (005 FR-009). */
+  entranceBlocked?: (origin: string, path: string, at: string) => boolean;
 }
 
 /**
@@ -405,6 +422,14 @@ export interface SanitizePolicy {
 export function sanitizeRecord(record: MapRecord, policy: SanitizePolicy): boolean {
   let changed = false;
   for (const prefix of policy.excludedPrefixes) changed = removePathPrefix(record, prefix, 'exclude') || changed;
+  if (record.entrances) {
+    // A whole-map delete of this site also covers its entrances; the source site's own rules come from the caller.
+    const wiped = policy.tombstones.filter((entry) => entry.pathPrefix === undefined && entry.path === undefined).map((entry) => Date.parse(entry.at));
+    const kept = record.entrances.filter((entry) => !wiped.some((cutoff) => time(entry.at) <= cutoff) && !policy.entranceBlocked?.(entry.origin, entry.path, entry.at));
+    if (kept.length !== record.entrances.length) changed = true;
+    if (kept.length) record.entrances = kept;
+    else delete record.entrances;
+  }
   for (const tombstone of policy.tombstones) {
     const cutoff = Date.parse(tombstone.at);
     const scoped = tombstone.pathPrefix !== undefined || tombstone.path !== undefined;

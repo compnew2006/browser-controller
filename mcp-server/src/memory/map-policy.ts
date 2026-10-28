@@ -233,11 +233,12 @@ export function forgetMapProfile(policy: MapPolicy, profile: string, now: string
 /**
  * Drop tombstones the queue has drained past and that are older than the retention. Reads apply tombstones too
  * (MapService.applyPolicy), and every commit rewrites its file through them, so a delete whose rewrite failed is
- * neither served nor kept past the next commit to that file within the retention.
+ * neither served nor kept past the next commit to that file within the retention. A tombstone from the drain's own
+ * millisecond stays, as tombstoneBlocks still covers observations from that millisecond.
  */
 export function pruneMapTombstones(policy: MapPolicy, drainedThrough: string, now: string): MapPolicy {
   const limit = Math.min(Date.parse(drainedThrough), Date.parse(now) - MAP_TOMBSTONE_RETENTION_MS);
-  const keep = policy.deletions.filter((entry) => Date.parse(entry.at) > limit);
+  const keep = policy.deletions.filter((entry) => Date.parse(entry.at) >= limit);
   return keep.length === policy.deletions.length ? policy : { ...policy, deletions: keep, updatedAt: now };
 }
 

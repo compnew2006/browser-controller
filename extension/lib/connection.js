@@ -23,7 +23,7 @@ import {
   newAuthNonce,
   verifyWebSocketDaemonProof,
 } from './daemon-auth.js';
-import { restoreVaultRuntimeState } from './vault-actions.js';
+import { closeAllApprovalCards, closeStaleApprovalCards, restoreVaultRuntimeState } from './vault-actions.js';
 import { VaultConnectionChannel } from './vault-connection.js';
 import {
   DEFAULT_WS_PORT,
@@ -316,6 +316,7 @@ export async function connect() {
       opened = true;
       connected = false;
       lastError = null;
+      void closeStaleApprovalCards().catch(() => {});
       updateBadge('disconnected');
       broadcastStatus('Connected transport; negotiating protocol');
       socket.send(JSON.stringify({ type: 'authInit', clientNonce }));
@@ -334,6 +335,8 @@ export async function connect() {
       connected = false;
       vaultChannel.setSupported(false);
       vaultChannel.failUiRequests();
+      // An approval card answers the daemon that drew it; with that daemon gone it goes too.
+      void closeAllApprovalCards();
       clearTimeout(handshakeTimeout);
       handshakeTimeout = null;
       connectedSince = null;

@@ -7,6 +7,7 @@ export const VAULT_MAX_PASSWORD_CHARS = 4_096;
 export const VAULT_MAX_LABEL_CHARS = 120;
 export const VAULT_MAX_IDENTIFIER_CHARS = 320;
 export const VAULT_MAX_AUDIT_EVENTS = 500;
+export const VAULT_MAX_ALLOWLIST = 200;
 
 export function canonicalizeOrigin(value: string): string {
   let url: URL;
@@ -61,10 +62,20 @@ export const VaultAuditEventSchema = z.object({
   result: z.enum(['success', 'denied', 'cancelled', 'failed']),
 }).strict();
 
+/** An origin the owner allowlisted: agents list and fill its accounts without asking (specs/006 FR-009). */
+export const VaultAllowlistEntrySchema = z.object({
+  origin: originSchema,
+  addedAt: z.number().int().nonnegative(),
+}).strict();
+
+export type VaultAllowlistEntry = z.infer<typeof VaultAllowlistEntrySchema>;
+
 export const VaultDataSchema = z.object({
   version: z.literal(VAULT_VERSION),
   entries: z.array(VaultCredentialSchema).max(VAULT_MAX_ENTRIES),
   audit: z.array(VaultAuditEventSchema).max(VAULT_MAX_AUDIT_EVENTS),
+  // Written only while non-empty, so a vault without an allowlist stays readable by earlier daemons.
+  allowlist: z.array(VaultAllowlistEntrySchema).max(VAULT_MAX_ALLOWLIST).optional(),
 }).strict();
 
 export type VaultData = z.infer<typeof VaultDataSchema>;

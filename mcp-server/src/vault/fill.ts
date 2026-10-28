@@ -57,6 +57,8 @@ export class FillWorkflow {
     }, signal);
     const operationTimeout = setTimeout(() => operation.controller.abort(), VAULT_FILL_OPERATION_TIMEOUT_MS);
     const fillSignal = operation.controller.signal;
+    // Whether the page gets secret text, and so redaction and protection; settled once the account is read.
+    let protects = initial.mode !== 'identifier';
     try {
       if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError('VAULT_PERMISSION_DENIED');
       if (!store.isUnlocked) return publicError('VAULT_LOCKED', { origin: initial.origin });
@@ -74,8 +76,16 @@ export class FillWorkflow {
       if (entry.origin !== inspection.origin) return publicError('VAULT_ORIGIN_MISMATCH');
       if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError('VAULT_PERMISSION_DENIED');
       if (fillSignal.aborted) return publicError('VAULT_PERMISSION_DENIED');
-      this.options.registerSecret(scope, entry.password, inspection.documentId);
-      this.options.markProtected(scope, { tabId, documentId: inspection.documentId, origin: inspection.origin, state: 'active', current: true });
+      // A first sign-in step asks for the username only: no password reaches the page, so the
+      // page is neither registered for redaction nor protected (specs/006 FR-012) — unless the
+      // username itself carries the password.
+      const identifierOnly = inspection.mode === 'identifier';
+      const withIdentifier = identifierOnly || inspection.identifierField === true;
+      protects = !identifierOnly || (entry.password.length > 0 && entry.identifier.includes(entry.password));
+      if (protects) {
+        this.options.registerSecret(scope, entry.password, inspection.documentId);
+        this.options.markProtected(scope, { tabId, documentId: inspection.documentId, origin: inspection.origin, state: 'active', current: true });
+      }
       const result = await this.options.fillPage({
         tabId,
         origin: inspection.origin,
@@ -83,19 +93,34 @@ export class FillWorkflow {
         targetDocumentId: inspection.targetDocumentId,
         frameId: inspection.frameId,
         nonce: inspection.nonce,
-        password: entry.password,
+        ...(identifierOnly ? {} : { password: entry.password }),
+        ...(withIdentifier ? { identifier: entry.identifier } : {}),
       }, sessionId, fillSignal, context.agentName);
-      if (fillSignal.aborted || !isRecord(result) || result.success !== true || result.filled_fields !== 1) {
+      const identifierFilled = withIdentifier && isRecord(result) && result.identifier_filled === true;
+      const expectedFields = identifierOnly ? 1 : identifierFilled ? 2 : 1;
+      if (fillSignal.aborted || !isRecord(result) || result.success !== true || result.filled_fields !== expectedFields
+        || (identifierOnly && !identifierFilled)) {
+        if (!protects) return publicError(fillSignal.aborted ? 'VAULT_OUTCOME_UNKNOWN' : 'VAULT_TARGET_UNSAFE', { origin: inspection.origin });
         this.options.markProtected(scope, { tabId, documentId: inspection.documentId, origin: inspection.origin, state: 'recovery_required', current: true });
         return publicError('VAULT_OUTCOME_UNKNOWN', { origin: inspection.origin });
       }
       await this.options.auditFill(store, handle, sessionId, inspection.origin, 'success');
       if (fillSignal.aborted) {
-        this.options.markProtected(scope, { tabId, documentId: inspection.documentId, origin: inspection.origin, state: 'recovery_required', current: true });
+        if (protects) this.options.markProtected(scope, { tabId, documentId: inspection.documentId, origin: inspection.origin, state: 'recovery_required', current: true });
         return publicError('VAULT_OUTCOME_UNKNOWN', { origin: inspection.origin });
       }
-      return { success: true, status: 'filled', filled_fields: 1, origin: inspection.origin };
+      return {
+        success: true,
+        status: 'filled',
+        filled_fields: expectedFields,
+        origin: inspection.origin,
+        ...(withIdentifier ? { identifier_filled: identifierFilled, password_filled: !identifierOnly } : {}),
+      };
     } catch {
+      if (!protects) {
+        await this.options.auditFill(store, handle, sessionId, initial.origin, 'failed').catch(() => {});
+        return publicError('VAULT_OUTCOME_UNKNOWN', { origin: initial.origin });
+      }
       this.options.markProtected(scope, { tabId, documentId: initial.documentId, origin: initial.origin, state: 'recovery_required', current: true });
       await this.options.auditFill(store, handle, sessionId, initial.origin, 'failed').catch(() => {});
       return publicError('VAULT_OUTCOME_UNKNOWN', { origin: initial.origin });
@@ -106,7 +131,11 @@ export class FillWorkflow {
     }
   }
 
-  /** The grant, re-read after every await: a revoked, consumed, expired or reconnected grant stops the fill. */
+  /**
+   * The grant, re-read after every await: a revoked, consumed, expired or reconnected grant stops the fill.
+   * A site approval is not bound to a session or a connection, but the browser identity and the
+   * connection still may not change during this one fill (specs/006 D2).
+   */
   private async grantStillUsable(
     grantId: string,
     context: VaultBrowserContext,
@@ -117,11 +146,21 @@ export class FillWorkflow {
     operationId?: string,
   ): Promise<boolean> {
     if (signal?.aborted || !this.options.isSessionLive(sessionId)) return false;
+    const site = this.options.grants.getSite(grantId);
+    if (site) {
+      if (site.revoked || site.browserScope !== scopeForBrowser(context.browserId) || site.origin !== origin) return false;
+      return this.sameBrowser(context, sessionId);
+    }
     const grant = this.options.grants.get(grantId);
     if (!grant || grant.revoked || grant.expiresAt <= this.options.now() || grant.sessionId !== sessionId
       || grant.browserScope !== scopeForBrowser(context.browserId) || grant.connectionId !== context.connectionId
       || grant.origin !== origin || (grant.credentialId && grant.credentialId !== handle)) return false;
     if (grant.oneShot && (grant.consumed || grant.claimedBy !== operationId)) return false;
+    return this.sameBrowser(context, sessionId);
+  }
+
+  /** The session's browser is still the verified, unique one this fill started with, on the same connection. */
+  private async sameBrowser(context: VaultBrowserContext, sessionId: string): Promise<boolean> {
     try {
       const current = await this.options.browserContext(sessionId);
       return current.supportsVault && !current.ambiguous && current.browserId === context.browserId

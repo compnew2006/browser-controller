@@ -148,6 +148,21 @@ describe('extension handshake (connection.js)', () => {
     expect(socket.closed).toEqual([]);
   });
 
+  it('takes down an approval card a restarted worker restored once a new daemon connection opens', async () => {
+    const stored = [{ tabId: 9, requestId: 'req_ab12', documentId: 'doc-9', origin: 'https://fixture.test', token: 'token-9', expiresAt: Date.now() + 60_000 }];
+    (globalThis as any).chrome.storage.session.get = async () => ({ bcVaultApprovalCards: stored });
+    const hidden: unknown[] = [];
+    (globalThis as any).chrome.scripting = { executeScript: async (request: unknown) => { hidden.push(request); return [{ result: true }]; } };
+    await load();
+    const cards = await import('../extension/lib/vault-card.js');
+    await cards.cardsReady;
+    expect(cards.isApprovalCardOpen(9)).toBe(true);
+    openSocket();
+    await settle();
+    expect(cards.isApprovalCardOpen(9)).toBe(false);
+    expect(hidden).toEqual([expect.objectContaining({ target: { tabId: 9, documentIds: ['doc-9'] }, args: ['req_ab12'] })]);
+  });
+
   it('refuses a daemon hello without a protocol version, with the restart hint', async () => {
     const conn = await load();
     const socket = openSocket();

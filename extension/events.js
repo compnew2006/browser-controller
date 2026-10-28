@@ -30,6 +30,7 @@ import {
   sendVaultProtectionTabRemoved,
 } from "./lib/connection.js";
 import {
+  closeApprovalCard,
   forgetPrivateVaultTab,
   getVaultProtectionSnapshot,
   isPrivateVaultSender,
@@ -39,15 +40,47 @@ import {
   registerPrivateVaultTab,
   removeProtectedTab,
 } from "./lib/vault-actions.js";
+import { dropCard, takeCardDecision } from "./lib/vault-card.js";
+
+/** Tells the daemon an approval card went away with its document: its request is cancelled. */
+function cancelCardRequest(requestId) {
+  if (!requestId) return;
+  requestVaultUi({ operation: "cardDecision", requestId, decision: "cancel", always: false }).catch(() => {});
+}
 
 /**
- * The vault state a tab owned when it closed or was replaced: its private UI page and its
- * protected documents. Both listeners below run this same teardown.
+ * The vault state a tab owned when it closed or was replaced: its private UI page, its approval
+ * card and its protected documents. Both listeners below run this same teardown.
  */
 async function releaseVaultTabState(tabId) {
   if (forgetPrivateVaultTab(tabId)) sendVaultUiClosed();
+  cancelCardRequest(await closeApprovalCard(tabId, { removeFromPage: false }));
   const removal = await removeProtectedTab(tabId);
   if (removal.documentIds.length || removal.unknownContextRemoved) sendVaultProtectionTabRemoved(removal);
+}
+
+/**
+ * A decision from an approval card's own content script (lib/vault-card.js checks the sender). The
+ * card stays recorded, and keeps the agent's input off the tab, until the daemon accepted it; a move
+ * to the vault page or a cancel ends the card either way, and the vault page opens if the daemon
+ * could not move the request there.
+ */
+function relayCardDecision(msg, sender, respond) {
+  const decision = takeCardDecision(msg, sender);
+  if (!decision) {
+    respond({ success: false, code: "VAULT_PERMISSION_DENIED" });
+    return false;
+  }
+  const { tabId, requestId } = decision;
+  requestVaultUi({ operation: "cardDecision", requestId, decision: decision.decision, always: decision.always })
+    .catch(() => ({ success: false, code: "VAULT_STORAGE_INVALID" }))
+    .then(async (result) => {
+      const accepted = result?.success === true;
+      if (accepted || decision.decision === "page" || decision.decision === "cancel") dropCard(tabId, requestId);
+      if (!accepted && decision.decision === "page") await openPrivateVault().catch(() => {});
+      respond(accepted || decision.decision === "page" ? { success: true } : { success: false, code: result?.code });
+    });
+  return true;
 }
 
 export function registerEventListeners() {
@@ -91,6 +124,7 @@ export function registerEventListeners() {
       });
       return true;
     }
+    if (msg.type === "vaultCardDecision") return relayCardDecision(msg, sender, respond);
     if (msg.type === "openVault") {
       if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("popup/popup.html")) return false;
       openPrivateVault().then(() => respond({ success: true })).catch(() => respond({ success: false }));
@@ -182,6 +216,8 @@ export function registerEventListeners() {
 
   chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, documentId }) => {
     if (frameId !== 0 || typeof documentId !== "string") return;
+    // The card's document is gone: its request is cancelled, and the agent's input is free again.
+    closeApprovalCard(tabId, { keepDocumentId: documentId, removeFromPage: false }).then(cancelCardRequest);
     markDocumentCurrent(tabId, documentId).then(async () => {
       const snapshot = await getVaultProtectionSnapshot();
       sendJson(snapshot);

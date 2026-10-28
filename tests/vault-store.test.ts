@@ -50,6 +50,33 @@ afterEach(async () => {
 });
 
 describe('CredentialVaultStore', () => {
+  it('keeps the owner allowlist encrypted, once per origin, and drops the key when it empties (specs/006)', async () => {
+    const store = await newStore();
+    await store.initialize();
+    await expect(store.allowlistAdd('https://example.test/path', 1)).rejects.toThrow(/origin is invalid/);
+    expect(await store.allowlistAdd('https://example.test', 5)).toBe(true);
+    expect(await store.allowlistAdd('https://example.test', 6)).toBe(false);
+    expect(await store.allowlistAdd('http://127.0.0.1:43210', 7)).toBe(true);
+    const files = await readAllFiles(path.join(stateDir, 'vault'));
+    expect(files.some((bytes) => bytes.includes(Buffer.from('example.test')))).toBe(false);
+
+    store.lock();
+    await expect(store.allowlist()).rejects.toThrow(/VAULT_LOCKED/);
+    const reopened = await newStore();
+    await reopened.unlock();
+    expect(await reopened.allowlist()).toEqual([
+      { origin: 'https://example.test', addedAt: 5 },
+      { origin: 'http://127.0.0.1:43210', addedAt: 7 },
+    ]);
+    expect(await reopened.allowlistRemove('https://missing.test')).toBe(false);
+    expect(await reopened.allowlistRemove('https://example.test')).toBe(true);
+    expect(await reopened.allowlistRemove('http://127.0.0.1:43210')).toBe(true);
+    expect(await reopened.allowlist()).toEqual([]);
+    // An emptied list leaves the data in the shape an earlier daemon can still read.
+    const data = await (reopened as unknown as { readData(): Promise<Record<string, unknown>> }).readData();
+    expect(data).not.toHaveProperty('allowlist');
+  });
+
   it('encrypts synthetic data at rest and decrypts it only after explicit initialization/unlock', async () => {
     const store = await newStore();
     expect(await store.status()).toBe('empty');

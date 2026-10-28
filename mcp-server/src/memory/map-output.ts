@@ -4,7 +4,7 @@
  * Every text is bounded and labeled untrusted; names are JSON-quoted so a hostile name reads as data.
  */
 import { MAP_LIMITS } from './map-allowlist.js';
-import type { ControlEntry, Destination, MapRecord, PageEntry } from './map-record.js';
+import type { ControlEntry, Destination, Entrance, MapRecord, PageEntry } from './map-record.js';
 import { controlStatus, entryRecency, pageStatus } from './map-reconcile.js';
 import { matchesWords, normalizeForMatch, queryWords, readablePath } from './map-text.js';
 
@@ -14,6 +14,12 @@ const OUTLINE_LINE_CHARS = 100;
 const CONTROLS_PER_PAGE = 5;
 const NO_MAP_LINE = 'no map entries for this site; browser_memory shows its website-memory facts';
 const COMPLETE_READ_HINT = 'tip: a complete browser_snapshot (no query, larger maxChars) keeps the map current';
+/** Computed routes stop here (specs/005-direct-site-routing FR-006). */
+const MAX_ROUTE_STEPS = 4;
+const KNOWN_PAGES_IN_REMINDER = 3;
+const REMINDER_TITLE_CHARS = 40;
+const REMINDER_PAGES_CHARS = 300;
+const ENTRANCE_LINE_CHARS = 300;
 
 export class MapCursorError extends Error {
   constructor() {
@@ -38,6 +44,19 @@ export interface LookupControl {
   confirmWithUser: boolean;
 }
 
+export interface RouteStep {
+  /** The page the step's control is on. */
+  from: string;
+  locator: LookupControl['locator'];
+}
+
+/** Computed at lookup time from recorded destinations, never stored (005 FR-006). */
+export interface LookupRoute {
+  /** An addressable page to open first. */
+  start: string;
+  steps: RouteStep[];
+}
+
 export interface LookupPage {
   path: string;
   title: string | null;
@@ -48,6 +67,8 @@ export interface LookupPage {
   lastSeenAt: string;
   useCount: number;
   controls?: LookupControl[];
+  /** For a page without its own address: how to reach it from one that has one. */
+  route?: LookupRoute;
 }
 
 export interface MapLookup {
@@ -96,6 +117,56 @@ function describeControlKey(page: PageEntry, key: string): string {
   return `${role} ${JSON.stringify(name)}`;
 }
 
+const locatorOf = (control: ControlEntry): LookupControl['locator'] => ({ role: control.role, name: control.name, ...(control.nth !== null ? { nth: control.nth } : {}) });
+const routable = (control: ControlEntry): boolean => !control.dataChanging && controlStatus(control) === 'working';
+
+/** Edges between pages: working, non-data-changing controls whose latest destination is a same-origin path. A control inside a menu needs its opener first. */
+function routeEdges(record: MapRecord): Map<string, Array<{ to: string; steps: RouteStep[] }>> {
+  const edges = new Map<string, Array<{ to: string; steps: RouteStep[] }>>();
+  for (const page of record.pages) {
+    const list: Array<{ to: string; steps: RouteStep[] }> = [];
+    for (const control of page.controls) {
+      const destination = latestDestination(control);
+      if (!routable(control) || destination?.path === undefined || destination.path === page.path) continue;
+      const steps: RouteStep[] = [];
+      if (control.parent !== null) {
+        const opener = page.controls.find((entry) => entry.key === control.parent);
+        if (!opener || !routable(opener)) continue;
+        steps.push({ from: page.path, locator: locatorOf(opener) });
+      }
+      steps.push({ from: page.path, locator: locatorOf(control) });
+      list.push({ to: destination.path, steps });
+    }
+    if (list.length) edges.set(page.path, list);
+  }
+  return edges;
+}
+
+/** The fewest control steps (at most 4) from any addressable page to `target`; ties go to the better-ranked start. */
+export function findRoute(record: MapRecord, target: string, edges = routeEdges(record)): LookupRoute | undefined {
+  const best = new Map<string, number>();
+  const queue: Array<{ path: string; cost: number; start: string; steps: RouteStep[] }> = [];
+  for (const page of rankPages(record.pages)) {
+    if (!page.addressable || page.path === target) continue;
+    best.set(page.path, 0);
+    queue.push({ path: page.path, cost: 0, start: page.path, steps: [] });
+  }
+  while (queue.length) {
+    let index = 0;
+    for (let at = 1; at < queue.length; at += 1) if (queue[at].cost < queue[index].cost) index = at;
+    const [current] = queue.splice(index, 1);
+    if (current.path === target) return { start: current.start, steps: current.steps };
+    if ((best.get(current.path) ?? Infinity) < current.cost) continue;
+    for (const edge of edges.get(current.path) ?? []) {
+      const cost = current.cost + edge.steps.length;
+      if (cost > MAX_ROUTE_STEPS || (best.get(edge.to) ?? Infinity) <= cost) continue;
+      best.set(edge.to, cost);
+      queue.push({ path: edge.to, cost, start: current.start, steps: [...current.steps, ...edge.steps] });
+    }
+  }
+  return undefined;
+}
+
 function lookupControl(page: PageEntry, control: ControlEntry): LookupControl {
   const destination = latestDestination(control);
   const { at, ...target } = destination ?? { at: '' };
@@ -103,7 +174,7 @@ function lookupControl(page: PageEntry, control: ControlEntry): LookupControl {
     area: control.area,
     role: control.role,
     name: control.name,
-    locator: { role: control.role, name: control.name, ...(control.nth !== null ? { nth: control.nth } : {}) },
+    locator: locatorOf(control),
     ...(destination ? { expected: { ...target, seenAt: at } } : {}),
     ...(control.parent ? { insideOf: describeControlKey(page, control.parent) } : {}),
     status: controlLabel(control),
@@ -113,7 +184,7 @@ function lookupControl(page: PageEntry, control: ControlEntry): LookupControl {
   };
 }
 
-function lookupPage(record: MapRecord, page: PageEntry, controls: ControlEntry[] | null): LookupPage {
+function lookupPage(record: MapRecord, page: PageEntry, controls: ControlEntry[] | null, route?: LookupRoute): LookupPage {
   const viaPage = page.via ? record.pages.find((entry) => entry.path === page.via?.path) : undefined;
   return {
     path: page.path,
@@ -125,6 +196,7 @@ function lookupPage(record: MapRecord, page: PageEntry, controls: ControlEntry[]
     lastSeenAt: page.lastSeenAt,
     useCount: page.useCount,
     ...(controls ? { controls: controls.map((control) => lookupControl(page, control)) } : {}),
+    ...(route ? { route } : {}),
   };
 }
 
@@ -158,11 +230,30 @@ function controlLine(control: LookupControl): string {
   return `    ${control.area} ${control.role} ${JSON.stringify(control.name)}${inside}${expectText(control)} · browser_click ${args} · ${control.status.replace(/_/gu, ' ')} · seen ${day(control.lastSeenAt)} · used ${control.useCount}${confirm}`;
 }
 
+/** The last direct open met a sign-in page after the page was last seen (005 FR-005). */
+function signInText(page: LookupPage): string {
+  const open = page.lastOpen;
+  if (open?.result !== 'sign_in' || Date.parse(open.at) < Date.parse(page.lastSeenAt)) return '';
+  return ` · sign-in expected${open.path ? ` (last open landed on ${open.path})` : ''}`;
+}
+
 function pageLine(page: LookupPage): string {
   const where = page.addressable ? page.path : `(not addressable) ${page.path}`;
   const title = page.title ? ` ${JSON.stringify(page.title)}` : '';
   const via = page.via ? ` · via ${page.via.path} ${page.via.control}` : '';
-  return `- ${where}${title} · ${openText(page)} · seen ${day(page.lastSeenAt)} · used ${page.useCount}${via}`;
+  return `- ${where}${title} · ${openText(page)}${signInText(page)} · seen ${day(page.lastSeenAt)} · used ${page.useCount}${via}`;
+}
+
+function routeLine(route: LookupRoute): string {
+  return `    route: open ${route.start}${route.steps.map((step) => ` · browser_click ${JSON.stringify({ target: step.locator })}`).join('')}`;
+}
+
+/** Where agents came in from other sites, newest first: the way in when this site asks for sign-in (005 FR-005). */
+function entranceLine(entrances: readonly Entrance[] | undefined, limit: number): string | null {
+  if (!entrances?.length) return null;
+  const items = entrances.slice(0, limit).map((entry) => `${entry.origin}${entry.addressable ? entry.path : ` (not addressable) ${entry.path}`} (${day(entry.at)})`);
+  const line = `entered before from ${items.join(', ')}`;
+  return line.length > ENTRANCE_LINE_CHARS ? `${line.slice(0, ENTRANCE_LINE_CHARS - 1)}…` : line;
 }
 
 export function mapHeader(origin: string, knownPages: number): string {
@@ -180,31 +271,35 @@ function empty(origin: string): MapLookup {
   return { success: true, origin, label: MAP_LABEL, outline: false, knownPages: 0, pages: [], text: `${mapHeader(origin, 0)}\n${NO_MAP_LINE}` };
 }
 
-/** Without query: at most 10 pages, one line each of at most 100 characters, at most 1,000 characters (R-16, AC-33). */
+/** Without query: at most 10 lines (pages, and one entrances line) of at most 100 characters, at most 1,000 characters (R-16, AC-33). */
 export function buildMapOutline(origin: string, record: MapRecord | null): MapLookup {
-  if (!record || record.pages.length === 0) return empty(origin);
+  if (!record || (record.pages.length === 0 && !record.entrances?.length)) return empty(origin);
   const header = mapHeader(origin, record.pages.length);
   const pages: LookupPage[] = [];
   const lines: string[] = [];
-  let chars = 0;
+  const entered = entranceLine(record.entrances, 2);
+  const entrance = entered && entered.length > OUTLINE_LINE_CHARS ? `${entered.slice(0, OUTLINE_LINE_CHARS - 1)}…` : entered;
+  let chars = entrance ? entrance.length + 1 : 0;
+  const pageLines = MAP_LIMITS.outlineLines - (entrance ? 1 : 0);
   for (const page of rankPages(record.pages)) {
-    if (lines.length >= MAP_LIMITS.outlineLines) break;
+    if (lines.length >= pageLines) break;
     const entry = lookupPage(record, page, null);
     const where = entry.addressable ? entry.path : '(not addressable)';
-    let line = `${lines.length + 1}. ${where}${entry.title ? ` ${JSON.stringify(entry.title)}` : ''} · ${openText(entry)} · seen ${day(entry.lastSeenAt)} · used ${entry.useCount}`;
+    const signIn = signInText(entry) ? ' · sign-in expected' : '';
+    let line = `${lines.length + 1}. ${where}${entry.title ? ` ${JSON.stringify(entry.title)}` : ''} · ${openText(entry)}${signIn} · seen ${day(entry.lastSeenAt)} · used ${entry.useCount}`;
     if (line.length > OUTLINE_LINE_CHARS) line = `${line.slice(0, OUTLINE_LINE_CHARS - 1)}…`;
     if (chars + line.length + 1 > MAP_LIMITS.outlineChars) break;
     chars += line.length + 1;
     lines.push(line);
     pages.push(entry);
   }
-  return { success: true, origin, label: MAP_LABEL, outline: true, knownPages: record.pages.length, pages, text: [header, ...lines].join('\n') };
+  return { success: true, origin, label: MAP_LABEL, outline: true, knownPages: record.pages.length, pages, text: [header, ...(entrance ? [entrance] : []), ...lines].join('\n') };
 }
 
 /** With query: pages whose title or path match, or that hold matching controls; at most 20 pages and 4,000 characters (R-16). */
 export function buildMapLookup(origin: string, record: MapRecord | null, options: { query: string; cursor?: string; nextArgs: (cursor: string) => string }): MapLookup {
   const offset = offsetOf(options.cursor);
-  if (!record || record.pages.length === 0) return empty(origin);
+  if (!record || (record.pages.length === 0 && !record.entrances?.length)) return empty(origin);
   const words = queryWords(options.query);
   // A page is also found by the name of a control that leads to it (AC-02).
   const leadsTo = new Map<string, string[]>();
@@ -225,11 +320,15 @@ export function buildMapLookup(origin: string, record: MapRecord | null, options
   }
   const header = mapHeader(origin, record.pages.length);
   const pages: LookupPage[] = [];
-  const lines: string[] = [header];
+  const entered = entranceLine(record.entrances, MAP_LIMITS.lookupEntries);
+  const lines: string[] = [header, ...(entered ? [entered] : [])];
+  const edges = routeEdges(record);
   let index = offset;
   for (; index < hits.length && pages.length < MAP_LIMITS.lookupEntries; index += 1) {
-    const entry = lookupPage(record, hits[index].page, hits[index].controls);
-    const block = [pageLine(entry), ...(entry.controls ?? []).map(controlLine)];
+    const hit = hits[index].page;
+    const route = hit.addressable ? undefined : findRoute(record, hit.path, edges);
+    const entry = lookupPage(record, hit, hits[index].controls, route);
+    const block = [pageLine(entry), ...(route ? [routeLine(route)] : []), ...(entry.controls ?? []).map(controlLine)];
     // Leave room for the next and tip lines.
     if ([...lines, ...block].join('\n').length > MAP_LIMITS.lookupChars - 300) break;
     lines.push(...block);
@@ -250,6 +349,16 @@ export function buildMapLookup(origin: string, record: MapRecord | null, options
 export function buildMapReminder(record: MapRecord | null, path: string, alreadyShown: (role: string, name: string) => boolean): string[] | null {
   if (!record || record.pages.length === 0) return null;
   const last = `map: ${record.pages.length} known pages for this site (untrusted hints) — browser_site_map`;
+  // Up to 3 addresses to open directly, most recently used or seen first (005 FR-007). It takes one control line's place.
+  const known = record.pages
+    .filter((entry) => entry.addressable && entry.path !== path && entry.path !== '/' && pageStatus(entry) === 'working')
+    .sort((a, b) => entryRecency(b) - entryRecency(a) || (a.path < b.path ? -1 : 1))
+    .slice(0, KNOWN_PAGES_IN_REMINDER)
+    .map((entry) => `${entry.path}${entry.title ? ` ${JSON.stringify(entry.title.length > REMINDER_TITLE_CHARS ? `${entry.title.slice(0, REMINDER_TITLE_CHARS - 1)}…` : entry.title)}` : ''}`);
+  // An address is never cut: one that does not fit is left out.
+  const fitting = known.reduce<string[]>((kept, item) => (`map pages: ${[...kept, item].join(' · ')}`.length <= REMINDER_PAGES_CHARS ? [...kept, item] : kept), []);
+  const pagesLine = fitting.length ? `map pages: ${fitting.join(' · ')}` : null;
+  const controlLines = MAP_LIMITS.reminderLines - 1 - (pagesLine ? 1 : 0);
   const page = record.pages.find((entry) => entry.path === path);
   const items = page
     ? rankControls(page.controls.filter((control) => control.parent === null && !control.dataChanging && controlStatus(control) === 'working' && !alreadyShown(control.role, control.name))).map((control) => {
@@ -267,10 +376,11 @@ export function buildMapReminder(record: MapRecord | null, path: string, already
       continue;
     }
     if (current !== 'map: ') lines.push(current);
-    if (lines.length >= MAP_LIMITS.reminderLines - 1) break;
+    if (lines.length >= controlLines) break;
     current = item.length + 5 <= 150 ? `map: ${item}` : 'map: ';
   }
-  if (current !== 'map: ' && lines.length < MAP_LIMITS.reminderLines - 1) lines.push(current);
+  if (current !== 'map: ' && lines.length < controlLines) lines.push(current);
+  if (pagesLine) lines.push(pagesLine);
   lines.push(last);
   while (lines.join('\n').length > MAP_LIMITS.reminderChars && lines.length > 1) lines.shift();
   return lines;

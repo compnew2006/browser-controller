@@ -19,6 +19,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { authenticatedHttpGet } = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'bridge-auth.js')).href);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const FIXTURE_IDENTIFIER = 'fixture-user@example.test';
 const ensure = (condition, message) => { if (!condition) throw new Error(message); };
 const privateDiagnostics = { stage: 'setup', secrets: new Set(), logs: [] };
 
@@ -294,39 +295,40 @@ async function main() {
     await focusByKeyboard(vaultPage, { selector: '#requests input[name="label"]' });
     await vaultPage.keyboard.type('Synthetic account');
     await focusByKeyboard(vaultPage, { selector: '#requests input[name="identifier"]' });
-    await vaultPage.keyboard.type('fixture-user@example.test');
+    await vaultPage.keyboard.type(FIXTURE_IDENTIFIER);
     await focusByKeyboard(vaultPage, { selector: '#requests input[name="password"]' });
     await vaultPage.keyboard.type(syntheticPassword);
-    const formValuesSurvived = await passwordField.evaluate(async (field, expectedPassword) => {
+    const formValuesSurvived = await passwordField.evaluate(async (field, { expectedPassword, identifier }) => {
       await new Promise((resolve) => setTimeout(resolve, 5_400));
       const card = field.closest('form');
       return field.value === expectedPassword
         && document.activeElement === field
         && card?.querySelector('input[name="label"]')?.value === 'Synthetic account'
-        && card?.querySelector('input[name="identifier"]')?.value === 'fixture-user@example.test';
-    }, syntheticPassword);
+        && card?.querySelector('input[name="identifier"]')?.value === identifier;
+    }, { expectedPassword: syntheticPassword, identifier: FIXTURE_IDENTIFIER });
     ensure(formValuesSurvived, 'private save fields or keyboard focus were lost during the five-second state refresh');
-    await activateButtonByKeyboard(vaultPage, 'Save and fill using this session', { scopeHeading: 'Save a sign-in' });
-    await vaultPage.getByText('Check the session access box before saving and filling.', { exact: true }).waitFor({ timeout: 2_000 });
+    await activateButtonByKeyboard(vaultPage, 'Save, allow this site, and fill', { scopeHeading: 'Save a sign-in' });
+    await vaultPage.getByText('Check the site access box before saving and filling.', { exact: true }).waitFor({ timeout: 2_000 });
     const keyboardValidationErrorDisplayed = await vaultPage.getByRole('status').textContent()
-      .then((text) => text?.includes('Check the session access box before saving and filling.') === true);
+      .then((text) => text?.includes('Check the site access box before saving and filling.') === true);
     ensure(keyboardValidationErrorDisplayed, 'the private UI did not clearly display its keyboard-triggered consent error');
     await focusByKeyboard(vaultPage, { selector: '#requests input[type="checkbox"]' });
     await vaultPage.keyboard.press('Space');
     const sessionConsentChecked = await vaultPage.locator('#requests input[type="checkbox"]').evaluate((checkbox) => checkbox.checked);
     ensure(sessionConsentChecked, 'keyboard input did not check the explicit session-consent control');
-    await activateButtonByKeyboard(vaultPage, 'Save and fill using this session', { scopeHeading: 'Save a sign-in' });
-    await vaultPage.getByText('The account was saved, session access was granted, and one fill was attempted.').waitFor({ timeout: 20_000 });
-    const firstFillCorrect = await fixturePage.locator('#password').evaluate((field, expected) => field.value === expected, syntheticPassword);
-    ensure(firstFillCorrect, 'the private save-and-fill flow did not fill the fixture field');
-    const accessAfterSave = await vaultPage.locator('#accessActions').innerText();
+    await activateButtonByKeyboard(vaultPage, 'Save, allow this site, and fill', { scopeHeading: 'Save a sign-in' });
+    await vaultPage.getByText('The account was saved, the site was allowed until the vault locks, and one fill was attempted.').waitFor({ timeout: 20_000 });
+    const firstFillCorrect = await fixturePage.locator('#password').evaluate((field, expected) => field.value === expected, syntheticPassword)
+      && await fixturePage.locator('input[name="username"]').inputValue() === FIXTURE_IDENTIFIER;
+    ensure(firstFillCorrect, 'the private save-and-fill flow did not fill the username and password fields');
+    const sitesAfterSave = await vaultPage.locator('#siteGrants').innerText();
     const privateStateAfterSave = await privateRpc(vaultPage, { operation: 'getState' });
-    const grantSummaryAfterSave = (privateStateAfterSave?.grants || []).map((grant) => ({ purpose: grant.purpose, oneShot: grant.oneShot === true }));
-    ensure(accessAfterSave.includes('Session fill'), `save-and-fill did not retain its explicit session grant (access ${accessAfterSave}; grants ${JSON.stringify(grantSummaryAfterSave)})`);
+    const grantSummaryAfterSave = (privateStateAfterSave?.grants || []).map((grant) => ({ purpose: grant.purpose, via: grant.via }));
+    ensure(sitesAfterSave.includes('Allowed on this page'), `save-and-fill did not approve the site (sites ${sitesAfterSave}; grants ${JSON.stringify(grantSummaryAfterSave)})`);
     const reviewScreenshotPath = process.env.VAULT_SCREENSHOT_OUT;
     if (reviewScreenshotPath) await vaultPage.screenshot({ path: reviewScreenshotPath, fullPage: true });
-    const savedFillGrant = privateStateAfterSave?.grants?.find((grant) => grant.purpose === 'fill' && grant.handle);
-    ensure(savedFillGrant, 'private UI state did not retain the session fill grant');
+    const savedSiteGrant = privateStateAfterSave?.grants?.find((grant) => grant.purpose === 'site' && grant.via === 'page');
+    ensure(savedSiteGrant, 'private UI state did not list the site approval');
 
     const closedRequest = parseSuccess(await call('browser_vault', { action: 'save_login', tabId, label: 'Cancel-on-close fixture' }), 'browser_vault close-cancel request');
     ensure(closedRequest.status === 'user_action_required' && typeof closedRequest.requestId === 'string', 'close-cancel request was not created');
@@ -367,19 +369,12 @@ async function main() {
     const secondSessionTabId = Number(secondTabMatch[1]);
     const secondSessionFixturePage = context.pages().find((page) => page.url().startsWith(fixture.secondUrl));
     ensure(secondSessionFixturePage, 'second MCP-created fixture tab was not found');
-    privateDiagnostics.stage = 'second-session-list-request';
-    const secondListRequest = parseSuccess(await callSecond('browser_vault', { action: 'list', tabId: secondSessionTabId }), 'second-session browser_vault list request');
-    ensure(secondListRequest.status === 'user_action_required' && typeof secondListRequest.requestId === 'string', 'a new session reused another session\'s list grant');
-    vaultPage = await locatePrivateVaultPage(context, extensionId);
-    const secondSessionCard = vaultPage.locator('#requests article').filter({ hasText: 'VaultFixtureSecond' }).filter({ has: vaultPage.getByRole('heading', { name: 'Approve account access' }) });
-    await secondSessionCard.waitFor({ timeout: 5_000 });
-    await activateButtonByKeyboard(vaultPage, 'Allow session account list', { scopeHeading: 'Approve account access' });
-    await vaultPage.getByText('Account metadata access was approved.').waitFor({ timeout: 10_000 });
-    privateDiagnostics.stage = 'second-session-list-approved';
+    privateDiagnostics.stage = 'second-session-list';
     const approvedListStarted = process.hrtime.bigint();
     const secondListed = parseSuccess(await callSecond('browser_vault', { action: 'list', tabId: secondSessionTabId }), 'second-session browser_vault list');
     listTimings.push(Number(process.hrtime.bigint() - approvedListStarted) / 1_000_000);
-    ensure(secondListed.status === 'ready' && Array.isArray(secondListed.accounts) && secondListed.accounts.length === 1, 'explicitly approved account list was not returned');
+    ensure(secondListed.status === 'ready' && Array.isArray(secondListed.accounts) && secondListed.accounts.length === 1,
+      'the site approval did not cover a new agent session (specs/006 FR-001)');
 
     const listedStarted = process.hrtime.bigint();
     privateDiagnostics.stage = 'first-session-list-after-approval';
@@ -388,7 +383,7 @@ async function main() {
     ensure(listed.status === 'ready' && Array.isArray(listed.accounts) && listed.accounts.length === 1, 'the saved account fill grant did not permit scoped listing');
     const account = listed.accounts[0];
     ensure(typeof account.handle === 'string' && account.id === undefined && typeof account.identifier === 'string', 'public account metadata did not use handle-only identifiers');
-    ensure(account.handle === savedFillGrant.handle, 'private fill grant and public account handle were not the same opaque account reference');
+    ensure(account.identifier === FIXTURE_IDENTIFIER, 'the listed account was not the saved one');
     listCount = 2;
 
     privateDiagnostics.stage = 'primary-second-page';
@@ -413,13 +408,15 @@ async function main() {
         targetPage = secondFixturePage;
       }
       await targetPage.locator('#password').fill('');
+      await targetPage.locator('input[name="username"]').fill('');
       const started = process.hrtime.bigint();
       const result = parseSuccess(await call('browser_vault', { action: 'fill', tabId: targetTabId, handle: account.handle }), 'browser_vault fill');
       const elapsed = Number(process.hrtime.bigint() - started) / 1_000_000;
       fillTimings.push(elapsed);
-      ensure(result.success === true && result.filled_fields === 1,
-        `an authorized MCP fill did not report one successful field (${JSON.stringify({ success: result.success, status: result.status, filledFields: result.filled_fields, code: result.code, elapsedMs: Math.round(elapsed) })})`);
-      const oracleCorrect = await targetPage.locator('#password').evaluate((field, expected) => field.value === expected, syntheticPassword);
+      ensure(result.success === true && result.filled_fields === 2 && result.identifier_filled === true,
+        `an authorized MCP fill did not report two successful fields (${JSON.stringify({ success: result.success, status: result.status, filledFields: result.filled_fields, code: result.code, elapsedMs: Math.round(elapsed) })})`);
+      const oracleCorrect = await targetPage.locator('#password').evaluate((field, expected) => field.value === expected, syntheticPassword)
+        && await targetPage.locator('input[name="username"]').inputValue() === FIXTURE_IDENTIFIER;
       ensure(oracleCorrect, `MCP fill call ${index + 1} failed its immediate page oracle`);
       fillCount++;
     }
@@ -493,17 +490,49 @@ async function main() {
     await vaultPage.getByText('Locked', { exact: true }).waitFor({ timeout: 10_000 });
     const lockedStatus = parseSuccess(await call('browser_vault', { action: 'status' }), 'browser_vault locked status');
     ensure(lockedStatus.status === 'locked', 'the keyboard lock action did not lock the local vault');
-    const reapproval = parseSuccess(await call('browser_vault', { action: 'list', tabId }), 'browser_vault reapproval request');
-    ensure(reapproval.status === 'user_action_required' && typeof reapproval.requestId === 'string', 'lock did not revoke account-list access');
-    await vaultPage.locator('#requests article').filter({ has: vaultPage.getByRole('heading', { name: 'Approve account access' }) }).waitFor({ timeout: 5_000 });
-    await activateButtonByKeyboard(vaultPage, 'Unlock vault', { scopeHeading: 'Approve account access' });
-    await vaultPage.getByText('Unlocked', { exact: true }).waitFor({ timeout: 10_000 });
-    await activateButtonByKeyboard(vaultPage, 'Allow session account list', { scopeHeading: 'Approve account access' });
-    await vaultPage.getByText('Account metadata access was approved.').waitFor({ timeout: 10_000 });
-    const reapprovedState = await privateRpc(vaultPage, { operation: 'getState' });
-    ensure(reapprovedState.grants?.some((grant) => grant.purpose === 'list'), 'keyboard account-list consent did not create a grant');
-    await activateButtonByKeyboard(vaultPage, 'Revoke', { scopeSelector: '#accessActions' });
-    await vaultPage.getByText('Session grant revoked.').waitFor({ timeout: 10_000 });
+    privateDiagnostics.stage = 'approval-card';
+    // A list after the lock asks on a card on the requesting tab and waits for the owner (specs/006 US2).
+    await fixturePage.bringToFront();
+    const cardList = call('browser_vault', { action: 'list', tabId });
+    const cardHost = fixturePage.locator('bc-vault-approval');
+    await cardHost.waitFor({ state: 'attached', timeout: 10_000 });
+    const agentClick = await call('browser_click', { tabId, target: '#password' });
+    ensure(agentClick.isError === true && resultText(agentClick).startsWith('VAULT_APPROVAL_PENDING'),
+      `agent input reached a tab with an approval card (${resultText(agentClick).slice(0, 120)})`);
+    await sleep(1_500); // the card accepts a decision only after it has been visible and still for 600 ms
+    // The owner's keyboard: focus enters the card's closed shadow root at its checkbox, then Allow.
+    let reachedCard = false;
+    for (let index = 0; index < 20 && !reachedCard; index++) {
+      await fixturePage.keyboard.press('Tab');
+      reachedCard = await fixturePage.evaluate(() => document.activeElement?.localName === 'bc-vault-approval');
+    }
+    ensure(reachedCard, 'keyboard focus did not reach the approval card');
+    await fixturePage.keyboard.press('Tab');
+    await fixturePage.keyboard.press('Enter');
+    const cardListed = parseSuccess(await cardList, 'browser_vault list through the approval card');
+    ensure(cardListed.status === 'ready' && cardListed.accounts?.length === 1, `the owner's Allow on the card did not complete the waiting list (${cardListed.status})`);
+    await cardHost.waitFor({ state: 'detached', timeout: 5_000 });
+    ensure(!resultText(await call('browser_click', { tabId, target: '#password' })).startsWith('VAULT_APPROVAL_PENDING'), 'agent input stayed blocked after the decision');
+    const cardState = await privateRpc(vaultPage, { operation: 'getState' });
+    ensure(cardState.status === 'ready' && cardState.grants?.some((grant) => grant.purpose === 'site' && grant.via === 'card'),
+      'the card did not unlock the vault and approve the site');
+    await vaultPage.getByText('Allowed on the page’s approval card').waitFor({ timeout: 10_000 });
+    await activateButtonByKeyboard(vaultPage, 'Revoke', { scopeSelector: '#siteGrants' });
+    await vaultPage.getByText('is no longer allowed.').waitFor({ timeout: 10_000 });
+
+    privateDiagnostics.stage = 'allowlist';
+    await focusByKeyboard(vaultPage, { selector: '#allowForm input[name="site"]' });
+    await vaultPage.keyboard.type(new URL(fixture.url).host);
+    await vaultPage.keyboard.press('Enter');
+    await vaultPage.getByText('is always allowed.').waitFor({ timeout: 10_000 });
+    const allowlisted = parseSuccess(await call('browser_vault', { action: 'list', tabId }), 'browser_vault list on an allowlisted site');
+    ensure(allowlisted.status === 'ready' && allowlisted.accounts?.length === 1, 'an allowlisted site still asked for approval');
+    ensure((await privateRpc(vaultPage, { operation: 'getState' })).grants?.some((grant) => grant.purpose === 'site' && grant.via === 'allowlist'),
+      'the allowlist approval was not listed');
+    await activateButtonByKeyboard(vaultPage, 'Remove', { scopeSelector: '#allowlist' });
+    await vaultPage.getByText('was removed from the always-allowed list').waitFor({ timeout: 10_000 });
+    const afterRemoval = await privateRpc(vaultPage, { operation: 'getState' });
+    ensure(!afterRemoval.allowlist?.length && !afterRemoval.grants?.some((grant) => grant.purpose === 'site'), 'removing the site from the allowlist kept its approval');
     await activateButtonByKeyboard(vaultPage, 'Remove', { scopeSelector: '.account-row' });
     await activateButtonByKeyboard(vaultPage, 'Confirm remove', { scopeSelector: '.account-row' });
     await vaultPage.getByText('No saved accounts yet.').waitFor({ timeout: 10_000 });
@@ -524,6 +553,11 @@ async function main() {
       keyboardValidationErrorDisplayed,
       keyboardCancelStateDisplayed,
       keyboardOnlySaveUseLockRevokeDelete: true,
+      siteApprovalCoveredSecondSession: true,
+      agentInputRefusedWhileCardShown: true,
+      ownerAllowedOnCardByKeyboard: true,
+      allowlistApprovedWithoutPrompt: true,
+      usernameAndPasswordFilled: true,
       pendingRequestCancelledOnPrivatePageClose: true,
       mcpAccountsListed: listCount,
       mcpFillsVerified: fillCount,

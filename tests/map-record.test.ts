@@ -106,3 +106,29 @@ describe('map record (T006)', () => {
     expect(code(() => validateMapRecord(record(many), 'read'))).toBe('MEMORY_CORRUPT');
   });
 });
+
+describe('map record: read pages and entrances (specs/005-direct-site-routing)', () => {
+  const entrance = (overrides: Record<string, unknown> = {}) => ({ origin: 'https://portal.example', path: '/my/databases', addressable: true, at: T, ...overrides });
+  const withEntrances = (entrances: unknown[]): MapRecord => ({ ...record(), entrances } as MapRecord);
+
+  it('accepts a page recorded by a complete read and a record with entrances', () => {
+    expect(code(() => validateMapRecord(record([page({ reason: 'read' })]), 'read'))).toBeUndefined();
+    const valid = withEntrances([entrance(), entrance({ origin: 'https://b.example', path: '/{id}/x', addressable: false })]);
+    expect(validateMapRecord(valid, 'read')).toEqual(valid);
+    expect(code(() => validateMapRecord({ ...record([]), entrances: [entrance()] }, 'read'))).toBeUndefined();
+  });
+
+  it.each([
+    ['an unknown entrance field', [entrance({ name: 'Connect' })]],
+    ['the map\'s own origin', [entrance({ origin: 'https://a.example' })]],
+    ['an unmasked path', [entrance({ path: '/u/a@b.example' })]],
+    ['a relative path', [entrance({ path: 'x' })]],
+    ['a missing addressable flag', [entrance({ addressable: 'yes' })]],
+    ['a bad time', [entrance({ at: 'yesterday' })]],
+    ['a duplicate', [entrance(), entrance()]],
+    ['more than 5', Array.from({ length: 6 }, (_, index) => entrance({ path: `/p${index}` }))],
+    ['a non-array', entrance() as unknown as unknown[]],
+  ])('refuses %s', (_label, entrances) => {
+    expect(code(() => validateMapRecord(withEntrances(entrances), 'read'))).toBe('MEMORY_CORRUPT');
+  });
+});

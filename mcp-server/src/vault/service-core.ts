@@ -26,6 +26,8 @@ export abstract class VaultServiceCore {
     openUi: async (requestId, sessionId, agentName) => {
       await this.transport.callVaultAction('openUi', { requestId }, sessionId, undefined, agentName);
     },
+    showCard: (pending) => this.showCard(pending),
+    closeCard: (pending) => this.closeCard(pending),
   });
   /**
    * The fill is a strategy rather than an abstract method: nothing in this file
@@ -107,8 +109,51 @@ export abstract class VaultServiceCore {
     return store;
   }
 
+  /**
+   * Draws the in-page approval card on the requesting tab (specs/006 D4). False when the extension
+   * cannot: an older extension, a page it cannot script, or a refusal; the private page opens instead.
+   */
+  protected async showCard(pending: InternalPending): Promise<boolean> {
+    const { request } = pending;
+    if (request.tabId === undefined || !request.origin || !request.documentId) return false;
+    let context: VaultBrowserContext;
+    try { context = await this.transport.getBrowserContext(request.sessionId); }
+    catch { return false; }
+    if (!context.supportsSiteApproval || context.connectionId !== pending.connectionId) return false;
+    const store = this.storeFor(pending.browserId);
+    let account: string | undefined;
+    if (request.credentialId && store.isUnlocked) {
+      try { account = (await store.get(request.credentialId))?.label; } catch { account = undefined; }
+    }
+    const result = await this.transport.callVaultAction('prompt', {
+      tabId: request.tabId,
+      requestId: request.requestId,
+      documentId: request.documentId,
+      origin: request.origin,
+      purpose: request.purpose === 'fill' ? 'fill' : 'list',
+      browserLabel: pending.browserLabel.slice(0, 120),
+      agentName: pending.agentName.slice(0, 120),
+      unlock: !store.isUnlocked,
+      ...(account ? { account: account.slice(0, 120) } : {}),
+      expiresAt: request.expiresAt,
+    }, request.sessionId, undefined, pending.agentName);
+    return isRecord(result) && result.success === true && result.shown === true;
+  }
+
+  /** Takes down a card whose request ended without the card's own decision. */
+  protected closeCard(pending: InternalPending): void {
+    const { request } = pending;
+    if (request.tabId === undefined) return;
+    void Promise.resolve()
+      .then(() => this.transport.closeCard(pending.connectionId, { tabId: request.tabId!, requestId: request.requestId }, request.sessionId))
+      .catch(() => {});
+  }
+
   protected async inspect(tabId: number, sessionId: string, signal?: AbortSignal): Promise<VaultInspection> {
-    const result = await this.transport.callVaultAction('inspect', { tabId }, sessionId, signal, this.sessionAgentNames.get(sessionId));
+    let withIdentifier: boolean;
+    try { withIdentifier = (await this.transport.getBrowserContext(sessionId)).supportsSiteApproval === true; }
+    catch { withIdentifier = false; }
+    const result = await this.transport.callVaultAction('inspect', withIdentifier ? { tabId, withIdentifier: true } : { tabId }, sessionId, signal, this.sessionAgentNames.get(sessionId));
     if (!isRecord(result) || result.success === false || result.tabId !== tabId
       || typeof result.origin !== 'string' || typeof result.documentId !== 'string'
       || typeof result.targetDocumentId !== 'string' || typeof result.nonce !== 'string' || !result.nonce
@@ -125,6 +170,8 @@ export abstract class VaultServiceCore {
       frameId: result.frameId as number,
       nonce: result.nonce,
       suitable: result.suitable === true,
+      ...(withIdentifier && result.mode === 'identifier' ? { mode: 'identifier' as const } : {}),
+      ...(withIdentifier && result.identifierField === true ? { identifierField: true } : {}),
       ...(typeof result.reasonCode === 'string' ? { reasonCode: result.reasonCode } : {}),
     };
   }
@@ -142,7 +189,9 @@ export abstract class VaultServiceCore {
       requestId: pending.request.requestId,
       purpose: pending.request.purpose,
       ...(origin ? { origin } : {}),
-      message: safeMessage('VAULT_USER_ACTION_REQUIRED'),
+      message: pending.surface === 'card'
+        ? 'The owner was asked on an approval card on this tab and has not decided yet. Call browser_vault again with the same action to keep waiting.'
+        : safeMessage('VAULT_USER_ACTION_REQUIRED'),
     };
   }
 

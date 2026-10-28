@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+Run `npm run build`, reload the extension at `chrome://extensions` and restart the daemon after updating.
+
+### Added
+- Site map routes (spec 005): the map remembers pages an agent read completely and whether each has its own address. A page reached through a content link or from another site is recorded once it is opened by its address.
+- A click whose page changes address a moment later is credited with that destination, within 120 s and when no other action ran in the tab.
+- Each map keeps up to 5 entrances: pages on other sites a click left from. `browser_site_map` lists them as `entered before from …`, and marks a page whose last direct open landed on a sign-in page as `sign-in expected`.
+- Routes are computed when a map is read. The `browser_navigate` reminder lists up to 3 known addresses to open directly.
+- Vault site approval (spec 006): one approval covers listing and filling the saved accounts of one site in one Chrome profile, for every agent session, until the vault locks, the owner revokes it, a backup is restored or the daemon restarts.
+- The owner approves on a card that the extension draws on the requesting tab, in a closed shadow root that page scripts cannot read. It shows the site, the profile, the agent and whether the vault will be unlocked, never a password. It accepts a decision only from the user's own input, once the whole card has been visible and in place for 600 ms. A card the page covers, restyles or the window resizes waits again; a card the page moves or removes sends the owner to the vault page. Agent snapshots and locators do not see inside it. Only when the card cannot be shown does the extension page open, as before.
+- While the card shows, agent input to that tab fails `VAULT_APPROVAL_PENDING`. A `browser_vault` `list` or `fill` call that started the card waits up to 40 s for the decision; Deny returns `VAULT_DECLINED`.
+- Sites the owner always allows: added on the card or in the vault page's new "Site access" section, kept inside the encrypted vault, and never visible to agent tools. Listing and filling there need no request and write a grant audit event. Removing a site from the list ends its approval at once.
+- When the agent session that asked ends while its card shows, even during the owner's decision, its call ends as cancelled, but the card stays until it expires. Allow there still approves the site and answers the other sessions' requests that joined the card. A new request for that site gets its own card, which names its own agent, and takes over the waiting requests. Requests still waiting when a card ends without a decision move to the vault page, so the owner can still decide them.
+- A card the daemon already ended answers Allow and Deny with an error instead of going away as if they worked; "Decide on the vault page" opens the vault page. The daemon takes cards down through the browser connection that drew them, so a card in a second Chrome profile also closes after its session ended.
+- The vault page's "Site access" section lists site approvals with how each was given, and revokes each one.
+- New extension capability `vault-site-approval`.
+
+### Changed
+- A fill writes the saved username into the one username field of the same form, then the password. With several fields that look like a username, the password goes alone. A first step that shows only a username field gets the username alone. The result reports `filled_fields` and never a value.
+- Parallel vault calls on one tab no longer replace each other's page inspection, which made the first fill end `VAULT_OUTCOME_UNKNOWN`.
+- Map files may hold `entrances` and `read` pages. An older daemon quarantines such a file as `MEMORY_CORRUPT`; before downgrading, run `npm run memory -- map delete --all`.
+- An earlier daemon cannot read a vault that holds an always-allowed site. Remove every always-allowed site in the vault page before downgrading.
+- `scripts/smoke-vault-isolated.mjs` checks the card flow, the always-allowed list and the username fill. New `npm run smoke:vault-card` checks the card's own guards in Chromium with real mouse input; it needs no daemon or extension.
+
+### Fixed
+- A website memory or site map delete could lose its tombstone when the queue emptied in the same millisecond as the delete. Work enqueued in that millisecond could then bring the deleted site back. Tombstones now stay until the queue empties at a later time.
+
 ## 3.1.1
 
 Reload the extension at `chrome://extensions` and restart the daemon after updating.

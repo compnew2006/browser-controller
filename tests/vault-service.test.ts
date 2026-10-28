@@ -4,13 +4,29 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { VaultService, type VaultBrowserContext, type VaultTransport } from '../mcp-server/src/vault/service.js';
-import { safeMessage } from '../mcp-server/src/vault/service-common.js';
+import { safeMessage, type PrivateConnection } from '../mcp-server/src/vault/service-common.js';
 import { scopeForBrowser } from '../mcp-server/src/vault/store.js';
 import { forwardHandler } from '../mcp-server/src/tools/types.js';
 import { routeVaultAwareCall } from '../mcp-server/src/vault/daemon-routing.js';
 
 const ORIGIN = 'https://fixture.test';
 const SESSION = 'session-fixture';
+const OTHER_SESSION = 'session-other';
+
+/** Saves one account for ORIGIN through a private save request, with no session consent. */
+async function saveAccount(service: VaultService, connection: () => { browserId: string; browserLabel: string; connectionId: string }, tabId: number): Promise<string> {
+  const request = await service.handlePublic(SESSION, { action: 'save_login', tabId });
+  const saved = await service.handlePrivateUi(connection(), {
+    operation: 'save', requestId: request.requestId, origin: ORIGIN,
+    identifier: 'fixture-user', password: 'synthetic-only', label: 'fixture', allowSession: false, saveAndFill: false,
+  });
+  return String(saved.handle);
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 200 && !condition(); attempt++) await new Promise((resolve) => setTimeout(resolve, 2));
+  expect(condition()).toBe(true);
+}
 
 function makeTransport(overrides: Partial<VaultBrowserContext> = {}) {
   const state: {
@@ -19,6 +35,10 @@ function makeTransport(overrides: Partial<VaultBrowserContext> = {}) {
     fillCount: number;
     disconnect: boolean;
     fillHook?: (signal?: AbortSignal) => Promise<unknown>;
+    /** Runs before an inspection answers; a rejection fails it. */
+    inspectHook?: () => Promise<void>;
+    /** Answers the in-page card action; without it the action is unknown, as on an older extension. */
+    prompt?: (params: Record<string, unknown>) => unknown;
   } = {
     context: {
       browserId: 'profile-fixture', browserLabel: 'Fixture', connectionId: 'connection-fixture-0001',
@@ -36,6 +56,7 @@ function makeTransport(overrides: Partial<VaultBrowserContext> = {}) {
     async callVaultAction(action, params, _sessionId, signal) {
       state.calls.push({ action, params });
       if (action === 'inspect') {
+        if (state.inspectHook) await state.inspectHook();
         return {
           success: true, tabId: params.tabId, origin: ORIGIN, documentId: 'document-fixture',
           targetDocumentId: 'document-fixture', frameId: 0, nonce: 'nonce-fixture', suitable: true,
@@ -47,7 +68,12 @@ function makeTransport(overrides: Partial<VaultBrowserContext> = {}) {
         return { success: true, filled_fields: 1 };
       }
       if (action === 'openUi') return { success: true };
+      if (action === 'prompt' && state.prompt) return state.prompt(params);
       throw new Error('unexpected action');
+    },
+    async closeCard(connectionId, params) {
+      state.calls.push({ action: 'promptClose', params: { ...params, connectionId } });
+      return { success: true, closed: true };
     },
   };
   return { state, transport };
@@ -59,12 +85,12 @@ describe('VaultService', () => {
     await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
   });
 
-  async function setup(overrides: Partial<VaultBrowserContext> = {}) {
+  async function setup(overrides: Partial<VaultBrowserContext> = {}, now?: () => number) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bc-vault-service-'));
     roots.push(root);
     const { state, transport } = makeTransport(overrides);
     let live = true;
-    const service = new VaultService(root, transport, () => live);
+    const service = new VaultService(root, transport, () => live, now);
     return {
       root,
       state,
@@ -153,7 +179,7 @@ describe('VaultService', () => {
     expect(JSON.stringify(captured)).not.toContain(SESSION);
   });
 
-  it('pins tab-list replies to the selected replacement profile and revokes the old profile grant', async () => {
+  it('pins tab-list replies to the selected replacement profile and keeps a site approval to its own profile', async () => {
     const { state, service, connection } = await setup();
     await service.handlePrivateUi(connection(), { operation: 'unlock' });
     const request = await service.handlePublic(SESSION, { action: 'save_login', tabId: 3 });
@@ -171,11 +197,14 @@ describe('VaultService', () => {
     service.redaction.register(scopeForBrowser('profile-b'), secretB, 'document-profile-b');
     const tabsReply = await service.sanitizeForSession(SESSION, { text: `tabs title ${secretB}` }, 'browser_tabs', selected);
     expect(JSON.stringify(tabsReply).includes(secretB)).toBe(false);
-
-    state.context = { ...state.context, browserId: 'profile-fixture', browserLabel: 'Fixture', connectionId: 'connection-fixture-0001' };
-    await service.pinBrowserId(SESSION);
+    // The site was approved in the first profile only: the second profile asks for itself.
     const needsApproval = await service.handlePublic(SESSION, { action: 'fill', tabId: 3, handle });
     expect(needsApproval).toMatchObject({ status: 'user_action_required', purpose: 'fill' });
+
+    // Back on the first profile, its site approval still stands: it ends with the vault lock, not a profile switch.
+    state.context = { ...state.context, browserId: 'profile-fixture', browserLabel: 'Fixture', connectionId: 'connection-fixture-0001' };
+    await service.pinBrowserId(SESSION);
+    expect(await service.handlePublic(SESSION, { action: 'fill', tabId: 3, handle })).toMatchObject({ success: true, status: 'filled' });
   });
 
   it('blocks high-risk output profile-wide and checks the returned image after the tool finishes', async () => {
@@ -426,7 +455,7 @@ describe('VaultService', () => {
     expect(accounts[0].handle).toMatch(/^cred_[a-f0-9]{32}$/);
   });
 
-  it('retains a session fill grant after the Save and fill attempt completes', async () => {
+  it('approves the site for the profile after Save and fill, for every later list and fill', async () => {
     const { service, connection } = await setup();
     await service.pinBrowserId(SESSION, 'FixtureAgent');
     await service.handlePrivateUi(connection(), { operation: 'unlock' });
@@ -437,20 +466,19 @@ describe('VaultService', () => {
     });
     expect(saved).toMatchObject({ success: true, status: 'accepted' });
     const grants = (await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants;
-    expect(grants).toEqual([expect.objectContaining({ purpose: 'fill', handle: expect.any(String) })]);
+    expect(grants).toEqual([expect.objectContaining({ purpose: 'site', origin: ORIGIN, via: 'page', sessionLabel: 'Every agent session' })]);
     expect(grants[0]).not.toHaveProperty('oneShot');
-    expect(grants[0].sessionLabel).toBe('FixtureAgent · session fixture');
     expect(grants[0]).not.toHaveProperty('sessionId');
-    const handle = grants[0].handle;
-    expect(await service.handlePublic(SESSION, { action: 'list', tabId: 13 })).toMatchObject({ success: true, status: 'ready' });
+    const listed = await service.handlePublic(SESSION, { action: 'list', tabId: 13 });
+    expect(listed).toMatchObject({ success: true, status: 'ready' });
+    const handle = (listed.accounts as Array<{ handle: string }>)[0].handle;
     expect(await service.handlePublic(SESSION, { action: 'fill', tabId: 13, handle }))
       .toMatchObject({ success: true, status: 'filled' });
     const retained = (await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants;
-    expect(retained).toEqual([expect.objectContaining({ purpose: 'fill', handle })]);
-    expect(retained[0]).not.toHaveProperty('oneShot');
+    expect(retained).toEqual([expect.objectContaining({ purpose: 'site', grantId: grants[0].grantId })]);
   });
 
-  it('completes a dedicated one-fill request exactly once without retaining its grant', async () => {
+  it('runs an approved fill request exactly once and lets later fills on the site go ahead', async () => {
     const { service, state, connection } = await setup();
     await service.handlePrivateUi(connection(), { operation: 'unlock' });
     const saveRequest = await service.handlePublic(SESSION, { action: 'save_login', tabId: 14 });
@@ -465,10 +493,49 @@ describe('VaultService', () => {
       operation: 'approve', requestId: approval.requestId, credentialId: handle, purpose: 'fill',
     });
     expect(approved).toMatchObject({ success: true, status: 'filled', filled_fields: 1 });
-    expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
     expect(state.fillCount).toBe(1);
+    expect(await service.handlePublic(SESSION, { action: 'status', requestId: approval.requestId })).toMatchObject({ status: 'accepted' });
+    expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants)
+      .toEqual([expect.objectContaining({ purpose: 'site', origin: ORIGIN, via: 'page' })]);
     const nextFill = await service.handlePublic(SESSION, { action: 'fill', tabId: 14, handle });
-    expect(nextFill).toMatchObject({ success: true, status: 'user_action_required', purpose: 'fill' });
+    expect(nextFill).toMatchObject({ success: true, status: 'filled' });
+    expect(state.fillCount).toBe(2);
+  });
+
+  it('lets one list approval cover listing and filling for every session of the profile', async () => {
+    const { service, state, connection } = await setup();
+    await service.handlePrivateUi(connection(), { operation: 'unlock' });
+    const handle = await saveAccount(service, connection, 17);
+    const listRequest = await service.handlePublic(SESSION, { action: 'list', tabId: 17 });
+    expect(listRequest).toMatchObject({ status: 'user_action_required', purpose: 'approve' });
+    expect(await service.handlePrivateUi(connection(), { operation: 'approve', requestId: listRequest.requestId, purpose: 'list' }))
+      .toMatchObject({ success: true, status: 'approved' });
+    expect(await service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 17 })).toMatchObject({ success: true, status: 'ready' });
+    expect(await service.handlePublic(OTHER_SESSION, { action: 'fill', tabId: 17, handle })).toMatchObject({ success: true, status: 'filled' });
+    // The session that asked ending, or the extension reconnecting, does not end the site approval.
+    service.revokeSession(SESSION);
+    const previous = state.context.connectionId;
+    state.context = { ...state.context, connectionId: 'connection-fixture-0002' };
+    service.revokeConnection(state.context.browserId, previous);
+    expect(await service.handlePublic(SESSION, { action: 'fill', tabId: 17, handle })).toMatchObject({ success: true, status: 'filled' });
+    expect(state.fillCount).toBe(2);
+  });
+
+  it('ends every site approval when the vault locks, and the owner can revoke one', async () => {
+    const { service, connection } = await setup();
+    await service.handlePrivateUi(connection(), { operation: 'unlock' });
+    const handle = await saveAccount(service, connection, 18);
+    const approval = await service.handlePublic(SESSION, { action: 'list', tabId: 18 });
+    await service.handlePrivateUi(connection(), { operation: 'approve', requestId: approval.requestId, purpose: 'list' });
+    await service.handlePrivateUi(connection(), { operation: 'lock' });
+    await service.handlePrivateUi(connection(), { operation: 'unlock' });
+    expect(await service.handlePublic(SESSION, { action: 'fill', tabId: 18, handle })).toMatchObject({ status: 'user_action_required' });
+
+    const again = await service.handlePublic(SESSION, { action: 'list', tabId: 18 });
+    await service.handlePrivateUi(connection(), { operation: 'approve', requestId: again.requestId, purpose: 'list' });
+    const [grant] = (await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants;
+    expect(await service.handlePrivateUi(connection(), { operation: 'revoke', grantId: grant.grantId })).toMatchObject({ success: true });
+    expect(await service.handlePublic(SESSION, { action: 'list', tabId: 18 })).toMatchObject({ status: 'user_action_required' });
   });
 
   it('does not let a list approval request grant a fill permission without a fill request', async () => {
@@ -552,5 +619,452 @@ describe('VaultService', () => {
     const result = await service.handlePublic(SESSION, { action: 'fill', tabId: 11, handle });
     expect(result).toMatchObject({ success: false, code: 'VAULT_PERMISSION_DENIED' });
     expect(state.fillCount).toBe(0);
+  });
+
+  describe('in-page approval card (specs/006)', () => {
+    async function setupCard(now?: () => number) {
+      const context = await setup({ supportsSiteApproval: true }, now);
+      context.state.prompt = () => ({ success: true, shown: true });
+      return context;
+    }
+    const prompts = (state: { calls: Array<{ action: string; params: Record<string, unknown> }> }) =>
+      state.calls.filter((call) => call.action === 'prompt').map((call) => call.params);
+    /** Waits until the daemon holds `count` live requests on the connection, so a joining call has reached the journal. */
+    async function waitForRequests(service: VaultService, connection: () => PrivateConnection, count: number): Promise<void> {
+      for (let attempt = 0; attempt < 500; attempt++) {
+        const view = await service.handlePrivateUi(connection(), { operation: 'getState' }) as { requests?: unknown[] };
+        if ((view.requests?.length ?? 0) >= count) return;
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+      throw new Error(`the daemon never held ${count} live requests`);
+    }
+
+    it('waits for an allow on the card and answers the same list call', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.pinBrowserId(SESSION, 'FixtureAgent');
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      await saveAccount(service, connection, 20);
+      const openedBefore = state.calls.filter((call) => call.action === 'openUi').length;
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 20 });
+      await waitFor(() => prompts(state).length === 1);
+      expect(prompts(state)[0]).toMatchObject({
+        tabId: 20, origin: ORIGIN, documentId: 'document-fixture', purpose: 'list', unlock: false, agentName: 'FixtureAgent',
+      });
+      const decided = await service.handlePrivateUi(connection(), {
+        operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: false,
+      });
+      expect(decided).toMatchObject({ success: true, status: 'approved' });
+      expect(await listing).toMatchObject({ success: true, status: 'ready', accounts: [expect.objectContaining({ handle: expect.any(String) })] });
+      expect(state.calls.filter((call) => call.action === 'openUi')).toHaveLength(openedBefore);
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants)
+        .toEqual([expect.objectContaining({ purpose: 'site', via: 'card' })]);
+    });
+
+    it('unlocks a locked vault from the card and fills in the same call', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const handle = await saveAccount(service, connection, 21);
+      await service.handlePrivateUi(connection(), { operation: 'lock' });
+      const filling = service.handlePublic(SESSION, { action: 'fill', tabId: 21, handle });
+      await waitFor(() => prompts(state).length === 1);
+      expect(prompts(state)[0]).toMatchObject({ purpose: 'fill', unlock: true });
+      expect(prompts(state)[0]).not.toHaveProperty('account');
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: false });
+      expect(await filling).toMatchObject({ success: true, status: 'filled' });
+      expect(state.fillCount).toBe(1);
+    });
+
+    it('reports a denial as VAULT_DECLINED and approves nothing', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const handle = await saveAccount(service, connection, 22);
+      const filling = service.handlePublic(SESSION, { action: 'fill', tabId: 22, handle });
+      await waitFor(() => prompts(state).length === 1);
+      expect(prompts(state)[0]).toMatchObject({ purpose: 'fill', account: 'fixture' });
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'deny', always: false });
+      expect(await filling).toMatchObject({ success: false, code: 'VAULT_DECLINED' });
+      expect(state.fillCount).toBe(0);
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
+    });
+
+    it('shows one card for concurrent requests on a site and settles them with one decision', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const handle = await saveAccount(service, connection, 23);
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 23 });
+      const filling = service.handlePublic(OTHER_SESSION, { action: 'fill', tabId: 23, handle });
+      await waitFor(() => prompts(state).length === 1);
+      // Let the second call reach the journal and join the card instead of drawing its own.
+      await waitForRequests(service, connection, 2);
+      expect(prompts(state)).toHaveLength(1);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: false });
+      expect(await listing).toMatchObject({ success: true, status: 'ready' });
+      expect(await filling).toMatchObject({ success: true, status: 'filled' });
+    });
+
+    it('allowlists a site with "always", so later approvals need no card after the vault unlocks again', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const handle = await saveAccount(service, connection, 24);
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 24 });
+      await waitFor(() => prompts(state).length === 1);
+      const refused = await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'deny', always: true });
+      expect(refused).toMatchObject({ success: false, code: 'INVALID_ARGUMENT' });
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: true });
+      expect(await listing).toMatchObject({ success: true, status: 'ready' });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).allowlist)
+        .toEqual([expect.objectContaining({ origin: ORIGIN })]);
+
+      await service.handlePrivateUi(connection(), { operation: 'lock' });
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      expect(await service.handlePublic(OTHER_SESSION, { action: 'fill', tabId: 24, handle })).toMatchObject({ success: true, status: 'filled' });
+      expect(prompts(state)).toHaveLength(1);
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants)
+        .toEqual([expect.objectContaining({ purpose: 'site', via: 'allowlist' })]);
+
+      // Removing the site from the allowlist ends the approval it gave.
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistRemove', origin: ORIGIN })).toMatchObject({ success: true, status: 'removed' });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
+      const asked = service.handlePublic(SESSION, { action: 'list', tabId: 24 });
+      await waitFor(() => prompts(state).length === 2);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[1].requestId, decision: 'cancel', always: false });
+      expect(await asked).toMatchObject({ status: 'cancelled' });
+    });
+
+    it('lets the owner allowlist a typed site from the vault page, and refuses one that is not a site origin', async () => {
+      const { service, connection } = await setupCard();
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: 'https://fixture.test/login' }))
+        .toMatchObject({ success: false, code: 'VAULT_LOCKED' });
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: 'https://fixture.test/login' }))
+        .toMatchObject({ success: true, status: 'added', origin: ORIGIN });
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: ORIGIN }))
+        .toMatchObject({ success: true, status: 'unchanged' });
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: 'javascript:alert(1)' }))
+        .toMatchObject({ success: false, code: 'INVALID_ARGUMENT' });
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: 'https://owner:secret@fixture.test' }))
+        .toMatchObject({ success: false, code: 'INVALID_ARGUMENT' });
+      expect(await service.handlePublic(SESSION, { action: 'list', tabId: 25 })).toMatchObject({ success: true, status: 'ready' });
+    });
+
+    it('reads a typed bare host as HTTPS, and a bare loopback host as HTTP', async () => {
+      const { service, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const add = (origin: string) => service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin });
+      expect(await add('fixture.test')).toMatchObject({ success: true, origin: 'https://fixture.test' });
+      expect(await add('127.0.0.1:8123')).toMatchObject({ success: true, origin: 'http://127.0.0.1:8123' });
+      expect(await add('localhost:3000/login')).toMatchObject({ success: true, origin: 'http://localhost:3000' });
+      expect(await add('https://localhost:3443')).toMatchObject({ success: true, origin: 'https://localhost:3443' });
+      expect(await add('http://fixture.test')).toMatchObject({ success: false, code: 'INVALID_ARGUMENT' });
+    });
+
+    it('moves the request to the private page when the owner picks it on the card', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 26 });
+      await waitFor(() => prompts(state).length === 1);
+      const requestId = prompts(state)[0].requestId;
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId, decision: 'page', always: false }))
+        .toMatchObject({ success: true, status: 'moved' });
+      const reply = await listing;
+      expect(reply).toMatchObject({ status: 'user_action_required', requestId });
+      expect(String(reply.message)).not.toMatch(/approval card/);
+      expect(state.calls.some((call) => call.action === 'openUi' && call.params.requestId === requestId)).toBe(true);
+      expect(await service.handlePrivateUi(connection(), { operation: 'approve', requestId, purpose: 'list' }))
+        .toMatchObject({ success: true, status: 'approved' });
+    });
+
+    it('opens the private page when the extension cannot draw the card', async () => {
+      const { service, state, connection } = await setupCard();
+      state.prompt = () => ({ success: false, code: 'VAULT_TARGET_UNSAFE' });
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const reply = await service.handlePublic(SESSION, { action: 'list', tabId: 27 });
+      expect(reply).toMatchObject({ status: 'user_action_required', purpose: 'approve' });
+      expect(state.calls.some((call) => call.action === 'openUi' && call.params.requestId === reply.requestId)).toBe(true);
+    });
+
+    it('answers a waiting call when its own request is cancelled, and accepts decisions only for card requests on this connection', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const controller = new AbortController();
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 28 }, controller.signal);
+      await waitFor(() => prompts(state).length === 1);
+      const requestId = prompts(state)[0].requestId;
+      const stranger = { ...connection(), connectionId: 'connection-stranger-0001' };
+      expect(await service.handlePrivateUi(stranger, { operation: 'cardDecision', requestId, decision: 'allow', always: false }))
+        .toMatchObject({ success: false, code: 'VAULT_PERMISSION_DENIED' });
+      controller.abort();
+      expect(await listing).toMatchObject({ status: 'user_action_required', requestId });
+      // The card still stands for the owner; a later call joins it rather than drawing another.
+      const again = service.handlePublic(SESSION, { action: 'list', tabId: 28 });
+      await waitForRequests(service, connection, 2);
+      expect(prompts(state)).toHaveLength(1);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId, decision: 'allow', always: false });
+      expect(await again).toMatchObject({ success: true, status: 'ready' });
+
+      const saveRequest = await service.handlePublic(SESSION, { action: 'save_login', tabId: 28 });
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: saveRequest.requestId, decision: 'allow', always: false }))
+        .toMatchObject({ success: false, code: 'VAULT_PERMISSION_DENIED' });
+    });
+
+    it('closes the card when its request ends without a card decision', async () => {
+      let clock = Date.now();
+      const { service, state, connection } = await setupCard(() => clock);
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 29 });
+      await waitFor(() => prompts(state).length === 1);
+      const requestId = prompts(state)[0].requestId;
+      clock += 5 * 60_000;
+      await service.handlePrivateUi(connection(), { operation: 'getState' });
+      expect(await listing).toMatchObject({ status: 'expired' });
+      await waitFor(() => state.calls.some((call) => call.action === 'promptClose' && call.params.requestId === requestId));
+    });
+
+    it('keeps the card for the site when its session ends: the call ends cancelled, and Allow still approves the site', async () => {
+      const { service, state, connection, setLive } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 29 });
+      await waitFor(() => prompts(state).length === 1);
+      const requestId = prompts(state)[0].requestId;
+      setLive(false);
+      service.revokeSession(SESSION);
+      expect(await listing).toMatchObject({ status: 'cancelled' });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(state.calls.some((call) => call.action === 'promptClose')).toBe(false);
+      const inspections = state.calls.filter((call) => call.action === 'inspect').length;
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId, decision: 'allow', always: false }))
+        .toMatchObject({ success: true, status: 'approved', requestId });
+      // The ended session is not used to look at the page again; the extension ends the card with its document.
+      expect(state.calls.filter((call) => call.action === 'inspect')).toHaveLength(inspections);
+      const after = await service.handlePrivateUi(connection(), { operation: 'getState' }) as any;
+      expect(after.grants).toEqual([expect.objectContaining({ purpose: 'site', via: 'card' })]);
+      expect(after.requests).toEqual([]);
+      await waitFor(() => state.calls.some((call) => call.action === 'promptClose' && call.params.requestId === requestId));
+      expect(state.calls.find((call) => call.action === 'promptClose')?.params.connectionId).toBe(state.context.connectionId);
+      // The card decides once; its own request stays cancelled.
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId, decision: 'deny', always: false }))
+        .toMatchObject({ success: false, code: 'VAULT_REQUEST_EXPIRED' });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toHaveLength(1);
+    });
+
+    it('keeps the requests that joined a card on it when the card’s session ends, and moves them to the next card for the site', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.pinBrowserId(OTHER_SESSION, 'OtherAgent');
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const leading = service.handlePublic(SESSION, { action: 'list', tabId: 30 });
+      await waitFor(() => prompts(state).length === 1);
+      const joined = service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 30 });
+      await waitForRequests(service, connection, 2);
+      service.revokeSession(SESSION);
+      expect(await leading).toMatchObject({ status: 'cancelled' });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(prompts(state)).toHaveLength(1);
+      // A later request gets a card that names its own agent; the held card comes down and its requests move over.
+      const later = service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 30 });
+      await waitFor(() => prompts(state).length === 2);
+      expect(prompts(state)[1]).toMatchObject({ agentName: 'OtherAgent' });
+      expect(state.calls.some((call) => call.action === 'promptClose' && call.params.requestId === prompts(state)[0].requestId)).toBe(true);
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[1].requestId, decision: 'deny', always: false }))
+        .toMatchObject({ success: true, status: 'declined' });
+      expect(await joined).toMatchObject({ success: false, code: 'VAULT_DECLINED' });
+      expect(await later).toMatchObject({ success: false, code: 'VAULT_DECLINED' });
+      expect(state.calls.some((call) => call.action === 'openUi')).toBe(false);
+    });
+
+    it('lets a held card decline the requests that joined it', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const leading = service.handlePublic(SESSION, { action: 'list', tabId: 35 });
+      await waitFor(() => prompts(state).length === 1);
+      const joined = service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 35 });
+      await waitForRequests(service, connection, 2);
+      service.revokeSession(SESSION);
+      await leading;
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'deny', always: false }))
+        .toMatchObject({ success: true, status: 'cancelled' });
+      expect(await joined).toMatchObject({ success: false, code: 'VAULT_DECLINED' });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
+    });
+
+    it('holds a card whose session ends while it is being drawn, and takes down one that never showed', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      let draw!: (value: unknown) => void;
+      state.prompt = () => new Promise((resolve) => { draw = resolve; });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 36 });
+      await waitFor(() => prompts(state).length === 1);
+      service.revokeSession(SESSION);
+      draw({ success: true, shown: true });
+      expect(await listing).toMatchObject({ status: 'cancelled' });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(state.calls.some((call) => call.action === 'promptClose')).toBe(false);
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: false }))
+        .toMatchObject({ success: true, status: 'approved' });
+
+      // Locking ends that approval, so the next request asks again.
+      await service.handlePrivateUi(connection(), { operation: 'lock' });
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const other = service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 37 });
+      await waitFor(() => prompts(state).length === 2);
+      const otherId = prompts(state)[1].requestId;
+      service.revokeSession(OTHER_SESSION);
+      draw({ success: false, code: 'VAULT_TARGET_UNSAFE' });
+      expect(await other).toMatchObject({ status: 'cancelled' });
+      await waitFor(() => state.calls.some((call) => call.action === 'promptClose' && call.params.requestId === otherId));
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: otherId, decision: 'allow', always: false }))
+        .toMatchObject({ success: false, code: 'VAULT_REQUEST_EXPIRED' });
+    });
+
+    it('finishes an Allow for the site when the asking session ends during it', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 38 });
+      await waitFor(() => prompts(state).length === 1);
+      const joined = service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 38 });
+      await waitForRequests(service, connection, 2);
+      let fail!: () => void;
+      state.inspectHook = () => new Promise((_resolve, reject) => { fail = () => reject(new Error('NOT_CONNECTED: gone')); });
+      const inspections = state.calls.filter((call) => call.action === 'inspect').length;
+      const deciding = service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: false });
+      await waitFor(() => state.calls.filter((call) => call.action === 'inspect').length > inspections);
+      state.inspectHook = undefined;
+      // The page check runs through the asking session, which ends while it waits.
+      service.revokeSession(SESSION);
+      fail();
+      expect(await deciding).toMatchObject({ success: true, status: 'approved' });
+      expect(await listing).toMatchObject({ status: 'cancelled' });
+      expect(await joined).toMatchObject({ success: true, status: 'ready' });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants)
+        .toEqual([expect.objectContaining({ purpose: 'site', via: 'card' })]);
+    });
+
+    it('lets a held card approve the requests that joined it', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      await service.handlePrivateUi(connection(), { operation: 'lock' });
+      const leading = service.handlePublic(SESSION, { action: 'list', tabId: 30 });
+      await waitFor(() => prompts(state).length === 1);
+      const joined = service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 30 });
+      await waitForRequests(service, connection, 2);
+      service.revokeSession(SESSION);
+      await leading;
+      // A locked vault unlocks from the held card, as from a live one.
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: true }))
+        .toMatchObject({ success: true, status: 'approved' });
+      expect(await joined).toMatchObject({ success: true, status: 'ready' });
+      const after = await service.handlePrivateUi(connection(), { operation: 'getState' }) as any;
+      expect(after.grants).toEqual([expect.objectContaining({ purpose: 'site', via: 'allowlist' })]);
+      expect(after.allowlist).toEqual([expect.objectContaining({ origin: ORIGIN })]);
+    });
+
+    it('moves the requests that joined a held card to the private page when the card expires', async () => {
+      let clock = Date.now();
+      const { service, state, connection } = await setupCard(() => clock);
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const leading = service.handlePublic(SESSION, { action: 'list', tabId: 31 });
+      await waitFor(() => prompts(state).length === 1);
+      const requestId = prompts(state)[0].requestId;
+      clock += 60_000;
+      const joined = service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 31 });
+      await waitForRequests(service, connection, 2);
+      service.revokeSession(SESSION);
+      expect(await leading).toMatchObject({ status: 'cancelled' });
+      // Past the card's expiry, before the joined request's own.
+      clock += 4 * 60_000 + 1_000;
+      await service.handlePrivateUi(connection(), { operation: 'getState' });
+      const reply = await joined;
+      expect(reply).toMatchObject({ status: 'user_action_required' });
+      expect(state.calls.some((call) => call.action === 'openUi' && call.params.requestId === reply.requestId)).toBe(true);
+      expect(state.calls.some((call) => call.action === 'promptClose' && call.params.requestId === requestId)).toBe(true);
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId, decision: 'allow', always: false }))
+        .toMatchObject({ success: false, code: 'VAULT_REQUEST_EXPIRED' });
+      // The owner can still approve the moved request there, and the approval covers the site.
+      expect(await service.handlePrivateUi(connection(), { operation: 'approve', requestId: reply.requestId, purpose: 'list' }))
+        .toMatchObject({ success: true, status: 'approved' });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants)
+        .toEqual([expect.objectContaining({ purpose: 'site' })]);
+    });
+
+    it('takes down a held card that outlived its retention when no call expired it first', async () => {
+      let clock = Date.now();
+      const { service, state, connection } = await setupCard(() => clock);
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 34 });
+      await waitFor(() => prompts(state).length === 1);
+      const requestId = prompts(state)[0].requestId;
+      service.revokeSession(SESSION);
+      await listing;
+      clock += 16 * 60_000;
+      service.revokeSession(OTHER_SESSION);
+      await waitFor(() => state.calls.some((call) => call.action === 'promptClose' && call.params.requestId === requestId));
+    });
+
+    it('ends a held card with its connection, and with a move to the vault page when nothing waits on it', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const first = service.handlePublic(SESSION, { action: 'list', tabId: 32 });
+      await waitFor(() => prompts(state).length === 1);
+      const firstId = prompts(state)[0].requestId;
+      service.revokeSession(SESSION);
+      await first;
+      service.revokeConnection(state.context.browserId, state.context.connectionId);
+      await waitFor(() => state.calls.some((call) => call.action === 'promptClose' && call.params.requestId === firstId));
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: firstId, decision: 'allow', always: false }))
+        .toMatchObject({ success: false, code: 'VAULT_REQUEST_EXPIRED' });
+
+      const second = service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 33 });
+      await waitFor(() => prompts(state).length === 2);
+      const secondId = prompts(state)[1].requestId;
+      service.revokeSession(OTHER_SESSION);
+      await second;
+      // Nothing is left to move: the daemon says so, and the extension opens the vault page itself.
+      expect(await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: secondId, decision: 'page', always: false }))
+        .toMatchObject({ success: false, code: 'VAULT_REQUEST_EXPIRED' });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
+    });
+
+    it('opens no page for joined requests that one card decision settled', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const leading = service.handlePublic(SESSION, { action: 'list', tabId: 31 });
+      await waitFor(() => prompts(state).length === 1);
+      const joined = service.handlePublic(OTHER_SESSION, { action: 'list', tabId: 31 });
+      await waitForRequests(service, connection, 2);
+      const openedBefore = state.calls.filter((call) => call.action === 'openUi').length;
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'deny', always: false });
+      expect(await leading).toMatchObject({ code: 'VAULT_DECLINED' });
+      expect(await joined).toMatchObject({ code: 'VAULT_DECLINED' });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(state.calls.filter((call) => call.action === 'openUi')).toHaveLength(openedBefore);
+    });
+
+    it('ends an "always" approval from the card as soon as the owner removes the site from the list', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 32 });
+      await waitFor(() => prompts(state).length === 1);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: true });
+      expect(await listing).toMatchObject({ success: true, status: 'ready' });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants)
+        .toEqual([expect.objectContaining({ purpose: 'site', via: 'allowlist' })]);
+      await service.handlePrivateUi(connection(), { operation: 'allowlistRemove', origin: ORIGIN });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
+    });
+
+    it('grants nothing when "always" cannot be added to the list', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const store = (service as unknown as { storeFor: (browserId: string) => { allowlistAdd: () => Promise<boolean> } })
+        .storeFor(connection().browserId);
+      store.allowlistAdd = async () => { throw new Error('allowlist limit reached'); };
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 33 });
+      await waitFor(() => prompts(state).length === 1);
+      const decided = await service.handlePrivateUi(connection(), {
+        operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: true,
+      });
+      expect(decided).toMatchObject({ success: false });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
+      expect(await listing).not.toMatchObject({ status: 'ready' });
+    });
   });
 });

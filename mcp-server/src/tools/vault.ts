@@ -6,7 +6,7 @@ import { tabIdParam, forwardHandler } from './types.js';
 export const vaultTool: ToolDefinition = {
   name: 'browser_vault',
   summary: 'Request private credential help for the current site',
-  description: 'Request a private save, list, unlock, or one-shot fill. Passwords and approval decisions are entered in the Browser Controller extension page, never in this tool call.',
+  description: 'Request a private save, list, unlock, or fill (username and password). The owner approves a site once, on a card on that tab or the extension page; passwords never enter this call.',
   inputSchema: z.object({
     action: z.enum(['status', 'list', 'fill', 'save_login', 'unlock']),
     tabId: tabIdParam.optional(),

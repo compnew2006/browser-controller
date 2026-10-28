@@ -113,6 +113,7 @@ function makeTransport() {
   const transport: VaultTransport = {
     async getBrowserContext() { return context; },
     async callVaultAction() { throw new Error('unexpected action'); },
+    async closeCard() { throw new Error('unexpected action'); },
   };
   return transport;
 }

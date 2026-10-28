@@ -252,7 +252,7 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
   }
 
   revokeSession(sessionId: string): void {
-    this.requests.cancelMatching((pending) => pending.request.sessionId === sessionId);
+    this.requests.cancelSession(sessionId);
     this.requests.pruneTerminal();
     this.grants.revokeSession(sessionId);
     this.operations.abortMatching((operation) => operation.sessionId === sessionId);
@@ -266,10 +266,11 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
     this.operations.abortMatching((operation) => operation.scope === scope && operation.connectionId === connectionId);
   }
 
-  /** Closing the authenticated private vault page cancels its waiting approvals. */
+  /** Closing the authenticated private vault page cancels its waiting approvals; requests shown on an in-page card stay. */
   cancelPrivateUiRequests(browserId: string, connectionId: string): void {
     const scope = scopeForBrowser(browserId);
-    this.requests.cancelMatching((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId);
+    this.requests.cancelMatching((pending) => pending.request.browserScope === scope && pending.connectionId === connectionId
+      && pending.surface !== 'card');
   }
 
   lockAll(): void {

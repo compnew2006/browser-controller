@@ -10,6 +10,7 @@ export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   'credential-vault-v1',
   'site-context',
   'site-map',
+  'vault-site-approval',
 ]);
 
 /** The 3.0 tool contract. A daemon without it is a 2.x build. */

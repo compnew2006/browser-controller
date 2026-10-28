@@ -18,6 +18,7 @@
  */
 
 import { raceReject } from './timing.js';
+import { cardInputGate, cardsReady } from './vault-card.js';
 
 export const IDLE_MS = 30_000;
 /** A CDP command on a frozen renderer never answers: bound the setup probes. */
@@ -269,12 +270,18 @@ export async function ensureCdp(tabId) {
     await s.ready;
   }
   armIdle(tabId);
-  return (method, params = {}) => chrome.debugger.sendCommand({ tabId }, method, params).catch((err) => {
-    // The debugger went away without its onDetach event (a detach this extension made, a
-    // Chrome-side drop): forget the stale session, so the next call attaches again.
-    if (DEBUGGER_GONE.test(String(err?.message || err))) endSession(tabId, 'detached');
-    throw err;
-  });
+  return async (method, params = {}) => {
+    // While a vault approval card shows on the tab, the agent's input never reaches it (specs/006 D5).
+    await cardsReady;
+    const refused = cardInputGate(tabId, method, params);
+    if (refused) throw refused;
+    return chrome.debugger.sendCommand({ tabId }, method, params).catch((err) => {
+      // The debugger went away without its onDetach event (a detach this extension made, a
+      // Chrome-side drop): forget the stale session, so the next call attaches again.
+      if (DEBUGGER_GONE.test(String(err?.message || err))) endSession(tabId, 'detached');
+      throw err;
+    });
+  };
 }
 
 /** A CDP error that says the debugger is no longer attached to the target. */
@@ -285,7 +292,10 @@ const DEBUGGER_GONE = /not attached|Detached while|No target with given id/i;
  * ("Debugger is not attached") when there is none, so a probe never shows the
  * debugger banner.
  */
-export function sendAttached(tabId, method, params = {}) {
+export async function sendAttached(tabId, method, params = {}) {
+  await cardsReady;
+  const refused = cardInputGate(tabId, method, params);
+  if (refused) throw refused;
   return chrome.debugger.sendCommand({ tabId }, method, params);
 }
 

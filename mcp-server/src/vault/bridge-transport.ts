@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-import { CREDENTIAL_VAULT_CAPABILITY, SITE_CONTEXT_CAPABILITY, SITE_MAP_CAPABILITY } from '../protocol.js';
+import { CREDENTIAL_VAULT_CAPABILITY, SITE_CONTEXT_CAPABILITY, SITE_MAP_CAPABILITY, VAULT_SITE_APPROVAL_CAPABILITY } from '../protocol.js';
 import { ExtensionConnections, type ExtensionConnection } from '../bridge-connections.js';
 import type { VaultService } from './service.js';
 
@@ -40,6 +40,7 @@ export class VaultBridgeTransport {
     supportsVault: boolean;
     supportsSiteContext: boolean;
     supportsSiteMap: boolean;
+    supportsSiteApproval: boolean;
     ambiguous: boolean;
   } {
     const conn = this.connections.forSession(sessionId);
@@ -50,6 +51,7 @@ export class VaultBridgeTransport {
       supportsVault: this.supportsVault(conn),
       supportsSiteContext: conn.capabilities.includes(SITE_CONTEXT_CAPABILITY),
       supportsSiteMap: conn.capabilities.includes(SITE_MAP_CAPABILITY),
+      supportsSiteApproval: this.supportsVault(conn) && conn.capabilities.includes(VAULT_SITE_APPROVAL_CAPABILITY),
       ambiguous: !this.hasUniqueIdentity(conn),
     };
   }
@@ -65,7 +67,7 @@ export class VaultBridgeTransport {
     signal?: AbortSignal,
     agentName?: string,
   ): Promise<unknown> {
-    if (!['inspect', 'fill', 'openUi'].includes(action)) throw new Error('INVALID_ARGUMENT: unsupported private vault action');
+    if (!['inspect', 'fill', 'openUi', 'prompt', 'promptClose'].includes(action)) throw new Error('INVALID_ARGUMENT: unsupported private vault action');
     if (signal?.aborted) throw new Error('VAULT_PERMISSION_DENIED: private action was cancelled before send');
 
     let conn: ExtensionConnection;
@@ -77,17 +79,50 @@ export class VaultBridgeTransport {
       if (conn.browserId === 'default' || !this.hasUniqueIdentity(conn)) {
         throw new Error('VAULT_PERMISSION_DENIED: browser identity is not unique and verified');
       }
-      if (action === 'inspect' && (!Number.isInteger(params.tabId) || Object.keys(params).some((key) => key !== 'tabId'))) {
+      if ((action === 'prompt' || action === 'promptClose') && !conn.capabilities.includes(VAULT_SITE_APPROVAL_CAPABILITY)) {
+        throw new Error('VAULT_EXTENSION_REQUIRED: reload the Browser Controller extension to show approval cards');
+      }
+      if (action === 'inspect' && (!Number.isInteger(params.tabId)
+        || Object.keys(params).some((key) => key !== 'tabId' && key !== 'withIdentifier')
+        || (params.withIdentifier !== undefined && params.withIdentifier !== true)
+        || (params.withIdentifier === true && !conn.capabilities.includes(VAULT_SITE_APPROVAL_CAPABILITY)))) {
         throw new Error('INVALID_ARGUMENT: private inspection request is invalid');
       }
       if (action === 'openUi' && (typeof params.requestId !== 'string' || Object.keys(params).some((key) => key !== 'requestId'))) {
         throw new Error('INVALID_ARGUMENT: private UI request is invalid');
       }
-      if (action === 'fill') this.validateFillParams(params);
+      if (action === 'prompt') this.validatePromptParams(params);
+      if (action === 'promptClose' && (!Number.isInteger(params.tabId) || typeof params.requestId !== 'string'
+        || Object.keys(params).some((key) => key !== 'tabId' && key !== 'requestId'))) {
+        throw new Error('INVALID_ARGUMENT: private card request is invalid');
+      }
+      if (action === 'fill') this.validateFillParams(params, conn.capabilities.includes(VAULT_SITE_APPROVAL_CAPABILITY));
     } catch (error) {
       throw error instanceof Error ? error : new Error('NOT_CONNECTED: selected browser is not connected');
     }
+    return this.dispatch(action, params, conn, sessionId, signal, agentName);
+  }
 
+  /**
+   * Takes an approval card down through the connection that drew it. A card can outlive the session that
+   * asked for it (specs/006 edge cases), and an ended session would be routed to the primary browser.
+   */
+  closeCard(connectionId: string, params: { tabId: number; requestId: string }, sessionId: string): Promise<unknown> {
+    const conn = this.connections.live().find((candidate) => candidate.connectionId === connectionId);
+    if (!conn || !this.supportsVault(conn) || !conn.capabilities.includes(VAULT_SITE_APPROVAL_CAPABILITY)) {
+      return Promise.resolve({ success: true, closed: false });
+    }
+    return this.dispatch('promptClose', { tabId: params.tabId, requestId: params.requestId }, conn, sessionId);
+  }
+
+  private dispatch(
+    action: string,
+    params: Record<string, unknown>,
+    conn: ExtensionConnection,
+    sessionId: string,
+    signal?: AbortSignal,
+    agentName?: string,
+  ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = `v${++this.requestId}`;
       // The extension bounds each page script at 8s; reserve transport time
@@ -178,14 +213,34 @@ export class VaultBridgeTransport {
     pending.reject(error);
   }
 
-  private validateFillParams(params: Record<string, unknown>): void {
-    const allowed = ['tabId', 'origin', 'documentId', 'targetDocumentId', 'frameId', 'nonce', 'password'];
-    if (Object.keys(params).some((key) => !allowed.includes(key)) || allowed.some((key) => params[key] === undefined)
+  /**
+   * A fill carries the password, the identifier, or both (specs/006 FR-012). Only an extension with
+   * the site-approval capability understands the identifier; an older one gets the password alone.
+   */
+  private validateFillParams(params: Record<string, unknown>, identifierSupported: boolean): void {
+    const required = ['tabId', 'origin', 'documentId', 'targetDocumentId', 'frameId', 'nonce'];
+    const allowed = [...required, 'password', ...(identifierSupported ? ['identifier'] : [])];
+    if (Object.keys(params).some((key) => !allowed.includes(key)) || required.some((key) => params[key] === undefined)
       || !Number.isInteger(params.tabId) || typeof params.origin !== 'string' || typeof params.documentId !== 'string'
       || typeof params.targetDocumentId !== 'string' || !params.targetDocumentId
       || typeof params.frameId !== 'number' || !Number.isInteger(params.frameId) || params.frameId < 0
-      || typeof params.nonce !== 'string' || typeof params.password !== 'string') {
+      || typeof params.nonce !== 'string'
+      || (params.password !== undefined && typeof params.password !== 'string')
+      || (params.identifier !== undefined && typeof params.identifier !== 'string')
+      || (params.password === undefined && params.identifier === undefined)) {
       throw new Error('INVALID_ARGUMENT: private fill request is invalid');
+    }
+  }
+
+  private validatePromptParams(params: Record<string, unknown>): void {
+    const allowed = ['tabId', 'requestId', 'documentId', 'origin', 'purpose', 'browserLabel', 'agentName', 'unlock', 'account', 'expiresAt'];
+    const shortText = (value: unknown) => typeof value === 'string' && value.length <= 120;
+    if (Object.keys(params).some((key) => !allowed.includes(key)) || !Number.isInteger(params.tabId)
+      || typeof params.requestId !== 'string' || typeof params.documentId !== 'string' || !params.documentId
+      || typeof params.origin !== 'string' || !['list', 'fill'].includes(String(params.purpose))
+      || !shortText(params.browserLabel) || !shortText(params.agentName) || typeof params.unlock !== 'boolean'
+      || (params.account !== undefined && !shortText(params.account)) || !Number.isSafeInteger(params.expiresAt)) {
+      throw new Error('INVALID_ARGUMENT: private card request is invalid');
     }
   }
 

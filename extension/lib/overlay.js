@@ -70,6 +70,9 @@ export async function showLockShield(tabId, label) {
             // The agent's own CDP input (trusted-input.js) is isTrusted===true
             // too: it opens a short pass-through window around each action.
             if (window.__bcAgentInputUntil > Date.now()) return;
+            // The owner answers a vault approval card even while an agent call runs (specs/006).
+            // The mark is set in this isolated world, so a page element cannot claim it.
+            if (typeof e.composedPath === 'function' && e.composedPath().some((node) => node && node.__bcVaultHost === true)) return;
             e.preventDefault();
             e.stopImmediatePropagation();
           };

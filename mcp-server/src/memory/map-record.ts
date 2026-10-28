@@ -14,6 +14,8 @@ export const MAX_MAP_CONTROLS = MAP_LIMITS.controlsPerPage;
 export const MAX_MAP_BYTES = MAP_LIMITS.mapFileBytes;
 export const MAX_MAP_FILES_PER_PROFILE = MAP_LIMITS.mapFilesPerProfile;
 export const MAX_MAP_TOTAL_BYTES = MAP_LIMITS.mapTotalBytes;
+/** Entrances kept per map, newest first (specs/005-direct-site-routing FR-004). */
+export const MAX_MAP_ENTRANCES = 5;
 
 export type ReadContext = 'public' | 'not_public' | 'unknown';
 export const READ_CONTEXTS: readonly ReadContext[] = ['public', 'not_public', 'unknown'];
@@ -73,7 +75,8 @@ export interface PageEntry {
   lang: string | null;
   dir: 'ltr' | 'rtl' | null;
   addressable: boolean;
-  reason: 'root' | 'destination' | 'hub' | 'landing';
+  /** `read`: a complete read of the page itself (specs/005-direct-site-routing FR-001). */
+  reason: 'root' | 'destination' | 'hub' | 'landing' | 'read';
   via: { path: string; control: string } | null;
   lastOpen: OpenResult | null;
   useCount: number;
@@ -85,11 +88,24 @@ export interface PageEntry {
   controls: ControlEntry[];
 }
 
+/**
+ * Another site's page that an agent's click left to arrive on this site (specs/005-direct-site-routing FR-004): its
+ * origin and masked path only, never the control's name or any content text.
+ */
+export interface Entrance {
+  origin: string;
+  path: string;
+  addressable: boolean;
+  at: string;
+}
+
 export interface MapRecord {
   schemaVersion: 1;
   profile: string;
   origin: string;
   pages: PageEntry[];
+  /** Optional, so files written before 005 stay valid; absent when empty. */
+  entrances?: Entrance[];
   commitSeq: number;
   updatedAt: string;
 }
@@ -115,7 +131,7 @@ const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u;
 const AREAS: readonly string[] = ['header', 'nav', 'sidebar', 'footer', 'main', 'page', 'dialog', 'menu'];
 const ROLES: readonly string[] = ['link', 'button', 'tab', 'menuitem'];
 const OPEN_KINDS: readonly string[] = ['same', 'elsewhere', 'other_origin', 'sign_in', 'not_found', 'error'];
-const REASONS: readonly string[] = ['root', 'destination', 'hub', 'landing'];
+const REASONS: readonly string[] = ['root', 'destination', 'hub', 'landing', 'read'];
 
 const bad = (mode: Mode, message: string): MemoryStoreError => new MemoryStoreError(mode === 'read' ? 'MEMORY_CORRUPT' : 'INVALID_ARGUMENT', message);
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -246,11 +262,29 @@ function validatePage(raw: unknown, mode: Mode): PageEntry {
   return page as unknown as PageEntry;
 }
 
+function validateEntrances(value: unknown, own: string, mode: Mode): void {
+  check(Array.isArray(value) && value.length <= MAX_MAP_ENTRANCES, mode, 'map.entrances is not a bounded array');
+  const seen = new Set<string>();
+  for (const raw of value as unknown[]) {
+    check(isRecord(raw), mode, 'entrance is not an object');
+    const entrance = raw as Record<string, unknown>;
+    onlyKeys(entrance, ['origin', 'path', 'addressable', 'at'], mode, 'entrance');
+    storedOrigin(entrance.origin, mode, 'entrance.origin');
+    check(entrance.origin !== own, mode, 'entrance.origin is the map\'s own origin');
+    storedPath(entrance.path, mode, 'entrance.path');
+    check(typeof entrance.addressable === 'boolean', mode, 'entrance.addressable is not a boolean');
+    check(isTime(entrance.at), mode, 'entrance.at is not a time');
+    const key = `${entrance.origin as string}\n${entrance.path as string}`;
+    check(!seen.has(key), mode, 'map.entrances holds a duplicate');
+    seen.add(key);
+  }
+}
+
 /** Strict validation of a map file: on read a failure quarantines the file (MEMORY_CORRUPT); on write it is a programming error. */
 export function validateMapRecord(raw: unknown, mode: Mode): MapRecord {
   check(isRecord(raw), mode, 'map is not an object');
   const record = raw as Record<string, unknown>;
-  onlyKeys(record, ['schemaVersion', 'profile', 'origin', 'pages', 'commitSeq', 'updatedAt'], mode, 'map');
+  onlyKeys(record, ['schemaVersion', 'profile', 'origin', 'pages', 'entrances', 'commitSeq', 'updatedAt'], mode, 'map');
   check(record.schemaVersion === MAP_SCHEMA_VERSION, mode, 'unknown map schemaVersion');
   check(typeof record.profile === 'string' && record.profile.length > 0 && record.profile.length <= 200, mode, 'map.profile is invalid');
   storedOrigin(record.origin, mode, 'map.origin');
@@ -261,6 +295,7 @@ export function validateMapRecord(raw: unknown, mode: Mode): MapRecord {
     check(!paths.has(valid.path), mode, 'map.pages holds a duplicate path');
     paths.add(valid.path);
   }
+  if (record.entrances !== undefined) validateEntrances(record.entrances, record.origin as string, mode);
   check(isCount(record.commitSeq), mode, 'map.commitSeq is invalid');
   check(isTime(record.updatedAt), mode, 'map.updatedAt is not a time');
   return structuredClone(record) as unknown as MapRecord;
