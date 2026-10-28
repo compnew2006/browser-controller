@@ -264,6 +264,8 @@
       "NetworkProbeLimit",
       "WMF-Last-Access",
       "WMF-Last-Access-Global",
+      "WMF-Uniq",
+      "WMF-DP",
       "appLifetimeMetrics",
       "userLifetimeMetrics",
       "glean_session_last_active",

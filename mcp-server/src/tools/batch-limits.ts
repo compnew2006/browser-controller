@@ -29,3 +29,6 @@ export const NOT_BATCHABLE = new Set(['browser_batch', 'browser_safety', 'browse
  * the tab to act on (close/focus), not the page a batch works on.
  */
 export const NO_DEFAULT_TAB = new Set(['browser_tabs']);
+
+/** Tools that take a tabId or an origin: a step that names an origin gets no default tabId. */
+export const TAB_OR_ORIGIN = new Set(['browser_site_map']);

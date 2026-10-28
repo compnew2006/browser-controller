@@ -48,7 +48,7 @@ describe('registerTools', () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual(allTools.map((t) => t.name));
-    expect(tools).toHaveLength(21);
+    expect(tools).toHaveLength(22);
     expect(tools.map((t) => t.name)).not.toContain('browser_tools');
   });
 

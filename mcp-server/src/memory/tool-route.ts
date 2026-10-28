@@ -1,4 +1,5 @@
 import type { RoutedCallResult } from '../vault/daemon-routing.js';
+import { canonicalOrigin } from './policy.js';
 
 /** The tab-context action the daemon sends to the extension; see DAEMON_ONLY_WIRE_TOOLS in wire-tools.ts. */
 export const CONTEXT_ACTION = 'browser_memory_internal_context';
@@ -84,4 +85,31 @@ export async function routeMemoryTool(
   } catch {
     return fail('MEMORY_UNAVAILABLE: website memory failed');
   }
+}
+
+export const unknownScope = (reason: string): RoutedCallResult => fail(`MEMORY_SCOPE_UNKNOWN: ${reason}`);
+
+/**
+ * The tab's canonical origin, read from the browser under the normal tab lock. A private tab, a frame that is
+ * not the top document or a non-http page has no origin to act on. The agent never supplies an origin.
+ */
+export async function resolveTab(
+  bridge: MemoryToolBridge,
+  sessionId: string,
+  agentName: string,
+  tabId: number,
+  signal: AbortSignal,
+): Promise<{ origin: string; siteContext: unknown } | RoutedCallResult> {
+  let raw: unknown;
+  try {
+    raw = await bridge.callTool(CONTEXT_ACTION, { tabId }, sessionId, signal, agentName);
+  } catch (error) {
+    return fail(contextFailure(error));
+  }
+  const siteContext = isRecord(raw) ? raw.siteContext ?? null : null;
+  if (!isRecord(siteContext) || typeof siteContext.url !== 'string') return unknownScope("this tab's site could not be verified, so nothing was changed.");
+  if (siteContext.incognito !== false) return unknownScope('a private tab has no website memory, so nothing was changed.');
+  if (siteContext.topLevel !== true) return unknownScope('the page is not a top-level document, so nothing was changed.');
+  const origin = canonicalOrigin(siteContext.url);
+  return origin ? { origin, siteContext } : unknownScope('the page is not an http or https site, so nothing was changed.');
 }

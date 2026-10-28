@@ -135,6 +135,23 @@ describe('shared page DOM runtime (resolver)', () => {
     expect(D().nameOf(host)).toBe('Shadow label');
     expect(D().roleOf(doc.el('input', { type: 'search' }))).toBe('searchbox');
   });
+
+  it('follows HTML-AAM for headers and footers: banner and contentinfo only outside sectioning content', () => {
+    const pageHeader = doc.el('header');
+    const article = doc.el('article');
+    const postHeader = doc.el('header');
+    const postFooter = doc.el('footer');
+    const region = doc.el('div', { role: 'region' });
+    const regionFooter = doc.el('footer');
+    article.append(postHeader, postFooter);
+    region.append(regionFooter);
+    doc.body.append(pageHeader, article, region);
+    expect(D().roleOf(pageHeader)).toBe('banner');
+    expect(D().roleOf(article)).toBe('article');
+    expect(D().roleOf(postHeader)).toBe('generic');
+    expect(D().roleOf(postFooter)).toBe('generic');
+    expect(D().roleOf(regionFooter)).toBe('generic');
+  });
 });
 
 describe('repeated row controls (icon buttons in table rows)', () => {

@@ -37,7 +37,8 @@ function makeDaemon() {
   }));
   const handleTool = vi.fn(async () => ({ success: true as const, text: 'memory (untrusted site notes)', origin: ORIGIN, items: [] }));
   const prepareTool = vi.fn(() => ({ connectionId: 'conn-1' }));
-  const memory: PolicyToolHost = { admin, prepareTool, handleTool };
+  const mapIdentity = vi.fn(() => ({ profile: 'profile-a', label: 'Work' }));
+  const memory: PolicyToolHost = { admin, prepareTool, handleTool, mapIdentity };
   const bridge = {
     callTool: vi.fn(async (_tool: string, _params: Record<string, unknown>) => {
       if (tab.fail) throw new Error(tab.fail);

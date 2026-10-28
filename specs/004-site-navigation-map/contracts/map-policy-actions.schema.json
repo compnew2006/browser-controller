@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-controller/specs/004-site-navigation-map/map-policy-actions.schema.json",
+  "title": "Site map owner controls",
+  "description": "Additions to browser_memory_policy (agent requests, owner-confirmed by elicitation) and to the memory-admin IPC kind (owner CLI). Agent requests are scoped to the session's verified profile. ownerConfirmed, confirmedOrigin, confirmedPath and confirmedProfile are internal wire fields set by the MCP server after elicitation; agent-supplied values are dropped.",
+  "$defs": {
+    "toolInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "enum": [
+            "enable", "disable", "exclude", "include", "inspect", "export", "delete",
+            "map_enable", "map_disable", "map_exclude_path", "map_include_path", "map_inspect", "map_export", "map_delete"
+          ]
+        },
+        "tabId": { "type": "integer", "minimum": 0, "description": "Required for map_exclude_path and map_include_path; selects the site for map_inspect, map_export and map_delete." },
+        "path": { "type": "string", "minLength": 2, "maxLength": 200, "pattern": "^/[^?#]*$", "description": "map_exclude_path and map_include_path: the prefix. map_delete: one page entry (masked path as shown by map_inspect)." }
+      },
+      "allOf": [
+        { "if": { "properties": { "action": { "enum": ["map_exclude_path", "map_include_path"] } } }, "then": { "required": ["tabId", "path"] } },
+        { "if": { "properties": { "action": { "const": "map_delete" } }, "required": ["path"] }, "then": { "required": ["tabId"] } },
+        { "if": { "properties": { "action": { "enum": ["enable", "disable", "exclude", "include", "inspect", "export", "delete", "map_enable", "map_disable"] } } }, "then": { "not": { "required": ["path"] } } }
+      ]
+    },
+    "toolWireExtras": {
+      "type": "object",
+      "properties": {
+        "ownerConfirmed": { "type": "boolean" },
+        "confirmedOrigin": { "type": "string" },
+        "confirmedPath": { "type": "string" },
+        "confirmedProfile": { "type": "string" }
+      }
+    },
+    "adminRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "command", "map"],
+      "properties": {
+        "kind": { "const": "memory-admin" },
+        "id": { "type": "string" },
+        "command": { "const": "map" },
+        "map": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command"],
+          "properties": {
+            "command": { "enum": ["status", "enable", "disable", "exclude-path", "include-path", "inspect", "export", "delete"] },
+            "browser": { "type": "string", "description": "browserId; required for enable and disable; optional elsewhere (default: every profile for status, inspect, export)." },
+            "origin": { "type": "string" },
+            "path": { "type": "string", "pattern": "^/[^?#]*$" },
+            "all": { "type": "boolean", "description": "delete: every map of the profile, or of every profile when browser is absent; also resets the counters." }
+          }
+        }
+      }
+    },
+    "adminResult": {
+      "type": "object",
+      "required": ["kind", "id", "success"],
+      "properties": {
+        "kind": { "const": "memory-admin-result" },
+        "id": { "type": "string" },
+        "success": { "type": "boolean" },
+        "mapStatus": {
+          "type": "object",
+          "description": "Per profile: enabled, map files, bytes, oldest entry date, quarantined files, dropped observations, counters (estimates labeled). Never origins, paths, titles or names.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "files": { "type": "integer" },
+              "bytes": { "type": "integer" },
+              "oldestEntryDate": { "type": ["string", "null"], "format": "date" },
+              "quarantined": { "type": "integer" },
+              "dropped": { "type": "integer" },
+              "counters": {
+                "type": "object",
+                "properties": {
+                  "lookups": { "type": "integer" },
+                  "usesWorked": { "type": "integer" },
+                  "usesFailed": { "type": "integer" },
+                  "loadsSavedEstimate": { "type": "integer" },
+                  "charsSavedEstimate": { "type": "integer" },
+                  "since": { "type": "string", "format": "date-time" }
+                }
+              }
+            }
+          }
+        },
+        "records": { "type": "array", "description": "inspect/export: MapRecord objects (map-store.schema.json). Owner CLI only; agents get outline text (RV-15)." },
+        "error": { "type": "string" }
+      }
+    }
+  }
+}

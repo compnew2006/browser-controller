@@ -1,0 +1,91 @@
+{
+  "$comment": "Owner gate 3. Draft rules for what the site map may store and how it labels controls. mcp-server/src/memory/map-allowlist.ts mirrors this file; a parity test keeps them equal. Changing this file changes what can be stored: review it like a permission change. Matching uses normalizeForMatch (research R-14). The data-changing vocabulary can only over-match into a lost reminder line; it is not a safety guarantee.",
+  "version": 1,
+  "areas": {
+    "banner": "header",
+    "navigation": "nav",
+    "search": "nav",
+    "complementary": "sidebar",
+    "contentinfo": "footer",
+    "main": "main",
+    "dialog": "dialog",
+    "alertdialog": "dialog",
+    "menu": "menu",
+    "menubar": "nav",
+    "(none)": "page"
+  },
+  "eligibleRoles": {
+    "header": ["link", "button", "tab", "menuitem"],
+    "nav": ["link", "button", "tab", "menuitem"],
+    "sidebar": ["link", "button", "tab", "menuitem"],
+    "footer": ["link", "button", "tab", "menuitem"],
+    "main": ["button", "tab", "menuitem"],
+    "page": ["button", "tab", "menuitem"],
+    "dialog": ["link", "button", "tab", "menuitem"],
+    "menu": ["link", "button", "tab", "menuitem"]
+  },
+  "openedOnly": ["dialog", "menu"],
+  "contentContainers": {
+    "$comment": "Inside main or page, a subtree rooted at one of these roles is a content area: nothing in it is stored, and a page reached only from it is not recorded.",
+    "roles": ["article", "feed", "table", "grid", "treegrid", "row", "rowgroup", "cell", "gridcell", "listitem", "log", "comment", "document"]
+  },
+  "ignoredLineFields": ["value", "context"],
+  "masking": {
+    "$comment": "Applied in this order to paths, titles and names. A name with a placeholder is not stored; a path with one is not addressable and its title is not stored.",
+    "rules": [
+      { "placeholder": "{email}", "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}" },
+      { "placeholder": "{phone}", "pattern": "\\+?\\p{Nd}(?:[\\s.()-]*\\p{Nd}){6,}" },
+      { "placeholder": "{id}", "pattern": "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" },
+      { "placeholder": "{id}", "pattern": "(?=[0-9a-fA-F]*\\d)[0-9a-fA-F]{12,}" },
+      { "placeholder": "{id}", "pattern": "(?=[A-Za-z0-9_-]*\\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{16,}" },
+      { "placeholder": "{n}", "pattern": "\\p{Nd}{4,}" }
+    ]
+  },
+  "limits": {
+    "nameChars": 80,
+    "titleChars": 120,
+    "pathChars": 200,
+    "pagesPerOrigin": 500,
+    "controlsPerPage": 60,
+    "mapFileBytes": 1048576,
+    "mapFilesPerProfile": 1000,
+    "mapTotalBytes": 67108864,
+    "excludedPrefixesPerOrigin": 32,
+    "reminderLines": 4,
+    "reminderChars": 600,
+    "lookupEntries": 20,
+    "lookupChars": 4000,
+    "outlineLines": 10,
+    "outlineChars": 1000,
+    "tabCacheEntries": 64,
+    "errorAttributionSeconds": 120
+  },
+  "arabicProclitics": {
+    "$comment": "A name word matches a vocabulary word when it equals it, or when it equals it after one of these is removed from its start with at least 2 letters left. Longer forms are tried first. Vocabulary words are never stripped, so الغاء still matches الغاء.",
+    "prefixes": ["وال", "بال", "فال", "كال", "لل", "ال", "و", "ف", "ب", "ل", "ك"]
+  },
+  "dataChanging": {
+    "$comment": "Phrases, matched as consecutive words of the normalized name. Verb forms included: imperative, verbal noun, and common present forms.",
+    "en": [
+      "delete", "remove", "erase", "clear all", "discard", "destroy",
+      "pay", "pay now", "purchase", "buy", "buy now", "checkout", "check out", "place order", "order now", "subscribe", "upgrade", "renew",
+      "transfer", "send", "send money", "withdraw", "deposit", "donate",
+      "submit", "confirm", "approve", "reject", "decline", "accept invitation",
+      "sign out", "log out", "logout", "signout",
+      "unsubscribe", "cancel", "cancel subscription", "cancel order", "close account", "deactivate", "disable account", "revoke", "reset", "archive", "publish", "post", "share", "block", "report", "unfollow", "leave group"
+    ],
+    "ar": [
+      "حذف", "احذف", "امسح", "مسح", "ازاله", "ازل", "ازاله الكل", "تفريغ",
+      "دفع", "ادفع", "ادفع الان", "شراء", "اشتر", "اشتري", "اشتري الان", "اطلب", "اطلب الان", "اتمام الطلب", "اتمام الشراء", "اتمام الدفع", "اشتراك", "اشترك", "ترقيه", "تجديد", "جدد",
+      "تحويل", "حول الاموال", "حول المبلغ", "ارسال", "ارسل", "سحب", "اسحب", "ايداع", "تبرع",
+      "تاكيد", "اكد", "موافقه", "وافق", "رفض", "ارفض", "قبول الدعوه",
+      "تسجيل الخروج", "تسجيل خروج", "خروج", "اخرج",
+      "الغاء الاشتراك", "الغاء", "الغاء الطلب", "اغلاق الحساب", "تعطيل الحساب", "عطل", "ابطال", "اعاده تعيين", "اعاده الضبط", "ارشفه", "نشر", "انشر", "مشاركه", "شارك", "حظر", "احظر", "ابلاغ", "بلغ", "الغاء المتابعه", "مغادره المجموعه"
+    ]
+  },
+  "notDataChanging": {
+    "$comment": "Whole normalized names that never match: false friends only, words that merely look like a listed verb. A harmless control that really uses a listed verb, such as \"Remove filter\", stays matched; the spec accepts that over-match (RV-18).",
+    "en": [],
+    "ar": ["حول", "حول الموقع", "حولنا"]
+  }
+}

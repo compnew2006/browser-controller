@@ -48,6 +48,7 @@ describe('anonymity names v2', () => {
   it('accepts the surveyed non-login names', () => {
     const names = [
       'cookies_policy', 'FCCDCF', 'FCNEC', 'GeoIP', 'NetworkProbeLimit', 'WMF-Last-Access', 'WMF-Last-Access-Global',
+      'WMF-Uniq', 'WMF-DP', 'CentralAuthAnon', 'ddg-promotions', 'wmE-sessionTickTickCount',
       'appLifetimeMetrics', 'userLifetimeMetrics', 'glean_session_last_active', '__cf_bm', '_cfuvid', 'cf_clearance',
       'AWSALB', 'AWSALBCORS', '_clck', '_clsk',
       'arwikimwuser-sessionId', 'enwikimwuser-sessionId', 'MediaWikiModuleStore:arwiki', 'CentralNoticeKV|global|buckets',

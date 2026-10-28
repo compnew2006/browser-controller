@@ -92,8 +92,11 @@ export async function dispatch(tool, params, sessionId, agentName, signal, obser
   return withDialogLine(params?.tabId, withFileChooserLine(params?.tabId, observed));
 }
 
-/** The calls that report siteContext when the daemon asks for it (specs/003-website-agent-memory R-05). */
-const OBSERVED_TOOLS = new Set(['browser_navigate', 'browser_snapshot']);
+/**
+ * The calls that report siteContext when the daemon asks for it (specs/003-website-agent-memory R-05). A click
+ * reports the light block (specs/004-site-navigation-map R-06); the daemon asks for it only for the site map.
+ */
+const OBSERVED_TOOLS = new Set(['browser_navigate', 'browser_snapshot', 'browser_click']);
 
 /**
  * Add siteContext to a successful navigate or snapshot result. The block is built after the
@@ -107,7 +110,7 @@ async function withSiteContext(tool, params, urlBefore, result) {
   if (typeof tabId !== 'number') return result;
   // A URL taken from another tab (the one a navigate replaced) says nothing about this one.
   const before = tabId === params?.tabId ? urlBefore : null;
-  const siteContext = await buildSiteContext(tabId, { urlBefore: before, navigated: tool === 'browser_navigate' });
+  const siteContext = await buildSiteContext(tabId, { urlBefore: before, navigated: tool === 'browser_navigate', light: tool === 'browser_click' });
   return { ...result, siteContext };
 }
 

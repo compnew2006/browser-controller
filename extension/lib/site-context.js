@@ -17,7 +17,7 @@ export const ANONYMITY_NAMES = Object.freeze({
   exact: Object.freeze([
     'CookieConsent', 'OptanonConsent', 'OptanonAlertBoxClosed', 'euconsent-v2', 'cookieyes-consent', 'cookielawinfo-checkbox-necessary',
     '_ga', '_gid', '_gat', '_gcl_au', '_fbp', 'cookies_policy',
-    'FCCDCF', 'FCNEC', 'GeoIP', 'NetworkProbeLimit', 'WMF-Last-Access', 'WMF-Last-Access-Global',
+    'FCCDCF', 'FCNEC', 'GeoIP', 'NetworkProbeLimit', 'WMF-Last-Access', 'WMF-Last-Access-Global', 'WMF-Uniq', 'WMF-DP',
     'appLifetimeMetrics', 'userLifetimeMetrics', 'glean_session_last_active', '__cf_bm', '_cfuvid', 'cf_clearance',
     'AWSALB', 'AWSALBCORS', '_clck', '_clsk', 'CentralAuthAnon', 'ddg-promotions',
   ]),
@@ -194,13 +194,43 @@ function primaryLanguage(raw) {
  * only the handler-end URL is compared with the URL after the page read.
  * Answers within `budgetMs`; past it the block is anonymous:null ('unavailable'). Never throws.
  */
-export async function buildSiteContext(tabId, { urlBefore = null, navigated = false, budgetMs = SITE_CONTEXT_BUDGET_MS } = {}) {
+export async function buildSiteContext(tabId, { urlBefore = null, navigated = false, light = false, budgetMs = SITE_CONTEXT_BUDGET_MS } = {}) {
   let timer;
-  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(unavailableContext(null)), budgetMs); });
+  const fallback = light ? lightContext(null, '', urlBefore, false) : unavailableContext(null);
+  const late = new Promise((resolve) => { timer = setTimeout(() => resolve(fallback), budgetMs); });
   try {
-    return await Promise.race([readSiteContext(tabId, urlBefore, navigated), late]);
+    return await Promise.race([light ? readLightContext(tabId, urlBefore) : readSiteContext(tabId, urlBefore, navigated), late]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * The light block for an observed click (specs/004-site-navigation-map R-06): tab-level URLs only. No page
+ * script runs and no cookie or storage is read; anonymity is not probed. Query and fragment stay in the URLs
+ * so the daemon can see they exist; userinfo is removed.
+ */
+function lightContext(tab, after, urlBefore, stable) {
+  return {
+    url: after ? inspectUrl(after).safeUrl : '',
+    fromUrl: typeof urlBefore === 'string' && urlBefore ? inspectUrl(urlBefore).safeUrl : '',
+    incognito: tab?.incognito === true,
+    topLevel: true,
+    stable,
+    anonymous: null,
+    anonymityReason: 'not_probed',
+  };
+}
+
+async function readLightContext(tabId, urlBefore) {
+  let tab = null;
+  try {
+    tab = await chrome.tabs.get(tabId);
+    const afterHandler = typeof tab?.url === 'string' ? tab.url : '';
+    const afterRead = await captureTabUrl(tabId);
+    return lightContext(tab, afterHandler, urlBefore, afterHandler !== '' && afterRead === afterHandler);
+  } catch {
+    return lightContext(tab, '', urlBefore, false);
   }
 }
 

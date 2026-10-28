@@ -96,7 +96,8 @@ export const TRUSTED_TOOL_RESULT_FIELDS: Readonly<Record<string, readonly string
   browser_inspect_element: ['tabId', 'element', 'details'],
   browser_safety: ['content', 'structuredContent', 'settings', 'isError'],
   browser_memory: ['origin', 'items', 'next'],
-  browser_memory_policy: ['action', 'origin'],
+  browser_memory_policy: ['action', 'origin', 'path', 'profile', 'profileLabel'],
+  browser_site_map: ['origin', 'label', 'outline', 'knownPages', 'pages', 'next'],
   browser_vault: [
     'status', 'code', 'message', 'requestId', 'purpose', 'origin', 'handle', 'accounts',
     'browserLabel', 'grantId', 'backups', 'backupId', 'createdAt', 'filled_fields', 'success', 'error',

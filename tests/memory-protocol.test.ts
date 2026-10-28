@@ -9,6 +9,7 @@ import {
   MEMORY_ADMIN_CAPABILITY,
   PROTOCOL_VERSION,
   SITE_CONTEXT_CAPABILITY,
+  SITE_MAP_CAPABILITY,
   buildIpcWelcome,
   validateExtensionCapabilities,
   validateIpcHandshake,
@@ -31,6 +32,11 @@ describe('memory capabilities', () => {
     expect(validateExtensionCapabilities(withoutSiteContext)).toEqual({ ok: true, legacy: false });
   });
 
+  it('advertises site-map as additive too (specs/004 T012)', () => {
+    expect(EXTENSION_PROTOCOL_CAPABILITIES).toContain(SITE_MAP_CAPABILITY);
+    expect(validateExtensionCapabilities(EXTENSION_PROTOCOL_CAPABILITIES.filter((c) => c !== SITE_MAP_CAPABILITY))).toEqual({ ok: true, legacy: false });
+  });
+
   it('keeps memory-admin out of the mutual IPC list so an older client still connects', () => {
     expect(IPC_PROTOCOL_CAPABILITIES).not.toContain(MEMORY_ADMIN_CAPABILITY);
     expect(buildIpcWelcome('s1').capabilities).not.toContain(MEMORY_ADMIN_CAPABILITY);
@@ -47,16 +53,18 @@ describe('memory capabilities', () => {
 
 describe('observe request flag', () => {
   it('sets observe only on observable tools and only when asked', () => {
-    expect([...OBSERVABLE_TOOLS].sort()).toEqual(['browser_navigate', 'browser_snapshot']);
+    expect([...OBSERVABLE_TOOLS].sort()).toEqual(['browser_click', 'browser_navigate', 'browser_snapshot']);
     expect(withObserve('browser_navigate', { url: 'https://a.test' }, true)).toEqual({ url: 'https://a.test', observe: true });
     expect(withObserve('browser_snapshot', { tabId: 1 }, false)).toEqual({ tabId: 1 });
-    expect(withObserve('browser_click', { tabId: 1 }, true)).toEqual({ tabId: 1 });
+    expect(withObserve('browser_click', { tabId: 1 }, true)).toEqual({ tabId: 1, observe: true });
+    expect(withObserve('browser_type', { tabId: 1 }, true)).toEqual({ tabId: 1 });
   });
 
   it('drops an agent-supplied observe on observable tools and leaves other tools alone', () => {
     expect(withObserve('browser_navigate', { url: 'https://a.test', observe: true }, false)).toEqual({ url: 'https://a.test' });
     expect(withObserve('browser_snapshot', { observe: 'x' }, true)).toEqual({ observe: true });
-    expect(withObserve('browser_click', { observe: 'diff' }, true)).toEqual({ observe: 'diff' });
+    expect(withObserve('browser_click', { observe: 'diff' }, false)).toEqual({});
+    expect(withObserve('browser_type', { observe: 'diff' }, true)).toEqual({ observe: 'diff' });
   });
 });
 

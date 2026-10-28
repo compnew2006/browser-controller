@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-controller/specs/004-site-navigation-map/map-store.schema.json",
+  "title": "Site map on-disk records",
+  "description": "Files under <state dir>/memory/: map-policy.json, maps/<sha256(browserId)>/<sha256(browserId + '\\n' + origin)>.json and map-counters.json. Directory and files are private to the owner (0o700 / 0o600, as in 003). Every string is masked and bounded before it is written (data-model.md).",
+  "$defs": {
+    "time": { "type": "string", "format": "date-time" },
+    "context": { "enum": ["public", "not_public", "unknown"] },
+    "controlKey": { "type": "string", "maxLength": 120, "description": "area + '\\n' + role + '\\n' + normalizeForMatch(name)" },
+    "tombstone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "origin", "at"],
+      "properties": {
+        "profile": { "type": "string" },
+        "origin": { "type": "string" },
+        "pathPrefix": { "type": "string", "pattern": "^/[^?#]*$" },
+        "path": { "type": "string", "pattern": "^/[^?#]*$", "description": "Exactly this page (a page delete)." },
+        "at": { "$ref": "#/$defs/time" }
+      },
+      "not": { "required": ["pathPrefix", "path"] }
+    },
+    "mapPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "profiles", "excludedPaths", "deletions", "updatedAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "profiles": {
+          "type": "object",
+          "maxProperties": 16,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["enabled", "enabledAt"],
+            "properties": { "enabled": { "type": "boolean" }, "enabledAt": { "oneOf": [{ "$ref": "#/$defs/time" }, { "type": "null" }] } }
+          }
+        },
+        "excludedPaths": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "type": "string", "pattern": "^/[^?#]*[^/?#]$", "maxLength": 200 } }
+        },
+        "deletions": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/tombstone" } },
+        "updatedAt": { "$ref": "#/$defs/time" }
+      }
+    },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at"],
+      "minProperties": 2,
+      "maxProperties": 2,
+      "properties": {
+        "path": { "type": "string", "maxLength": 200 },
+        "origin": { "type": "string" },
+        "opens": { "enum": ["menu", "dialog"] },
+        "excluded": { "const": true },
+        "at": { "$ref": "#/$defs/time" }
+      }
+    },
+    "lastUse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result", "at"],
+      "properties": {
+        "result": { "enum": ["worked", "failed"] },
+        "code": { "enum": ["NOT_FOUND", "AMBIGUOUS", "ELEMENT_HIDDEN", "ELEMENT_DISABLED", "ELEMENT_COVERED", "REF_GONE", "REF_NOT_FOUND", "CLICK_MISSED", "MISMATCH"] },
+        "at": { "$ref": "#/$defs/time" }
+      }
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "area", "role", "name", "nth", "parent", "lang", "dataChanging", "destinations", "seen", "useCount", "lastUse", "firstSeenAt", "lastSeenAt"],
+      "properties": {
+        "key": { "$ref": "#/$defs/controlKey" },
+        "area": { "enum": ["header", "nav", "sidebar", "footer", "main", "page", "dialog", "menu"] },
+        "role": { "enum": ["link", "button", "tab", "menuitem"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "nth": { "type": ["integer", "null"], "minimum": 0 },
+        "parent": { "oneOf": [{ "$ref": "#/$defs/controlKey" }, { "type": "null" }] },
+        "lang": { "type": ["string", "null"] },
+        "dataChanging": { "type": "boolean" },
+        "destinations": { "type": "object", "propertyNames": { "$ref": "#/$defs/context" }, "additionalProperties": { "$ref": "#/$defs/destination" } },
+        "seen": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/context" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lastSeenAt", "atLastComplete"],
+            "properties": { "lastSeenAt": { "$ref": "#/$defs/time" }, "atLastComplete": { "type": "boolean" } }
+          }
+        },
+        "useCount": { "type": "integer", "minimum": 0 },
+        "lastUse": { "oneOf": [{ "$ref": "#/$defs/lastUse" }, { "type": "null" }] },
+        "firstSeenAt": { "$ref": "#/$defs/time" },
+        "lastSeenAt": { "$ref": "#/$defs/time" }
+      }
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "title", "lang", "dir", "addressable", "reason", "via", "lastOpen", "useCount", "lastUse", "readChars", "contexts", "firstSeenAt", "lastSeenAt", "controls"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^/", "maxLength": 200 },
+        "title": { "type": ["string", "null"], "maxLength": 120 },
+        "lang": { "type": ["string", "null"] },
+        "dir": { "enum": ["ltr", "rtl", null] },
+        "addressable": { "type": "boolean" },
+        "reason": { "enum": ["root", "destination", "hub", "landing"] },
+        "via": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "object", "additionalProperties": false, "required": ["path", "control"], "properties": { "path": { "type": "string" }, "control": { "$ref": "#/$defs/controlKey" } } }
+          ]
+        },
+        "lastOpen": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["result", "at"],
+              "properties": {
+                "result": { "enum": ["same", "elsewhere", "other_origin", "sign_in", "not_found", "error"] },
+                "path": { "type": "string", "maxLength": 200 },
+                "origin": { "type": "string" },
+                "statusClass": { "enum": ["4xx", "5xx"] },
+                "at": { "$ref": "#/$defs/time" }
+              }
+            }
+          ]
+        },
+        "useCount": { "type": "integer", "minimum": 0 },
+        "lastUse": { "oneOf": [{ "$ref": "#/$defs/lastUse" }, { "type": "null" }] },
+        "readChars": { "type": "integer", "minimum": 0 },
+        "contexts": {
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/context" },
+          "additionalProperties": { "type": "object", "additionalProperties": false, "required": ["lastSeenAt"], "properties": { "lastSeenAt": { "$ref": "#/$defs/time" } } }
+        },
+        "firstSeenAt": { "$ref": "#/$defs/time" },
+        "lastSeenAt": { "$ref": "#/$defs/time" },
+        "controls": { "type": "array", "maxItems": 60, "items": { "$ref": "#/$defs/control" } }
+      }
+    },
+    "mapRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "profile", "origin", "pages", "commitSeq", "updatedAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "profile": { "type": "string" },
+        "origin": { "type": "string" },
+        "pages": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/page" } },
+        "commitSeq": { "type": "integer", "minimum": 0 },
+        "updatedAt": { "$ref": "#/$defs/time" }
+      }
+    },
+    "mapCounters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "profiles"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "profiles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lookups", "usesWorked", "usesFailed", "loadsSavedEstimate", "charsSavedEstimate", "since"],
+            "properties": {
+              "lookups": { "type": "integer", "minimum": 0 },
+              "usesWorked": { "type": "integer", "minimum": 0 },
+              "usesFailed": { "type": "integer", "minimum": 0 },
+              "loadsSavedEstimate": { "type": "integer", "minimum": 0 },
+              "charsSavedEstimate": { "type": "integer", "minimum": 0 },
+              "since": { "$ref": "#/$defs/time" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

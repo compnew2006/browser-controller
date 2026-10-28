@@ -374,9 +374,9 @@ describe('the router and a file chooser that agent input opened', () => {
 describe('dispatch registry ↔ MCP tool registry (drift guard)', () => {
   // browser_batch and browser_safety are server-only; browser_vault is daemon-owned
   // and uses private internal frames rather than the generic extension tool dispatcher.
-  // browser_memory and browser_memory_policy are daemon-owned too: they reach the extension only through the internal context action.
+  // browser_memory, browser_memory_policy and browser_site_map are daemon-owned too: they reach the extension only through the internal context action.
   const wireTools = allTools.filter((t) => !['browser_batch', 'browser_safety'].includes(t.name));
-  const extensionTools = wireTools.filter((t) => !['browser_vault', 'browser_memory', 'browser_memory_policy'].includes(t.name));
+  const extensionTools = wireTools.filter((t) => !['browser_vault', 'browser_memory', 'browser_memory_policy', 'browser_site_map'].includes(t.name));
 
   it('every registered MCP tool has an extension handler', () => {
     for (const tool of extensionTools) {
@@ -397,6 +397,7 @@ describe('dispatch registry ↔ MCP tool registry (drift guard)', () => {
   it('keeps the daemon-owned memory tool and its internal context action out of the public registry', () => {
     expect(dispatchedTools).not.toContain('browser_memory');
     expect(dispatchedTools).not.toContain('browser_memory_policy');
+    expect(dispatchedTools).not.toContain('browser_site_map');
     expect(dispatchedTools).not.toContain('browser_memory_internal_context');
     expect(allTools.map((tool) => tool.name)).not.toContain('browser_memory_internal_context');
   });

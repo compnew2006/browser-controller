@@ -23,6 +23,8 @@ const execControl = vi.hoisted(() => ({ failNext: null as Error | null, hang: fa
 const navigateHandler = vi.hoisted(() => vi.fn());
 const snapshotHandler = vi.hoisted(() => vi.fn());
 const textHandler = vi.hoisted(() => vi.fn());
+const clickHandler = vi.hoisted(() => vi.fn());
+vi.mock('../extension/handlers/interaction.js', () => ({ handleClick: clickHandler, handleType: vi.fn() }));
 vi.mock('../extension/handlers/navigation.js', () => ({ handleNavigate: navigateHandler, getActiveTab: async () => ({}) }));
 vi.mock('../extension/handlers/inspection.js', () => ({
   handleSnapshot: snapshotHandler,
@@ -162,6 +164,7 @@ beforeEach(() => {
   navigateHandler.mockReset();
   snapshotHandler.mockReset();
   textHandler.mockReset();
+  clickHandler.mockReset();
   tabsGet.mockClear();
   setWorld();
 });
@@ -199,7 +202,11 @@ describe('siteContext anonymity verdict (R-07)', () => {
 
   it('accepts a signed-out Wikipedia page (allowlist v2 survey names)', async () => {
     setWorld({
-      cookies: [{ name: 'GeoIP' }, { name: 'NetworkProbeLimit' }, { name: 'arwikimwuser-sessionId' }, { name: 'WMF-Last-Access', httpOnly: true }],
+      // The cookie store of a signed-out ar.wikipedia.org reader; the HttpOnly names are invisible to document.cookie.
+      cookies: [
+        { name: 'GeoIP' }, { name: 'NetworkProbeLimit' }, { name: 'arwikimwuser-sessionId' }, { name: 'WMF-Last-Access', httpOnly: true },
+        { name: 'WMF-Last-Access-Global', httpOnly: true }, { name: 'WMF-Uniq', httpOnly: true }, { name: 'WMF-DP', httpOnly: true },
+      ],
       local: [
         'CentralNoticeKV|global|buckets', 'MediaWikiModuleStore:arwiki', 'CentralAuthAnon',
         'wmE-sessionTickLastTickTime', 'wmE-sessionTickTickCount',
@@ -217,7 +224,7 @@ describe('siteContext anonymity verdict (R-07)', () => {
   it('is false on a signed-in Wikipedia page even with the v2 names present', async () => {
     setWorld({
       cookies: [
-        { name: 'GeoIP' }, { name: 'arwikimwuser-sessionId' },
+        { name: 'GeoIP' }, { name: 'arwikimwuser-sessionId' }, { name: 'WMF-Uniq', httpOnly: true }, { name: 'WMF-DP', httpOnly: true },
         { name: 'centralauth_User' }, { name: 'centralauth_Session', httpOnly: true }, { name: 'arwikiSession', httpOnly: true }, { name: 'arwikiUserID' },
       ],
       local: ['MediaWikiModuleStore:arwiki'],
@@ -523,6 +530,7 @@ describe('contract parity', () => {
     expect(manifest.permissions).toContain('cookies');
     const protocol = await import('../extension/lib/protocol.js');
     expect(protocol.EXTENSION_PROTOCOL_CAPABILITIES).toContain('site-context');
+    expect(protocol.EXTENSION_PROTOCOL_CAPABILITIES).toContain('site-map');
   });
 });
 
@@ -567,6 +575,55 @@ describe('router attaches siteContext only on observe:true', () => {
     expect(snap).toMatchObject({ success: true, text: snapResult.text });
     expect(snap.siteContext).toMatchObject({ anonymous: null, anonymityReason: 'unavailable', stable: false });
     tabsGet.mockImplementation(async (id: number) => ({ id, url: tabState.urls[0]!, incognito: false }));
+  });
+});
+
+describe('light siteContext for an observed click (specs/004 R-06, T013)', () => {
+  beforeEach(() => {
+    // An earlier case pins tabs.get to the first URL; these cases need each read to take the next one.
+    tabsGet.mockImplementation(async (id: number): Promise<Tab> => {
+      const url = tabState.urls.length > 1 ? tabState.urls.shift()! : tabState.urls[0]!;
+      return { id, url, incognito: tabState.incognito };
+    });
+  });
+
+  it('reports url, fromUrl and stability with no page script and no cookie read', async () => {
+    tabState.urls = ['https://example.com/', 'https://example.com/help?x=1', 'https://example.com/help?x=1'];
+    clickHandler.mockResolvedValue({ success: true, tabId: 7, navigated: true });
+    const out = await dispatch('browser_click', { tabId: 7, target: 'e3' }, 's1', 'a', undefined, true);
+    expect(out.siteContext).toEqual({
+      url: 'https://example.com/help?x=1',
+      fromUrl: 'https://example.com/',
+      incognito: false,
+      topLevel: true,
+      stable: true,
+      anonymous: null,
+      anonymityReason: 'not_probed',
+    });
+    expect(executeScript).not.toHaveBeenCalled();
+    expect(cookiesGetAll).not.toHaveBeenCalled();
+    expect(reads.values).toBe(0);
+  });
+
+  it('removes userinfo and reports a moving tab as unstable', async () => {
+    tabState.urls = ['https://u:p@example.com/a', 'https://u:p@example.com/b', 'https://example.com/c'];
+    clickHandler.mockResolvedValue({ success: true, tabId: 7 });
+    const out = await dispatch('browser_click', { tabId: 7, target: 'e3' }, 's1', 'a', undefined, true);
+    expect(out.siteContext).toMatchObject({ url: 'https://example.com/b', fromUrl: 'https://example.com/a', stable: false });
+  });
+
+  it('adds nothing without observe or to a failed click', async () => {
+    clickHandler.mockResolvedValue({ success: true, tabId: 7 });
+    expect((await dispatch('browser_click', { tabId: 7, target: 'e3' }, 's1', 'a')).siteContext).toBeUndefined();
+    clickHandler.mockResolvedValue({ success: false, error: 'NOT_FOUND: no match' });
+    expect((await dispatch('browser_click', { tabId: 7, target: 'e3' }, 's1', 'a', undefined, true)).siteContext).toBeUndefined();
+  });
+
+  it('keeps the full block for navigate and snapshot', async () => {
+    snapshotHandler.mockResolvedValue({ success: true, text: 'x' });
+    const snap = await dispatch('browser_snapshot', { tabId: 7 }, 's1', 'a', undefined, true);
+    expect(snap.siteContext).toMatchObject({ anonymous: true, anonymityReason: 'ok' });
+    expect(snap.siteContext.fromUrl).toBeUndefined();
   });
 });
 

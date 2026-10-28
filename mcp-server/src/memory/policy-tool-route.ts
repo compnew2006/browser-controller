@@ -1,24 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import type { RoutedCallResult } from '../vault/daemon-routing.js';
 import type { MemoryAdminCommand, MemoryAdminRequest, MemoryAdminResult } from '../daemon-config.js';
-import { canonicalOrigin } from './policy.js';
+import { routeMapPolicyTool, type MapPolicyHost } from './map-policy-route.js';
+import { routeSiteMapTool } from './map-tool-route.js';
+import { MEMORY_POLICY_ACTIONS, SITE_SCOPED_ACTIONS, isMapPolicyAction, type MemoryPolicyAction } from './policy-actions.js';
 import {
-  CONTEXT_ACTION,
-  contextFailure,
   fail,
   isRecord,
+  resolveTab,
   routeMemoryTool,
+  unknownScope,
   type MemoryToolBridge,
   type MemoryToolHost,
 } from './tool-route.js';
 
-const ACTIONS = ['enable', 'disable', 'exclude', 'include', 'inspect', 'export', 'delete'] as const;
-type Action = (typeof ACTIONS)[number];
-const SCOPED: ReadonlySet<Action> = new Set(['exclude', 'include', 'inspect', 'export', 'delete']);
+const ACTIONS = MEMORY_POLICY_ACTIONS;
+type Action = MemoryPolicyAction;
+const SCOPED = SITE_SCOPED_ACTIONS;
 const TEXT_MAX = 4_000;
 
 /** The slice of MemoryService this route uses. `admin` is the one writer of policy, shared with the owner CLI. */
-export interface PolicyToolHost extends MemoryToolHost {
+export interface PolicyToolHost extends MemoryToolHost, MapPolicyHost {
   admin(request: MemoryAdminRequest): Promise<MemoryAdminResult>;
 }
 
@@ -34,7 +36,7 @@ function parseArguments(params: Record<string, unknown>): PolicyArguments | stri
   const unknown = Object.keys(params).filter((key) => !['action', 'tabId', 'ownerConfirmed', 'confirmedOrigin'].includes(key));
   if (unknown.length) return 'INVALID_ARGUMENT: browser_memory_policy takes action and tabId only';
   const action = ACTIONS.find((candidate) => candidate === params.action);
-  if (!action) return 'INVALID_ARGUMENT: action must be enable, disable, exclude, include, inspect, export or delete';
+  if (!action) return 'INVALID_ARGUMENT: action must be enable, disable, exclude, include, inspect, export, delete or a map_ action';
   const { tabId, ownerConfirmed, confirmedOrigin } = params;
   if (ownerConfirmed !== undefined && typeof ownerConfirmed !== 'boolean') return 'INVALID_ARGUMENT: ownerConfirmed must be a boolean';
   if (confirmedOrigin !== undefined && (typeof confirmedOrigin !== 'string' || confirmedOrigin.length > 300)) return 'INVALID_ARGUMENT: confirmedOrigin must be a string';
@@ -49,33 +51,6 @@ function parseArguments(params: Record<string, unknown>): PolicyArguments | stri
     ownerConfirmed: ownerConfirmed === true,
     ...(typeof confirmedOrigin === 'string' ? { confirmedOrigin } : {}),
   };
-}
-
-const unknownScope = (reason: string): RoutedCallResult => fail(`MEMORY_SCOPE_UNKNOWN: ${reason}`);
-
-/**
- * The tab's canonical origin, read from the browser under the normal tab lock. A private tab, a frame that is
- * not the top document or a non-http page has no origin to act on. The agent never supplies an origin.
- */
-async function resolveTab(
-  bridge: MemoryToolBridge,
-  sessionId: string,
-  agentName: string,
-  tabId: number,
-  signal: AbortSignal,
-): Promise<{ origin: string; siteContext: unknown } | RoutedCallResult> {
-  let raw: unknown;
-  try {
-    raw = await bridge.callTool(CONTEXT_ACTION, { tabId }, sessionId, signal, agentName);
-  } catch (error) {
-    return fail(contextFailure(error));
-  }
-  const siteContext = isRecord(raw) ? raw.siteContext ?? null : null;
-  if (!isRecord(siteContext) || typeof siteContext.url !== 'string') return unknownScope("this tab's site could not be verified, so nothing was changed.");
-  if (siteContext.incognito !== false) return unknownScope('a private tab has no website memory, so nothing was changed.');
-  if (siteContext.topLevel !== true) return unknownScope('the page is not a top-level document, so nothing was changed.');
-  const origin = canonicalOrigin(siteContext.url);
-  return origin ? { origin, siteContext } : unknownScope('the page is not an http or https site, so nothing was changed.');
 }
 
 const COMMANDS: Record<Exclude<Action, 'inspect' | 'export'>, MemoryAdminCommand> = {
@@ -111,6 +86,7 @@ export async function routeMemoryPolicyTool(
   signal: AbortSignal,
   sanitize: (value: unknown) => Promise<unknown> = async (value) => value,
 ): Promise<RoutedCallResult> {
+  if (isMapPolicyAction(params.action)) return routeMapPolicyTool(memory, bridge, sessionId, agentName, params.action, params, signal, sanitize);
   const args = parseArguments(params);
   if (typeof args === 'string') return fail(args);
   const { action } = args;
@@ -161,10 +137,10 @@ export async function routeMemoryPolicyTool(
 }
 
 export function isMemoryTool(tool: string): boolean {
-  return tool === 'browser_memory' || tool === 'browser_memory_policy';
+  return tool === 'browser_memory' || tool === 'browser_memory_policy' || tool === 'browser_site_map';
 }
 
-/** The daemon's one entry for both memory tools. */
+/** The daemon's one entry for the memory tools. */
 export function routeMemoryToolCall(
   tool: string,
   memory: PolicyToolHost,
@@ -175,6 +151,7 @@ export function routeMemoryToolCall(
   signal: AbortSignal,
   sanitize?: (value: unknown) => Promise<unknown>,
 ): Promise<RoutedCallResult> {
+  if (tool === 'browser_site_map') return routeSiteMapTool(memory, bridge, sessionId, agentName, params, signal, sanitize);
   return tool === 'browser_memory_policy'
     ? routeMemoryPolicyTool(memory, bridge, sessionId, agentName, params, signal, sanitize)
     : routeMemoryTool(memory, bridge, sessionId, agentName, params, signal, sanitize);

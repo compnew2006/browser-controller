@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { AtomicWriteAborted, atomicWriteFile, type AtomicWriteOptions } from './atomic-file.js';
 import { canonicalOrigin } from './policy.js';
+import { assertPrivate, errorCode, quarantineName, removeTemps } from './record-files.js';
 import {
   MAX_ORIGINS,
   MAX_SITE_BYTES,
@@ -66,10 +67,6 @@ function requireOrigin(origin: string): string {
   const canonical = typeof origin === 'string' ? canonicalOrigin(origin) : null;
   if (!canonical || canonical !== origin) throw new MemoryStoreError('INVALID_ARGUMENT', 'origin must be a canonical http or https origin');
   return canonical;
-}
-
-function errorCode(error: unknown): string | undefined {
-  return (error as NodeJS.ErrnoException | undefined)?.code;
 }
 
 interface Usage {
@@ -283,47 +280,14 @@ export class JsonMemoryStore implements MemoryStore {
       st = await fsp.lstat(this.sitesDir);
     } catch (error) {
       if (errorCode(error) === 'ENOENT') {
-        await this.removeTemps(this.memoryDir, /^policy\.json\..+\.tmp$/u, STALE_POLICY_TEMP_MS);
+        await removeTemps(this.memoryDir, /^policy\.json\..+\.tmp$/u, STALE_POLICY_TEMP_MS);
         return;
       }
       throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'memory directory could not be read');
     }
-    this.assertPrivate(st, 'directory');
-    await this.removeTemps(this.sitesDir, /\.tmp$/u);
-    await this.removeTemps(this.memoryDir, /^policy\.json\..+\.tmp$/u, STALE_POLICY_TEMP_MS);
-  }
-
-  /** Removes matching temp files; with `minAgeMs`, only those not modified for that long (a write may be in flight). */
-  private async removeTemps(dir: string, pattern: RegExp, minAgeMs = 0): Promise<void> {
-    let names: string[];
-    try {
-      names = await fsp.readdir(dir);
-    } catch {
-      return;
-    }
-    // File times come from the wall clock, not the injectable one.
-    const cutoff = Date.now() - minAgeMs;
-    await Promise.all(
-      names
-        .filter((name) => pattern.test(name))
-        .map(async (name) => {
-          const file = path.join(dir, name);
-          if (minAgeMs > 0 && (await fsp.lstat(file)).mtimeMs > cutoff) return;
-          await fsp.rm(file, { force: true });
-        })
-        .map((removal) => removal.catch(() => undefined)),
-    );
-  }
-
-  /** The POSIX owner and mode-bit check; win32 has no comparable mode bits, so it is skipped there. */
-  private assertPrivate(st: Awaited<ReturnType<typeof fsp.lstat>>, kind: 'directory' | 'file'): void {
-    if (st.isSymbolicLink() || (kind === 'directory' ? !st.isDirectory() : !st.isFile())) {
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', `memory ${kind} is not a regular ${kind}`);
-    }
-    if (this.platform === 'win32') return;
-    const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-    if (uid !== undefined && st.uid !== uid) throw new MemoryStoreError('MEMORY_UNAVAILABLE', `memory ${kind} is owned by another user`);
-    if ((Number(st.mode) & 0o077) !== 0) throw new MemoryStoreError('MEMORY_UNAVAILABLE', `memory ${kind} permissions allow other users`);
+    assertPrivate(st, 'directory', this.platform);
+    await removeTemps(this.sitesDir, /\.tmp$/u);
+    await removeTemps(this.memoryDir, /^policy\.json\..+\.tmp$/u, STALE_POLICY_TEMP_MS);
   }
 
   private async listDir(): Promise<string[]> {
@@ -381,7 +345,7 @@ export class JsonMemoryStore implements MemoryStore {
       if (errorCode(error) === 'ENOENT') return null;
       throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'site file could not be read');
     }
-    this.assertPrivate(st, 'file');
+    assertPrivate(st, 'file', this.platform);
     if (st.size > MAX_SITE_BYTES) return this.quarantine(fileName, 'site file is too large');
     let text: string;
     try {
@@ -403,7 +367,7 @@ export class JsonMemoryStore implements MemoryStore {
   private async quarantine(fileName: string, reason: string): Promise<never> {
     const now = this.options.now ?? Date.now;
     try {
-      await fsp.rename(path.join(this.sitesDir, fileName), path.join(this.sitesDir, `${fileName}.corrupt-${now()}`));
+      await fsp.rename(path.join(this.sitesDir, fileName), path.join(this.sitesDir, quarantineName(fileName, now())));
     } catch {
       // The read still fails closed; status keeps reporting the file until it can be moved.
     }

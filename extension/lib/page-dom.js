@@ -14,7 +14,7 @@
  * shadow roots + same-origin iframes); anything ambiguous is reported, never guessed.
  */
 
-export const PAGE_DOM_VERSION = 17;
+export const PAGE_DOM_VERSION = 18;
 
 /**
  * `refBase`: the highest ref number the tab's earlier documents showed (lib/state.js
@@ -259,6 +259,14 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
 
 
   const INPUT_BUTTONS = ['button', 'submit', 'reset', 'image'];
+  const SECTIONING_TAGS = new Set(['ARTICLE', 'ASIDE', 'MAIN', 'NAV', 'SECTION']);
+  const SECTIONING_ROLES = new Set(['article', 'complementary', 'main', 'navigation', 'region']);
+  function inSectioning(el) {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (SECTIONING_TAGS.has(String(p.tagName || '').toUpperCase()) || SECTIONING_ROLES.has(clean(attr(p, 'role')).split(' ')[0])) return true;
+    }
+    return false;
+  }
   function roleOf(el) {
     const explicit = clean(attr(el, 'role')).split(' ')[0];
     if (explicit) return explicit;
@@ -281,7 +289,9 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
       return 'textbox';
     }
     if (el.isContentEditable) return 'textbox';
-    const map = { nav: 'navigation', main: 'main', header: 'banner', footer: 'contentinfo', form: 'form', dialog: 'dialog', table: 'table', ul: 'list', ol: 'list', li: 'listitem', aside: 'complementary' };
+    // HTML-AAM: a header or footer inside sectioning content is not the page's banner or contentinfo.
+    if ((tag === 'header' || tag === 'footer') && inSectioning(el)) return 'generic';
+    const map = { nav: 'navigation', main: 'main', header: 'banner', footer: 'contentinfo', form: 'form', dialog: 'dialog', table: 'table', ul: 'list', ol: 'list', li: 'listitem', aside: 'complementary', article: 'article' };
     return map[tag] || 'generic';
   }
 

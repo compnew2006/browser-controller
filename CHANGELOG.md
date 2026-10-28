@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.1.1
+
+Reload the extension at `chrome://extensions` and restart the daemon after updating.
+
+### Added
+- Site map, off by default and enabled per Chrome profile (spec 004): with website memory on, the daemon remembers a site's structural pages, the controls in its header, navigation, sidebar and footer, and where they lead, for that profile only. Page text, form values, queries and content areas are never stored; personal-looking path segments are masked. See README "Site map".
+- `browser_site_map {tabId | origin, query?, cursor?}` (read-only): matching pages with ready `browser_click` locators, or an outline of the site. `browser_navigate` reminders add the page's known controls. The tool count is now 22.
+- `browser_memory_policy` takes `map_enable`, `map_disable`, `map_exclude_path`, `map_include_path`, `map_inspect`, `map_export` and `map_delete`, each confirmed by the owner, and a `path` parameter.
+- `npm run memory -- map status | enable | disable | exclude-path | include-path | inspect | export | delete`: owner CLI for the map. `delete <origin>` and `delete --all` also delete the matching maps.
+- `scripts/map-bench.mjs` and `specs/004-site-navigation-map/baseline.md` for the map performance baseline.
+- ADR-0004 (map storage and the profile boundary) and ADR-0005 (observing clicks), both proposed.
+
+### Changed
+- With the map on, `browser_click` is observed: the extension reports the tab URL before and after the click (no page script, no cookies). New extension capability `site-map`; an older extension keeps working, and the map then learns no click destinations.
+- Shared JSON store helpers moved from `memory/store.ts` to `memory/record-files.ts`, without a behavior change.
+- Roles follow HTML-AAM more closely: a `<header>` or `<footer>` inside `article`, `aside`, `main`, `nav` or `section` is `generic`, not `banner` or `contentinfo`, and `<article>` is `article`. `browser_snapshot` prints an unnamed `article` line where a post starts, and role locators see the new roles. `browser_text` article mode now keeps a `<header>` inside an `<article>` or `<main>`, as its tag rule intended.
+
 ## 3.1.0
 
 ### Added

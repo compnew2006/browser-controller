@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { tabIdParam, textResult, failureResult, rawResultOf, codedMessageOf, withNotes } from './types.js';
 import { prepareToolParams } from './params.js';
-import { BATCH_BUDGET_MS, BATCH_MAX_DELAY_MS, BATCH_MAX_STEPS, NOT_BATCHABLE, NO_DEFAULT_TAB } from './batch-limits.js';
+import { BATCH_BUDGET_MS, BATCH_MAX_DELAY_MS, BATCH_MAX_STEPS, NOT_BATCHABLE, NO_DEFAULT_TAB, TAB_OR_ORIGIN } from './batch-limits.js';
 
 /**
  * Resolve a sibling tool by name. tools/registry.ts installs the map at load;
@@ -128,7 +128,8 @@ export const batchTool: ToolDefinition = {
         result = failureResult(`INVALID_ARGUMENT: ${step.tool} cannot be used inside a batch`);
       } else {
         const stepParams = { ...(step.params ?? {}) };
-        if (tabId !== undefined && stepParams.tabId === undefined && !NO_DEFAULT_TAB.has(def.name) && 'tabId' in def.inputSchema.shape) {
+        const namesOrigin = TAB_OR_ORIGIN.has(def.name) && stepParams.origin !== undefined;
+        if (tabId !== undefined && stepParams.tabId === undefined && !NO_DEFAULT_TAB.has(def.name) && !namesOrigin && 'tabId' in def.inputSchema.shape) {
           stepParams.tabId = tabId;
         }
         try {

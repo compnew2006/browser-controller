@@ -212,8 +212,20 @@ export const ENROLLMENT_FILE = path.join(STATE_DIR, 'enrollment.json');
 
 // --- IPC / WS protocol message shapes --------------------------------------
 
-export const MEMORY_ADMIN_COMMANDS = ['status', 'enable', 'disable', 'exclude', 'include', 'inspect', 'export', 'delete'] as const;
+export const MEMORY_ADMIN_COMMANDS = ['status', 'enable', 'disable', 'exclude', 'include', 'inspect', 'export', 'delete', 'map'] as const;
 export type MemoryAdminCommand = (typeof MEMORY_ADMIN_COMMANDS)[number];
+export const MAP_ADMIN_COMMANDS = ['status', 'enable', 'disable', 'exclude-path', 'include-path', 'inspect', 'export', 'delete'] as const;
+export type MapAdminCommand = (typeof MAP_ADMIN_COMMANDS)[number];
+
+/** The `map` sub-command (specs/004-site-navigation-map/contracts/map-policy-actions.schema.json). */
+export interface MapAdminRequest {
+  command: MapAdminCommand;
+  /** browserId; required for enable and disable. */
+  browser?: string;
+  origin?: string;
+  path?: string;
+  all?: boolean;
+}
 
 /** Owner CLI -> daemon, after the token hello. Shape: contracts/memory-admin-ipc.schema.json. */
 export interface MemoryAdminRequest {
@@ -222,6 +234,19 @@ export interface MemoryAdminRequest {
   command: MemoryAdminCommand;
   origin?: string;
   all?: boolean;
+  /** Only with command `map`. */
+  map?: MapAdminRequest;
+}
+
+/** Per-profile `map status`: counts and dates only, never origins, paths, titles or names. */
+export interface MapAdminProfileStatus {
+  enabled: boolean;
+  files: number;
+  bytes: number;
+  oldestEntryDate: string | null;
+  quarantined: number;
+  dropped: number;
+  counters: Record<string, number | string> | null;
 }
 
 export interface MemoryAdminStatus {
@@ -241,8 +266,10 @@ export interface MemoryAdminResult {
   /** `CODE: message` (INVALID_ARGUMENT, MEMORY_UNAVAILABLE, MEMORY_CORRUPT). */
   error?: string;
   status?: Partial<MemoryAdminStatus>;
-  /** inspect/export: SiteRecord objects as stored. Owner-only full view. */
+  /** inspect/export: SiteRecord objects as stored, or MapRecord objects for `map`. Owner-only full view. */
   records?: unknown[];
+  /** `map` commands: keyed by browserId. */
+  mapStatus?: Record<string, MapAdminProfileStatus>;
 }
 
 export type IpcClientMessage =
@@ -272,12 +299,17 @@ export function parseMemoryAdminRequest(raw: unknown): { ok: true; request: Memo
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return bad('memory-admin request must be an object');
   const msg = raw as Record<string, unknown>;
   for (const key of Object.keys(msg)) {
-    if (!['kind', 'id', 'command', 'origin', 'all'].includes(key)) return bad(`unknown field ${key.slice(0, 40)}`);
+    if (!['kind', 'id', 'command', 'origin', 'all', 'map'].includes(key)) return bad(`unknown field ${key.slice(0, 40)}`);
   }
   if (msg.kind !== 'memory-admin') return bad('kind must be memory-admin');
   if (typeof msg.id !== 'string' || msg.id.length === 0 || msg.id.length > 64) return bad('id must be a string of 1-64 characters');
   const command = MEMORY_ADMIN_COMMANDS.find((candidate) => candidate === msg.command);
   if (!command) return bad('unknown command');
+  if (command === 'map' || msg.map !== undefined) {
+    if (command !== 'map' || msg.origin !== undefined || msg.all !== undefined) return bad('map takes only its map field');
+    const map = parseMapAdminRequest(msg.map);
+    return typeof map === 'string' ? bad(map) : { ok: true, request: { kind: 'memory-admin', id: msg.id, command, map } };
+  }
   if (msg.all !== undefined && typeof msg.all !== 'boolean') return bad('all must be a boolean');
   if (msg.all === true && command !== 'delete') return bad('all is only valid with delete');
   if (msg.origin !== undefined) {
@@ -296,6 +328,45 @@ export function parseMemoryAdminRequest(raw: unknown): { ok: true; request: Memo
       ...(msg.origin !== undefined ? { origin: msg.origin as string } : {}),
       ...(msg.all !== undefined ? { all: msg.all as boolean } : {}),
     },
+  };
+}
+
+const MAP_ADMIN_PATH = /^\/[^?#]*$/;
+const MAP_ADMIN_FIELDS: Record<MapAdminCommand, { required: readonly string[]; allowed: readonly string[] }> = {
+  status: { required: [], allowed: ['browser'] },
+  enable: { required: ['browser'], allowed: ['browser'] },
+  disable: { required: ['browser'], allowed: ['browser'] },
+  'exclude-path': { required: ['origin', 'path'], allowed: ['origin', 'path'] },
+  'include-path': { required: ['origin', 'path'], allowed: ['origin', 'path'] },
+  inspect: { required: ['origin'], allowed: ['browser', 'origin'] },
+  export: { required: [], allowed: ['browser'] },
+  delete: { required: [], allowed: ['browser', 'origin', 'path', 'all'] },
+};
+
+/** Validates the `map` field; a string is the reason it is invalid. Origins and paths are canonicalized by the service. */
+function parseMapAdminRequest(raw: unknown): MapAdminRequest | string {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return 'map must be an object';
+  const map = raw as Record<string, unknown>;
+  for (const key of Object.keys(map)) if (!['command', 'browser', 'origin', 'path', 'all'].includes(key)) return `unknown map field ${key.slice(0, 40)}`;
+  const command = MAP_ADMIN_COMMANDS.find((candidate) => candidate === map.command);
+  if (!command) return 'unknown map command';
+  const rule = MAP_ADMIN_FIELDS[command];
+  for (const key of Object.keys(map)) if (key !== 'command' && !rule.allowed.includes(key)) return `${key} is not valid with map ${command}`;
+  for (const key of rule.required) if (map[key] === undefined) return `map ${command} needs ${key}`;
+  if (map.browser !== undefined && (typeof map.browser !== 'string' || map.browser.length === 0 || map.browser.length > 200)) return 'browser must be a browserId';
+  if (map.origin !== undefined && (typeof map.origin !== 'string' || map.origin.length > 300 || !MEMORY_ADMIN_ORIGIN.test(map.origin))) return 'origin must be an http(s) origin';
+  if (map.path !== undefined && (typeof map.path !== 'string' || map.path.length < 1 || map.path.length > 200 || !MAP_ADMIN_PATH.test(map.path))) return 'path must start with "/" and have no query or fragment';
+  if (map.all !== undefined && typeof map.all !== 'boolean') return 'all must be a boolean';
+  if (command === 'delete') {
+    if (map.all === true && (map.origin !== undefined || map.path !== undefined)) return 'map delete takes an origin or all, not both';
+    if (map.all !== true && map.origin === undefined) return 'map delete needs an origin or all';
+  }
+  return {
+    command,
+    ...(map.browser !== undefined ? { browser: map.browser as string } : {}),
+    ...(map.origin !== undefined ? { origin: map.origin as string } : {}),
+    ...(map.path !== undefined ? { path: map.path as string } : {}),
+    ...(map.all !== undefined ? { all: map.all as boolean } : {}),
   };
 }
 

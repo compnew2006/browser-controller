@@ -50,7 +50,7 @@ export function rejectOversizedFrame(
 }
 
 /** Tools whose result may carry a `siteContext` block when the daemon sets `observe` (website memory). */
-export const OBSERVABLE_TOOLS: ReadonlySet<string> = new Set(['browser_navigate', 'browser_snapshot']);
+export const OBSERVABLE_TOOLS: ReadonlySet<string> = new Set(['browser_navigate', 'browser_snapshot', 'browser_click']);
 
 /**
  * Request flag asking the extension for a `siteContext` block. It travels in `params` because the

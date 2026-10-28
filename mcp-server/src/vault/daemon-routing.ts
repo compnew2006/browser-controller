@@ -41,7 +41,7 @@ interface RouteOptions {
   tool: string;
   params: Record<string, unknown>;
   signal: AbortSignal;
-  /** Ask the extension for `siteContext` (navigate and snapshot only). Set by the daemon, never by an agent. */
+  /** Ask the extension for `siteContext` (navigate, snapshot, and click while the site map is on). Set by the daemon, never by an agent. */
   observe?: boolean;
 }
 

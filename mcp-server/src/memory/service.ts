@@ -5,6 +5,8 @@ import type { MemoryObservation } from '../vault/daemon-routing.js';
 import { SITE_CONTEXT_CAPABILITY } from '../protocol.js';
 import { adminFromWire, errorCode, runAdminCommand, type AdminContext } from './admin.js';
 import { collectFacts, extractSnapshotFacts, MAX_CANDIDATES } from './facts.js';
+import { MapService, type MapLookupResult } from './map-service.js';
+import type { JsonMapStore } from './map-store.js';
 import { MemoryCursorError, buildMemoryView, buildReminder, unavailableLine, type MemoryView } from './output.js';
 import {
   MemoryPolicyError,
@@ -31,9 +33,12 @@ const TOOL_KINDS: readonly string[] = ['all', 'facts', 'visits'];
 /** Identity of the extension connection that serves a session; `ambiguous` means another live connection has the same browserId. */
 export interface MemoryConnection {
   browserId: string;
+  browserLabel?: string;
   connectionId: string;
   ambiguous: boolean;
   supportsSiteContext: boolean;
+  /** The extension sends the light `siteContext` for clicks (004, capability `site-map`). */
+  supportsSiteMap?: boolean;
 }
 
 export interface MemoryServiceDeps {
@@ -46,14 +51,16 @@ export interface MemoryServiceDeps {
   store?: MemoryStore;
   /** Longest wait for the store when building a navigate reminder. */
   reminderTimeoutMs?: number;
+  /** Test seam for the site map's store. */
+  mapStore?: JsonMapStore;
 }
 
 
-export type MemoryToolResult = ({ success: true } & MemoryView) | { success: false; error: string };
+export type MemoryToolResult = ({ success: true } & MemoryView) | MapLookupResult | { success: false; error: string };
 
 /** State taken before the browser call and handed back to `afterCall`. */
 export interface MemoryCall {
-  /** True only for navigate and snapshot while the policy is enabled; the daemon puts it on the extension request. */
+  /** True for navigate and snapshot while the policy is enabled, and for click while the map is effective (004); the daemon puts it on the extension request. */
   observe: boolean;
   browserId?: string;
   connectionIdBefore?: string;
@@ -67,6 +74,8 @@ export interface MemoryCallOutcome {
   /** What the agent receives: `siteContext` is already removed and the vault already applied. */
   result: unknown;
   observation: MemoryObservation | undefined;
+  /** The agent's error text for a failed call; the site map uses it for click use feedback (004 R-08). */
+  error?: string;
 }
 
 interface ParsedSiteContext extends ScopeSiteContext {
@@ -143,6 +152,8 @@ export class MemoryService {
   private warmed = false;
   private lastError: { code: string; at: string } | null = null;
   private readonly adminContext: AdminContext;
+  /** The site map (specs/004-site-navigation-map). */
+  readonly map: MapService;
 
   constructor(deps: MemoryServiceDeps) {
     this.deps = deps;
@@ -159,12 +170,21 @@ export class MemoryService {
       },
       onDrained: (drainedThrough) => this.pruneTombstones(drainedThrough),
     });
+    this.map = new MapService({
+      memoryDir: this.memoryDir,
+      now: this.now,
+      vault: deps.vault,
+      connection: deps.connection,
+      ...(deps.mapStore ? { store: deps.mapStore } : {}),
+      ...(deps.reminderTimeoutMs !== undefined ? { reminderTimeoutMs: deps.reminderTimeoutMs } : {}),
+    });
     this.adminContext = {
       iso: () => this.iso(),
       store: this.store,
       queue: this.queue,
       mutatePolicy: (change, options) => this.mutatePolicy(change, false, options?.resetCorrupt === true),
       status: () => this.status(),
+      map: this.map,
     };
   }
 
@@ -186,6 +206,7 @@ export class MemoryService {
         void this.store.warm?.();
       }
       const connection = this.deps.connection(sessionId);
+      if (tool === 'browser_click' && !this.map.wantsObserve(connection)) return { observe: false };
       return { observe: true, browserId: connection.browserId, connectionIdBefore: connection.connectionId };
     } catch (error) {
       if (error instanceof MemoryPolicyError) this.noteError(error.code);
@@ -193,11 +214,30 @@ export class MemoryService {
     }
   }
 
-  /** Capture after the browser outcome is final. Synchronous, never throws, and only enqueues. */
+  /**
+   * Capture after the browser outcome is final. Synchronous, never throws, and only enqueues. The site map goes
+   * first and shares the one scope decision; it also sees a failed click, which has no observation (004 R-08).
+   */
   afterCall(call: MemoryCall, outcome: MemoryCallOutcome): void {
-    if (!call.observe || !outcome.observation) return;
+    if (!call.observe) return;
+    const { observation } = outcome;
+    let scoped: ReturnType<MemoryService['scopeFor']> | null | undefined;
+    const decide = () => (scoped ??= observation ? this.scopeFor('capture', call, outcome, observation) : null);
+    this.map.afterCall({
+      sessionId: outcome.sessionId,
+      tool: outcome.tool,
+      params: outcome.params,
+      daemonCallId: outcome.daemonCallId,
+      result: outcome.result,
+      ...(outcome.error !== undefined && !observation ? { error: outcome.error } : {}),
+      ...(call.browserId !== undefined ? { browserId: call.browserId } : {}),
+      ...(call.connectionIdBefore !== undefined ? { connectionIdBefore: call.connectionIdBefore } : {}),
+      siteContext: observation?.siteContext ?? null,
+      decide,
+    });
+    if (!observation || outcome.tool === 'browser_click') return;
     try {
-      this.capture(call, outcome, outcome.observation);
+      this.capture(outcome, decide());
     } catch (error) {
       this.noteError(errorCode(error));
     }
@@ -232,8 +272,9 @@ export class MemoryService {
     return { decision, context, result };
   }
 
-  private capture(call: MemoryCall, outcome: MemoryCallOutcome, observation: MemoryObservation): void {
-    const { decision, context, result } = this.scopeFor('capture', call, outcome, observation);
+  private capture(outcome: MemoryCallOutcome, scoped: ReturnType<MemoryService['scopeFor']> | null): void {
+    if (!scoped) return;
+    const { decision, context, result } = scoped;
     if (!decision.in || !context) return;
 
     const navigated = outcome.tool === 'browser_navigate';
@@ -275,8 +316,12 @@ export class MemoryService {
     try {
       const { decision } = this.scopeFor('reminder', call, outcome, observation);
       if (!decision.in) return result;
-      const lines = await this.reminderLines(decision.scope.origin, decision.scope.browserId, typeof result.tabId === 'number' ? result.tabId : undefined);
-      if (!lines) return result;
+      const { origin, browserId, path: rawPath } = decision.scope;
+      const mapRead = this.map.startReminder(origin, browserId, rawPath);
+      const memoryLines = (await this.reminderLines(origin, browserId, typeof result.tabId === 'number' ? result.tabId : undefined)) ?? [];
+      const mapLines = mapRead ? this.map.reminderLines(await mapRead, rawPath, memoryLines) : null;
+      const lines = [...memoryLines, ...(mapLines ?? [])];
+      if (lines.length === 0) return result;
       return { ...result, ...(typeof result.text === 'string' ? { text: `${result.text}\n${lines.join('\n')}` } : {}), memory: lines };
     } catch (error) {
       this.noteError(errorCode(error));
@@ -331,6 +376,21 @@ export class MemoryService {
     return { connectionId: connection.connectionId };
   }
 
+  /** The session's verified profile for a `map_*` request (004 R-20); reading a map also needs the vault clear. Never throws. */
+  mapIdentity(sessionId: string, purpose: 'change' | 'read'): { profile: string; label: string } | { error: string } {
+    let connection: MemoryConnection;
+    try {
+      connection = this.deps.connection(sessionId);
+    } catch {
+      return { error: 'MEMORY_UNAVAILABLE: no browser extension is connected for this session.' };
+    }
+    if (connection.browserId === 'default' || connection.ambiguous) return { error: "MEMORY_SCOPE_UNKNOWN: this session's browser profile could not be verified, so nothing was changed." };
+    if (purpose === 'read' && this.deps.vault.memoryEligibility(connection.browserId) !== 'clear') {
+      return { error: "MEMORY_SCOPE_UNKNOWN: this session's browser profile is protected by the credential vault." };
+    }
+    return { profile: connection.browserId, label: connection.browserLabel || connection.browserId };
+  }
+
   /**
    * `browser_memory {tabId, kind?, cursor?}` for the verified profile and the origin of the tab's current page. The
    * profile and origin come from the connection and the extension, never from the parameters (AC-26). Failures are
@@ -339,29 +399,15 @@ export class MemoryService {
   async handleTool(tool: string, params: Record<string, unknown>, sessionId: string, context: MemoryToolContext): Promise<MemoryToolResult> {
     const fail = (code: string, message: string): MemoryToolResult => ({ success: false, error: `${code}: ${message}` });
     try {
+      if (tool === 'browser_site_map') return await this.map.lookup(params, sessionId, (tabId) => this.toolDecision(sessionId, context, tabId));
       if (tool !== 'browser_memory') return fail('INVALID_ARGUMENT', `unknown memory tool ${tool}`);
       const input = parseToolInput(params);
       if (typeof input === 'string') return fail('INVALID_ARGUMENT', input);
 
-      const policy = readPolicy(this.memoryDir);
-      if (!policy.enabled) return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
+      if (!readPolicy(this.memoryDir).enabled) return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
       // The connection now, after the context read; the one before it came from prepareTool (R-04).
-      const after = this.deps.connection(sessionId);
-      if (!after.supportsSiteContext) return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
-
-      const siteContext = parseSiteContext(context.siteContext);
-      const decision = decideScope({
-        purpose: 'reminder',
-        policy,
-        browserId: after.browserId,
-        liveConnectionsForBrowserId: after.ambiguous ? 2 : 1,
-        connectionIdBefore: context.connectionIdBefore ?? undefined,
-        connectionIdAfter: after.connectionId,
-        extensionCapabilities: after.supportsSiteContext ? [SITE_CONTEXT_CAPABILITY] : [],
-        vault: this.deps.vault.memoryEligibility(after.browserId, input.tabId),
-        siteContext,
-        sanitizedUnchanged: true,
-      });
+      if (!this.deps.connection(sessionId).supportsSiteContext) return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
+      const decision = this.toolDecision(sessionId, context, input.tabId);
       if (!decision.in) {
         if (decision.outcome === 'disabled') return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
         if (decision.outcome === 'excluded') return fail('MEMORY_EXCLUDED', 'this site is excluded from website memory.');
@@ -377,6 +423,23 @@ export class MemoryService {
       this.noteError(code);
       return fail(code === 'MEMORY_CORRUPT' ? 'MEMORY_CORRUPT' : 'MEMORY_UNAVAILABLE', 'website memory could not be read.');
     }
+  }
+
+  /** The scope of a memory tool's tab read: the context the daemon read, checked against the connection now (R-04). */
+  private toolDecision(sessionId: string, context: MemoryToolContext, tabId: number): ScopeDecision {
+    const after = this.deps.connection(sessionId);
+    return decideScope({
+      purpose: 'reminder',
+      policy: readPolicy(this.memoryDir),
+      browserId: after.browserId,
+      liveConnectionsForBrowserId: after.ambiguous ? 2 : 1,
+      connectionIdBefore: context.connectionIdBefore ?? undefined,
+      connectionIdAfter: after.connectionId,
+      extensionCapabilities: after.supportsSiteContext ? [SITE_CONTEXT_CAPABILITY] : [],
+      vault: this.deps.vault.memoryEligibility(after.browserId, tabId),
+      siteContext: parseSiteContext(context.siteContext),
+      sanitizedUnchanged: true,
+    });
   }
 
   /** Tombstones the queue has drained past are removed through the one policy writer. */
@@ -402,6 +465,7 @@ export class MemoryService {
       const next = change(current);
       if (skipUnchanged && next === current) return current;
       await writePolicy(this.memoryDir, next);
+      this.map.invalidate();
       return next;
     });
     this.policyTail = run.catch(() => undefined);
@@ -446,5 +510,6 @@ export class MemoryService {
   async flush(): Promise<void> {
     await this.queue.drain();
     await this.policyTail;
+    await this.map.flush();
   }
 }

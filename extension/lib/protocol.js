@@ -9,6 +9,7 @@ export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   'tools-v3',
   'credential-vault-v1',
   'site-context',
+  'site-map',
 ]);
 
 /** The 3.0 tool contract. A daemon without it is a 2.x build. */

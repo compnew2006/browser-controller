@@ -9,6 +9,8 @@ import {
   recordDeletion,
   type MemoryPolicy,
 } from './policy.js';
+import { deleteMapsWithMemory, runMapAdmin } from './map-admin.js';
+import type { MapService } from './map-service.js';
 import type { MemoryQueue } from './queue.js';
 import { MemoryStoreError, type MemoryStore } from './store.js';
 
@@ -20,6 +22,8 @@ export interface AdminContext {
   /** `resetCorrupt`: an unreadable policy is set aside and the change starts from the disabled default. */
   mutatePolicy(change: (policy: MemoryPolicy) => MemoryPolicy, options?: { resetCorrupt?: boolean }): Promise<MemoryPolicy>;
   status(): Promise<MemoryAdminStatus>;
+  /** The site map (004): its `map` sub-command, and 003 deletes also delete its maps. */
+  map: MapService;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -53,6 +57,9 @@ export async function runAdminCommand(context: AdminContext, request: MemoryAdmi
     if (request.origin !== undefined && origin === null) throw new MemoryPolicyError('INVALID_ARGUMENT', 'origin must be an http or https origin');
     const at = context.iso();
     switch (request.command) {
+      case 'map':
+        if (!request.map) throw new MemoryPolicyError('INVALID_ARGUMENT', 'map needs its map field');
+        return await runMapAdmin(context.map, id, request.map);
       case 'status':
         return done({ status: await context.status() });
       case 'enable':
@@ -84,6 +91,7 @@ export async function runAdminCommand(context: AdminContext, request: MemoryAdmi
         await context.queue.settle((inFlight) => key === '*' || inFlight === key);
         if (key === '*') await context.store.deleteAll();
         else await context.store.deleteSite(key);
+        await deleteMapsWithMemory(context.map, key);
         return done({ status: await context.status() });
       }
     }

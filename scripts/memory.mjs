@@ -9,6 +9,13 @@
  *   node scripts/memory.mjs inspect <origin> | export
  *   node scripts/memory.mjs delete <origin> | delete --all
  *
+ * Site map (per browser profile; --browser <id> picks one):
+ *   node scripts/memory.mjs map status [--browser <id>]
+ *   node scripts/memory.mjs map enable --browser <id> | map disable --browser <id>
+ *   node scripts/memory.mjs map exclude-path <origin> <path> | map include-path <origin> <path>
+ *   node scripts/memory.mjs map inspect <origin> [--browser <id>] | map export [--browser <id>]
+ *   node scripts/memory.mjs map delete <origin> [<path>] [--browser <id>] | map delete --all [--browser <id>]
+ *
  * Exit codes: 0 done, 1 the daemon refused the command, 2 usage error (nothing sent),
  * 3 the daemon is not reachable or denied the hello, 4 the daemon cannot serve `memory-admin`
  * (nothing sent). The token is read from the state directory and never printed.
@@ -27,7 +34,7 @@ const { buildIpcHello, MEMORY_ADMIN_CAPABILITY } = await import(pathToFileURL(pa
 const STATE_DIR = process.env.BC_STATE_DIR || path.join(os.homedir(), '.browser-controller');
 const SOCKET = process.platform === 'win32' ? '\\\\.\\pipe\\browser-controller' : path.join(STATE_DIR, 'daemon.sock');
 const TIMEOUT_MS = 30_000;
-const USAGE = 'usage: memory.mjs status | enable | disable | exclude <origin> | include <origin> | inspect <origin> | export | delete <origin> | delete --all';
+const USAGE = 'usage: memory.mjs status | enable | disable | exclude <origin> | include <origin> | inspect <origin> | export | delete <origin> | delete --all | map <command> (see the file header)';
 
 const fail = (code, message) => {
   console.error(message);
@@ -41,8 +48,55 @@ function origin(value) {
   return url.origin;
 }
 
+function mapPath(value) {
+  if (!/^\/[^?#]*$/.test(value) || value.length > 200) fail(2, 'INVALID_ARGUMENT: a path starts with "/" and has no query or fragment (example: /account)');
+  return value;
+}
+
+/** `map <command> ...`: the --browser and --all flags anywhere, then the positional arguments. */
+function parseMap(argv) {
+  const [command, ...rest] = argv;
+  const positional = [];
+  const map = { command };
+  for (let i = 0; i < rest.length; i += 1) {
+    if (rest[i] === '--browser' && rest[i + 1]) map.browser = rest[(i += 1)];
+    else if (rest[i] === '--all') map.all = true;
+    else positional.push(rest[i]);
+  }
+  const need = (count) => { if (positional.length !== count) fail(2, USAGE); };
+  switch (command) {
+    case 'status': case 'export':
+      need(0);
+      break;
+    case 'enable': case 'disable':
+      need(0);
+      if (!map.browser) fail(2, `map ${command} needs --browser <id> (browser_tabs lists the ids)`);
+      break;
+    case 'exclude-path': case 'include-path':
+      need(2);
+      map.origin = origin(positional[0]);
+      map.path = mapPath(positional[1]);
+      break;
+    case 'inspect':
+      need(1);
+      map.origin = origin(positional[0]);
+      break;
+    case 'delete':
+      if (map.all) { need(0); break; }
+      if (positional.length < 1 || positional.length > 2) fail(2, USAGE);
+      map.origin = origin(positional[0]);
+      if (positional[1] !== undefined) map.path = mapPath(positional[1]);
+      break;
+    default:
+      return fail(2, USAGE);
+  }
+  if (map.all && command !== 'delete') fail(2, '--all is only valid with map delete');
+  return { command: 'map', map };
+}
+
 function parse(argv) {
   const [command, ...rest] = argv;
+  if (command === 'map') return parseMap(rest);
   const need = (count) => { if (rest.length !== count) fail(2, USAGE); };
   switch (command) {
     case 'status': case 'enable': case 'disable': case 'export':

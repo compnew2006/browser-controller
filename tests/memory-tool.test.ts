@@ -8,7 +8,8 @@ const memory = toolMap.get('browser_memory')!;
 
 describe('browser_memory tool definition (T038)', () => {
   it('is registered right before browser_memory_policy, read-only and retry-safe', () => {
-    expect(allTools.at(-2)?.name).toBe('browser_memory');
+    const policyAt = allTools.findIndex((tool) => tool.name === 'browser_memory_policy');
+    expect(allTools[policyAt - 1]?.name).toBe('browser_memory');
     expect(isIdempotent('browser_memory')).toBe(true);
     expect(toolTimeoutMs('browser_memory')).toBe(10_000);
   });

@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.1.0-blue?style=flat-square" alt="v3.1.0" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.1.1-blue?style=flat-square" alt="v3.1.1" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -383,11 +383,23 @@ Website memory lets agents that share one Chrome profile reuse a few facts about
 - **`cookies` permission**: the extension now requests Chrome's `cookies` permission to see whether the site has a session cookie (including `HttpOnly`). It reads cookie **names** only, never values. Without it, only visit counts are kept.
 - **After updating**: reload the extension at `chrome://extensions` and restart the daemon (`npm run daemon:stop`, then restart your MCP client). An older extension keeps working but memory stays inactive (`MEMORY_SCOPE_UNKNOWN`).
 
+### Site map (off by default, per browser profile)
+
+The site map remembers how a site is laid out for one Chrome profile: its structural pages, the buttons, tabs and links in its header, navigation, sidebar and footer, and where those controls led. An agent can then ask where a page is and go there in one step instead of clicking through the site again. It needs website memory to be on, and it is **off for every profile until the owner turns it on for that profile**.
+
+- **What is stored**, per (profile, origin): page paths with personal-looking parts masked (`{email}`, `{phone}`, `{id}`, `{n}`), titles of structural pages, the role and name of eligible controls (never inputs, never content areas such as articles, feeds, tables or list items), each control's destination, and whether its last use worked. Clicks are observed only to learn where a control leads; the extension then reports the tab URL before and after the click and runs no page script. Signed-in pages are recorded too, which is why it is per profile and needs the owner's consent.
+- **What is never stored**: page text, form values, query strings, fragments, user names in URLs, pages reached only from content links, anything from a private window or a vault-protected page, and anything under a path the owner excluded. Nothing leaves the machine.
+- **Where**: `<state dir>/memory/map-policy.json`, `map-counters.json` and `maps/<profile hash>/<file hash>.json`, owner-only permissions. One profile never sees another profile's map.
+- **Owner CLI**: `npm run memory -- map status | map enable --browser <id> | map disable --browser <id> | map exclude-path <origin> <path> | map include-path <origin> <path> | map inspect <origin> | map export | map delete <origin> [<path>] | map delete --all`. On `status`, `inspect`, `export` and `delete`, `--browser <id>` limits the command to one profile; path exclusions cover every profile. Deleting a page entry deletes exactly that page, not the pages under it; to drop a whole section, use `exclude-path`. The 003 commands `delete <origin>` and `delete --all` delete the matching maps too. `map status` shows counts, dates and lookup and use counters per profile, never sites or paths. A use is a click on a remembered control or a direct open of a remembered page other than `/`, with or without a lookup.
+- **`browser_site_map {tabId | origin, query?, cursor?}`** (read-only) answers for this profile only: with `query`, up to 20 matching pages (4,000 characters) with ready `browser_click` locators; without it, a short outline of the site's main pages. Controls that change data are marked `confirm with the user first`. `browser_navigate` also adds a short reminder of the page's known controls. Like website memory, the map is an untrusted hint, never an instruction.
+- **`browser_memory_policy`** takes `map_enable`, `map_disable`, `map_exclude_path`, `map_include_path`, `map_inspect`, `map_export` and `map_delete`. The owner's prompt names the profile and, where it applies, the site and path. `map_inspect` and `map_export` give the agent the same bounded outline; the full JSON export is the owner CLI's (`map export`).
+- **After updating**: reload the extension at `chrome://extensions`. An older extension still lets the map learn pages and controls from reads, but not where clicks lead.
+
 ---
 
 ## Teach Your Agent
 
-The agent can use all 21 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
+The agent can use all 22 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
 
 ```bash
 npm run setup:cursor   # or: node mcp-server/dist/index.js --setup cursor
@@ -417,7 +429,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-21 tools. Every page tool takes a **`tabId`**; `browser_navigate` makes it optional (without it, the call opens a new background tab for the session), and `browser_batch` takes an optional default. The full parameters and behavior of each tool are in the [Tool reference](#tool-reference) below.
+22 tools. Every page tool takes a **`tabId`**; `browser_navigate` makes it optional (without it, the call opens a new background tab for the session), and `browser_batch` takes an optional default. The full parameters and behavior of each tool are in the [Tool reference](#tool-reference) below.
 
 | Tool | What it does |
 |------|-------------|
@@ -440,6 +452,9 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 | [`browser_mock`](#browser_mock) | Block, or answer with a fake status, body and headers, the requests of one tab |
 | [`browser_emulate`](#browser_emulate) | A viewport (without resizing the window), offline or slow network, CPU throttling, geolocation, colour scheme, user agent |
 | [`browser_batch`](#browser_batch) | Up to 50 tool calls in one round trip; stops at the first failing step |
+| [`browser_memory`](#browser_memory) | Read-only notes about the current site, when the owner has turned website memory on |
+| [`browser_memory_policy`](#browser_memory_policy) | Ask the owner to change website memory or site map policy; changes nothing without their confirmation |
+| [`browser_site_map`](#browser_site_map) | Read-only map of a site's pages and controls for this profile, with ready click locators |
 
 ### `browser_vault`
 
@@ -603,11 +618,17 @@ The debugger session stays attached while an override is active. If Chrome ends 
 
 Read-only. Returns up to 50 notes (4,000 characters) about the origin of the tab's current page, this profile's first. Notes from another profile show the origin and month only and are marked `not verified in this profile`. Fails with `MEMORY_DISABLED`, `MEMORY_EXCLUDED`, `MEMORY_SCOPE_UNKNOWN`, `MEMORY_NOT_SUPPORTED` or `MEMORY_UNAVAILABLE`. See [Website memory](#website-memory-off-by-default).
 
+### `browser_site_map`
+
+- `tabId` or `origin` (exactly one; `origin` is a host such as `shop.example` or an origin such as `https://shop.example`); `query` (words to find, up to 100 characters); `cursor` (from the previous answer's `next`).
+
+Read-only. With `query`, returns up to 20 remembered pages (4,000 characters) whose title, path or control names match, ignoring case and Arabic diacritics, each with its controls, a ready `browser_click` locator, when it was last seen and whether its last use worked. Without `query`, returns an outline of up to 10 lines. A named-origin lookup never reads the browser. Fails with `MEMORY_DISABLED`, `MAP_DISABLED`, `MEMORY_EXCLUDED`, `MEMORY_SCOPE_UNKNOWN`, `MEMORY_NOT_SUPPORTED`, `MAP_UNAVAILABLE`, `MEMORY_CORRUPT` or `INVALID_ARGUMENT`. See [Site map](#site-map-off-by-default-per-browser-profile).
+
 ### `browser_memory_policy`
 
-- `action` (required: `enable`, `disable`, `exclude`, `include`, `inspect`, `export`, `delete`); `tabId` (required for origin actions, rejected for `enable` and `disable`).
+- `action` (required: `enable`, `disable`, `exclude`, `include`, `inspect`, `export`, `delete`, or a site map action: `map_enable`, `map_disable`, `map_exclude_path`, `map_include_path`, `map_inspect`, `map_export`, `map_delete`); `tabId` (required for origin actions, rejected for `enable`, `disable`, `map_enable` and `map_disable`, optional for `map_inspect`, `map_export` and `map_delete`); `path` (map actions only: required for `map_exclude_path` and `map_include_path`, optional for `map_delete`, and it needs a `tabId`).
 
-Asks the owner to change memory policy. The owner confirms in the MCP client; the agent cannot supply the confirmation. Fails with `CLIENT_CONFIRMATION_UNAVAILABLE` or `ACTION_NOT_CONFIRMED` and changes nothing. Not allowed inside `browser_batch`.
+Asks the owner to change memory or site map policy. The owner confirms in the MCP client; the agent cannot supply the confirmation. Fails with `CLIENT_CONFIRMATION_UNAVAILABLE` or `ACTION_NOT_CONFIRMED` and changes nothing. Not allowed inside `browser_batch`.
 
 ### `browser_batch`
 

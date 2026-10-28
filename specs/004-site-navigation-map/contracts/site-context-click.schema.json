@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-controller/specs/004-site-navigation-map/site-context-click.schema.json",
+  "title": "Light siteContext for an observed browser_click",
+  "description": "When the daemon sets observe:true on a browser_click request and the extension advertises capability 'site-map', a successful click result carries this block. It runs no page script and reads no cookie or storage; anonymity is not probed. The daemon removes the block before the agent sees the result, as for 003's siteContext. Navigate and snapshot keep 003's full block (site-context.schema.json in 003).",
+  "$defs": {
+    "capability": { "const": "site-map" },
+    "block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "fromUrl", "incognito", "topLevel", "stable", "anonymous", "anonymityReason"],
+      "properties": {
+        "url": { "type": "string", "maxLength": 2048, "description": "Tab URL after the handler, userinfo removed; '' when unknown." },
+        "fromUrl": { "type": "string", "maxLength": 2048, "description": "Tab URL captured before the handler (within URL_BEFORE_BUDGET_MS), userinfo removed; '' when unknown. The daemon attributes the click only when it matches its cached read." },
+        "incognito": { "type": "boolean" },
+        "topLevel": { "const": true, "description": "Tab-level URLs describe the top document." },
+        "stable": { "type": "boolean", "description": "The handler-end URL equals a second read after it." },
+        "anonymous": { "const": null },
+        "anonymityReason": { "const": "not_probed" }
+      }
+    }
+  }
+}

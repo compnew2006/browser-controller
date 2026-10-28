@@ -366,7 +366,9 @@ function snapshotPage(_target, _fb, _query, _max) {
   D.pruneRegistry();
 
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'PATH', 'BR', 'HR', 'WBR', 'META', 'LINK', 'HEAD']);
-  const LANDMARKS = new Set(['navigation', 'main', 'banner', 'contentinfo', 'form', 'search', 'complementary', 'region', 'dialog']);
+  // Structural containers: an explicit label only, and their children keep their own text lines. `article`
+  // is listed so a post prints as an unnamed line that marks where its content starts.
+  const LANDMARKS = new Set(['navigation', 'main', 'banner', 'contentinfo', 'form', 'search', 'complementary', 'region', 'dialog', 'article']);
   const BUTTON_TYPES = ['button', 'submit', 'reset', 'image'];
   const isCheckable = (el) => el.tagName === 'INPUT' && ['checkbox', 'radio'].includes(String(el.type || '').toLowerCase());
   const kidsOf = (el) => D.flatChildren(el).filter((c) => c.nodeType === 1);

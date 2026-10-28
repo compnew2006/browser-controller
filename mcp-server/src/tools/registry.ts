@@ -20,6 +20,7 @@ import { safetyTool } from './safety.js';
 import { vaultTool } from './vault.js';
 import { memoryTool } from './memory.js';
 import { memoryPolicyTool } from './memory-policy.js';
+import { siteMapTool } from './site-map.js';
 
 /**
  * The tools, in the order tools/list shows them. Extension-backed ones forward
@@ -51,6 +52,7 @@ export const allTools: ToolDefinition[] = [
   vaultTool,
   memoryTool,
   memoryPolicyTool,
+  siteMapTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

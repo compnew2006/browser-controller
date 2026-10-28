@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-import { CREDENTIAL_VAULT_CAPABILITY, SITE_CONTEXT_CAPABILITY } from '../protocol.js';
+import { CREDENTIAL_VAULT_CAPABILITY, SITE_CONTEXT_CAPABILITY, SITE_MAP_CAPABILITY } from '../protocol.js';
 import { ExtensionConnections, type ExtensionConnection } from '../bridge-connections.js';
 import type { VaultService } from './service.js';
 
@@ -39,6 +39,7 @@ export class VaultBridgeTransport {
     connectionId: string;
     supportsVault: boolean;
     supportsSiteContext: boolean;
+    supportsSiteMap: boolean;
     ambiguous: boolean;
   } {
     const conn = this.connections.forSession(sessionId);
@@ -48,6 +49,7 @@ export class VaultBridgeTransport {
       connectionId: conn.connectionId,
       supportsVault: this.supportsVault(conn),
       supportsSiteContext: conn.capabilities.includes(SITE_CONTEXT_CAPABILITY),
+      supportsSiteMap: conn.capabilities.includes(SITE_MAP_CAPABILITY),
       ambiguous: !this.hasUniqueIdentity(conn),
     };
   }

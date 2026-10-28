@@ -462,7 +462,7 @@ class Daemon {
           observe: memoryCall.observe,
         });
       const { observation, ...agentOutcome } = outcome;
-      const memoryOutcome = { sessionId: client.sessionId, tool: msg.tool, params: msg.params, daemonCallId, result: agentOutcome.result, observation };
+      const memoryOutcome = { sessionId: client.sessionId, tool: msg.tool, params: msg.params, daemonCallId, result: agentOutcome.result, observation, ...(agentOutcome.success ? {} : { error: agentOutcome.error }) };
       if (agentOutcome.success) agentOutcome.result = await this.memory.withReminder(memoryCall, memoryOutcome);
       this.sendToClient(client, { kind: 'result', id: msg.id, ...agentOutcome });
       this.memory.afterCall(memoryCall, memoryOutcome);
