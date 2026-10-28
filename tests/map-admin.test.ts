@@ -106,6 +106,19 @@ describe('memory-admin map: status and counters (AC-35, SC-010)', () => {
     const status = (await mapAdmin({ command: 'status', browser: PROFILE })).mapStatus?.[PROFILE];
     expect(status).toMatchObject({ files: 0, counters: null });
   });
+
+  it.skipIf(process.platform === 'win32')('keeps status and the policy commands working when the counters file cannot be read', async () => {
+    await learn();
+    await service.handleTool('browser_site_map', { origin: ORIGIN }, 's1', { siteContext: null, connectionIdBefore: null });
+    await service.flush();
+    // Readable by other users: the store refuses the file without reading it.
+    fs.chmodSync(path.join(dir.memoryDir, 'map-counters.json'), 0o644);
+    const status = await mapAdmin({ command: 'status' });
+    expect(status).toMatchObject({ success: true });
+    expect(status.mapStatus?.[PROFILE]).toMatchObject({ enabled: true, files: 1, counters: null });
+    expect(await mapAdmin({ command: 'exclude-path', origin: ORIGIN, path: '/profilev2.php' })).toMatchObject({ success: true });
+    expect(await mapAdmin({ command: 'disable', browser: PROFILE })).toMatchObject({ success: true, mapStatus: { [PROFILE]: { enabled: false } } });
+  });
 });
 
 describe('memory-admin map: deletes (AC-16)', () => {

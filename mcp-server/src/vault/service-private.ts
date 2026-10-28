@@ -423,8 +423,8 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const existing = this.grants.findSite(scope, origin);
     const grant = this.grants.createSite(scope, origin, always ? 'allowlist' : 'card');
     try {
+      // One row for the decision: a second one for the list entry would carry the same fields.
       await store.audit(this.auditEvent('grant', scope, sessionId, origin, 'success'));
-      if (listed) await store.audit(this.auditEvent('grant', scope, sessionId, origin, 'success'));
     } catch (error) {
       // An approval the owner is told failed must not stay live.
       if (!existing) this.grants.revoke(grant.grantId);
@@ -468,8 +468,10 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const store = this.storeFor(connection.browserId);
     if (!store.isUnlocked) return publicError('VAULT_LOCKED');
     const removed = await store.allowlistRemove(origin);
-    for (const grant of this.grants.revokeSiteVia(scope, origin, 'allowlist')) await this.cancelGrantOperations(grant.grantId);
-    if (removed) await this.writeAudit(store, 'revoke', undefined, undefined, origin, 'success');
+    // The site is no longer allowed in this profile, whichever way its approval was given.
+    const revoked = this.grants.revokeSite(scope, origin);
+    for (const grant of revoked) await this.cancelGrantOperations(grant.grantId);
+    if (removed || revoked.length > 0) await this.writeAudit(store, 'revoke', undefined, undefined, origin, 'success');
     return { success: true, status: removed ? 'removed' : 'not_found', origin };
   }
 
@@ -498,9 +500,11 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const site = this.grants.getSite(grantId);
     if (site) {
       if (site.browserScope !== scopeForBrowser(connection.browserId)) return publicError('VAULT_PERMISSION_DENIED');
-      this.grants.revoke(grantId);
-      await this.cancelGrantOperations(grantId);
       const store = this.storeFor(connection.browserId);
+      // A site still on the always-allowed list would be approved again by the next list or fill: it leaves the
+      // list first, so no approval can start from it after this one ends.
+      if (store.isUnlocked) await store.allowlistRemove(site.origin);
+      for (const ended of this.grants.revokeSite(site.browserScope, site.origin)) await this.cancelGrantOperations(ended.grantId);
       if (store.isUnlocked) await store.audit(this.auditEvent('revoke', site.browserScope, undefined, site.origin, 'success'));
       return { success: true, status: 'revoked' };
     }

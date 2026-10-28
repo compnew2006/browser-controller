@@ -285,6 +285,16 @@ describe('MapService — controls and use feedback, US2 (T025)', () => {
     expect(await lookup({ origin: ORIGIN })).toMatchObject({ success: false, error: expect.stringMatching(/^MEMORY_CORRUPT: the memory policy could not be read/u) });
   });
 
+  it.skipIf(process.platform === 'win32')('names the policy file that could not be read, not the site map', async () => {
+    await enableAll();
+    await learnHome();
+    // Writable by other users: the policy reader refuses it without reading it.
+    fs.chmodSync(path.join(dir.memoryDir, 'map-policy.json'), 0o622);
+    expect(await lookup({ origin: ORIGIN })).toEqual({ success: false, error: 'MAP_UNAVAILABLE: the site map policy could not be read.' });
+    fs.chmodSync(path.join(dir.memoryDir, 'policy.json'), 0o622);
+    expect(await lookup({ origin: ORIGIN })).toEqual({ success: false, error: 'MAP_UNAVAILABLE: the memory policy could not be read.' });
+  });
+
   it('a dialog already open before the click is not credited to the clicked control (RV-14)', async () => {
     await enableAll();
     const lines = (menuOpen: boolean) => [

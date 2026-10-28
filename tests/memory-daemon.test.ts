@@ -520,8 +520,10 @@ describe('control and isolation (US2)', () => {
       expect(item.observedMonth).toMatch(/^\d{4}-\d{2}$/u);
     }
     expect(JSON.stringify(detail.result)).not.toContain(PROFILE);
-    // P2's own view of visits is its own count, not P1's two.
+    // P2's own view of visits is its own count, not P1's two. The file is renamed before its commit ends, so wait
+    // for the commit too: until then the daemon still reads the record it held before.
     await until(() => (recordOf()?.profiles['profile-2']?.visit?.count === 1 ? true : null));
+    await committed();
     const own = (await client.call('browser_memory', { tabId: 7, kind: 'visits' })).result.items;
     expect(own).toHaveLength(1);
     expect(own[0].text).toContain('visits: 1,');

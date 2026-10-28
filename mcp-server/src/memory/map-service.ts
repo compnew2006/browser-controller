@@ -315,22 +315,24 @@ export class MapService {
       const input = parseLookup(params);
       if (typeof input === 'string') return fail('INVALID_ARGUMENT', input);
       // Read the two policies apart, so the owner is sent to the reset that fixes the file that failed.
-      const policyFailure = (error: unknown, message: string): MapLookupResult => {
+      const policyFailure = (error: unknown, subject: string, reset: string): MapLookupResult => {
         const code = mapErrorCode(error);
         this.noteError(code);
-        return error instanceof MemoryPolicyError && code === 'MEMORY_CORRUPT' ? fail('MEMORY_CORRUPT', message) : fail('MAP_UNAVAILABLE', 'the site map could not be read.');
+        return error instanceof MemoryPolicyError && code === 'MEMORY_CORRUPT'
+          ? fail('MEMORY_CORRUPT', `${subject} could not be read; ${reset}`)
+          : fail('MAP_UNAVAILABLE', `${subject} could not be read.`);
       };
       let memory: MemoryPolicy;
       let map: MapPolicy;
       try {
         memory = readPolicy(this.memoryDir);
       } catch (error) {
-        return policyFailure(error, 'the memory policy could not be read; the owner can reset it.');
+        return policyFailure(error, 'the memory policy', 'the owner can reset it.');
       }
       try {
         map = readMapPolicy(this.memoryDir);
       } catch (error) {
-        return policyFailure(error, 'the site map policy could not be read; the owner can reset it with map disable or map delete --all.');
+        return policyFailure(error, 'the site map policy', 'the owner can reset it with map disable or map delete --all.');
       }
       if (!memory.enabled) return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
       let profile: string;

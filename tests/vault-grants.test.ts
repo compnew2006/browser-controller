@@ -165,14 +165,16 @@ describe('grant registry', () => {
       expect(grants.activeSitesFor(scope)).toEqual([]);
     });
 
-    it('ends only the approvals an allowlist entry gave when that entry is removed', () => {
+    it('ends every approval of one origin in one profile, however it was given', () => {
       const grants = registryAt();
-      const fromAllowlist = grants.createSite(scope, ORIGIN, 'allowlist');
-      const other = grants.createSite(scope, 'https://other.test', 'card');
-      expect(grants.revokeSiteVia(scope, 'https://other.test', 'allowlist')).toEqual([]);
-      expect(grants.revokeSiteVia(scope, ORIGIN, 'allowlist')).toEqual([fromAllowlist]);
-      expect(fromAllowlist.revoked).toBe(true);
+      const fromCard = grants.createSite(scope, ORIGIN, 'card');
+      const other = grants.createSite(scope, 'https://other.test', 'allowlist');
+      const otherProfile = grants.createSite(scopeForBrowser('fixture-other-profile'), ORIGIN, 'allowlist');
+      expect(grants.revokeSite(scope, 'https://unknown.test')).toEqual([]);
+      expect(grants.revokeSite(scope, ORIGIN)).toEqual([fromCard]);
+      expect(fromCard.revoked).toBe(true);
       expect(grants.activeSitesFor(scope)).toEqual([other]);
+      expect(otherProfile.revoked).toBe(false);
     });
   });
 });

@@ -12,10 +12,10 @@ Run `npm run build`, reload the extension at `chrome://extensions` and restart t
 - Vault site approval (spec 006): one approval covers listing and filling the saved accounts of one site in one Chrome profile, for every agent session, until the vault locks, the owner revokes it, a backup is restored or the daemon restarts.
 - The owner approves on a card that the extension draws on the requesting tab, in a closed shadow root that page scripts cannot read. It shows the site, the profile, the agent and whether the vault will be unlocked, never a password. It accepts a decision only from the user's own input, once the whole card has been visible and in place for 600 ms. A card the page covers, restyles or the window resizes waits again; a card the page moves or removes sends the owner to the vault page. Agent snapshots and locators do not see inside it. Only when the card cannot be shown does the extension page open, as before.
 - While the card shows, agent input to that tab fails `VAULT_APPROVAL_PENDING`. A `browser_vault` `list` or `fill` call that started the card waits up to 40 s for the decision; Deny returns `VAULT_DECLINED`.
-- Sites the owner always allows: added on the card or in the vault page's new "Site access" section, kept inside the encrypted vault, and never visible to agent tools. Listing and filling there need no request and write a grant audit event. Removing a site from the list ends its approval at once.
+- Sites the owner always allows: added on the card or in the vault page's new "Site access" section, kept inside the encrypted vault, and never visible to agent tools. Listing and filling there need no request and write a grant audit event. Removing a site from the list ends every approval of that site in that profile at once, however it was given.
 - When the agent session that asked ends while its card shows, even during the owner's decision, its call ends as cancelled, but the card stays until it expires. Allow there still approves the site and answers the other sessions' requests that joined the card. A new request for that site gets its own card, which names its own agent, and takes over the waiting requests. Requests still waiting when a card ends without a decision move to the vault page, so the owner can still decide them.
 - A card the daemon already ended answers Allow and Deny with an error instead of going away as if they worked; "Decide on the vault page" opens the vault page. The daemon takes cards down through the browser connection that drew them, so a card in a second Chrome profile also closes after its session ended.
-- The vault page's "Site access" section lists site approvals with how each was given, and revokes each one.
+- The vault page's "Site access" section lists site approvals with how each was given, and revokes each one. Revoking a site's approval also takes the site off the always-allowed list, which would otherwise approve it again on the next call.
 - New extension capability `vault-site-approval`.
 
 ### Changed
@@ -27,6 +27,8 @@ Run `npm run build`, reload the extension at `chrome://extensions` and restart t
 
 ### Fixed
 - A website memory or site map delete could lose its tombstone when the queue emptied in the same millisecond as the delete. Work enqueued in that millisecond could then bring the deleted site back. Tombstones now stay until the queue empties at a later time.
+- `npm run memory -- map` commands failed `MEMORY_UNAVAILABLE` when `map-counters.json` could not be read, because each result reports the counters. They now report no counters for that file and run.
+- `browser_site_map` named the site map when it could not read the memory policy. It now names the policy file that failed.
 
 ## 3.1.1
 

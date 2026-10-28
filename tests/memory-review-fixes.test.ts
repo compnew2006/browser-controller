@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -261,24 +261,68 @@ describe('F-03: queued operations for one origin share one write', () => {
 });
 
 describe('F-08: an abandoned write that lands late is not overwritten by the next commit', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Real time while setTimeout is fake: yields to the event loop until `done` holds or `ms` have passed. */
+  async function realWait(ms: number, done: () => boolean): Promise<void> {
+    const end = Date.now() + ms;
+    while (!done() && Date.now() < end) await new Promise((resolve) => setImmediate(resolve));
+  }
+
   it('keeps both visits', async () => {
+    // Only the commit timers are fake: the first write is held in its rename until its timer has abandoned it, so a
+    // slow disk cannot make the write miss the rename and be discarded instead, and the next commit never times out.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let reachRename!: () => void;
+    let releaseRename!: () => void;
+    let abandon!: () => void;
+    const inRename = new Promise<void>((resolve) => { reachRename = resolve; });
+    const held = new Promise<void>((resolve) => { releaseRename = resolve; });
+    const abandoned = new Promise<void>((resolve) => { abandon = resolve; });
+    const reads: Array<{ settled: boolean }> = [];
+    class WatchedStore extends JsonMemoryStore {
+      override getSite(origin: string, options?: { afterWrites?: boolean }): Promise<SiteRecord | null> {
+        const read = { settled: false };
+        reads.push(read);
+        const result = super.getSite(origin, options);
+        void result.then(() => { read.settled = true; }, () => { read.settled = true; });
+        return result;
+      }
+    }
     let first = true;
-    const store = new JsonMemoryStore(memoryDir, {
+    const store = new WatchedStore(memoryDir, {
       rename: async (from, to) => {
         if (first) {
           first = false;
-          await new Promise((resolve) => setTimeout(resolve, 250));
+          reachRename();
+          await held;
         }
         await fs.promises.rename(from, to);
       },
     });
     await writePolicy(memoryDir, enabledPolicy());
-    const queue = new MemoryQueue({ store, memoryDir, now: () => Date.parse(T3), commitTimeoutMs: 150 });
+    const queue = new MemoryQueue({
+      store,
+      memoryDir,
+      now: () => Date.parse(T3),
+      commitTimeoutMs: 150,
+      onDrop: (_op, reason) => { if (reason === 'timeout') abandon(); },
+    });
     queue.enqueue(op({ opId: 'slow-1' }));
-    await new Promise((resolve) => setTimeout(resolve, 170));
+    await inRename;
+    await vi.advanceTimersByTimeAsync(150);
+    await abandoned;
     queue.enqueue(op({ opId: 'slow-2' }));
-    await queue.drain();
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    const drained = queue.drain();
+    // The next commit reads while the abandoned write is still held. A read that does not wait for that write ends
+    // at once and builds on no record; give it up to 200 ms before the write may land.
+    await realWait(5000, () => reads.length === 2);
+    expect(reads).toHaveLength(2);
+    await realWait(200, () => reads[1].settled);
+    releaseRename();
+    await drained;
     const fresh = new JsonMemoryStore(memoryDir);
     expect((await fresh.getSite(ORIGIN))?.profiles['profile-a'].visit?.count).toBe(2);
     expect(queue.stats().dropped.timeout).toBe(1);

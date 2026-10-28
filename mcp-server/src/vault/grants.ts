@@ -71,11 +71,11 @@ export class GrantRegistry {
       .sort((left, right) => left.createdAt - right.createdAt);
   }
 
-  /** Ends the site approvals one origin received from the allowlist. */
-  revokeSiteVia(scope: string, origin: string, via: SiteGrant['via']): SiteGrant[] {
+  /** Ends every approval of one origin in one profile scope, however it was given. */
+  revokeSite(scope: string, origin: string): SiteGrant[] {
     const revoked: SiteGrant[] = [];
     for (const [id, grant] of this.siteGrants) {
-      if (grant.browserScope !== scope || grant.origin !== origin || grant.via !== via) continue;
+      if (grant.browserScope !== scope || grant.origin !== origin) continue;
       grant.revoked = true;
       this.siteGrants.delete(id);
       revoked.push(grant);

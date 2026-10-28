@@ -1051,6 +1051,55 @@ describe('VaultService', () => {
       expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
     });
 
+    it('writes one grant audit row for an "always" decision', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const store = (service as unknown as { storeFor(browserId: string): { audit(event: any): Promise<void> } }).storeFor(state.context.browserId);
+      const original = store.audit.bind(store);
+      const actions: string[] = [];
+      store.audit = async (event: any) => {
+        actions.push(event.action);
+        return original(event);
+      };
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 35 });
+      await waitFor(() => prompts(state).length === 1);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: true });
+      expect(await listing).toMatchObject({ success: true, status: 'ready' });
+      expect(actions.filter((action) => action === 'grant')).toHaveLength(1);
+    });
+
+    it('takes a revoked site off the always-allowed list, so the next list asks again', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: ORIGIN })).toMatchObject({ status: 'added' });
+      expect(await service.handlePublic(SESSION, { action: 'list', tabId: 36 })).toMatchObject({ success: true, status: 'ready' });
+      const before = await service.handlePrivateUi(connection(), { operation: 'getState' }) as any;
+      expect(before.grants).toEqual([expect.objectContaining({ purpose: 'site', via: 'allowlist' })]);
+      expect(await service.handlePrivateUi(connection(), { operation: 'revoke', grantId: before.grants[0].grantId }))
+        .toMatchObject({ success: true, status: 'revoked' });
+      const after = await service.handlePrivateUi(connection(), { operation: 'getState' }) as any;
+      expect(after.grants).toEqual([]);
+      expect(after.allowlist ?? []).toEqual([]);
+      const asked = service.handlePublic(SESSION, { action: 'list', tabId: 36 });
+      await waitFor(() => prompts(state).length === 1);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'cancel', always: false });
+      expect(await asked).toMatchObject({ status: 'cancelled' });
+    });
+
+    it('ends a card approval too when the owner removes its site from the list', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 37 });
+      await waitFor(() => prompts(state).length === 1);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: false });
+      expect(await listing).toMatchObject({ success: true, status: 'ready' });
+      await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: ORIGIN });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants)
+        .toEqual([expect.objectContaining({ purpose: 'site', via: 'card' })]);
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistRemove', origin: ORIGIN })).toMatchObject({ status: 'removed' });
+      expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
+    });
+
     it('grants nothing when "always" cannot be added to the list', async () => {
       const { service, state, connection } = await setupCard();
       await service.handlePrivateUi(connection(), { operation: 'unlock' });

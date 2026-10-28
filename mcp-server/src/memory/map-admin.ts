@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { MapAdminProfileStatus, MapAdminRequest, MemoryAdminResult } from '../daemon-config.js';
 import { addMapTombstone, disableMapProfile, enableMapProfile, excludeMapPath, includeMapPath, readMapPolicy, type MapTombstone } from './map-policy.js';
 import type { MapRecord } from './map-record.js';
+import type { MapCounters } from './map-store.js';
 import { mapErrorCode, type MapService } from './map-service.js';
 import { canonicalPagePath, canonicalPrefix } from './map-text.js';
 import { MemoryPolicyError, canonicalOrigin } from './policy.js';
@@ -74,7 +75,13 @@ export async function mapProfileStatus(map: MapService, browser?: string): Promi
   } catch (error) {
     map.noteError(mapErrorCode(error));
   }
-  const counters = (await map.store.getCounters()).profiles;
+  // Counters are only reported here: a file that cannot be read must not block the commands that report them.
+  let counters: Record<string, MapCounters> = {};
+  try {
+    counters = (await map.store.getCounters()).profiles;
+  } catch (error) {
+    map.noteError(mapErrorCode(error));
+  }
   const ids = browser !== undefined ? [browser] : [...new Set([...Object.keys(profiles), ...Object.keys(counters)])].sort();
   const status: Record<string, MapAdminProfileStatus> = {};
   for (const id of ids) {
