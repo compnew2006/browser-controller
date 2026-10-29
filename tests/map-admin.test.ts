@@ -118,6 +118,21 @@ describe('memory-admin map: status and counters (AC-35, SC-010)', () => {
     expect(status.mapStatus?.[PROFILE]).toMatchObject({ enabled: true, files: 1, counters: null });
     expect(await mapAdmin({ command: 'exclude-path', origin: ORIGIN, path: '/profilev2.php' })).toMatchObject({ success: true });
     expect(await mapAdmin({ command: 'disable', browser: PROFILE })).toMatchObject({ success: true, mapStatus: { [PROFILE]: { enabled: false } } });
+    expect(status.mapCountersError).toBe('MEMORY_UNAVAILABLE');
+  });
+
+  it.skipIf(process.platform === 'win32')('deletes a profile\'s maps when the counters file cannot be read, and says the counters were not reset', async () => {
+    await learn();
+    await service.handleTool('browser_site_map', { origin: ORIGIN }, 's1', { siteContext: null, connectionIdBefore: null });
+    await service.flush();
+    fs.chmodSync(path.join(dir.memoryDir, 'map-counters.json'), 0o644);
+    const answer = await mapAdmin({ command: 'delete', all: true, browser: PROFILE });
+    expect(answer).toMatchObject({ success: true, mapCountersError: 'MEMORY_UNAVAILABLE', mapStatus: { [PROFILE]: { files: 0, counters: null } } });
+    // Readable again: the entry the delete could not reset is still there, and status no longer reports an error.
+    fs.chmodSync(path.join(dir.memoryDir, 'map-counters.json'), 0o600);
+    const status = await mapAdmin({ command: 'status', browser: PROFILE });
+    expect(status).not.toHaveProperty('mapCountersError');
+    expect(status.mapStatus?.[PROFILE]?.counters).toMatchObject({ lookups: 1 });
   });
 });
 

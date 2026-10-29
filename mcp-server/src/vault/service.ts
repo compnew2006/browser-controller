@@ -106,6 +106,7 @@ export class VaultService extends VaultServiceProtection {
     const allowlist = await store.allowlist();
     if (!allowlist.some((entry) => entry.origin === origin)) return undefined;
     const scope = scopeForBrowser(context.browserId);
+    if (this.grants.siteBlocked(scope, origin)) return undefined;
     const grant = this.grants.createSite(scope, origin, 'allowlist');
     await store.audit(this.auditEvent('grant', scope, sessionId, origin, 'success'));
     return grant;

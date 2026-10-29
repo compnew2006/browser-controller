@@ -420,6 +420,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
    */
   private async approveSiteFromCard(store: CredentialVaultStore, scope: string, origin: string, sessionId: string, always: boolean) {
     const listed = always && await store.allowlistAdd(origin, this.now());
+    if (always) this.grants.unblockSite(scope, origin);
     const existing = this.grants.findSite(scope, origin);
     const grant = this.grants.createSite(scope, origin, always ? 'allowlist' : 'card');
     try {
@@ -457,6 +458,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const store = this.storeFor(connection.browserId);
     if (!store.isUnlocked) return publicError('VAULT_LOCKED');
     const added = await store.allowlistAdd(origin, this.now());
+    this.grants.unblockSite(scopeForBrowser(connection.browserId), origin);
     if (added) await this.writeAudit(store, 'grant', undefined, undefined, origin, 'success');
     return { success: true, status: added ? 'added' : 'unchanged', origin };
   }
@@ -464,15 +466,25 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
   private async privateAllowlistRemove(connection: PrivateConnection, raw: unknown): Promise<Record<string, unknown>> {
     const origin = this.allowlistOrigin(raw);
     if (!origin) return publicError('INVALID_ARGUMENT');
-    const scope = scopeForBrowser(connection.browserId);
     const store = this.storeFor(connection.browserId);
     if (!store.isUnlocked) return publicError('VAULT_LOCKED');
-    const removed = await store.allowlistRemove(origin);
-    // The site is no longer allowed in this profile, whichever way its approval was given.
+    const { removed, revoked } = await this.endSite(store, scopeForBrowser(connection.browserId), origin);
+    if (removed || revoked > 0) await this.writeAudit(store, 'revoke', undefined, undefined, origin, 'success');
+    return { success: true, status: removed ? 'removed' : 'not_found', revoked, origin };
+  }
+
+  /**
+   * The owner stops allowing a site in one profile: every approval of it ends, then it leaves the always-allowed
+   * list. The approvals end in memory first and the list may not approve the site meanwhile, so a vault write that
+   * fails leaves the site refused, not allowed; the error still reaches the owner.
+   */
+  private async endSite(store: CredentialVaultStore, scope: string, origin: string): Promise<{ removed: boolean; revoked: number }> {
+    this.grants.blockSite(scope, origin);
     const revoked = this.grants.revokeSite(scope, origin);
     for (const grant of revoked) await this.cancelGrantOperations(grant.grantId);
-    if (removed || revoked.length > 0) await this.writeAudit(store, 'revoke', undefined, undefined, origin, 'success');
-    return { success: true, status: removed ? 'removed' : 'not_found', origin };
+    const removed = store.isUnlocked && await store.allowlistRemove(origin);
+    this.grants.unblockSite(scope, origin);
+    return { removed, revoked: revoked.length };
   }
 
   private finishRequest(connection: PrivateConnection, requestId: unknown, state: 'declined' | 'cancelled'): Record<string, unknown> {
@@ -501,12 +513,10 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     if (site) {
       if (site.browserScope !== scopeForBrowser(connection.browserId)) return publicError('VAULT_PERMISSION_DENIED');
       const store = this.storeFor(connection.browserId);
-      // A site still on the always-allowed list would be approved again by the next list or fill: it leaves the
-      // list first, so no approval can start from it after this one ends.
-      if (store.isUnlocked) await store.allowlistRemove(site.origin);
-      for (const ended of this.grants.revokeSite(site.browserScope, site.origin)) await this.cancelGrantOperations(ended.grantId);
+      // A site still on the always-allowed list would be approved again by the next list or fill: it leaves the list too.
+      const { removed } = await this.endSite(store, site.browserScope, site.origin);
       if (store.isUnlocked) await store.audit(this.auditEvent('revoke', site.browserScope, undefined, site.origin, 'success'));
-      return { success: true, status: 'revoked' };
+      return { success: true, status: 'revoked', unlisted: removed };
     }
     const grant = this.grants.get(grantId);
     if (!grant || grant.browserScope !== scopeForBrowser(connection.browserId) || grant.connectionId !== connection.connectionId) return publicError('VAULT_PERMISSION_DENIED');

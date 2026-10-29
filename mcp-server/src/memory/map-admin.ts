@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import type { MapAdminProfileStatus, MapAdminRequest, MemoryAdminResult } from '../daemon-config.js';
 import { addMapTombstone, disableMapProfile, enableMapProfile, excludeMapPath, includeMapPath, readMapPolicy, type MapTombstone } from './map-policy.js';
 import type { MapRecord } from './map-record.js';
-import type { MapCounters } from './map-store.js';
+import type { MapCounters, MapCountersFile } from './map-store.js';
 import { mapErrorCode, type MapService } from './map-service.js';
 import { canonicalPagePath, canonicalPrefix } from './map-text.js';
 import { MemoryPolicyError, canonicalOrigin } from './policy.js';
@@ -67,20 +67,24 @@ function oldestDate(records: readonly MapRecord[]): string | null {
   return oldest ? oldest.slice(0, 10) : null;
 }
 
-/** Per profile: counts and a date only, never origins, paths, titles or names (R-21, SC-004). */
-export async function mapProfileStatus(map: MapService, browser?: string): Promise<Record<string, MapAdminProfileStatus>> {
+/**
+ * Per profile: counts and a date only, never origins, paths, titles or names (R-21, SC-004). A counters file that
+ * cannot be read gives no counters and its code in `mapCountersError`, so it does not block the command.
+ */
+export async function mapProfileStatus(map: MapService, browser?: string): Promise<Pick<MemoryAdminResult, 'mapStatus' | 'mapCountersError'>> {
   let profiles: Record<string, { enabled: boolean }> = {};
   try {
     profiles = readMapPolicy(map.memoryDir).profiles;
   } catch (error) {
     map.noteError(mapErrorCode(error));
   }
-  // Counters are only reported here: a file that cannot be read must not block the commands that report them.
   let counters: Record<string, MapCounters> = {};
+  let countersError: string | undefined;
   try {
     counters = (await map.store.getCounters()).profiles;
   } catch (error) {
-    map.noteError(mapErrorCode(error));
+    countersError = mapErrorCode(error);
+    map.noteError(countersError);
   }
   const ids = browser !== undefined ? [browser] : [...new Set([...Object.keys(profiles), ...Object.keys(counters)])].sort();
   const status: Record<string, MapAdminProfileStatus> = {};
@@ -96,7 +100,7 @@ export async function mapProfileStatus(map: MapService, browser?: string): Promi
       counters: counters[id] ?? null,
     };
   }
-  return status;
+  return { mapStatus: status, ...(countersError ? { mapCountersError: countersError } : {}) };
 }
 
 /**
@@ -130,8 +134,15 @@ async function scrubEntrances(map: MapService, source: string, profiles: readonl
   await sanitizeMaps(map, files, at);
 }
 
+/** Called once the profile's maps are deleted: a counters file that cannot be read keeps its entry, and the result reports why. */
 async function resetCounters(map: MapService, profile: string): Promise<void> {
-  const file = await map.store.getCounters();
+  let file: MapCountersFile;
+  try {
+    file = await map.store.getCounters();
+  } catch (error) {
+    map.noteError(mapErrorCode(error));
+    return;
+  }
   if (!Object.hasOwn(file.profiles, profile)) return;
   const profiles = { ...file.profiles };
   delete profiles[profile];
@@ -191,7 +202,7 @@ async function inspect(map: MapService, request: MapAdminRequest): Promise<MapRe
  * `delete --all` (every profile), which set it aside and start from the default; the refusal names them.
  */
 export async function runMapAdmin(map: MapService, id: string, request: MapAdminRequest): Promise<MemoryAdminResult> {
-  const done = async (extra: Partial<MemoryAdminResult> = {}): Promise<MemoryAdminResult> => ({ kind: 'memory-admin-result', id, success: true, mapStatus: await mapProfileStatus(map, request.browser), ...extra });
+  const done = async (extra: Partial<MemoryAdminResult> = {}): Promise<MemoryAdminResult> => ({ kind: 'memory-admin-result', id, success: true, ...(await mapProfileStatus(map, request.browser)), ...extra });
   try {
     const at = map.iso();
     switch (request.command) {

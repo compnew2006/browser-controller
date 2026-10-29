@@ -77,6 +77,9 @@ export type MapLookupResult = MapLookup | { success: false; error: string };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** Errors thrown by the map policy read in `readPolicies`, so a failure is reported against the file that failed. */
+const MAP_POLICY_FAILURES = new WeakSet<Error>();
+
 export function mapErrorCode(error: unknown): string {
   return error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.code : 'MEMORY_UNAVAILABLE';
 }
@@ -166,7 +169,13 @@ export class MapService {
   }
 
   readPolicies(): { memory: MemoryPolicy; map: MapPolicy } {
-    return { memory: readPolicy(this.memoryDir), map: readMapPolicy(this.memoryDir) };
+    const memory = readPolicy(this.memoryDir);
+    try {
+      return { memory, map: readMapPolicy(this.memoryDir) };
+    } catch (error) {
+      if (error instanceof Error) MAP_POLICY_FAILURES.add(error);
+      throw error;
+    }
   }
 
   /** The map is effective for a profile: website memory on and the map on for it (R-04). Never throws. */
@@ -311,17 +320,17 @@ export class MapService {
    */
   async lookup(params: Record<string, unknown>, sessionId: string, tabDecision: (tabId: number) => ScopeDecision): Promise<MapLookupResult> {
     const fail = (code: string, message: string): MapLookupResult => ({ success: false, error: `${code}: ${message}` });
+    // Each policy failure names its policy, so the owner is sent to the reset that fixes the file that failed.
+    const policyFailure = (error: unknown, subject: string, reset: string): MapLookupResult => {
+      const code = mapErrorCode(error);
+      this.noteError(code);
+      return error instanceof MemoryPolicyError && code === 'MEMORY_CORRUPT'
+        ? fail('MEMORY_CORRUPT', `${subject} could not be read; ${reset}`)
+        : fail('MAP_UNAVAILABLE', `${subject} could not be read.`);
+    };
     try {
       const input = parseLookup(params);
       if (typeof input === 'string') return fail('INVALID_ARGUMENT', input);
-      // Read the two policies apart, so the owner is sent to the reset that fixes the file that failed.
-      const policyFailure = (error: unknown, subject: string, reset: string): MapLookupResult => {
-        const code = mapErrorCode(error);
-        this.noteError(code);
-        return error instanceof MemoryPolicyError && code === 'MEMORY_CORRUPT'
-          ? fail('MEMORY_CORRUPT', `${subject} could not be read; ${reset}`)
-          : fail('MAP_UNAVAILABLE', `${subject} could not be read.`);
-      };
       let memory: MemoryPolicy;
       let map: MapPolicy;
       try {
@@ -382,9 +391,13 @@ export class MapService {
       return view;
     } catch (error) {
       if (error instanceof MapCursorError) return fail('INVALID_ARGUMENT', 'cursor is not valid.');
-      const code = mapErrorCode(error);
-      this.noteError(code);
-      if (error instanceof MemoryPolicyError && code === 'MEMORY_CORRUPT') return fail('MEMORY_CORRUPT', 'the memory policy could not be read; the owner can reset it.');
+      // A policy read again later (the tab's scope, the re-check of a map read) failed.
+      if (error instanceof MemoryPolicyError) {
+        return MAP_POLICY_FAILURES.has(error)
+          ? policyFailure(error, 'the site map policy', 'the owner can reset it with map disable or map delete --all.')
+          : policyFailure(error, 'the memory policy', 'the owner can reset it.');
+      }
+      this.noteError(mapErrorCode(error));
       return fail('MAP_UNAVAILABLE', 'the site map could not be read.');
     }
   }

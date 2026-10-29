@@ -18,6 +18,8 @@ import type { LiveGrant, PrivateConnection, SiteGrant, VaultBrowserContext } fro
 export class GrantRegistry {
   private readonly grants = new Map<string, LiveGrant>();
   private readonly siteGrants = new Map<string, SiteGrant>();
+  /** Per profile scope: sites the owner stopped allowing while the always-allowed list may still hold them. */
+  private readonly blockedSites = new Map<string, Set<string>>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -69,6 +71,26 @@ export class GrantRegistry {
     return [...this.siteGrants.values()]
       .filter((grant) => grant.browserScope === scope && !grant.revoked)
       .sort((left, right) => left.createdAt - right.createdAt);
+  }
+
+  /**
+   * Keeps the always-allowed list from approving a site again while the owner's revoke or removal of it is being
+   * written, and after that write failed. The owner allowing the site again, a lock or a restore lifts it.
+   */
+  blockSite(scope: string, origin: string): void {
+    const sites = this.blockedSites.get(scope) ?? new Set<string>();
+    sites.add(origin);
+    this.blockedSites.set(scope, sites);
+  }
+
+  unblockSite(scope: string, origin: string): void {
+    const sites = this.blockedSites.get(scope);
+    sites?.delete(origin);
+    if (sites?.size === 0) this.blockedSites.delete(scope);
+  }
+
+  siteBlocked(scope: string, origin: string): boolean {
+    return this.blockedSites.get(scope)?.has(origin) === true;
   }
 
   /** Ends every approval of one origin in one profile scope, however it was given. */
@@ -144,6 +166,7 @@ export class GrantRegistry {
 
   /** Every grant issued for one browser scope: locking or restoring the store retires all of them, site approvals included. */
   revokeScope(scope: string): void {
+    this.blockedSites.delete(scope);
     for (const [id, grant] of this.grants) if (grant.browserScope === scope) this.grants.delete(id);
     for (const [id, grant] of this.siteGrants) {
       if (grant.browserScope !== scope) continue;
@@ -167,6 +190,7 @@ export class GrantRegistry {
   }
 
   clear(): void {
+    this.blockedSites.clear();
     for (const grantId of this.grants.keys()) this.grants.delete(grantId);
     for (const grant of this.siteGrants.values()) grant.revoked = true;
     this.siteGrants.clear();

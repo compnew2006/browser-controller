@@ -176,5 +176,22 @@ describe('grant registry', () => {
       expect(grants.activeSitesFor(scope)).toEqual([other]);
       expect(otherProfile.revoked).toBe(false);
     });
+
+    it('blocks a site from the always-allowed list until it is unblocked or its scope is revoked', () => {
+      const grants = registryAt();
+      const otherScope = scopeForBrowser('fixture-other-profile');
+      grants.blockSite(scope, ORIGIN);
+      grants.blockSite(otherScope, ORIGIN);
+      expect(grants.siteBlocked(scope, ORIGIN)).toBe(true);
+      expect(grants.siteBlocked(scope, 'https://other.test')).toBe(false);
+      grants.unblockSite(scope, ORIGIN);
+      expect(grants.siteBlocked(scope, ORIGIN)).toBe(false);
+      grants.blockSite(scope, ORIGIN);
+      grants.revokeScope(scope);
+      expect(grants.siteBlocked(scope, ORIGIN)).toBe(false);
+      expect(grants.siteBlocked(otherScope, ORIGIN)).toBe(true);
+      grants.clear();
+      expect(grants.siteBlocked(otherScope, ORIGIN)).toBe(false);
+    });
   });
 });

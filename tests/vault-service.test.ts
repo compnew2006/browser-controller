@@ -1076,10 +1076,10 @@ describe('VaultService', () => {
       const before = await service.handlePrivateUi(connection(), { operation: 'getState' }) as any;
       expect(before.grants).toEqual([expect.objectContaining({ purpose: 'site', via: 'allowlist' })]);
       expect(await service.handlePrivateUi(connection(), { operation: 'revoke', grantId: before.grants[0].grantId }))
-        .toMatchObject({ success: true, status: 'revoked' });
+        .toMatchObject({ success: true, status: 'revoked', unlisted: true });
       const after = await service.handlePrivateUi(connection(), { operation: 'getState' }) as any;
       expect(after.grants).toEqual([]);
-      expect(after.allowlist ?? []).toEqual([]);
+      expect(after.allowlist).toEqual([]);
       const asked = service.handlePublic(SESSION, { action: 'list', tabId: 36 });
       await waitFor(() => prompts(state).length === 1);
       await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'cancel', always: false });
@@ -1096,8 +1096,53 @@ describe('VaultService', () => {
       await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: ORIGIN });
       expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants)
         .toEqual([expect.objectContaining({ purpose: 'site', via: 'card' })]);
-      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistRemove', origin: ORIGIN })).toMatchObject({ status: 'removed' });
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistRemove', origin: ORIGIN })).toMatchObject({ status: 'removed', revoked: 1 });
       expect((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants).toEqual([]);
+    });
+
+    it('says an approval ended when the site it removes was no longer on the list', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 38 });
+      await waitFor(() => prompts(state).length === 1);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'allow', always: false });
+      expect(await listing).toMatchObject({ success: true, status: 'ready' });
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistRemove', origin: ORIGIN }))
+        .toMatchObject({ success: true, status: 'not_found', revoked: 1 });
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistRemove', origin: ORIGIN }))
+        .toMatchObject({ success: true, status: 'not_found', revoked: 0 });
+    });
+
+    it('keeps a revoked site refused when the vault cannot take it off the list, until the owner allows it again', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: ORIGIN });
+      expect(await service.handlePublic(SESSION, { action: 'list', tabId: 39 })).toMatchObject({ success: true, status: 'ready' });
+      const store = (service as unknown as { storeFor(browserId: string): { allowlistRemove(origin: string): Promise<boolean> } })
+        .storeFor(connection().browserId);
+      const allowlistRemove = store.allowlistRemove.bind(store);
+      store.allowlistRemove = async () => { throw new Error('vault file could not be written'); };
+      const grantId = ((await service.handlePrivateUi(connection(), { operation: 'getState' }) as any).grants[0]).grantId;
+      // The owner is told the revoke failed, but the approval is gone and the list entry cannot bring it back.
+      expect(await service.handlePrivateUi(connection(), { operation: 'revoke', grantId })).toMatchObject({ success: false });
+      const after = await service.handlePrivateUi(connection(), { operation: 'getState' }) as any;
+      expect(after.grants).toEqual([]);
+      expect(after.allowlist).toEqual([expect.objectContaining({ origin: ORIGIN })]);
+      const asked = service.handlePublic(SESSION, { action: 'list', tabId: 39 });
+      await waitFor(() => prompts(state).length === 1);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'cancel', always: false });
+      expect(await asked).toMatchObject({ status: 'cancelled' });
+      // A removal from the list that fails the same way leaves the site refused too.
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistRemove', origin: ORIGIN })).toMatchObject({ success: false });
+      const again = service.handlePublic(SESSION, { action: 'list', tabId: 39 });
+      await waitFor(() => prompts(state).length === 2);
+      await service.handlePrivateUi(connection(), { operation: 'cardDecision', requestId: prompts(state)[1].requestId, decision: 'cancel', always: false });
+      expect(await again).toMatchObject({ status: 'cancelled' });
+      // Adding the site again is the owner allowing it again.
+      store.allowlistRemove = allowlistRemove;
+      expect(await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: ORIGIN })).toMatchObject({ status: 'unchanged' });
+      expect(await service.handlePublic(SESSION, { action: 'list', tabId: 39 })).toMatchObject({ success: true, status: 'ready' });
+      expect(prompts(state)).toHaveLength(2);
     });
 
     it('grants nothing when "always" cannot be added to the list', async () => {

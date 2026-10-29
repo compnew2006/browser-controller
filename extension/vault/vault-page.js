@@ -71,6 +71,7 @@ function setBusy(value) {
   document.querySelectorAll('button').forEach((button) => { button.disabled = value; });
 }
 
+/** `successMessage` is a string, or a function of the daemon's reply when the outcome decides the wording. */
 async function invoke(payload, successMessage) {
   if (busy) return null;
   setBusy(true);
@@ -78,7 +79,7 @@ async function invoke(payload, successMessage) {
   let response;
   try {
     response = await rpc(payload);
-    if (response.success === true) setNotice(successMessage, 'success');
+    if (response.success === true) setNotice(typeof successMessage === 'function' ? successMessage(response) : successMessage, 'success');
     else setNotice(explain(response), 'error');
   } catch {
     response = { success: false, code: 'VAULT_STORAGE_INVALID' };
@@ -383,6 +384,26 @@ function renderAccounts(entries) {
   restoreAccountFocus(focusedAccount, ready);
 }
 
+/** What a Revoke did: the daemon also removes a revoked site from the always-allowed list. */
+function revokedSiteMessage(origin, response) {
+  return response.unlisted === true
+    ? `${origin} is no longer allowed and was removed from the always-allowed list.`
+    : `${origin} is no longer allowed.`;
+}
+
+/** What a Remove did: it also revokes the site's approval, however that approval was given. */
+function removedSiteMessage(origin, response) {
+  const revoked = Number(response.revoked) > 0;
+  if (response.status === 'removed') {
+    return revoked
+      ? `${origin} was removed from the always-allowed list, and its approval was revoked.`
+      : `${origin} was removed from the always-allowed list.`;
+  }
+  return revoked
+    ? `${origin} was not on the always-allowed list. Its approval was revoked.`
+    : `${origin} was not on the always-allowed list.`;
+}
+
 const SITE_GRANT_SOURCES = {
   card: 'Allowed on the page’s approval card',
   page: 'Allowed on this page',
@@ -407,7 +428,7 @@ function renderSites() {
   if (!grants.length) siteGrantsEl.append(element('p', 'empty', 'No site is allowed right now.'));
   for (const grant of grants) {
     siteGrantsEl.append(siteRow(grant.origin, `${SITE_GRANT_SOURCES[grant.via] || 'Allowed'} · every agent session`,
-      actionButton('Revoke', 'danger', () => invoke({ operation: 'revoke', grantId: grant.grantId }, `${grant.origin} is no longer allowed.`))));
+      actionButton('Revoke', 'danger', () => invoke({ operation: 'revoke', grantId: grant.grantId }, (response) => revokedSiteMessage(grant.origin, response)))));
   }
   const allowlist = Array.isArray(state?.allowlist) ? state.allowlist : [];
   allowlistEl.replaceChildren();
@@ -416,7 +437,7 @@ function renderSites() {
     const added = Number.isFinite(entry.addedAt) ? `Added ${new Date(entry.addedAt).toLocaleDateString()}` : 'Always allowed';
     allowlistEl.append(siteRow(entry.origin, added,
       actionButton('Remove', 'danger', () => invoke({ operation: 'allowlistRemove', origin: entry.origin },
-        `${entry.origin} was removed from the always-allowed list, and its automatic approval was revoked.`))));
+        (response) => removedSiteMessage(entry.origin, response)))));
   }
 }
 

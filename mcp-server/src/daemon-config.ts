@@ -270,6 +270,8 @@ export interface MemoryAdminResult {
   records?: unknown[];
   /** `map` commands: keyed by browserId. */
   mapStatus?: Record<string, MapAdminProfileStatus>;
+  /** `map` commands: the error code when the counters file could not be read; `mapStatus` then shows no counters. */
+  mapCountersError?: string;
 }
 
 export type IpcClientMessage =

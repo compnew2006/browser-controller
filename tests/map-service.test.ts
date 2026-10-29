@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MemoryService, type MemoryCall, type MemoryConnection } from '../mcp-server/src/memory/service.js';
-import { defaultPolicy, enablePolicy, excludeOrigin, writePolicy } from '../mcp-server/src/memory/policy.js';
+import { MemoryPolicyError, defaultPolicy, enablePolicy, excludeOrigin, writePolicy } from '../mcp-server/src/memory/policy.js';
 import { defaultMapPolicy, enableMapProfile, writeMapPolicy } from '../mcp-server/src/memory/map-policy.js';
 import { JsonMapStore } from '../mcp-server/src/memory/map-store.js';
 import { MemoryStoreError } from '../mcp-server/src/memory/site-record.js';
@@ -293,6 +293,23 @@ describe('MapService — controls and use feedback, US2 (T025)', () => {
     expect(await lookup({ origin: ORIGIN })).toEqual({ success: false, error: 'MAP_UNAVAILABLE: the site map policy could not be read.' });
     fs.chmodSync(path.join(dir.memoryDir, 'policy.json'), 0o622);
     expect(await lookup({ origin: ORIGIN })).toEqual({ success: false, error: 'MAP_UNAVAILABLE: the memory policy could not be read.' });
+  });
+
+  it.skipIf(process.platform === 'win32')('names the policy that fails when it is read again later in the lookup', async () => {
+    await enableAll();
+    await learnHome();
+    // The map read re-checks both policies; the map policy turns unreadable while the record is read.
+    const getMap = service.map.store.getMap.bind(service.map.store);
+    service.map.store.getMap = async (...args: Parameters<typeof getMap>) => {
+      fs.chmodSync(path.join(dir.memoryDir, 'map-policy.json'), 0o622);
+      return getMap(...args);
+    };
+    expect(await lookup({ origin: ORIGIN })).toEqual({ success: false, error: 'MAP_UNAVAILABLE: the site map policy could not be read.' });
+    fs.chmodSync(path.join(dir.memoryDir, 'map-policy.json'), 0o600);
+    service.map.store.getMap = getMap;
+    // The tab's scope decision reads the memory policy again.
+    const refused = await service.map.lookup({ tabId: 7 }, 's1', () => { throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file could not be read'); });
+    expect(refused).toEqual({ success: false, error: 'MAP_UNAVAILABLE: the memory policy could not be read.' });
   });
 
   it('a dialog already open before the click is not credited to the clicked control (RV-14)', async () => {
