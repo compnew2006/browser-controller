@@ -11,6 +11,7 @@ import {
   type SafetyAction,
 } from "../mcp-server/src/tools/action-support.js";
 import type { ToolHost, ToolResult } from "../mcp-server/src/tools/types.js";
+import { isStabilityProbe } from "./helpers/stability-probe.js";
 
 type Confirm = "approved" | "declined" | "unavailable" | "throw";
 
@@ -69,7 +70,10 @@ function setup(opts: Setup = {}) {
 
 const text = (res: ToolResult) => (res.content.find((c) => c.type === "text") as { text: string }).text;
 const click = { tabId: 1, target: "e1" };
-const sentActions = (s: { sent: Array<{ tool: string }> }) => s.sent.filter((c) => c.tool !== "browser_snapshot");
+// The dispatched calls: the snapshot of an observation and the page-stability
+// probe that follows an action are reads, not the action the agent asked for.
+const sentActions = (s: { sent: Array<{ tool: string; params: Record<string, unknown> }> }) =>
+  s.sent.filter((c) => c.tool !== "browser_snapshot" && !isStabilityProbe(c));
 
 describe("action safety gate: disabled", () => {
   it("dispatches without classifying", async () => {

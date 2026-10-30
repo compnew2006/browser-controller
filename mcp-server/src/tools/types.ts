@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { explainNoWindow, isNoWindow } from "./browser-selection.js";
 
 /**
  * Minimal structural host a tool handler needs. Both {@link ExtensionBridge}
@@ -115,7 +116,7 @@ const UNKNOWN_PARAMETER_HINTS = new Map<string, string>([
   ["include", "use rules and/or listeners"],
   ["fullUrls", "removed in 3.0"],
   ["bypassCache", 'use browser_navigate with url "reload"'],
-  ["continueOnError", "a batch stops at its first failing step"],
+  ["continueOnError", 'use onError:"continue" (a batch stops at its first failing step by default)'],
   ["captureBodies", "use bodies with requestId"],
   ["pattern", "use filter, a substring"],
   ["urlPattern", "use filter, a substring"],
@@ -226,7 +227,14 @@ export function forwardHandler(name: string) {
       return outcomeOf(await host.callTool(name, params));
     } catch (err) {
       const payload = payloadOf(err);
-      if (payload !== undefined) return outcomeOf(payload);
+      if (payload !== undefined) {
+        const raw = payload as Record<string, unknown>;
+        const error = typeof raw.error === 'string' ? raw.error : '';
+        if (isNoWindow(error)) return outcomeOf({ ...raw, error: await explainNoWindow(host, error) });
+        return outcomeOf(payload);
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (isNoWindow(message)) return outcomeOf({ success: false, error: await explainNoWindow(host, message) });
       throw err;
     }
   };

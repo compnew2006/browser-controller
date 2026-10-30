@@ -5,6 +5,9 @@
 Run `npm run build`, reload the extension at `chrome://extensions` and restart the daemon after updating.
 
 ### Added
+- `browser_wait {until:"stable"}`: waits until the page stops changing, by fingerprinting its rendered text every 100 ms. Two identical readings mean the page settled; a page that never settles (a clock, a live feed) reaches the timeout and says so.
+- `browser_tabs {action:"session"}`: the session's own policy, and the way to change it. `isolation:"isolated"` restricts the session to the tabs it opened itself (any other tab fails `TAB_NOT_OWNED`, and the tab list shows the session's own tabs only); `access:"read-only"` refuses every call that changes something with `READ_ONLY`, before anything is dispatched. Both are session settings, and the default stays trusted and writable.
+- `browser_batch {onError:"continue"}`: the batch runs the steps after a failing one and names every failure (`STEP_FAILED: 2 step(s) failed, 3 completed`). The default is still `stop`.
 - Site map routes (spec 005): the map remembers pages an agent read completely and whether each has its own address. A page reached through a content link or from another site is recorded once it is opened by its address.
 - A click whose page changes address a moment later is credited with that destination, within 120 s and when no other action ran in the tab.
 - Each map keeps up to 5 entrances: pages on other sites a click left from. `browser_site_map` lists them as `entered before from …`, and marks a page whose last direct open landed on a sign-in page as `sign-in expected`.
@@ -19,6 +22,11 @@ Run `npm run build`, reload the extension at `chrome://extensions` and restart t
 - New extension capability `vault-site-approval`.
 
 ### Changed
+- An action now waits for the page to settle before the call returns: the page's rendered text is read inside the page until it stops changing. A read that follows an action sees what the action produced, not the page before it — an SPA that redraws a list in place no longer answers with the old list.
+- `browser_navigate` waits for the page the same way. The load event is not the end of the page: an app that renders after it is still empty when the navigation returns, and the read that follows would see it empty.
+- An `expect` is polled for up to 1.5 s instead of being read once, so a page that changes a moment after the click still meets it. The result says how long it waited.
+- `ELEMENT_HIDDEN` now says how to go on (`use browser_evaluate to act on it, or hover it first`) instead of leaving the agent to guess.
+- "No current window" (a Chrome window that closed under the session) now names the browsers that still have a window, so the agent can pick one instead of retrying the same call.
 - A fill writes the saved username into the one username field of the same form, then the password. With several fields that look like a username, the password goes alone. A first step that shows only a username field gets the username alone. The result reports `filled_fields` and never a value.
 - Parallel vault calls on one tab no longer replace each other's page inspection, which made the first fill end `VAULT_OUTCOME_UNKNOWN`.
 - Map files may hold `entrances` and `read` pages. An older daemon quarantines such a file as `MEMORY_CORRUPT`; before downgrading, run `npm run memory -- map delete --all`.
@@ -26,6 +34,7 @@ Run `npm run build`, reload the extension at `chrome://extensions` and restart t
 - `scripts/smoke-vault-isolated.mjs` checks the card flow, the always-allowed list and the username fill. New `npm run smoke:vault-card` checks the card's own guards in Chromium with real mouse input; it needs no daemon or extension.
 
 ### Fixed
+- `browser_batch` dropped every step but the last one: a batch that read the page twice answered with the second read only, and the first read — and any screenshot step before it — was lost. Every step's result comes back now, each under its own step label, and `structuredContent` carries one entry per step. A failing step keeps the steps that already ran as context. The batch's whole text is capped at 120 000 characters (`maxChars` changes it); past the cap the later steps are cut and the cut is said out loud, so the agent knows to read that step again.
 - A website memory or site map delete could lose its tombstone when the queue emptied in the same millisecond as the delete. Work enqueued in that millisecond could then bring the deleted site back. Tombstones now stay until the queue empties at a later time.
 - `npm run memory -- map` commands failed `MEMORY_UNAVAILABLE` when `map-counters.json` could not be read, because each result reports the counters. They now run, report no counters and name the failure in `mapCountersError`. A profile's `delete --all` deletes its maps and leaves that file's counters for the profile in place.
 - `browser_site_map` named the site map when it could not read the memory policy. It now names the policy that failed.

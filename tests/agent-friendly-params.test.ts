@@ -110,13 +110,39 @@ describe('through the MCP server and a batch', () => {
     expect(textOf(res)).toContain('step 1/1 browser_screenshot: note: scale ignored: screenshots are JPEG, longest side at most 1568 px');
   });
 
-  it('the note of an earlier step reaches the batch result, which is the last step', async () => {
+  it('the note of an earlier step reaches the batch result, under that step', async () => {
     const { host } = recordingHost();
     const batch = toolMap.get('browser_batch')!;
     const res = await batch.handler(host, batch.inputSchema.parse({
       tabId: 2,
       actions: [{ tool: 'browser_wait', params: { text: 'Orders' } }, { tool: 'browser_text', params: {} }],
     }) as Record<string, unknown>);
-    expect(textOf(res)).toBe('browser_text done\nstep 1/2 browser_wait: note: text is read as target "text=Orders"');
+    expect(textOf(res)).toBe([
+      'step 1/2 browser_wait:',
+      'browser_wait done',
+      'step 1/2 browser_wait: note: text is read as target "text=Orders"',
+      '',
+      'step 2/2 browser_text:',
+      'browser_text done',
+    ].join('\n'));
+  });
+
+  it('a failed batch keeps the steps that already ran, uncoded', async () => {
+    const host: ToolHost = {
+      async callTool(tool) {
+        if (tool === 'browser_navigate') throw Object.assign(new Error('NAVIGATION_FAILED: net::ERR'), { result: { success: false, error: 'NAVIGATION_FAILED: net::ERR' } });
+        return { success: true, text: `${tool} done` };
+      },
+    };
+    const client = await connect(host);
+    const res = await client.callTool({
+      name: 'browser_batch',
+      arguments: { tabId: 1, actions: [{ tool: 'browser_text', params: {} }, { tool: 'browser_navigate', params: { url: 'https://x.test/' } }] },
+    });
+    const text = textOf(res);
+    expect(text).toContain('step 2/2 browser_navigate: NAVIGATION_FAILED: net::ERR; 0 skipped');
+    expect(text).toContain('step 1/2 browser_text:\nbrowser_text done');
+    // The context is not a failure of its own: it keeps its own text.
+    expect(text).not.toContain('INTERNAL_ERROR');
   });
 });

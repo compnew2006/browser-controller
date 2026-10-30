@@ -42,7 +42,9 @@ Version 3.0 is a breaking release: 19 tools, one `target` locator, and text resu
 - **Real, trusted input.** Clicks, typing, keys, wheel and drags go through the Chrome DevTools Protocol, so the page sees `isTrusted` events and focus, Tab, Enter and autocomplete behave as they do for a person. There is no synthetic-event fallback: if the debugger cannot attach, input fails with `DEBUGGER_UNAVAILABLE`. The yellow "being debugged" banner shows while the debugger is attached.
 - **One locator.** `target` takes a ref (`e12`), `text=Sign in`, viewport coordinates (`x,y`), a CSS selector, or an accessible `{ role, name, nth? }` object. Shadow roots and same-origin iframes are searched; cross-origin iframes are listed as not readable.
 - **Honest results.** A success is compact text. A failure is an `isError` result whose text is `CODE: message`, so the agent acts on the code instead of guessing.
-- **Batches.** `browser_batch` runs up to 50 tool calls in one round trip and stops at the first failing step.
+- **Batches.** `browser_batch` runs up to 50 tool calls in one round trip and stops at the first failing step (`onError:"continue"` runs the rest and names every failure).
+- **The page is read after it settled.** An action waits for the page to stop changing before the call returns, and a navigation waits for the page it loaded to draw, so the read that follows sees what the action produced, not the page before it. `browser_wait {until:"stable"}` waits for the same thing on demand.
+- **A session can be fenced in.** `browser_tabs {action:"session"}` opens the session for reading only (every call that changes something is refused), or isolates it (the agent touches the tabs it opened, and only those).
 - **Console-style JavaScript.** `browser_evaluate` accepts code as you'd type it in DevTools: top-level `await`, several statements with `return`, DOM nodes come back as readable descriptions. Over CDP, page CSP does not block it.
 - **Console, network and mocks on demand.** `browser_logs` reads a tab's console (uncaught errors with stacks) and its network requests, with response bodies on request. `browser_mock` answers or blocks one tab's requests, so the page really receives the fake response.
 - **Frozen tabs don't freeze the agent.** `browser_navigate` replaces a tab that stopped answering, and its result says so with a `note:` line naming the new `tabId`.
@@ -304,7 +306,8 @@ Failure codes:
 | `AMBIGUOUS` | `text=…` matches several elements. The message lists up to five refs. | Use one of the refs. |
 | `REF_GONE` | The ref's element is gone, or the ref is from an earlier page of the tab. | Take a new `browser_snapshot`. |
 | `REF_NOT_FOUND` | The ref was never issued in this tab. | Take a new `browser_snapshot`, and check the ref. |
-| `ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED` | The target cannot take the action. Nothing was done. | Wait, scroll, or pick another target. |
+| `ELEMENT_HIDDEN`, `ELEMENT_DISABLED`, `ELEMENT_COVERED` | The target cannot take the action. Nothing was done. The message says what to do (for `ELEMENT_HIDDEN`: act on it with `browser_evaluate`, or hover it first). | Wait, scroll, or pick another target. |
+| `EXPECTATION_FAILED`, `EXPECTATION_UNAVAILABLE` | The `expect` of a click or a typed form was not met, or the page could not be read to check it. The action already happened. | Look at the page before retrying. The expectation is polled for 1.5 s, so a late change usually still counts. |
 | `CLICK_MISSED` | The target moved between its measurement and the press: the press landed on another element, which the message names. | Take a new snapshot, then click again. |
 | `INPUT_BLOCKED` | The input was sent, but the page got none of it. A Chrome dialog over the tab takes the input, for example the password-breach warning ("Change your password") after a login, or a permission prompt. | Ask the user to close the dialog, or go on in a new tab. Do not repeat the input: it will not arrive either. |
 | `ELEMENT_READONLY` | `browser_type` or `browser_fill` text into a read-only field. Nothing was typed. | Pick another field. |
@@ -313,6 +316,9 @@ Failure codes:
 | `DIALOG_OPEN` | A JavaScript dialog is open on the tab, so input, page reads and `browser_evaluate` are refused before anything is sent. | Answer it with `browser_handle_dialog`, then retry. |
 | `NO_DIALOG` | `browser_handle_dialog` finds no dialog, or the dialog opened before the debugger attached. | Look at the page again. A dialog that opened before the debugger attached cannot be answered. |
 | `TAB_LOCKED` | Another session owns the tab. | Use a tab you own, or open a new one with `browser_navigate`. |
+| `TAB_NOT_OWNED` | An isolated session named a tab it did not open. Nothing was done. | Open a tab with `browser_navigate`, or open the session for the user's tabs again with `browser_tabs {action:"session", isolation:"trusted"}`. |
+| `READ_ONLY` | A read-only session named a call that changes something. Nothing was done. | Read what you need, then open a write session with `browser_tabs {action:"session", access:"full"}`. |
+| `STEP_FAILED` | A batch with `onError:"continue"` had failing steps. The steps that ran are under it. | Look at the failed steps; each one names its own code. |
 | `TAB_WEDGED` | The tab does not answer: an input stalls for 5 s, or a screenshot for 8 s. | Navigate the tab (it is replaced), reload it, or close it. |
 | `TAB_REPLACED` | The tab id was replaced by another tab: a frozen tab that `browser_navigate` swapped out, or one Chrome replaced (discard, prerender). The lock and control moved to the new tab. | Use the tab id the message names. |
 | `TAB_NOT_FOUND` | The tab is closed, or the id never named a tab. | Call `browser_tabs` list to see the open tabs. |
@@ -349,6 +355,7 @@ Failure codes:
 2. Agent B's calls on A's tab fail at once with `TAB_LOCKED` (naming the owner), not queued.
 3. Tabs listed as `[user, focused]` are the user's. Tabs of other sessions are not listed: `browser_tabs` only counts them, as `+N tabs used by other agents`. Pick a tab from the list, or open a new one with `browser_navigate`.
 4. Tab ids belong to a Chrome profile. With several profiles connected, `browser_tabs { browser: "<id>" }` selects one for the session.
+5. A session that opens `browser_tabs {action:"session", isolation:"isolated"}` is fenced in: it may only touch the tabs it opened itself (any other tab fails `TAB_NOT_OWNED`), and the tab list shows its own tabs only. It is the mode to use when the agent should not see the user's other pages at all.
 
 ### The popup is your control panel
 
@@ -478,13 +485,23 @@ Each entry lists the parameters (required ones first; defaults in parentheses) a
 - `tabId`: without it the call opens a new background tab in the user's last focused window, owned by the session. `back`, `forward` and `reload` need `tabId`.
 - `snapshot` (false): append a compact snapshot of the new page (up to 2,000 characters).
 
-The call waits up to 15 s for the new page's DOM to be ready (it does not wait for images and other subresources), then until the DOM has had no change for 200 ms (1 s at most), timed by the extension, so a background tab is as fast as a visible one. A 204 or a download ends the wait at once. The result has `tabId: <id>`, `url: <final address>`, `status: <code>` and `title: …`, and `loading: true` if the page is still loading at 15 s. A network failure fails `NAVIGATION_FAILED`; with nothing to go back or forward to, `NO_HISTORY_ENTRY`. A frozen tab is replaced: the result has a `note:` line with the new `tabId`, and a failure after the replacement names the new tab too. A cancelled call fails `TIMEOUT`.
+The call waits up to 15 s for the new page's DOM to be ready (it does not wait for images and other subresources), then until the DOM has had no change for 200 ms (1 s at most), timed by the extension, so a background tab is as fast as a visible one. It then waits for the page to settle (the same wait an action does), so the read that follows the navigation sees the page as it drew. A 204 or a download ends the wait at once. The result has `tabId: <id>`, `url: <final address>`, `status: <code>` and `title: …`, and `loading: true` if the page is still loading at 15 s. A network failure fails `NAVIGATION_FAILED`; with nothing to go back or forward to, `NO_HISTORY_ENTRY`. A frozen tab is replaced: the result has a `note:` line with the new `tabId`, and a failure after the replacement names the new tab too. A cancelled call fails `TIMEOUT`.
 
 ### `browser_tabs`
 
-- `action`: `list` (default), `close` or `focus`. `close` and `focus` need `tabId`.
+- `action`: `list` (default), `close`, `focus` or `session`. `close` and `focus` need `tabId`.
 - `tabId`: the tab to close or focus.
 - `browser`: `"auto"` (the default profile) or a browser id, selected for the session before the action runs.
+- `isolation` (`session` only): `trusted` (the default) or `isolated`.
+- `access` (`session` only): `full` (the default) or `read-only`.
+
+`action: "session"` reads the session's own policy, and changes it when `isolation` or `access` is given. The result is `session policy: isolation=…; access=…`.
+
+- **`trusted` (the default).** The agent may act in any tab, including the user's own, with the user's own logged-in sessions. This is what most work needs: an agent that has to use your signed-in session cannot do it any other way.
+- **`isolated`.** The agent may only touch the tabs it opened itself. A call that names another tab fails `TAB_NOT_OWNED`, and the tab list shows the session's own tabs only: the user's are counted, not shown. This is the mode the in-app browser has by construction.
+- **`read-only`.** The agent may read, navigate and scroll, but every call that changes something (click, type, fill, page code, a dialog, a mock, an emulation) fails `READ_ONLY` until the session is opened for writing again. Navigation stays allowed: opening a page changes no data.
+
+Both settings are per session and last until the session ends.
 
 `list` prints one line per tab: `123 [own] "Title" host/path`. A tab that one of your tabs opens (a `target="_blank"` link, `window.open`) is yours too; Chrome makes it the active tab, and the tab the user was on is made active again (unless the user was looking at the tab that opened it). `[user, focused]` is the user's focused tab. Tabs that another session owns or drives are not listed: they are counted in one line, `+N tabs used by other agents`. Other user tabs are listed as `[other]`, with title and address. With several profiles connected, a first block lists them and marks the selected one. `close` closes a tab you may act on; `focus` activates the tab and brings its window forward. Another session's tab fails `TAB_LOCKED`.
 
@@ -530,7 +547,7 @@ Settings live for the current MCP session and reset when it ends. `ask` uses MCP
 
 - `tabId`, `target` (required; a point `x,y` is allowed).
 - `button`: `left` (default), `right` or `middle`. `count`: 1–3. `modifiers`: any of `Alt`, `Control`, `Meta`, `Shift`.
-- `expect`: optional `{urlIncludes, textIncludes}` postcondition, checked against one snapshot after the click returns. A mismatch reports `EXPECTATION_FAILED` (an unavailable snapshot reports `EXPECTATION_UNAVAILABLE`); the click already happened, so inspect the page before retrying. Use `browser_wait` for delayed page changes.
+- `expect`: optional `{urlIncludes, textIncludes}` postcondition. The page is checked after the click returns, and then polled for up to 1.5 s, so a page that redraws a moment later still meets it. A mismatch reports `EXPECTATION_FAILED` (an unavailable snapshot reports `EXPECTATION_UNAVAILABLE`); the click already happened, so inspect the page before retrying. Use `browser_wait` for delayed page changes.
 - `observe: "diff"`: include added and removed snapshot lines in the structured receipt.
 - `hover` (false): move the pointer only. `dragTo`: a second target; the press is at `target`, the release at `dragTo`, with 10 moves between. Any text selection is cleared before the press, and the tab keeps drawing frames while the drag runs, so a drag in a background tab takes about as long as in a visible one. When the page starts an HTML5 drag (`draggable="true"`, a link, an image), Chrome hands it back instead of starting its own, and the rest of the gesture is sent as `dragenter`, `dragover` and `drop` at the same points; the result then has an `html5:` line. `hover` and `dragTo` cannot be combined.
 
@@ -565,11 +582,12 @@ Each field is handled by its kind:
 
 ### `browser_wait`
 
-- `tabId` (required); exactly one of `target`, `url` or `ms`; `gone` (false; with `target`); `timeout` (10000; 1–50000).
+- `tabId` (required); exactly one of `target`, `url`, `ms` or `until`; `gone` (false; with `target`); `timeout` (10000; 1–50000).
 
 - `target`: waits until it is visible; with `gone: true`, until it is hidden or removed. Polls the page and its same-origin iframes.
 - `url`: a substring of the page address, or a glob over the whole URL when it contains `*`.
 - `ms`: a plain delay. It must not be longer than `timeout` (`INVALID_ARGUMENT`).
+- `until: "stable"`: waits until the page stops changing. The page is fingerprinted every 100 ms; two identical readings mean it settled. A page that never settles (a clock, a live feed) reaches the timeout and fails `TIMEOUT: the page was still changing after … ms`.
 
 Not met in time fails `TIMEOUT`.
 
@@ -634,9 +652,13 @@ Asks the owner to change memory or site map policy. The owner confirms in the MC
 
 ### `browser_batch`
 
-- `actions` (required; 1–50 entries of `{tool, params}`; `browser_safety` and `browser_batch` cannot be nested); `tabId` (optional default).
+- `actions` (required; 1–50 entries of `{tool, params}`; `browser_safety` and `browser_batch` cannot be nested); `tabId` (optional default); `maxChars` (optional; cap on the batch's whole text, default 120 000); `onError` (optional; `stop` — the default — or `continue`).
 
-Steps run in order. The batch stops at the first failing step. The whole batch has a 50 s budget, and each step gets at most the time left in it. A step still running when the budget ends is cut off, though it may still finish in the page. The cut reads `step i/n <tool>: TIMEOUT: batch budget used; k skipped`. A `tabId` on the batch fills every step that omits its own (not `browser_tabs`). Without one, a step that opens a tab (a `browser_navigate` without `tabId`) becomes the default for the steps after it. A `browser_wait` with only `ms` sleeps inside the batch, capped at 10 s. The text result is the last step's output; `structuredContent` includes receipts for click/type/fill steps. A failure reads `step 2/4 browser_click: ELEMENT_HIDDEN: …; 2 skipped`.
+Steps run in order. By default the batch stops at the first failing step. `onError: "continue"` runs the rest of the steps anyway, and the answer then names every failure (`STEP_FAILED: 2 step(s) failed, 3 completed`) with each one under its own step label; the result is still an error, so the agent knows something went wrong. The whole batch has a 50 s budget, and each step gets at most the time left in it. A step still running when the budget ends is cut off, though it may still finish in the page. The cut reads `step i/n <tool>: TIMEOUT: batch budget used; k skipped`. A `tabId` on the batch fills every step that omits its own (not `browser_tabs`). Without one, a step that opens a tab (a `browser_navigate` without `tabId`) becomes the default for the steps after it. A `browser_wait` with only `ms` sleeps inside the batch, capped at 10 s.
+
+Every step's result comes back, each under its own step label — the label line, then the step's own text under it — so a batch never drops what an earlier step read. `structuredContent` carries one entry per step: its number, tool, status and a one-line summary, plus the receipt fields of a click/type/fill. The batch's whole text is capped at 120 000 characters (`maxChars` changes it); past the cap the later steps are cut and the cut is said out loud, so the agent knows to read that step again. Reading several fields of one page in a single `browser_evaluate` costs less than a read step each.
+
+A failure reads `step 2/4 browser_click: ELEMENT_HIDDEN: …; 2 skipped`, with the steps that already ran under it as context. The session's own rules apply to the steps too: a read-only session's batch refuses its writing steps, and an isolated session's batch refuses a tab it does not own.
 
 ---
 

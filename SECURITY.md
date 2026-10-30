@@ -34,6 +34,17 @@ Report vulnerabilities through:
 
 This policy is a guardrail, not a complete authorization boundary. Site-specific JavaScript controls can perform destructive work without a native submit control or a recognizable label, and the heuristic may miss them. Leave sensitive sites set to `block` when an incomplete page classifier is not acceptable. File paths and field values are not sent to the classifier.
 
+### Session policy (read-only and isolated)
+
+A session is trusted and writable by default: the common case is an agent that has to work in the user's own signed-in tabs. Two fences can be raised per session with `browser_tabs {action:"session"}`:
+
+- `access: "read-only"` refuses every call that changes something — click, type, fill, `browser_evaluate`, a dialog, a mock, an emulation — with `READ_ONLY`, before anything is dispatched. Navigation, scrolling and every read stay allowed: opening a page changes no data, and a read-only session that could not navigate could not read anything.
+- `isolation: "isolated"` restricts the session to the tabs it opened itself. A call that names any other tab fails `TAB_NOT_OWNED` before it is dispatched, and the tab listing shows the session's own tabs only: the user's other tabs are counted, not shown. A tab the session opens with `browser_navigate` is its own, so a session can still work.
+
+Both are session settings: they last until the session ends, and the default stays trusted and writable, so a client that never asks for them keeps today's behaviour. The fences are enforced in the MCP server, before the call reaches the extension, and a batch's steps are checked one by one — `onError: "continue"` cannot walk around them.
+
+They are a guardrail for the agent's own behaviour, not an authorization boundary: a paired client that asks for `access: "full"` gets writing back, and `browser_evaluate` remains arbitrary page-context JavaScript for a trusted session.
+
 - **Local-only communication**: the daemon's HTTP/WebSocket control plane is hard-bound to IPv4 loopback (`127.0.0.1`), not configurable through `WS_HOST`. WebSocket traffic between the extension and daemon remains local. MCP clients use stdio and then an authenticated local IPC socket; they do not get a TCP listener.
 - **Remote callers and n8n**: Browser Controller has no supported remote or n8n ingress protocol. Do not publish port 7225 or change the listener to a wildcard address. A remote integration should run on the same host and reach the MCP client through its approved local process boundary, or be given a separately authenticated transport; browser-control credentials must not be reused as a network API key.
 - **Origin validation (exact-match on a pinned extension ID)**: a request whose `Origin` is not `chrome-extension://…` is refused. The daemon pins the first extension origin that passes authenticated HTTP or WebSocket proof, then refuses every later request whose Origin is not an exact match. A web page and a co-installed hostile extension carry their own `Origin`; requests without an Origin are allowed through this gate for local clients but must still prove identity. Origin and loopback address are not treated as identity.

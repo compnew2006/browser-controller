@@ -1,22 +1,45 @@
 import { z } from 'zod';
-import type { ToolDefinition } from './types.js';
-import { tabIdParam, targetParam, forwardHandler } from './types.js';
+import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
+import { tabIdParam, targetParam, forwardHandler, failureResult, textResult } from './types.js';
+import { STABLE_WAIT_DEFAULT_MS, waitUntilStable } from './page-stability.js';
+
+const forwardWait = forwardHandler('browser_wait');
+
+/**
+ * browser_wait {until:'stable'}: wait until the page stops changing.
+ *
+ * The other waits look for something (an element, a URL) or wait a fixed time.
+ * This one waits for the page itself to come to rest: its rendered text is
+ * fingerprinted every 100 ms, and two identical readings mean the page settled.
+ * It is what an agent needs after an action that redraws the page in place,
+ * before reading the new state.
+ */
+const handler = async (host: ToolHost, params: Record<string, unknown>): Promise<ToolResult> => {
+  if (params.until !== 'stable') return forwardWait(host, params);
+  const tabId = params.tabId as number;
+  const timeout = typeof params.timeout === 'number' ? params.timeout : STABLE_WAIT_DEFAULT_MS;
+  const outcome = await waitUntilStable(host, tabId, timeout);
+  if (outcome.settled) return textResult(`page settled after ${outcome.waitedMs} ms`);
+  return failureResult(`TIMEOUT: the page was still changing after ${outcome.waitedMs} ms; it never settled within ${timeout} ms.`);
+};
+(handler as { toolName?: string }).toolName = 'browser_wait';
 
 export const waitTool: ToolDefinition = {
   name: 'browser_wait',
-  summary: 'Wait for an element, a URL or a delay',
-  description: 'Wait for exactly one of: target visible (gone:true = hidden), url (substring or glob), ms (delay). Times out with TIMEOUT.',
+  summary: 'Wait for an element, a URL, a delay, or the page to settle',
+  description: 'Wait for exactly one of: target visible (gone:true = hidden), url (substring or glob), ms (delay), until:"stable" (the page stops changing). Times out with TIMEOUT.',
   inputSchema: z.object({
     tabId: tabIdParam,
     target: targetParam.optional(),
     gone: z.boolean().optional(),
     url: z.string().optional(),
     ms: z.number().int().min(0).max(50_000).optional(),
+    until: z.enum(['stable']).optional().describe('Wait until the page stops changing'),
     timeout: z.number().int().min(1).max(50_000).optional(),
   }).strict().superRefine((params, ctx) => {
-    const given = [params.target, params.url, params.ms].filter((v) => v !== undefined).length;
+    const given = [params.target, params.url, params.ms, params.until].filter((v) => v !== undefined).length;
     if (given !== 1) {
-      ctx.addIssue({ code: 'custom', path: ['target'], message: 'Give exactly one of target, url or ms' });
+      ctx.addIssue({ code: 'custom', path: ['target'], message: 'Give exactly one of target, url, ms or until' });
     }
   }),
   // Playwright's browser_wait_for names (text, textGone, time in seconds) and a bare selector.
@@ -43,5 +66,5 @@ export const waitTool: ToolDefinition = {
   },
   // Waits can run up to the 50 s cap, so the transport must outlive it.
   timeoutMs: 55_000,
-  handler: forwardHandler('browser_wait'),
+  handler,
 };

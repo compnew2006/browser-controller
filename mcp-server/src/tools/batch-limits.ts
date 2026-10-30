@@ -21,6 +21,15 @@ export const BATCH_BUDGET_MS = 50_000;
 /** Longest a `ms` wait step may sleep inside the batch. Use separate waits for longer pauses. */
 export const BATCH_MAX_DELAY_MS = 10_000;
 
+/**
+ * Cap on the text the whole batch may answer with. Every step's result is
+ * returned, so a batch of large reads can grow the answer; past this cap the
+ * later steps are cut and the cut is said out loud, so the agent knows to read
+ * that step again. One browser_snapshot is 8 000 characters by default, so this
+ * holds about fifteen of them.
+ */
+export const BATCH_MAX_OUTPUT_CHARS = 120_000;
+
 /** Tools that must not run inside a batch: recursion, and an owner prompt that belongs to a single call. */
 export const NOT_BATCHABLE = new Set(['browser_batch', 'browser_safety', 'browser_memory_policy']);
 

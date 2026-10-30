@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { writeFileSync, mkdtempSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { fillTool } from "../../mcp-server/src/tools/fill.js";
 import type { ToolHost } from "../../mcp-server/src/tools/types.js";
+import { isStabilityProbe } from "../helpers/stability-probe.js";
 
-/** Records what reaches the extension; answers every call with a plain success. */
+/**
+ * Records what reaches the extension; answers every call with a plain success.
+ * The page-stability probe the action wrapper runs after a successful fill is
+ * not recorded: these tests count what the fill sent, not the wait that follows.
+ */
 function recordingHost() {
   const sent: Array<{ tool: string; params: Record<string, unknown> }> = [];
   const host: ToolHost = {
     async callTool(tool, params) {
+      if (isStabilityProbe({ tool, params })) return { success: true, text: "ok" };
       sent.push({ tool, params });
       return { success: true, text: "ok (2 fields)" };
     },
@@ -53,7 +59,7 @@ describe("browser_fill: file inputs are checked before anything is sent", () => 
   it("flags a directory as not a file (by name)", async () => {
     const { host, sent } = recordingHost();
     await fillTool.handler(host, { tabId: 3, fields: [{ target: "e4", value: [dir] }] });
-    expect(sent[0]!.params.fields).toEqual([{ target: "e4", value: [dir], missingFiles: [dir.split("/").pop()] }]);
+    expect(sent[0]!.params.fields).toEqual([{ target: "e4", value: [dir], missingFiles: [basename(dir)] }]);
   });
 
   it("expands ~/ to the home directory before checking and forwarding", async () => {

@@ -11,6 +11,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import { parseToolParams, registerTools } from '../mcp-server/src/register-tools.js';
 import { allTools } from '../mcp-server/src/tools/index.js';
 import type { ToolDefinition, ToolHost } from '../mcp-server/src/tools/types.js';
+import { withoutStabilityProbe } from './helpers/stability-probe.js';
 
 /**
  * Registration wiring (register-tools.ts), driven through a REAL McpServer +
@@ -20,12 +21,12 @@ import type { ToolDefinition, ToolHost } from '../mcp-server/src/tools/types.js'
  */
 
 // Fake daemon host: records calls, answers with an empty success payload.
-function makeFakeHost(): ToolHost & { calls: string[] } {
-  const calls: string[] = [];
+function makeFakeHost(): ToolHost & { calls: Array<{ tool: string; params: Record<string, unknown> }> } {
+  const calls: Array<{ tool: string; params: Record<string, unknown> }> = [];
   return {
     calls,
-    async callTool(tool: string) {
-      calls.push(tool);
+    async callTool(tool: string, params: Record<string, unknown>) {
+      calls.push({ tool, params });
       return { success: true, text: 'ok' };
     },
   };
@@ -57,7 +58,8 @@ describe('registerTools', () => {
     const { client } = await setup(host);
     const result = await client.callTool({ name: 'browser_click', arguments: { tabId: 1, target: '#btn' } });
     expect(result.isError).toBeFalsy();
-    expect(host.calls).toEqual(['browser_click']);
+    // The stability probe that follows the click is a read, not the call asked for.
+    expect(withoutStabilityProbe(host.calls).map((c) => c.tool)).toEqual(['browser_click']);
   });
 
   it('validates the schema before forwarding (click needs a target)', async () => {

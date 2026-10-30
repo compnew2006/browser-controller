@@ -3,18 +3,26 @@ import { CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { allTools } from './tools/index.js';
 import { prepareToolParams } from './tools/params.js';
-import { codedMessageOf, withNotes } from './tools/types.js';
+import { codedMessageOf, rawResultOf, withNotes } from './tools/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from './tools/types.js';
 import { attachSafetyController } from './tools/action-support.js';
+import { noteOwnedTab, sessionGate } from './tools/session-mode.js';
 
 // Re-exported for tests/register-tools.test.ts, which drives validation through
 // the bootstrap; the implementation lives in tools/params.ts now.
 export { parseToolParams } from './tools/params.js';
 
-/** A failure text the agent reads: a text with no code gets INTERNAL_ERROR in front (a batch step's `step i/n <tool>: ` prefix stays in front). */
+/**
+ * A tool's failure text: the `CODE: message` of its first line, with a batch step's
+ * `step i/n <tool>: ` prefix kept in front of it. The lines after it are context —
+ * the earlier steps of a batch — and stay as they are.
+ */
 function codedText(text: string): string {
   const step = /^step \d+\/\d+ \S+: /.exec(text)?.[0] ?? '';
-  return step + codedMessageOf(text.slice(step.length));
+  const rest = text.slice(step.length);
+  const lineEnd = rest.indexOf('\n');
+  if (lineEnd < 0) return step + codedMessageOf(rest);
+  return step + codedMessageOf(rest.slice(0, lineEnd)) + rest.slice(lineEnd);
 }
 
 function failure(text: string): ToolResult {
@@ -39,7 +47,16 @@ function wrapHandler(tool: ToolDefinition, host: ToolHost) {
       return failure(err instanceof Error ? err.message : String(err));
     }
     try {
-      return withNotes(codedResult(await tool.handler(host, parsed)), notes);
+      // The session policy (read-only, isolated) is checked before anything is dispatched.
+      const gate = await sessionGate(tool.name, parsed, host);
+      if (gate) return withNotes(gate, notes);
+      const result = await tool.handler(host, parsed);
+      // A tab the session opened is the session's own: in isolated mode it may act on it.
+      if (tool.name === 'browser_navigate' && parsed.tabId === undefined) {
+        const opened = rawResultOf(result)?.tabId;
+        if (typeof opened === 'number') noteOwnedTab(host, opened);
+      }
+      return withNotes(codedResult(result), notes);
     } catch (err) {
       return failure(err instanceof Error ? err.message : String(err));
     }

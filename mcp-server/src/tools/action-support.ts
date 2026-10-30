@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { failureResult, rawResultOf } from './types.js';
 import type { ToolHost, ToolResult } from './types.js';
+import { waitForPageToSettle } from './page-stability.js';
 
 export type SafetyAction = 'allow' | 'ask' | 'block';
 
@@ -230,6 +231,54 @@ async function snapshot(host: ToolHost, tabId: number): Promise<Snapshot> {
   };
 }
 
+/** One snapshot, or undefined when the page cannot be read. */
+async function takeSnapshot(host: ToolHost, tabId: number): Promise<Snapshot | undefined> {
+  try {
+    return await snapshot(host, tabId);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * How long an expectation is polled before it is reported as unmet, and how
+ * often it is re-read. A page that changes a moment after the action (a late
+ * navigation, an SPA re-render) must not fail an action that did work.
+ */
+const EXPECT_POLL_MS = 1_500;
+const EXPECT_POLL_STEP_MS = 100;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** The expectation's checks against one snapshot; empty when there is no expectation. */
+function expectChecks(after: Snapshot | undefined, wanted: { urlIncludes?: string; textIncludes?: string } | undefined): Record<string, boolean> {
+  const checks: Record<string, boolean> = {};
+  if (after && wanted?.urlIncludes !== undefined) checks.urlIncludes = !!after.url?.includes(wanted.urlIncludes);
+  if (after && wanted?.textIncludes !== undefined) checks.textIncludes = after.text.includes(wanted.textIncludes);
+  return checks;
+}
+
+/** Whether one snapshot already satisfies the expectation. */
+function expectChecksPass(after: Snapshot, wanted: { urlIncludes?: string; textIncludes?: string }): boolean {
+  return Object.values(expectChecks(after, wanted)).every(Boolean);
+}
+
+/** The first CODE: of a result's text, or undefined. */
+function codeOf(result: ToolResult): string | undefined {
+  const item = result.content.find((part) => part.type === 'text');
+  if (item?.type !== 'text') return undefined;
+  return /^([A-Z][A-Z0-9_]+):/.exec(item.text.split('\n', 1)[0])?.[1];
+}
+
+/** Add a way out to a refusal, so it reads as a direction and not as a wall. */
+function withHint(result: ToolResult, code: string, hint: string): ToolResult {
+  if (codeOf(result) !== code) return result;
+  return {
+    ...result,
+    content: result.content.map((part) => (part.type === 'text' ? { ...part, text: `${part.text}\n${hint}` } : part)),
+  };
+}
+
 function diff(before: Snapshot, after: Snapshot): Record<string, unknown> {
   const oldLines = before.text.split('\n').filter(Boolean);
   const newLines = after.text.split('\n').filter(Boolean);
@@ -303,6 +352,10 @@ export function actionHandler(
     if (gateRefusals.has(result)) {
       return withReceipt(result, tool, { status: 'not_dispatched', summary: summaryOf(result) }, false);
     }
+    // A page that changes in place draws its new state after the action returns.
+    // Waiting for the page to settle means the read that follows sees what the
+    // action produced, not the state before it.
+    if (!result.isError) await waitForPageToSettle(host, tabId);
     const raw = rawResultOf(result) ?? {};
     let after: Snapshot | undefined;
     if (wantsObservation || wanted) {
@@ -314,9 +367,22 @@ export function actionHandler(
       }
     }
 
-    const checks: Record<string, boolean> = {};
-    if (after && wanted?.urlIncludes !== undefined) checks.urlIncludes = !!after.url?.includes(wanted.urlIncludes);
-    if (after && wanted?.textIncludes !== undefined) checks.textIncludes = after.text.includes(wanted.textIncludes);
+    // An expectation is polled, not read once: a page that changes a moment after
+    // the action must not fail an action that did work.
+    let waitedMs = 0;
+    if (wanted && after && !expectChecksPass(after, wanted)) {
+      const deadline = Date.now() + EXPECT_POLL_MS;
+      while (Date.now() < deadline) {
+        await sleep(EXPECT_POLL_STEP_MS);
+        waitedMs += EXPECT_POLL_STEP_MS;
+        const next = await takeSnapshot(host, tabId);
+        if (!next) break;
+        after = next;
+        if (expectChecksPass(after, wanted)) break;
+      }
+    }
+
+    const checks = expectChecks(after, wanted);
     const expectPassed = Object.values(checks).every(Boolean);
     const expectFailed = !!wanted && !!after && !expectPassed;
     const expectUnavailable = !!wanted && !after;
@@ -325,7 +391,7 @@ export function actionHandler(
       const code = expectUnavailable ? 'EXPECTATION_UNAVAILABLE' : 'EXPECTATION_FAILED';
       const message = expectUnavailable
         ? 'the action completed, but the postcondition could not be checked; do not repeat it without checking the page.'
-        : 'the action completed, but the requested postcondition did not match; do not repeat it without checking the page.';
+        : `the action completed, but the requested postcondition did not match${waitedMs ? ` after waiting ${waitedMs} ms` : ''}; do not repeat it without checking the page.`;
       output = {
         ...result,
         isError: true,
@@ -334,6 +400,12 @@ export function actionHandler(
           : part),
       };
     }
+    // A hidden element is a refusal, not a dead end: the hint says how to go on.
+    output = withHint(
+      output,
+      'ELEMENT_HIDDEN',
+      'the element exists but is not visible (a control drawn by a sibling label is often like this); use browser_evaluate to act on it, or hover it first.',
+    );
 
     const observation = wantsObservation
       ? (before && after ? { kind: 'diff', ...diff(before, after) } : { kind: 'diff', status: 'unavailable' })
@@ -342,7 +414,7 @@ export function actionHandler(
       status: output.isError ? (expectUnavailable ? 'expectation_unavailable' : expectFailed ? 'expectation_failed' : 'error') : 'completed',
       summary: summaryOf(result),
       ...(typeof raw.url === 'string' ? { urlChanged: before ? before.url !== raw.url : undefined } : {}),
-      ...(wanted ? { expect: { passed: !!after && expectPassed, checks, ...(expectUnavailable ? { status: 'observation_unavailable' } : {}) } } : {}),
+      ...(wanted ? { expect: { passed: !!after && expectPassed, checks, ...(waitedMs ? { waitedMs } : {}), ...(expectUnavailable ? { status: 'observation_unavailable' } : {}) } } : {}),
       ...(observation ? { observation } : {}),
     };
     return withReceipt(output, tool, receipt, !output.isError);

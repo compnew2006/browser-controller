@@ -360,7 +360,7 @@ describe('batches and reminders (US1)', () => {
     expect(recordOf(other)).toEqual(inBatch);
   });
 
-  it('AC-27: an earlier navigate step puts its memory lines in the batch notes; the last result and receipts are unchanged', async () => {
+  it('AC-27: a navigate step keeps its memory lines with that step, and every step comes back', async () => {
     writeEnabledPolicy(stateDir);
     await boot();
     await client.call('browser_navigate', { url: PUBLIC, snapshot: true });
@@ -376,10 +376,13 @@ describe('batches and reminders (US1)', () => {
     });
     expect(result.isError).not.toBe(true);
     const text = textOf(result);
-    expect(text).toContain('step 1/3 browser_navigate: memory: memory (untrusted site notes for http://127.0.0.1:4010;');
-    expect(text).toContain('step 1/3 browser_navigate: memory: - language ar, direction rtl (this profile, verified');
+    expect(text).toContain('step 1/3 browser_navigate:');
+    expect(text).toContain('memory (untrusted site notes for http://127.0.0.1:4010;');
+    expect(text).toContain('- language ar, direction rtl (this profile, verified');
     expect(text).toContain('page text');
-    expect(text).not.toContain('step 2/3');
+    // Every step's own result travels, not only the last one's.
+    expect(text).toContain('step 2/3 browser_snapshot:');
+    expect(text).toContain('step 3/3 browser_text:');
     expect(text).not.toContain('step 3/3 browser_text: memory');
   });
 
