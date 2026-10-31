@@ -3,8 +3,11 @@ import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
 import { CREDENTIAL_VAULT_CAPABILITY, EXTENSION_PROTOCOL_CAPABILITIES, VAULT_SITE_APPROVAL_CAPABILITY } from '../mcp-server/src/protocol.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
+import { freePort } from './helpers/free-port.js';
 
-let port = 31_000 + (process.pid % 3_000);
+// The OS assigns the port: vitest runs test files in parallel, and a range
+// picked by arithmetic can collide with another file in the same run.
+let port = 0;
 const sockets: WebSocket[] = [];
 const bridges: ExtensionBridge[] = [];
 
@@ -16,10 +19,12 @@ afterEach(async () => {
   await new Promise((resolve) => setTimeout(resolve, 40));
 });
 
-function startBridge() {
-  const bridge = new ExtensionBridge({ port: ++port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 150 });
+async function startBridge() {
+  port = await freePort();
+  const bridge = new ExtensionBridge({ port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 150 });
   bridges.push(bridge);
-  return bridge.start().then(() => bridge);
+  await bridge.start();
+  return bridge;
 }
 
 async function connectExtension(

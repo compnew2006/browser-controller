@@ -5,9 +5,18 @@ import { ExtensionBridge, isDaemonResponsiveOnPort } from '../mcp-server/src/bri
 import { authenticatedHttpGet } from '../mcp-server/src/bridge-auth.js';
 import { WS_HARD_MAX_PAYLOAD_BYTES } from '../mcp-server/src/bridge-frames.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials, TEST_BRIDGE_TOKEN, TEST_ENROLLMENT_SECRET } from './helpers/bridge-auth.js';
+import { allocatePorts } from './helpers/free-port.js';
 
-let portCounter = 20_000 + (process.pid % 5_000);
-function nextPort() { return portCounter++; }
+// Ports come from the OS, not from a range picked by arithmetic: a band
+// derived from the pid collides with another test process whose pid lands in
+// the same band, and the daemon refuses to evict the port's owner.
+const PORT_POOL = await allocatePorts(64);
+let portCursor = 0;
+function nextPort(): number {
+  const port = PORT_POOL[portCursor++];
+  if (port === undefined) throw new Error('this test file needs more ports than the pool holds');
+  return port;
+}
 
 describe('isDaemonResponsiveOnPort', () => {
   let servers: http.Server[] = [];

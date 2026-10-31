@@ -8,6 +8,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildIpcHello } from '../mcp-server/src/protocol.js';
 import { authenticatedHttpGet } from '../mcp-server/src/bridge-auth.js';
+import { freePort } from './helpers/free-port.js';
 
 /**
  * Integration tests for the daemon's client-lifecycle behavior:
@@ -36,7 +37,13 @@ const TMP_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-test-'));
 const SOCK = path.join(TMP_STATE, 'daemon.sock');
 const TOKEN_FILE = path.join(TMP_STATE, 'token.json');
 const ENROLLMENT_FILE = path.join(TMP_STATE, 'enrollment.json');
-const WS_PORT = 30_000 + (process.pid % 5_000);
+// One ephemeral port per daemon instance this file starts. The OS hands out a
+// port that is free, instead of a random pick from a narrow window that a
+// second test process could collide with — the daemon refuses to evict
+// whoever owns a port, so a collision killed the whole test file.
+const WS_PORT = await freePort();
+const RL_PORT = await freePort();
+const E_PORT = await freePort();
 
 let token = '';
 let enrollment = '';
@@ -406,7 +413,6 @@ describe('--agent flag naming', { timeout: 15_000 }, () => {
 describe('daemon per-session rate limiting', { timeout: 30_000 }, () => {
   // Separate daemon instance with a tiny budget so the test is fast and doesn't
   // interfere with the shared daemon's clients above.
-  const RL_PORT = 19310 + Math.floor(Math.random() * 50);
   const RL_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-rl-'));
   const RL_SOCK = path.join(RL_STATE, 'daemon.sock');
   const RL_TOKEN_FILE = path.join(RL_STATE, 'token.json');
@@ -540,7 +546,6 @@ describe('daemon enrollment gate (closes first-contact TOFU race)', { timeout: 3
   // Self-contained daemon instance (own state dir + own port + own
   // enrollment.json), so this describe block can be run in isolation — the
   // gate must NOT depend on the shared lifecycle daemon above being booted.
-  const E_PORT = 19410 + Math.floor(Math.random() * 50);
   const E_STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-enr-'));
   const E_SOCK = path.join(E_STATE, 'daemon.sock');
   const E_TOKEN_FILE = path.join(E_STATE, 'token.json');

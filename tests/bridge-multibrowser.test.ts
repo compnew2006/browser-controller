@@ -3,8 +3,10 @@ import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
 import { buildExtensionHelloAck as extensionHelloAck } from '../extension/lib/protocol.js';
+import { freePort } from './helpers/free-port.js';
 
-let port = 26_000 + (process.pid % 3_000);
+// The OS assigns the port; a pid-derived band collides with another test process.
+let port = 0;
 const sockets: WebSocket[] = [];
 const bridges: ExtensionBridge[] = [];
 
@@ -17,7 +19,8 @@ afterEach(async () => {
 });
 
 async function startBridge() {
-  const bridge = new ExtensionBridge({ port: ++port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
+  port = await freePort();
+  const bridge = new ExtensionBridge({ port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
   bridges.push(bridge);
   await bridge.start();
   return { bridge, port };

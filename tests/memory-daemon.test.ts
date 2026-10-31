@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 import { batchTool } from '../mcp-server/src/tools/batch.js';
+import { freePort } from './helpers/free-port.js';
 import '../mcp-server/src/tools/registry.js';
 import { ALLOWLIST } from '../mcp-server/src/memory/allowlist.js';
 import { JsonMemoryStore, type SiteFact, type SiteRecord } from '../mcp-server/src/memory/store.js';
@@ -59,16 +59,6 @@ const siteContext = (url: string, page: Page) => ({
   ...page.context,
 });
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as net.AddressInfo;
-      server.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(read: () => T | null | undefined | false, ms = 5000): Promise<T> {
   const end = Date.now() + ms;

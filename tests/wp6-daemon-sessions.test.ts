@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { buildIpcHello, buildSessionId, newDaemonInstanceId } from '../mcp-server/src/protocol.js';
 import { newAuthNonce } from '../mcp-server/src/bridge-auth.js';
+import { freePort } from './helpers/free-port.js';
 
 /**
  * WP6 item 1a/1b (daemon side): session ids must not repeat across daemon
@@ -21,7 +22,9 @@ const DIST_DAEMON = path.join(ROOT, 'mcp-server', 'dist', 'daemon.js');
 const STATE = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-wp6-'));
 const SOCK = path.join(STATE, 'daemon.sock');
 const TOKEN_FILE = path.join(STATE, 'token.json');
-const WS_PORT = 44_000 + (process.pid % 4_000); // own band, see wp6-browser-default
+// An OS-assigned ephemeral port, not a pid-derived band another test process
+// can land in at the same time.
+const WS_PORT = await freePort();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));

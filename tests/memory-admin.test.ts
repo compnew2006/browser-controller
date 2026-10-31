@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildIpcWelcome } from '../mcp-server/src/protocol.js';
+import { freePort } from './helpers/free-port.js';
 import { MemoryService, type MemoryCall } from '../mcp-server/src/memory/service.js';
 import { enablePolicy, defaultPolicy, readPolicy as readPolicyFile, writePolicy as writePolicyFile } from '../mcp-server/src/memory/policy.js';
 import { JsonMemoryStore, siteFileName, type MemoryStore, type SiteRecord } from '../mcp-server/src/memory/store.js';
@@ -106,16 +107,6 @@ let daemon: DaemonHandle | null;
 let client: IpcClient | null;
 const extraDirs: string[] = [];
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as net.AddressInfo;
-      server.close(() => resolve(port));
-    });
-  });
-}
 
 async function boot(): Promise<void> {
   daemon = await startIsolatedDaemon(stateDir, { wsPort: await freePort() });

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { buildIpcHello } from '../mcp-server/src/protocol.js';
 import { isKnownWireTool } from '../mcp-server/src/wire-tools.js';
 import { allTools } from '../mcp-server/src/tools/index.js';
+import { freePort } from './helpers/free-port.js';
 
 /**
  * Daemon-side tool allow-list (audit F6-3): an authenticated IPC client other
@@ -40,7 +41,7 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
     if (!fs.existsSync(DAEMON_JS)) throw new Error(`${DAEMON_JS} missing, run \`npm run build\` first`);
     proc = spawn(process.execPath, [DAEMON_JS], {
       // No extension ever connects here: keep the plain 5 s wait (no reconnect wait after the start).
-      env: { ...process.env, BC_STATE_DIR: stateDir, BC_RECONNECT_WAIT_MS: '0', WS_PORT: String(36_000 + Math.floor(Math.random() * 2_000)), WS_HOST: '127.0.0.1' },
+      env: { ...process.env, BC_STATE_DIR: stateDir, BC_RECONNECT_WAIT_MS: '0', WS_PORT: String(await freePort()), WS_HOST: '127.0.0.1' },
       stdio: 'ignore',
     });
     for (let i = 0; i < 100; i++) {
