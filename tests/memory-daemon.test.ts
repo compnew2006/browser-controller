@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 import { batchTool } from '../mcp-server/src/tools/batch.js';
 import '../mcp-server/src/tools/registry.js';
