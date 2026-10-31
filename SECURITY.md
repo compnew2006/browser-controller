@@ -144,13 +144,16 @@ Before release, maintainers run the same local gates enforced by CI:
 ```bash
 npm ci
 npm audit --omit=dev
+npm run context:lint
+npm run context:measure
 npm run lint
+npm run arch:check
 npm run typecheck
 npm run build
 npm run test:coverage
 ```
 
-Production dependencies must have no known audit findings at release time, lint runs with zero warnings, and coverage is held to the configured 80% thresholds for the deterministic protocol, action, state, lock, and bridge-security core. Chrome lifecycle entry points, popup rendering, and native debugger plumbing need a real extension runtime and remain integration/E2E concerns rather than inflating this unit-coverage number. Audit data changes as advisories are published, so a previously clean lockfile must be checked again rather than assumed safe.
+Production dependencies must have no known audit findings at release time, lint runs with zero warnings, the architectural layering checks pass, and coverage is held to the configured thresholds over the whole production surface. Chrome lifecycle entry points, popup rendering, and native debugger plumbing need a real extension runtime, so no unit test reaches them: the only checks that exercise them are the local smoke scripts (`npm run smoke:real-chrome`, `smoke:vault-isolated`, `smoke:vault-card`), which the pipeline does not run. A green pipeline therefore does not prove those paths. Audit data changes as advisories are published, so a previously clean lockfile must be checked again rather than assumed safe.
 
 ## Scope
 
