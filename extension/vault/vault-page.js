@@ -237,12 +237,15 @@ function field(label, type, options = {}) {
   return { wrapper, input };
 }
 
-function checkbox(label) {
+function checkbox(label, hint) {
   const wrapper = element('label', 'check');
   const input = document.createElement('input');
   input.type = 'checkbox';
   wrapper.append(input, element('span', '', label));
-  return { wrapper, input };
+  // The note says what the box does with time. Three affordances allow a site, and only
+  // one of them keeps the approval past a lock (F-40).
+  const note = hint ? element('p', 'section-note', hint) : null;
+  return { wrapper, input, note };
 }
 
 function renderSaveRequest(request) {
@@ -250,14 +253,16 @@ function renderSaveRequest(request) {
   const label = field('Account name', 'text', { name: 'label', maxLength: 120, placeholder: 'Personal account' });
   const identifier = field('Username or email', 'text', { name: 'identifier', maxLength: 320, autocomplete: 'username' });
   const password = field('Password', 'password', { name: 'password', maxLength: 4096, autocomplete: 'new-password' });
-  const allow = checkbox('Allow agents to use sign-ins on this site until the vault locks');
+  const allow = checkbox(
+    'Allow agents to use sign-ins on this site until the vault locks',
+    'Ends when the vault locks. "Always allow" in Site access keeps the site approved across locks.');
   const actions = element('div', 'button-row');
   const save = actionButton('Save account', 'primary', null);
   const fill = actionButton('Save, allow this site, and fill', '', null);
   save.type = 'submit';
   fill.type = 'button';
   actions.append(save, fill, declineButton(request));
-  saveForm.append(label.wrapper, identifier.wrapper, password.wrapper, allow.wrapper, actions);
+  saveForm.append(label.wrapper, identifier.wrapper, password.wrapper, allow.wrapper, ...(allow.note ? [allow.note] : []), actions);
   const submit = (saveAndFill) => async (event) => {
     event?.preventDefault();
     if (!saveForm.reportValidity()) return;

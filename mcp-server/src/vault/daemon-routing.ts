@@ -4,6 +4,9 @@ import { isCredentialVaultPath } from './protected-paths.js';
 import { createHash } from 'node:crypto';
 import { OBSERVABLE_TOOLS, withObserve } from '../bridge-frames.js';
 import { ERROR_CODES, formatError } from '../core/error-codes.js';
+import { createLogger } from '../core/logger.js';
+
+const log = createLogger('browser-controller-daemon');
 
 const INTERNAL_VAULT_TOOL_NAMES = new Set([
   'browser_vault_internal_inspect', 'browser_vault_internal_fill',
@@ -100,6 +103,7 @@ export async function routeVaultAwareCall(options: RouteOptions): Promise<Routed
     let result: unknown;
     if (tool === 'browser_vault') {
       result = await vaultService.handlePublic(sessionId, params, signal);
+      logVaultOutcome(params.action, result);
     } else {
       if (tool === 'browser_fill' && Array.isArray(params.fields)) await assertVaultPathsNotUploaded(params.fields);
       await vaultService.assertToolAllowed(sessionId, tool, params);
@@ -121,14 +125,33 @@ export async function routeVaultAwareCall(options: RouteOptions): Promise<Routed
     const sanitizedError = await sanitize(rawError);
     const payload = (error as { result?: unknown })?.result;
     const sanitizedPayload = payload === undefined ? undefined : await sanitize(payload);
+    // A call that did not answer while a card is open on its tab gets the card named (F-34):
+    // a bare TIMEOUT told the agent nothing about what was waiting for the owner.
+    const hint = rawError.startsWith('TIMEOUT') ? vaultService.approvalCardHint(pinnedBrowserId, params.tabId) : undefined;
+    const text = safeErrorText(sanitizedError);
     return {
       success: false,
-      error: safeErrorText(sanitizedError),
+      error: hint ? `${text}${hint}` : text,
       ...(sanitizedPayload !== undefined ? { result: sanitizedPayload } : {}),
     };
   } finally {
     releaseRedaction?.();
   }
+}
+
+/**
+ * One line per vault call the agent made, so the operator log shows what the vault was
+ * asked and what it answered (F-37). The line names the action, the outcome and the
+ * site — never a handle, an identifier or a password.
+ */
+function logVaultOutcome(action: unknown, result: unknown): void {
+  if (!isRecord(result)) return;
+  const outcome = typeof result.status === 'string' ? result.status
+    : (typeof result.code === 'string' ? result.code : 'unknown');
+  const origin = typeof result.origin === 'string' ? result.origin : '';
+  const request = typeof result.requestId === 'string' ? result.requestId : '';
+  log.info(`vault ${typeof action === 'string' ? action : 'call'} -> ${outcome}`
+    + (origin ? ` origin=${origin}` : '') + (request ? ` request=${request}` : ''));
 }
 
 async function assertVaultPathsNotUploaded(fields: unknown[]): Promise<void> {

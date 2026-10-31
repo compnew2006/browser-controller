@@ -1,7 +1,7 @@
 import { CredentialVaultStore, scopeForBrowser } from './store.js';
 import { canonicalizeOrigin, metadataOf, randomId, VaultCredentialSchema, type VaultCredential } from './types.js';
 import {
-  VaultServiceError, publicError, requireStrictKeys, safeCode,
+  VaultServiceError, failureReasonOf, publicError, requireStrictKeys, safeCode,
   type PrivateConnection, type InternalPending, type VaultBrowserContext, type VaultPrivateRequest,
 } from './service-common.js';
 import { isRecord } from '../core/guards.js';
@@ -73,7 +73,8 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       }
     } catch (error) {
       const pending = requestId ? this.requests.forConnection(connection, requestId) : undefined;
-      if (pending?.request.state === 'processing') this.requests.settle(pending, 'failed');
+      // The reason travels with the request, so the agent can read why it failed (F-39).
+      if (pending?.request.state === 'processing') this.requests.fail(pending, failureReasonOf(error));
       const code = safeCode(error);
       return publicError(code);
     } finally {

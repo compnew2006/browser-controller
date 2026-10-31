@@ -218,6 +218,19 @@ export class RequestJournal {
     if (set) for (const resume of [...set]) resume();
   }
 
+  /** The live card request that asks the owner about one tab, if there is one (F-34). */
+  liveCardForTab(scope: string, tabId: number): InternalPending | undefined {
+    return [...this.requests.values()].find((item) => item.surface === 'card'
+      && item.request.browserScope === scope && item.request.tabId === tabId
+      && LIVE_STATES.has(item.request.state));
+  }
+
+  /** Ends a request as failed and keeps why, so the agent can read the reason (F-39). */
+  fail(pending: InternalPending, reason: string): void {
+    pending.failureReason = reason.slice(0, 200);
+    this.settle(pending, 'failed');
+  }
+
   get(requestId: string): InternalPending | undefined {
     return this.requests.get(requestId);
   }

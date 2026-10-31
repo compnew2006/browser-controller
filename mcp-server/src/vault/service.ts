@@ -12,6 +12,21 @@ export * from './service-common.js';
 type GrantRef = LiveGrant | SiteGrant;
 
 export class VaultService extends VaultServiceProtection {
+  /**
+   * What a call that did not answer should say when an approval card is open on its tab (F-34).
+   *
+   * The card keeps the agent's input off that tab, and a read on such a tab can go
+   * unanswered; the agent then gets a bare TIMEOUT with no hint of what is waiting. The
+   * card itself is the reason the owner has not answered yet — not a proven cause of the
+   * silence, so the hint says so.
+   */
+  approvalCardHint(browserId: string | undefined, tabId: unknown): string | undefined {
+    if (!browserId || !Number.isInteger(tabId)) return undefined;
+    const card = this.requests.liveCardForTab(scopeForBrowser(browserId), tabId as number);
+    if (!card) return undefined;
+    return ' An approval card is open on this tab: the owner has not decided yet, so the page may not answer.';
+  }
+
   async handlePublic(sessionId: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
     this.requests.expire();
     const action = params.action;

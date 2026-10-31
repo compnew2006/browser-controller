@@ -660,6 +660,40 @@ describe('VaultService', () => {
         .toEqual([expect.objectContaining({ purpose: 'site', via: 'card' })]);
     });
 
+    it('names the open card when a call on its tab did not answer (F-34)', async () => {
+      const { service, state, connection } = await setupCard();
+      await service.pinBrowserId(SESSION, 'FixtureAgent');
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const listing = service.handlePublic(SESSION, { action: 'list', tabId: 23 });
+      await waitFor(() => prompts(state).length === 1);
+
+      expect(service.approvalCardHint(state.context.browserId, 23)).toMatch(/approval card is open/i);
+      expect(service.approvalCardHint(state.context.browserId, 99)).toBeUndefined();
+      expect(service.approvalCardHint(undefined, 23)).toBeUndefined();
+      expect(service.approvalCardHint(state.context.browserId, 'twenty-three' as unknown as number)).toBeUndefined();
+
+      await service.handlePrivateUi(connection(), {
+        operation: 'cardDecision', requestId: prompts(state)[0].requestId, decision: 'deny', always: false,
+      });
+      await listing;
+    });
+
+    it('tells the agent why a request failed (F-39)', async () => {
+      const { service, connection } = await setup();
+      await service.pinBrowserId(SESSION, 'FixtureAgent');
+      await service.handlePrivateUi(connection(), { operation: 'unlock' });
+      const request = await service.handlePublic(SESSION, { action: 'save_login', tabId: 24 });
+
+      const refused = await service.handlePrivateUi(connection(), {
+        operation: 'save', requestId: request.requestId, origin: ORIGIN,
+        identifier: 'fixture-user', password: '', label: 'fixture', allowSession: false, saveAndFill: false,
+      });
+      expect(refused).toMatchObject({ success: false, code: 'INVALID_ARGUMENT' });
+
+      const status = await service.handlePublic(SESSION, { action: 'status', requestId: request.requestId });
+      expect(status).toMatchObject({ success: true, status: 'failed', reason: expect.stringContaining('invalid') });
+    });
+
     it('unlocks a locked vault from the card and fills in the same call', async () => {
       const { service, state, connection } = await setupCard();
       await service.handlePrivateUi(connection(), { operation: 'unlock' });

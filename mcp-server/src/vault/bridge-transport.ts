@@ -3,6 +3,10 @@ import { CREDENTIAL_VAULT_CAPABILITY, SITE_CONTEXT_CAPABILITY, SITE_MAP_CAPABILI
 import { ExtensionConnections, type ExtensionConnection } from '../bridge-connections.js';
 import type { VaultService } from './service.js';
 import { ERROR_CODES, formatError } from '../core/error-codes.js';
+import { isRecord } from '../core/guards.js';
+import { createLogger } from '../core/logger.js';
+
+const log = createLogger('browser-controller-daemon');
 
 interface PendingVaultAction {
   resolve: (value: unknown) => void;
@@ -273,6 +277,12 @@ export class VaultBridgeTransport {
       }
     }
     if (!this.connections.has(conn) || conn.ws.readyState !== WebSocket.OPEN) return;
+    // The owner's own decisions are worth a line in the operator log (F-37): the operation
+    // and its outcome only — never a handle, an identifier or a password.
+    const operation = isRecord(message.payload) && typeof message.payload.operation === 'string' ? message.payload.operation : 'request';
+    const outcome = isRecord(result) && typeof result.status === 'string' ? result.status
+      : (isRecord(result) && typeof result.code === 'string' ? result.code : 'unknown');
+    log.info(`vault ui ${operation} -> ${outcome}`);
     this.send(conn, { type: 'vaultUiResponse', id: message.id, result });
   }
 

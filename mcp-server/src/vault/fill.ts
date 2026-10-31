@@ -74,7 +74,7 @@ export class FillWorkflow {
       if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
       const entry = await store.get(handle);
       if (fillSignal.aborted) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
-      if (!entry) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
+      if (!entry) return publicError(ERROR_CODES.VAULT_HANDLE_NOT_FOUND);
       if (entry.origin !== inspection.origin) return publicError(ERROR_CODES.VAULT_ORIGIN_MISMATCH);
       if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
       if (fillSignal.aborted) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);

@@ -211,3 +211,15 @@ describe('fill workflow', () => {
     });
   });
 });
+
+describe('a handle that names no saved account (F-36)', () => {
+  it('says the handle is unknown instead of calling it a missing grant', async () => {
+    const empty = { isUnlocked: true, get: vi.fn(async () => null) } as unknown as CredentialVaultStore;
+    const w = workflow({ storeFor: () => empty });
+    const result = await run(w);
+
+    expect(result).toMatchObject({ success: false, code: 'VAULT_HANDLE_NOT_FOUND' });
+    expect(w.fillPage).not.toHaveBeenCalled();
+    expect(w.protectedDocuments).toEqual([]);
+  });
+});

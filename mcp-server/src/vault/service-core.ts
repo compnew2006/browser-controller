@@ -79,6 +79,7 @@ export abstract class VaultServiceCore {
         purpose: pending.request.purpose,
         ...(pending.request.origin ? { origin: pending.request.origin } : {}),
         ...(pending.request.credentialId ? { handle: pending.request.credentialId } : {}),
+        ...(pending.failureReason ? { reason: pending.failureReason } : {}),
       };
     }
     const store = this.storeFor(context.browserId);
@@ -240,7 +241,12 @@ export abstract class VaultServiceCore {
   }
 
   protected requestState(pending: InternalPending): Record<string, unknown> {
-    return { success: true, status: pending.request.state, requestId: pending.request.requestId };
+    return {
+      success: true,
+      status: pending.request.state,
+      requestId: pending.request.requestId,
+      ...(pending.failureReason ? { reason: pending.failureReason } : {}),
+    };
   }
 
   protected async ensureUiUnlocked(store: CredentialVaultStore): Promise<void> {

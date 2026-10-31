@@ -26,8 +26,9 @@ export const vaultTool: ToolDefinition = {
     if (params.action !== 'save_login' && params.label !== undefined) fail('label', 'label is accepted only by save_login');
     if (params.requestId !== undefined) fail('requestId', 'requestId is accepted only by status');
   }),
-  // Three bounded extension actions (inspection, re-inspection, fill) plus
-  // local lock/audit overhead fit inside the service's 30s active fill budget.
-  timeoutMs: 40_000,
+  // One call can wait 40 s for the owner's decision on the card and then run the fill
+  // with its own 30 s budget, so the tool's limit has to cover both (F-38): a limit equal
+  // to the card wait turned the owner's slow answer into a TIMEOUT instead of a decision.
+  timeoutMs: 80_000,
   handler: forwardHandler('browser_vault'),
 };

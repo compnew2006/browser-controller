@@ -19,7 +19,7 @@
       account: (label) => `Account to fill: ${label}`,
       unlock: 'Allowing also unlocks the vault on this device.',
       always: 'Always allow this site',
-      alwaysHint: 'Later requests from this site are approved without asking, and each one is logged.',
+      alwaysHint: 'Later requests from this site are approved without asking, and each one is logged. Kept in the encrypted vault, so it survives a lock.',
       allow: 'Allow',
       deny: 'Deny',
       page: 'Decide on the vault page',

@@ -110,6 +110,8 @@ export interface InternalPending {
   held?: boolean;
   /** The fill the private page ran when it approved this request, returned to a waiting call instead of a second fill. */
   outcome?: Record<string, unknown>;
+  /** Why the request failed, in words the agent can act on (F-39). */
+  failureReason?: string;
 }
 
 export interface PrivateConnection {
@@ -167,10 +169,26 @@ export function safeCode(error: unknown): string {
   return match?.[1] ?? ERROR_CODES.VAULT_STORAGE_INVALID;
 }
 
+/**
+ * Why a private request failed, in words the agent can act on (F-39).
+ *
+ * Only the vault's own static messages are used. An error from the file system can
+ * carry a local path, and the agent has no business reading one.
+ */
+export function failureReasonOf(error: unknown): string {
+  if (error instanceof VaultServiceError) {
+    const separator = error.message.indexOf(': ');
+    const text = separator === -1 ? error.message : error.message.slice(separator + 2);
+    return text.slice(0, 200);
+  }
+  return 'the vault could not complete the operation';
+}
+
 export function safeMessage(code: string): string {
   const messages: Record<string, string> = {
     [ERROR_CODES.VAULT_EXTENSION_REQUIRED]: 'The connected Browser Controller daemon does not support the credential vault. Restart it, then reload the extension.',
     [ERROR_CODES.VAULT_PERMISSION_DENIED]: 'This browser, site, account, or session does not have a current user grant.',
+    [ERROR_CODES.VAULT_HANDLE_NOT_FOUND]: 'No saved account matches that handle in this vault. List the accounts of this site again.',
     [ERROR_CODES.VAULT_ORIGIN_MISMATCH]: 'The active page does not match the exact site origin saved for this account.',
     [ERROR_CODES.VAULT_ORIGIN_UNSUPPORTED]: 'This page is not a supported vault target: fills work only on HTTPS sites and on loopback HTTP.',
     [ERROR_CODES.VAULT_PAGE_UNRESPONSIVE]: 'The page did not respond before the vault action timed out. Reload it, then inspect again.',

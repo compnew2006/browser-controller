@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RequestJournal } from '../mcp-server/src/vault/requests.js';
 import { OperationRegistry } from '../mcp-server/src/vault/operations.js';
+import { scopeForBrowser } from '../mcp-server/src/vault/store.js';
 import type { VaultBrowserContext } from '../mcp-server/src/vault/service-common.js';
 
 const context: VaultBrowserContext = {
@@ -150,5 +151,35 @@ describe('request journal', () => {
     journal.abortWorkMatching((item) => item.request.purpose === 'fill');
     expect(operations.signalFor(pending.request.requestId)?.aborted).toBe(true);
     expect(pending.request.state).toBe('processing');
+  });
+});
+
+describe('the findings of the live vault measurement (F-34, F-39)', () => {
+  it('keeps why a request failed, so the agent can read it (F-39)', async () => {
+    const { journal } = journalAt(1_000);
+    const pending = await begin(journal);
+
+    journal.fail(pending, 'account fields are invalid');
+
+    expect(pending.request.state).toBe('failed');
+    expect(pending.failureReason).toBe('account fields are invalid');
+  });
+
+  it('finds the live card on a tab, so a call that did not answer can name it (F-34)', async () => {
+    const operations = new OperationRegistry();
+    const journal = new RequestJournal({
+      now: () => 0,
+      isSessionLive: () => true,
+      operations,
+      openUi: async () => {},
+      showCard: async () => true,
+    });
+    const pending = await journal.begin(context, {
+      purpose: 'approve', sessionId: 'session-1', tabId: 7, documentId: 'doc-1', origin: 'https://example.test', card: true,
+    });
+
+    expect(journal.liveCardForTab(scopeForBrowser('browser-a'), 7)?.request.requestId).toBe(pending.request.requestId);
+    expect(journal.liveCardForTab(scopeForBrowser('browser-a'), 8)).toBeUndefined();
+    expect(journal.liveCardForTab(scopeForBrowser('browser-b'), 7)).toBeUndefined();
   });
 });
