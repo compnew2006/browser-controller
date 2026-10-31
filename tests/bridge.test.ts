@@ -5,7 +5,7 @@ import { ExtensionBridge, isDaemonResponsiveOnPort } from '../mcp-server/src/bri
 import { authenticatedHttpGet } from '../mcp-server/src/bridge-auth.js';
 import { WS_HARD_MAX_PAYLOAD_BYTES } from '../mcp-server/src/bridge-frames.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials, TEST_BRIDGE_TOKEN, TEST_ENROLLMENT_SECRET } from './helpers/bridge-auth.js';
-import { freePort } from './helpers/net.js';
+import { freePort } from './helpers/free-port.js';
 
 describe('isDaemonResponsiveOnPort', () => {
   let servers: http.Server[] = [];

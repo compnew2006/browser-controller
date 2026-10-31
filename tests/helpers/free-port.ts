@@ -51,39 +51,3 @@ export function freePort(): Promise<number> {
     });
   });
 }
-
-/**
- * `count` distinct ports the operating system says are free.
- *
- * Every listener is held open at the same time, so the kernel cannot hand the
- * same port twice. The listeners are closed before the ports are returned:
- * the caller binds them later, and the window between the two is the price of
- * a port that is free rather than a number picked out of a range.
- */
-export async function allocatePorts(count: number): Promise<number[]> {
-  const servers: net.Server[] = [];
-  const ports: number[] = [];
-  try {
-    for (let i = 0; i < count; i++) {
-      const { server, port } = await new Promise<{ server: net.Server; port: number }>((resolve, reject) => {
-        const server = net.createServer();
-        server.unref();
-        server.once('error', reject);
-        server.listen(0, '127.0.0.1', () => {
-          const address = server.address();
-          if (address === null || typeof address === 'string') {
-            server.close(() => reject(new Error('free port: the server reported no TCP address')));
-            return;
-          }
-          resolve({ server, port: address.port });
-        });
-      });
-      servers.push(server);
-      ports.push(port);
-    }
-    for (const port of ports) handedOut.add(port);
-    return ports;
-  } finally {
-    await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
-  }
-}

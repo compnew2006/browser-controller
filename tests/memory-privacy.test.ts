@@ -22,7 +22,7 @@ import {
 import { MemoryService } from '../mcp-server/src/memory/service.js';
 import { defaultPolicy, enablePolicy, writePolicy } from '../mcp-server/src/memory/policy.js';
 import { routeMemoryPolicyTool } from '../mcp-server/src/memory/policy-tool-route.js';
-import { freePort } from './helpers/net.js';
+import { freePort } from './helpers/free-port.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CLI = path.join(ROOT, 'scripts', 'memory.mjs');

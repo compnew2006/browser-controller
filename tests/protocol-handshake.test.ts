@@ -36,7 +36,7 @@ import {
   buildExtensionHelloAck as buildBrowserHelloAck,
   validateDaemonHello,
 } from '../extension/lib/protocol.js';
-import { freePort } from './helpers/net.js';
+import { freePort } from './helpers/free-port.js';
 
 /** The capability list a 2.x extension advertised: no tools-v3. */
 const V2_EXTENSION_CAPABILITIES = ['tool-dispatch', 'ping-pong', 'cancellation', 'observe-act-v2', 'tab-locks', 'webmcp'];
