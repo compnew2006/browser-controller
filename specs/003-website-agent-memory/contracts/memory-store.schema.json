@@ -24,13 +24,36 @@
       "additionalProperties": false,
       "required": ["factId", "kind", "value", "firstObserved", "lastObserved", "status"],
       "properties": {
-        "factId": { "type": "string", "maxLength": 120, "pattern": "^(site\\.language|ui\\.search|ui\\.login|ui\\.control:[a-z]+:.+)$" },
-        "kind": { "enum": ["site.language", "ui.search", "ui.login", "ui.control"] },
+        "factId": { "type": "string", "maxLength": 120, "pattern": "^(site\\.language|ui\\.search|ui\\.login|ui\\.control:[a-z]+:.+|ui\\.form\\.shape:.+)$" },
+        "kind": { "enum": ["site.language", "ui.search", "ui.login", "ui.control", "ui.form.shape"] },
         "value": { "type": "object", "maxProperties": 2 },
         "firstObserved": { "$ref": "#/$defs/time" },
         "lastObserved": { "$ref": "#/$defs/time" },
         "status": { "const": "current" }
       }
+    },
+    "formShape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fields", "required", "types", "hidden"],
+      "properties": {
+        "fields": { "type": "integer", "minimum": 0, "maximum": 64, "description": "How many fillable controls the measured form has. A type=hidden input is not one: it is not fillable." },
+        "required": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "types": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/fieldType" }, "description": "The distinct field types, each at most once. Types beyond the eighth are merged into 'other'." },
+        "hidden": { "type": "boolean", "description": "Whether at least one field is visually hidden: display:none, visibility:hidden, opacity:0, aria-hidden, or no client rects." }
+      }
+    },
+    "fieldType": {
+      "enum": ["text", "password", "email", "search", "tel", "url", "number", "date", "checkbox", "radio", "select", "textarea", "file", "other"]
+    },
+    "commitMode": {
+      "enum": ["unknown", "enter", "button"]
+    },
+    "hiddenCounter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count"],
+      "properties": { "count": { "type": "integer", "minimum": 1, "maximum": 1000000 } }
     },
     "profileState": {
       "type": "object",
@@ -60,6 +83,10 @@
               "path": { "type": "string", "maxLength": 120, "pattern": "^/[^?#]*$", "description": "Present only when every segment is on the reviewed pathSegments allowlist (review F-02)." }
             }
           }
+        },
+        "hidden": {
+          "description": "How many actions this profile saw fail on a control it could not reach, on this origin. Per profile, never shared; it holds no part of the failed action.",
+          "$ref": "#/$defs/hiddenCounter"
         }
       }
     },

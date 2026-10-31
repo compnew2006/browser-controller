@@ -5,6 +5,7 @@ import {
   matchPath,
   matchSearchName,
   primaryLanguage,
+  shapePath,
   type FactKind,
   type FactValue,
 } from './allowlist.js';
@@ -19,9 +20,9 @@ export const MAX_ORIGINS = 5_000;
 export const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 const MAX_FACT_ID = 120;
 const MAX_PATH = 120;
-const FACT_ID = /^(?:site\.language|ui\.search|ui\.login|ui\.control:[a-z]+:.+)$/u;
+const FACT_ID = /^(?:site\.language|ui\.search|ui\.login|ui\.control:[a-z]+:.+|ui\.form\.shape:.+)$/u;
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u;
-const FACT_KINDS: readonly string[] = ['site.language', 'ui.search', 'ui.login', 'ui.control'];
+const FACT_KINDS: readonly string[] = ['site.language', 'ui.search', 'ui.login', 'ui.control', 'ui.form.shape'];
 const TOOLS: readonly string[] = ['browser_snapshot', 'browser_navigate'];
 const UNSAFE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -62,6 +63,13 @@ export interface ProfileVerification {
 export interface ProfileSiteState {
   visit?: ProfileVisit | null;
   verifications?: Record<string, ProfileVerification>;
+  /** How many actions this profile saw fail on a control it could not reach (007). It holds no part of the failure. */
+  hidden?: ProfileHidden;
+}
+
+/** The hidden-control counter of one profile on one origin. */
+export interface ProfileHidden {
+  count: number;
 }
 
 /** `memory/sites/<sha256(origin)>.json`. */
@@ -127,6 +135,24 @@ function validateFactValue(fact: SiteFact, mode: Mode): void {
       strict(typeof value.name === 'string' && matchControlName(value.name) === value.name);
       strict(fact.factId === `ui.control:${String(value.role)}:${String(value.name)}`);
       return;
+    case 'ui.form.shape': {
+      onlyKeys(value, ['shape', 'commit'], mode, 'ui.form.shape');
+      const identity = fact.factId.slice('ui.form.shape:'.length);
+      strict(shapePath(identity) === identity);
+      const shape = value.shape;
+      if (!isRecord(shape)) throw bad(mode, 'ui.form.shape holds no shape');
+      onlyKeys(shape, ['fields', 'required', 'types', 'hidden'], mode, 'ui.form.shape.shape');
+      strict(typeof shape.fields === 'number' && Number.isInteger(shape.fields) && shape.fields >= 0 && shape.fields <= 64);
+      strict(typeof shape.required === 'number' && Number.isInteger(shape.required) && shape.required >= 0 && shape.required <= Number(shape.fields));
+      const types = shape.types;
+      if (!Array.isArray(types)) throw bad(mode, 'ui.form.shape holds no field types');
+      strict(types.length <= ALLOWLIST.formShapeLimits.typesPerShape);
+      strict(types.every((type: unknown) => (ALLOWLIST.fieldTypes as readonly string[]).includes(type as string)));
+      strict(new Set(types).size === types.length);
+      strict(shape.hidden === true || shape.hidden === false);
+      strict((ALLOWLIST.commitModes as readonly string[]).includes(value.commit as string));
+      return;
+    }
     default:
       throw bad(mode, 'unknown fact kind');
   }
@@ -155,7 +181,7 @@ function validateFact(raw: unknown, mode: Mode): SiteFact {
 
 function validateProfile(raw: unknown, mode: Mode): ProfileSiteState {
   if (!isRecord(raw)) throw bad(mode, 'profile state is not an object');
-  onlyKeys(raw, ['visit', 'verifications'], mode, 'profile state');
+  onlyKeys(raw, ['visit', 'verifications', 'hidden'], mode, 'profile state');
   const state: ProfileSiteState = {};
   if (raw.visit !== undefined) {
     if (raw.visit === null) {
@@ -191,6 +217,15 @@ function validateProfile(raw: unknown, mode: Mode): ProfileSiteState {
     }
     state.verifications = verifications;
   }
+  if (raw.hidden !== undefined) {
+    const hidden = raw.hidden;
+    if (!isRecord(hidden)) throw bad(mode, 'profile.hidden is not an object');
+    onlyKeys(hidden, ['count'], mode, 'profile.hidden');
+    if (!Number.isInteger(hidden.count) || (hidden.count as number) < 1 || (hidden.count as number) > ALLOWLIST.formShapeLimits.occurrenceCountMax) {
+      throw bad(mode, 'profile.hidden.count is invalid');
+    }
+    state.hidden = { count: hidden.count as number };
+  }
   return state;
 }
 
@@ -207,6 +242,11 @@ export function validateSiteRecord(raw: unknown, mode: Mode): SiteRecord {
   if (!Array.isArray(raw.facts)) throw bad(mode, 'site.facts is not an array');
   if (!isRecord(raw.profiles)) throw bad(mode, 'site.profiles is not an object');
   if (raw.facts.length > MAX_FACTS) throw full(mode, `a site holds at most ${MAX_FACTS} facts`);
+  // At most 8 shape facts per site (007, FR-004): the site's own bound for the new kind.
+  const shapeFacts = raw.facts.filter((fact) => isRecord(fact) && fact.kind === 'ui.form.shape').length;
+  if (shapeFacts > ALLOWLIST.formShapeLimits.shapeFactsPerSite) {
+    throw full(mode, `a site holds at most ${ALLOWLIST.formShapeLimits.shapeFactsPerSite} shape facts`);
+  }
   const profileEntries = Object.entries(raw.profiles);
   if (profileEntries.length > MAX_PROFILES) throw full(mode, `a site holds at most ${MAX_PROFILES} profiles`);
 

@@ -8,7 +8,7 @@ const MAX_ITEM_TEXT = 200;
 const MAX_CURSOR = 64;
 const CURSOR = /^p(\d{1,4})$/u;
 
-export type MemoryItemKind = SiteFact['kind'] | 'visit';
+export type MemoryItemKind = SiteFact['kind'] | 'visit' | 'hidden';
 export type MemoryItemScope = 'this_profile' | 'shared';
 
 /** One entry of the `browser_memory` result; every text is built from allowlist values and fixed words. */
@@ -70,6 +70,18 @@ function label(factValue: SiteFact, withPath: boolean): string {
       return value.dir === 'ltr' || value.dir === 'rtl' ? `language ${String(value.lang)}, direction ${value.dir}` : `language ${String(value.lang)}`;
     case 'ui.login':
       return withPath && typeof value.path === 'string' ? `login form at ${value.path}` : 'login form';
+    case 'ui.form.shape': {
+      const shape = value.shape as { fields: number; required: number; types: string[]; hidden: boolean };
+      const parts = [`${shape.fields} fields`];
+      if (shape.required > 0) parts.push(`${shape.required} required`);
+      for (const type of shape.types) parts.push(type);
+      if (shape.hidden) parts.push('hidden field');
+      const commit = value.commit === 'enter' ? 'commits on Enter' : value.commit === 'button' ? 'commits on its button' : 'commit unknown';
+      // The path is part of the shape's identity, and the shape belongs to one page: it is always shown, even
+      // for a shared fact, or the agent would not know which form it is reading about.
+      const path = factValue.factId.slice('ui.form.shape:'.length);
+      return `form shape at ${path}: ${parts.join(', ')}, ${commit} (describes the form's structure, not its content)`;
+    }
     default:
       return `${String(value.role)} "${String(value.name)}"`;
   }
@@ -112,6 +124,21 @@ function visitOf(site: SiteRecord, profileId: string): { count: number; firstAt:
 }
 
 /**
+ * The hidden-control counter of this profile on this origin (007). It counts the actions this profile saw fail
+ * on a control it could not reach. It names no control and holds no part of the failure.
+ */
+function hiddenOf(site: SiteRecord, profileId: string): number | null {
+  if (!Object.hasOwn(site.profiles, profileId)) return null;
+  const count = site.profiles[profileId].hidden?.count;
+  return typeof count === 'number' && count > 0 ? count : null;
+}
+
+/** The line the hidden-control counter produces, in the fixed words of the reviewed vocabulary. */
+function hiddenLine(count: number): string {
+  return `some controls on this site are not visible: act on them with browser_evaluate (this profile, ${count} times)`;
+}
+
+/**
  * The reminder appended to a navigate result (contracts/README.md). At most 8 lines and 600 characters,
  * this-profile facts first and then shared ones by recency, with the visit line kept last. Null when this
  * profile has nothing to show. `tabId` only feeds the pointer to `browser_memory` when items were cut.
@@ -122,21 +149,34 @@ export function buildReminder(origin: string, site: SiteRecord | null, profileId
   const facts = [...own, ...shared].map((entry) => `- ${entry.brief}`);
   const visit = visitOf(site, profileId);
   const visitLine = visit ? `- visits: ${visit.count}, last ${minute(visit.lastAt)} (this profile)` : null;
-  if (facts.length === 0 && !visitLine) return null;
+  const hidden = hiddenOf(site, profileId);
+  const counterLine = hidden ? `- ${hiddenLine(hidden)}` : null;
+  if (facts.length === 0 && !visitLine && !counterLine) return null;
 
   const header = memoryHeader(origin);
   const more = options.tabId === undefined ? null : `more: browser_memory {tabId: ${options.tabId}}`;
   const fixed = 1 + (visitLine ? 1 : 0);
-  let take = Math.min(facts.length, REMINDER_MAX_LINES - fixed);
+  // When the bound is reached the older facts go first, then the counter line; the header and the visit line
+  // are never dropped (007 D-09).
+  let counter = counterLine ? [counterLine] : [];
+  let take = Math.min(facts.length, REMINDER_MAX_LINES - fixed - counter.length);
   for (;;) {
     const cut = take < facts.length;
-    const lines = [header, ...facts.slice(0, take)];
+    const lines = [header, ...facts.slice(0, take), ...counter];
     if (visitLine) lines.push(visitLine);
     if (cut && more) lines.push(more);
     const room = lines.length <= REMINDER_MAX_LINES && lines.join('\n').length <= REMINDER_MAX_CHARS;
     if (room) return { lines, text: lines.join('\n') };
-    if (take === 0) return null;
-    take -= 1;
+    if (take > 0) {
+      take -= 1;
+      continue;
+    }
+    if (counter.length > 0) {
+      counter = [];
+      take = Math.min(facts.length, REMINDER_MAX_LINES - fixed);
+      continue;
+    }
+    return null;
   }
 }
 
@@ -172,8 +212,20 @@ export function buildMemoryView(origin: string, site: SiteRecord | null, profile
           brief: '',
         }
       : null;
+    // The hidden-control counter is profile activity, like a visit: it appears under `all` and under `visits`,
+    // and never under `facts` (007 D-09).
+    const hiddenCount = kind === 'facts' ? null : hiddenOf(site, profileId);
+    const hiddenRanked: Ranked | null = hiddenCount
+      ? {
+          item: { kind: 'hidden', scope: 'this_profile', text: hiddenLine(hiddenCount) },
+          at: visit ? Date.parse(visit.lastAt) : 0,
+          factId: '',
+          brief: '',
+        }
+      : null;
     const mine = kind === 'visits' ? [] : own;
-    const ownGroup = (visitRanked ? [...mine, visitRanked] : mine).sort((a, b) => b.at - a.at || (a.factId < b.factId ? -1 : a.factId > b.factId ? 1 : 0));
+    const extras = [visitRanked, hiddenRanked].filter((entry): entry is Ranked => entry !== null);
+    const ownGroup = [...mine, ...extras].sort((a, b) => b.at - a.at || (a.factId < b.factId ? -1 : a.factId > b.factId ? 1 : 0));
     ordered.push(...ownGroup.map((entry) => entry.item));
     if (kind !== 'visits') ordered.push(...shared.map((entry) => entry.item));
   }

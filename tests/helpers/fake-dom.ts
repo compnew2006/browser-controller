@@ -93,6 +93,15 @@ export class FakeElement {
     const w = this.isHiddenInTree ? 0 : 100;
     return { x: 10, y: 10, left: 10, top: 10, width: w, height: w ? 20 : 0, right: 10 + w, bottom: 30 };
   }
+  /** The client rects of this element: none when it is hidden in the tree (007's visibility rule). */
+  getClientRects() {
+    return this.isHiddenInTree ? [] : [this.getBoundingClientRect()];
+  }
+  /** The opacity of this element from its inline style; 1 when it has none (007's visibility rule). */
+  get opacity(): number {
+    const match = /opacity\s*:\s*([0-9.]+)/u.exec(this.attrs.get('style') ?? '');
+    return match ? Number(match[1]) : 1;
+  }
   checkVisibility() { return !this.isHiddenInTree; }
   scrollIntoView() {}
   focus() { this.ownerDocument.activeElement = this; }
@@ -136,7 +145,15 @@ export class FakeDocument {
   documentElement: FakeElement;
   parentNode = null;
   get children() { return [this.documentElement]; }
-  defaultView: { getComputedStyle: (el: FakeElement) => Record<string, string>; frameElement: FakeElement | null } = { getComputedStyle: (el: FakeElement) => ({ display: el.attrs.get('style')?.includes('display:contents') ? 'contents' : el.isHiddenInTree ? 'none' : 'block', visibility: 'visible', opacity: '1' }), frameElement: null };
+  defaultView: { getComputedStyle: (el: FakeElement) => Record<string, string>; frameElement: FakeElement | null } = { getComputedStyle: (el: FakeElement) => {
+    // The inline style drives display, visibility and opacity, so 007's visibility rule can be exercised.
+    const style = el.attrs.get('style') ?? '';
+    return {
+      display: style.includes('display:contents') ? 'contents' : el.isHiddenInTree ? 'none' : 'block',
+      visibility: /visibility\s*:\s*(hidden|collapse)/u.test(style) ? 'hidden' : 'visible',
+      opacity: String(el.opacity),
+    };
+  }, frameElement: null };
   constructor() {
     this.documentElement = new FakeElement(this, 'HTML');
     this.body = new FakeElement(this, 'BODY');

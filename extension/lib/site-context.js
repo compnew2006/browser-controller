@@ -52,6 +52,98 @@ export function isAnonymityName(name) {
  * imports. It returns structure and key NAMES only, never a value, an input name or a label.
  */
 export async function probeSitePage() {
+  // The probe as a whole is bounded by PROBE_TIMEOUT_MS in this module. The shape is measured inside that
+  // budget, never beyond it: a slow page must lose the shape, not the anonymity verdict (R-09).
+  const probeStartedAt = performance.now();
+  const PROBE_DEADLINE_MS = 900;
+  const PROBE_MARGIN_MS = 120;
+  const SHAPE_BUDGET_MS = 250;
+  // The shape of the form inside the main landmark (specs/007-form-shape-facts). Counts and reviewed words
+  // only: no label, no name, no value, no placeholder, no id, no selector. It is measured in the DOM,
+  // because a control the snapshot never shows cannot be counted from the snapshot at all.
+  const measureFormShape = () => {
+    const budget = Math.min(SHAPE_BUDGET_MS, PROBE_DEADLINE_MS - PROBE_MARGIN_MS - (performance.now() - probeStartedAt));
+    if (budget <= 0) return null;
+    const deadline = performance.now() + budget;
+    const styleOf = (element) => {
+      try { return getComputedStyle(element); } catch { return null; }
+    };
+    const isFillable = (element) => {
+      const tag = element.tagName;
+      if (tag === 'INPUT') {
+        const type = String(element.getAttribute('type') || 'text').toLowerCase();
+        return !['hidden', 'submit', 'button', 'reset', 'image'].includes(type);
+      }
+      if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      const editable = element.getAttribute('contenteditable');
+      return editable === '' || editable === 'true';
+    };
+    const fieldType = (element) => {
+      const tag = element.tagName;
+      if (tag === 'TEXTAREA') return 'textarea';
+      if (tag === 'SELECT') return 'select';
+      if (tag !== 'INPUT') return 'other';
+      const type = String(element.getAttribute('type') || 'text').toLowerCase();
+      if (type === 'password') return 'password';
+      if (type === 'email') return 'email';
+      if (type === 'search') return 'search';
+      if (type === 'tel') return 'tel';
+      if (type === 'url') return 'url';
+      if (type === 'number' || type === 'range') return 'number';
+      if (type === 'date' || type === 'datetime-local' || type === 'month' || type === 'week' || type === 'time') return 'date';
+      if (type === 'checkbox') return 'checkbox';
+      if (type === 'radio') return 'radio';
+      if (type === 'file') return 'file';
+      if (type === 'text') return 'text';
+      return 'other';
+    };
+    const isRequired = (element) => {
+      try { if (element.hasAttribute && element.hasAttribute('required')) return true; } catch { /* no hasAttribute */ }
+      try { return element.getAttribute('aria-required') === 'true'; } catch { return false; }
+    };
+    const visuallyHidden = (element) => {
+      try { if (element.closest && element.closest('[aria-hidden="true"]')) return true; } catch { /* no closest */ }
+      let node = element;
+      while (node && node.nodeType === 1) {
+        const style = styleOf(node);
+        if (style) {
+          if (style.display === 'none') return true;
+          if (style.visibility === 'hidden' || style.visibility === 'collapse') return true;
+          if (Number.parseFloat(String(style.opacity)) === 0) return true;
+        }
+        node = node.parentElement;
+      }
+      try { return element.getClientRects().length === 0; } catch { return false; }
+    };
+    const main = document.querySelector('main, [role="main"]');
+    if (!main) return null;
+    let fields = [];
+    for (const form of main.querySelectorAll('form')) {
+      const candidates = [];
+      for (const element of form.querySelectorAll('input, textarea, select, [contenteditable]')) {
+        if (isFillable(element)) candidates.push(element);
+      }
+      if (candidates.length > fields.length) fields = candidates;
+    }
+    if (fields.length === 0 || fields.length > 64) return null;
+    let required = 0;
+    let hidden = false;
+    const counts = new Map();
+    for (const element of fields) {
+      if (performance.now() > deadline) return null;
+      if (isRequired(element)) required += 1;
+      if (visuallyHidden(element)) hidden = true;
+      const type = fieldType(element);
+      counts.set(type, (counts.get(type) || 0) + 1);
+    }
+    const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    let types = ordered.map((entry) => entry[0]);
+    if (types.length > 8) {
+      const head = types.slice(0, 7);
+      types = head.includes('other') ? head : [...head, 'other'];
+    }
+    return { fields: fields.length, required, types, hidden };
+  };
   try {
     const root = document.documentElement;
     const rawLang = String(root?.lang || '').toLowerCase().split('-')[0];
@@ -83,6 +175,13 @@ export async function probeSitePage() {
     } catch {
       databases = null;
     }
+    // The shape is measured last: a slow page must not cost the anonymity verdict.
+    let formShape = null;
+    try {
+      formShape = measureFormShape();
+    } catch {
+      formShape = null; // a page that cannot be measured simply has no shape
+    }
     return {
       topLevel: window.top === window,
       lang: rawLang,
@@ -91,6 +190,7 @@ export async function probeSitePage() {
       local,
       session,
       databases,
+      formShape,
     };
   } catch (error) {
     return { __bcScriptError: error?.message || String(error) };
@@ -278,6 +378,8 @@ async function readSiteContext(tabId, urlBefore, navigated) {
       lang: primaryLanguage(probe?.lang),
       dir: probe?.dir === 'ltr' || probe?.dir === 'rtl' ? probe.dir : null,
       passwordField: probe?.passwordField === true,
+      // The measured form's shape, when the page has one inside its main landmark (007). Absent otherwise.
+      ...(probe?.formShape ? { formShape: probe.formShape } : {}),
     };
     const verdict = (anonymous, anonymityReason) => ({ ...context, anonymous, anonymityReason });
 

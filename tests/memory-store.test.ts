@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ALLOWLIST } from '../mcp-server/src/memory/allowlist.js';
+import { validateSiteRecord } from '../mcp-server/src/memory/site-record.js';
 import {
   JsonMemoryStore,
   MAX_FACTS,
@@ -588,5 +589,93 @@ describe('reconciliation across agents and restarts (AC-23, AC-24)', () => {
     expect(fs.readFileSync(siteFile(ORIGIN), 'utf8')).not.toContain('"ar"');
     expect(read.profiles['profile-b'].verifications!['site.language'].at).toBe(T2);
     expect(read.profiles['profile-a'].verifications!['site.language']).toBeDefined();
+  });
+});
+
+describe('the form shape fact and the hidden-control counter (007)', () => {
+  const AT = '2026-10-31T10:00:00.000Z';
+  /** The code of the error the validator raises, or '' when it raises none. */
+  const code = (run: () => unknown): string => {
+    try {
+      run();
+      return '';
+    } catch (error) {
+      return (error as { code?: string }).code ?? '';
+    }
+  };
+  const shapeValue = { shape: { fields: 3, required: 1, types: ['password', 'text'], hidden: true }, commit: 'unknown' };
+  const record = (facts: unknown[], profiles: Record<string, unknown> = {}) => ({
+    schemaVersion: 1,
+    origin: ORIGIN,
+    facts,
+    profiles,
+    commitSeq: 1,
+    updatedAt: AT,
+  });
+  const shapeFact = (over: Record<string, unknown> = {}) => ({
+    factId: 'ui.form.shape:/login',
+    kind: 'ui.form.shape',
+    value: shapeValue,
+    firstObserved: AT,
+    lastObserved: AT,
+    status: 'current',
+    ...over,
+  });
+
+  it('accepts a shape fact on write and on read', () => {
+    const rec = record([shapeFact()]);
+    expect(validateSiteRecord(rec, 'write').facts).toHaveLength(1);
+    expect(validateSiteRecord(rec, 'read').facts).toHaveLength(1);
+  });
+
+  it('accepts a shape fact for the root path', () => {
+    const rec = record([shapeFact({ factId: 'ui.form.shape:/' })]);
+    expect(validateSiteRecord(rec, 'read').facts[0].factId).toBe('ui.form.shape:/');
+  });
+
+  it('refuses a shape fact whose identity is not an allowlisted path', () => {
+    const rec = record([shapeFact({ factId: 'ui.form.shape:/account/1234' })]);
+    expect(code(() => validateSiteRecord(rec, 'read'))).toBe('MEMORY_CORRUPT');
+  });
+
+  it('refuses a shape fact whose field types are outside the reviewed list', () => {
+    const rec = record([shapeFact({ value: { shape: { ...shapeValue.shape, types: ['text', 'colorpicker'] }, commit: 'unknown' } })]);
+    expect(code(() => validateSiteRecord(rec, 'read'))).toBe('MEMORY_CORRUPT');
+  });
+
+  it('refuses a shape fact whose counts cannot be true', () => {
+    const rec = record([shapeFact({ value: { shape: { ...shapeValue.shape, required: 9 }, commit: 'unknown' } })]);
+    expect(code(() => validateSiteRecord(rec, 'read'))).toBe('MEMORY_CORRUPT');
+  });
+
+  it('refuses a shape fact whose commit mode is outside the reviewed list', () => {
+    const rec = record([shapeFact({ value: { shape: shapeValue.shape, commit: 'none' } })]);
+    expect(code(() => validateSiteRecord(rec, 'read'))).toBe('MEMORY_CORRUPT');
+  });
+
+  it('accepts the hidden-control counter in a profile state', () => {
+    const rec = record([], { p1: { visit: { firstAt: AT, lastAt: AT, count: 1 }, verifications: {}, hidden: { count: 3 } } });
+    expect(validateSiteRecord(rec, 'read').profiles.p1.hidden?.count).toBe(3);
+    expect(validateSiteRecord(rec, 'write').profiles.p1.hidden?.count).toBe(3);
+  });
+
+  it('refuses a counter that is not a number in range', () => {
+    for (const count of [0, -1, 1.5, ALLOWLIST.formShapeLimits.occurrenceCountMax + 1]) {
+      const rec = record([], { p1: { visit: { firstAt: AT, lastAt: AT, count: 1 }, verifications: {}, hidden: { count } } });
+      expect(code(() => validateSiteRecord(rec, 'read'))).toBe('MEMORY_CORRUPT');
+    }
+  });
+
+  it('still loads a record written before the change', () => {
+    const old = record(
+      [
+        { factId: 'site.language', kind: 'site.language', value: { lang: 'en', dir: null }, firstObserved: AT, lastObserved: AT, status: 'current' },
+        { factId: 'ui.login', kind: 'ui.login', value: { path: '/login' }, firstObserved: AT, lastObserved: AT, status: 'current' },
+      ],
+      { p1: { visit: { firstAt: AT, lastAt: AT, count: 2 }, verifications: {} } },
+    );
+    const validated = validateSiteRecord(old, 'read');
+    expect(validated.facts).toHaveLength(2);
+    expect(validated.profiles.p1.hidden).toBeUndefined();
   });
 });

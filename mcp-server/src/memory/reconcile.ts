@@ -1,4 +1,4 @@
-import { matchPath } from './allowlist.js';
+import { ALLOWLIST, matchPath } from './allowlist.js';
 import type { CaptureOp } from './queue.js';
 import {
   MAX_FACTS,
@@ -12,6 +12,8 @@ import {
 } from './store.js';
 
 const MAX_PATH = 120;
+/** The hidden-control counter never grows past the reviewed cap (007). */
+const MAX_HIDDEN_COUNT = ALLOWLIST.formShapeLimits.occurrenceCountMax;
 const UNSAFE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 
 /** A verification keeps a path only when every segment is on the reviewed path allowlist; the stored form is the normalized one. */
@@ -75,6 +77,13 @@ export function applyOp(record: SiteRecord | null, op: CaptureOp, now: string): 
     state.visit = state.visit
       ? { firstAt: earlier(state.visit.firstAt, firstAt), lastAt: later(state.visit.lastAt, op.at), count: state.visit.count + visits }
       : { firstAt, lastAt: op.at, count: visits };
+  } else if (op.type === 'hidden') {
+    // The hidden-control counter: how many actions this profile saw fail on a control it could not reach.
+    // It holds no part of the failure, and it is per profile: another profile's count never moves it.
+    const state = profile();
+    const count = op.count ?? 1;
+    const total = (state.hidden?.count ?? 0) + count;
+    state.hidden = { count: Math.min(total, MAX_HIDDEN_COUNT) };
   } else {
     const verify = op.tool !== undefined;
     const safePath = storablePath(op.path);

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { MemoryService, extractSnapshotFacts, type MemoryCall, type MemoryConnection } from '../mcp-server/src/memory/service.js';
 import { defaultPolicy, enablePolicy, excludeOrigin, readPolicy, writePolicy } from '../mcp-server/src/memory/policy.js';
 import { MemoryStoreError, siteFileName, type MemoryStore, type SiteRecord } from '../mcp-server/src/memory/store.js';
+import type { ShapeGate } from '../mcp-server/src/memory/allowlist.js';
 
 const ORIGIN = 'https://example.com';
 const START = Date.parse('2026-10-27T10:00:00.000Z');
@@ -16,7 +17,7 @@ let conn: MemoryConnection & { throws?: boolean };
 let eligibility: 'clear' | 'protected' | 'unknown';
 let service: MemoryService;
 
-function makeService(store?: MemoryStore): MemoryService {
+function makeService(store?: MemoryStore, options: { shapeGate?: ShapeGate } = {}): MemoryService {
   return new MemoryService({
     memoryDir,
     vault: { memoryEligibility: () => eligibility },
@@ -27,6 +28,7 @@ function makeService(store?: MemoryStore): MemoryService {
     },
     now: () => clock,
     store,
+    ...options,
   });
 }
 
@@ -641,5 +643,251 @@ describe('handleTool', () => {
     };
     service = makeService(corrupt);
     expect(await ask()).toMatchObject({ success: false, error: expect.stringMatching(/^MEMORY_CORRUPT:/u) });
+  });
+});
+
+describe('form shape facts (007)', () => {
+  const SHAPE = { fields: 3, required: 1, types: ['text', 'password', 'checkbox'], hidden: true };
+
+  const read = (over: { url?: string; formShape?: unknown; anonymous?: boolean } = {}) => {
+    const url = over.url ?? `${ORIGIN}/login`;
+    const call = service.beginCall('s1', 'browser_navigate');
+    run(call, {
+      params: { url, snapshot: true },
+      result: { success: true, url, tabId: 7, text: SNAPSHOT },
+      observation: observation(context({ url, ...(over.formShape === undefined ? {} : { formShape: over.formShape }), ...(over.anonymous === undefined ? {} : { anonymous: over.anonymous }) })),
+    });
+  };
+
+  it('stores one shape fact for the measured form, with counts and no page string', async () => {
+    await enable();
+    read({ formShape: SHAPE });
+    await service.flush();
+    const shape = record()?.facts.find((fact) => fact.kind === 'ui.form.shape');
+    expect(shape?.factId).toBe('ui.form.shape:/login');
+    expect(shape?.value).toEqual({ shape: { fields: 3, required: 1, types: ['checkbox', 'password', 'text'], hidden: true }, commit: 'unknown' });
+    expect(JSON.stringify(record())).not.toMatch(/Sign in|Accept all|Search/u);
+  });
+
+  it('stores a shape fact for the root path, which names no topic', async () => {
+    await enable();
+    read({ url: `${ORIGIN}/`, formShape: SHAPE });
+    await service.flush();
+    expect(record()?.facts.find((fact) => fact.kind === 'ui.form.shape')?.factId).toBe('ui.form.shape:/');
+  });
+
+  it('stores no shape fact for a path whose segments are not on the reviewed list', async () => {
+    await enable();
+    read({ url: `${ORIGIN}/account/1234`, formShape: SHAPE });
+    await service.flush();
+    expect(record()?.facts.some((fact) => fact.kind === 'ui.form.shape')).toBe(false);
+  });
+
+  it('stores no shape fact on a site the anonymity gate excludes', async () => {
+    await enable();
+    read({ formShape: SHAPE, anonymous: false });
+    await service.flush();
+    expect(record()?.facts.some((fact) => fact.kind === 'ui.form.shape')).toBe(false);
+  });
+
+  it('stores no shape fact when the page reports no shape', async () => {
+    await enable();
+    read();
+    await service.flush();
+    expect(record()?.facts.some((fact) => fact.kind === 'ui.form.shape')).toBe(false);
+  });
+
+  it('counts a field type outside the reviewed list as other, and never guesses it', async () => {
+    await enable();
+    read({ formShape: { fields: 2, required: 0, types: ['text', 'colorpicker'], hidden: false } });
+    await service.flush();
+    const shape = record()?.facts.find((fact) => fact.kind === 'ui.form.shape');
+    expect((shape?.value as { shape: { types: string[] } }).shape.types).toEqual(['other', 'text']);
+    expect(JSON.stringify(record())).not.toMatch(/colorpicker/u);
+  });
+});
+
+describe("OD-1's Option 2: the shape fact passes the anonymity gate (007)", () => {
+  const SHAPE = { fields: 2, required: 1, types: ['text', 'email'], hidden: false };
+
+  beforeEach(() => {
+    service = makeService(undefined, { shapeGate: 'option2' });
+  });
+
+  const read = () => {
+    const url = `${ORIGIN}/login`;
+    const call = service.beginCall('s1', 'browser_navigate');
+    run(call, {
+      params: { url, snapshot: true },
+      result: { success: true, url, tabId: 7, text: SNAPSHOT },
+      observation: observation(context({ url, anonymous: false, formShape: SHAPE })),
+    });
+  };
+
+  it('stores the shape fact on a site the anonymity gate excludes', async () => {
+    await enable();
+    read();
+    await service.flush();
+    expect(record()?.facts.find((fact) => fact.kind === 'ui.form.shape')?.factId).toBe('ui.form.shape:/login');
+  });
+
+  it('keeps every other fact behind the gate, so only the shape passes', async () => {
+    await enable();
+    read();
+    await service.flush();
+    expect(record()?.facts.map((fact) => fact.factId)).toEqual(['ui.form.shape:/login']);
+  });
+
+  it('holds the same privacy as Option 1: counts and reviewed words only', async () => {
+    await enable();
+    read();
+    await service.flush();
+    const stored = JSON.stringify(record());
+    expect(stored).not.toMatch(/Sign in|Accept all|Search/u);
+    // The shape's own value is exactly the reviewed words: no name, no value, no path outside the reviewed list.
+    expect(record()?.facts[0]?.value).toEqual({ shape: { fields: 2, required: 1, types: ['email', 'text'], hidden: false }, commit: 'unknown' });
+    expect(record()?.facts[0]?.factId).toBe('ui.form.shape:/login');
+  });
+});
+
+describe('the commit mode (007)', () => {
+  const read = (url = `${ORIGIN}/login`) => {
+    const call = service.beginCall('s1', 'browser_navigate');
+    run(call, {
+      params: { url, snapshot: true },
+      result: { success: true, url, tabId: 7, text: SNAPSHOT },
+      observation: observation(context({ url, formShape: { fields: 1, required: 0, types: ['text'], hidden: false } })),
+    });
+  };
+
+  const write = (tool: string, params: Record<string, unknown>) => {
+    service.afterCall(service.beginCall('s1', tool), {
+      sessionId: 's1',
+      tool,
+      params: { tabId: 7, ...params },
+      daemonCallId: `call-${Math.random()}`,
+      result: { success: true, tabId: 7, navigated: `${ORIGIN}/welcome` },
+    });
+  };
+
+  it('stores "enter" after a write that pressed Enter and moved the address', async () => {
+    await enable();
+    read();
+    write('browser_type', { submit: true });
+    read();
+    await service.flush();
+    const shape = record()?.facts.find((fact) => fact.kind === 'ui.form.shape');
+    expect((shape?.value as { commit: string }).commit).toBe('enter');
+  });
+
+  it('stores "button" after a click on a control the snapshot marked button', async () => {
+    await enable();
+    read();
+    write('browser_click', { target: 'e3' });
+    read();
+    await service.flush();
+    const shape = record()?.facts.find((fact) => fact.kind === 'ui.form.shape');
+    expect((shape?.value as { commit: string }).commit).toBe('button');
+  });
+
+  it('leaves the mode unknown when the write moved nothing, and never stores "none"', async () => {
+    await enable();
+    read();
+    service.afterCall(service.beginCall('s1', 'browser_type'), {
+      sessionId: 's1',
+      tool: 'browser_type',
+      params: { tabId: 7, submit: true },
+      daemonCallId: `call-${Math.random()}`,
+      result: { success: true, tabId: 7 },
+    });
+    read();
+    await service.flush();
+    const shape = record()?.facts.find((fact) => fact.kind === 'ui.form.shape');
+    expect((shape?.value as { commit: string }).commit).toBe('unknown');
+  });
+
+  it('never takes a commit mode from the markup: a link click stores nothing', async () => {
+    await enable();
+    read();
+    write('browser_click', { target: 'e2' });
+    read();
+    await service.flush();
+    const shape = record()?.facts.find((fact) => fact.kind === 'ui.form.shape');
+    expect((shape?.value as { commit: string }).commit).toBe('unknown');
+  });
+});
+
+describe('the hidden-control counter (007)', () => {
+  const read = (anonymous = true) => {
+    const url = `${ORIGIN}/login`;
+    const call = service.beginCall('s1', 'browser_navigate');
+    run(call, {
+      params: { url, snapshot: true },
+      result: { success: true, url, tabId: 7, text: SNAPSHOT },
+      observation: observation(context({ url, anonymous })),
+    });
+  };
+
+  const refuse = (error: string, tabId = 7) => {
+    service.afterCall(service.beginCall('s1', 'browser_click'), {
+      sessionId: 's1',
+      tool: 'browser_click',
+      params: { tabId, target: 'e1' },
+      daemonCallId: `call-${Math.random()}`,
+      result: { success: false, tabId },
+      error,
+    });
+  };
+
+  it('raises the counter in the acting profile after a refusal on a tab that was read', async () => {
+    await enable();
+    read();
+    refuse('ELEMENT_HIDDEN: the element exists but is not visible');
+    await service.flush();
+    expect(record()?.profiles['profile-a'].hidden?.count).toBe(1);
+  });
+
+  it('raises nothing for a tab that was never read, because no origin is known', async () => {
+    await enable();
+    refuse('ELEMENT_HIDDEN: the element exists but is not visible');
+    await service.flush();
+    expect(record()?.profiles['profile-a'].hidden?.count).toBeUndefined();
+  });
+
+  it('raises nothing for another failure code', async () => {
+    await enable();
+    read();
+    refuse('NOT_FOUND: no element matches');
+    await service.flush();
+    expect(record()?.profiles['profile-a'].hidden?.count).toBeUndefined();
+  });
+
+  it('counts on a site the anonymity gate excludes, because the counter holds no page content', async () => {
+    await enable();
+    read(false);
+    refuse('ELEMENT_COVERED: another element is on top');
+    await service.flush();
+    expect(record()?.profiles['profile-a'].hidden?.count).toBe(1);
+  });
+
+  it('keeps the counter in the acting profile only', async () => {
+    await enable();
+    read();
+    refuse('ELEMENT_HIDDEN: the element exists but is not visible');
+    await service.flush();
+    conn = { browserId: 'profile-b', connectionId: 'conn-2', ambiguous: false, supportsSiteContext: true };
+    read();
+    refuse('ELEMENT_HIDDEN: the element exists but is not visible');
+    await service.flush();
+    expect(record()?.profiles['profile-a'].hidden?.count).toBe(1);
+    expect(record()?.profiles['profile-b'].hidden?.count).toBe(1);
+  });
+
+  it('stores no part of the failed action', async () => {
+    await enable();
+    read();
+    refuse('ELEMENT_HIDDEN: the element exists but is not visible');
+    await service.flush();
+    expect(JSON.stringify(record())).not.toMatch(/e1|not visible|element/u);
   });
 });

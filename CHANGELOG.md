@@ -5,6 +5,9 @@
 Run `npm run build`, reload the extension at `chrome://extensions` and restart the daemon after updating.
 
 ### Added
+- Form shape facts (spec 007): for the form inside the page's `main` landmark, the website memory keeps how many fields it has, how many are required, which types they are (from a closed list) and whether one of them is visually hidden — so an agent fills the form it is looking at instead of the one it assumed. Counts and reviewed words only: no label, no name, no value, no placeholder, no id, no selector. A form outside `main` is never measured, a type outside the list is counted as `other` rather than guessed, and a site keeps at most eight of these shapes.
+- A form's commit mode, learned from what an action did rather than from the markup: a write that moved the address gives `enter` when it pressed Enter and `button` when it clicked a button. It is stored with the shape at the next read of that path, and stays `unknown` until an action is seen.
+- A hidden-control counter, per browser profile: the memory counts the actions this profile saw fail on a control it could not reach (`ELEMENT_HIDDEN`, `ELEMENT_COVERED`), so the next agent knows before it clicks. It holds no part of the failed action, it is never shared between profiles, and it is kept even on a site whose login state is visible, because it counts the profile's own actions rather than the page's content.
 - `browser_wait {until:"stable"}`: waits until the page stops changing, by fingerprinting its rendered text every 100 ms. Two identical readings mean the page settled; a page that never settles (a clock, a live feed) reaches the timeout and says so.
 - `browser_tabs {action:"session"}`: the session's own policy, and the way to change it. `isolation:"isolated"` restricts the session to the tabs it opened itself (any other tab fails `TAB_NOT_OWNED`, and the tab list shows the session's own tabs only); `access:"read-only"` refuses every call that changes something with `READ_ONLY`, before anything is dispatched. Both are session settings, and the default stays trusted and writable.
 - `browser_batch {onError:"continue"}`: the batch runs the steps after a failing one and names every failure (`STEP_FAILED: 2 step(s) failed, 3 completed`). The default is still `stop`.
@@ -22,6 +25,7 @@ Run `npm run build`, reload the extension at `chrome://extensions` and restart t
 - New extension capability `vault-site-approval`.
 
 ### Changed
+- The website memory keeps two new kinds of data (spec 007): a form's shape, and a per-profile count of the actions that failed on a control the agent could not reach. A daemon from an earlier version quarantines a record that holds them as `MEMORY_CORRUPT` — the whole record, not only the new fields — so run `npm run memory -- delete --all` before downgrading.
 - An action now waits for the page to settle before the call returns: the page's rendered text is read inside the page until it stops changing. A read that follows an action sees what the action produced, not the page before it — an SPA that redraws a list in place no longer answers with the old list.
 - `browser_navigate` waits for the page the same way. The load event is not the end of the page: an app that renders after it is still empty when the navigation returns, and the read that follows would see it empty.
 - An `expect` is polled for up to 1.5 s instead of being read once, so a page that changes a moment after the click still meets it. The result says how long it waited.

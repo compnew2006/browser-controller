@@ -14,6 +14,8 @@ import {
   normalizeText,
   primaryLanguage,
   searchFact,
+  shapeFact,
+  shapePath,
 } from '../mcp-server/src/memory/allowlist.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -286,5 +288,58 @@ describe('isAnonymityName', () => {
       expect(isAnonymityName(name)).toBe(false);
     }
     expect(isAnonymityName(undefined as unknown as string)).toBe(false);
+  });
+});
+
+describe('the form shape vocabulary (007)', () => {
+  it('has the same field types, commit modes, failure codes and limits as the contract', () => {
+    expect(ALLOWLIST.fieldTypes).toEqual(CONTRACT.fieldTypes);
+    expect(ALLOWLIST.commitModes).toEqual(CONTRACT.commitModes);
+    expect(ALLOWLIST.failureCodes).toEqual(CONTRACT.failureCodes);
+    expect(ALLOWLIST.formShapeLimits).toEqual(CONTRACT.formShapeLimits);
+  });
+
+  it('keeps the root path, which names no topic, and drops every other unlisted path', () => {
+    expect(shapePath('/')).toBe('/');
+    expect(shapePath('')).toBeNull();
+    expect(shapePath('/login')).toBe('/login');
+    expect(shapePath('/account/login')).toBe('/account/login');
+    expect(shapePath('/account/1234')).toBeNull();
+    expect(shapePath('/login?next=1')).toBeNull();
+    expect(shapePath('/login#top')).toBeNull();
+  });
+
+  it('builds one shape fact with counts and reviewed words only', () => {
+    const fact = shapeFact({ fields: 3, required: 1, types: ['text', 'password'], hidden: true }, '/login');
+    expect(fact?.factId).toBe('ui.form.shape:/login');
+    expect(fact?.kind).toBe('ui.form.shape');
+    expect(fact?.value).toEqual({ shape: { fields: 3, required: 1, types: ['password', 'text'], hidden: true }, commit: 'unknown' });
+    expect(JSON.stringify(fact)).not.toMatch(/hunter2|username|label/iu);
+  });
+
+  it('counts a type outside the reviewed list as other, and never guesses it', () => {
+    const fact = shapeFact({ fields: 2, required: 0, types: ['text', 'colorpicker'], hidden: false }, '/login');
+    expect((fact?.value as { shape: { types: string[] } }).shape.types).toEqual(['other', 'text']);
+    expect(JSON.stringify(fact)).not.toMatch(/colorpicker/u);
+  });
+
+  it('refuses a shape whose counts cannot be true', () => {
+    expect(shapeFact({ fields: -1, required: 0, types: [], hidden: false }, '/login')).toBeNull();
+    expect(shapeFact({ fields: 1, required: 2, types: [], hidden: false }, '/login')).toBeNull();
+    expect(shapeFact({ fields: 1, required: 0, types: 'text', hidden: false }, '/login')).toBeNull();
+    expect(shapeFact({ fields: 1, required: 0, types: [], hidden: 'yes' }, '/login')).toBeNull();
+  });
+
+  it('bounds the types to eight and merges the rest into other', () => {
+    const types = ['text', 'password', 'email', 'search', 'tel', 'url', 'number', 'date', 'checkbox'];
+    const fact = shapeFact({ fields: 9, required: 0, types, hidden: false }, '/login');
+    const kept = (fact?.value as { shape: { types: string[] } }).shape.types;
+    expect(kept.length).toBe(8);
+    expect(kept).toContain('other');
+  });
+
+  it('never writes a commit mode outside the reviewed list', () => {
+    expect(shapeFact({ fields: 1, required: 0, types: [], hidden: false }, '/login', 'none' as never)).toBeNull();
+    expect(shapeFact({ fields: 1, required: 0, types: [], hidden: false }, '/login', 'enter')?.value).toMatchObject({ commit: 'enter' });
   });
 });

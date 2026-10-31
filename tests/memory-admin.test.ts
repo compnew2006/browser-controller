@@ -440,3 +440,107 @@ describe('AC-11: queued captures stop at disable, exclude and delete', () => {
     expect(after.some(([origin]) => origin === ORIGIN_B)).toBe(true);
   });
 });
+
+describe('007: the owner\'s controls over the form shape facts', () => {
+  /** A site that holds one shape fact and a counter for each of two profiles. */
+  function shapeSite(origin: string): SiteRecord {
+    return {
+      schemaVersion: 1,
+      origin,
+      facts: [
+        {
+          factId: 'ui.form.shape:/login',
+          kind: 'ui.form.shape',
+          value: { shape: { fields: 3, required: 1, types: ['checkbox', 'password', 'text'], hidden: true }, commit: 'unknown' },
+          firstObserved: '2026-10-01T08:00:00.000Z',
+          lastObserved: '2026-10-01T08:00:00.000Z',
+          status: 'current',
+        },
+      ],
+      profiles: {
+        'profile-1': { visit: { firstAt: '2026-10-01T08:00:00.000Z', lastAt: '2026-10-02T08:00:00.000Z', count: 2 }, hidden: { count: 3 } },
+        'profile-2': { hidden: { count: 1 } },
+      },
+      commitSeq: 1,
+      updatedAt: '2026-10-02T08:00:00.000Z',
+    };
+  }
+
+  let dir: string;
+  let memoryDir: string;
+  let store: JsonMemoryStore;
+  let service: MemoryService;
+  let clock: number;
+
+  beforeEach(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-shape-admin-'));
+    memoryDir = path.join(dir, 'memory');
+    clock = Date.parse('2026-10-27T10:00:00.000Z');
+    store = new JsonMemoryStore(memoryDir);
+    service = new MemoryService({
+      memoryDir,
+      vault: { memoryEligibility: () => 'clear' },
+      connection: () => ({ browserId: 'profile-a', connectionId: 'conn-1', ambiguous: false, supportsSiteContext: true }),
+      now: () => clock,
+      store,
+    });
+    await writePolicyFile(memoryDir, enablePolicy(defaultPolicy(), new Date(clock).toISOString()));
+  });
+
+  afterEach(async () => {
+    await service.flush().catch(() => undefined);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('export lists the shape fact and the counter of every profile', async () => {
+    await store.putSite(shapeSite(ORIGIN_A));
+    const answer = await service.admin({ kind: 'memory-admin', id: 'e1', command: 'export' });
+    expect(answer.success).toBe(true);
+    const records = (answer as { records?: SiteRecord[] }).records ?? [];
+    expect(records[0].facts.map((fact) => fact.factId)).toEqual(['ui.form.shape:/login']);
+    expect(records[0].profiles['profile-1'].hidden).toEqual({ count: 3 });
+    expect(records[0].profiles['profile-2'].hidden).toEqual({ count: 1 });
+  });
+
+  it('inspect shows the shape fact and the counters as they are stored', async () => {
+    await store.putSite(shapeSite(ORIGIN_A));
+    const answer = await service.admin({ kind: 'memory-admin', id: 'i1', command: 'inspect', origin: ORIGIN_A });
+    const records = (answer as { records?: SiteRecord[] }).records ?? [];
+    expect(records[0].facts[0].kind).toBe('ui.form.shape');
+    expect(records[0].profiles['profile-1'].hidden?.count).toBe(3);
+    expect(records[0].profiles['profile-2'].hidden?.count).toBe(1);
+  });
+
+  it('delete <origin> removes the shape fact and the counter of every profile', async () => {
+    await store.putSite(shapeSite(ORIGIN_A));
+    await store.putSite(shapeSite(ORIGIN_B));
+    const answer = await service.admin({ kind: 'memory-admin', id: 'd1', command: 'delete', origin: ORIGIN_A });
+    expect(answer.success).toBe(true);
+    expect(await store.getSite(ORIGIN_A)).toBeNull();
+    expect(fs.existsSync(path.join(memoryDir, 'sites', siteFileName(ORIGIN_A)))).toBe(false);
+    // The other origin keeps its shape fact and its counters.
+    const kept = await store.getSite(ORIGIN_B);
+    expect(kept?.facts[0].kind).toBe('ui.form.shape');
+    expect(kept?.profiles['profile-2'].hidden?.count).toBe(1);
+  });
+
+  it('delete --all leaves no shape fact and no counter anywhere', async () => {
+    await store.putSite(shapeSite(ORIGIN_A));
+    await store.putSite(shapeSite(ORIGIN_B));
+    const answer = await service.admin({ kind: 'memory-admin', id: 'd2', command: 'delete', all: true });
+    expect(answer.success).toBe(true);
+    expect(await store.listSites()).toEqual([]);
+  });
+
+  it('exclude stops the collection and delete removes what was stored (003 FR-004)', async () => {
+    await store.putSite(shapeSite(ORIGIN_A));
+    const excluded = await service.admin({ kind: 'memory-admin', id: 'x1', command: 'exclude', origin: ORIGIN_A });
+    expect(excluded.success).toBe(true);
+    expect(readPolicyFile(memoryDir).excluded).toEqual([ORIGIN_A]);
+    // Excluding stops the collection; the stored record stays until the owner deletes it.
+    expect(await store.getSite(ORIGIN_A)).not.toBeNull();
+    const deleted = await service.admin({ kind: 'memory-admin', id: 'd3', command: 'delete', origin: ORIGIN_A });
+    expect(deleted.success).toBe(true);
+    expect(await store.getSite(ORIGIN_A)).toBeNull();
+  });
+});

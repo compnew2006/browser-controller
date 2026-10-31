@@ -272,3 +272,65 @@ describe('freshness and trust (US3: AC-13, AC-15)', () => {
     expect(viaOther.text).not.toContain('2026-10-27 09:14');
   });
 });
+
+describe('the form shape line and the hidden-control line (007)', () => {
+  const shape = fact(
+    'ui.form.shape:/login',
+    { shape: { fields: 3, required: 1, types: ['checkbox', 'password', 'text'], hidden: true }, commit: 'unknown' },
+    '2026-10-31T09:00:00.000Z',
+    'ui.form.shape',
+  );
+  const withShape = () => site({ facts: [...site().facts, shape] });
+  const withCounter = () => {
+    const base = site();
+    return site({ profiles: { ...base.profiles, [ME]: { ...base.profiles[ME], hidden: { count: 3 } } } });
+  };
+
+  it('shows the shape line with counts, and says it describes the structure', () => {
+    const reminder = buildReminder(ORIGIN, withShape(), ME, { tabId: 12 })!;
+    const line = reminder.lines.find((entry) => entry.includes('form shape'))!;
+    expect(line).toContain('3 fields');
+    expect(line).toContain('1 required');
+    expect(line).toContain('hidden field');
+    expect(line).toContain('describes the form\'s structure, not its content');
+    expect(line).not.toMatch(/hunter2|Remember me|Username/iu);
+  });
+
+  it('shows the hidden-control line for the acting profile, in fixed words', () => {
+    const reminder = buildReminder(ORIGIN, withCounter(), ME, { tabId: 12 })!;
+    const line = reminder.lines.find((entry) => entry.includes('not visible'))!;
+    expect(line).toContain('some controls on this site are not visible');
+    expect(line).toContain('browser_evaluate');
+    expect(line).toContain('3 times');
+  });
+
+  it('keeps the reminder inside 8 lines and 600 characters with both new lines', () => {
+    const reminder = buildReminder(ORIGIN, site({ facts: [...site().facts, shape] }), ME, { tabId: 12 })!;
+    expect(reminder.lines.length).toBeLessThanOrEqual(8);
+    expect(reminder.text.length).toBeLessThanOrEqual(600);
+    expect(reminder.lines[0]).toBe(memoryHeader(ORIGIN));
+  });
+
+  it('drops the older facts before the header and the visit line', () => {
+    const crowded = site({ facts: manyFacts(40) });
+    const reminder = buildReminder(ORIGIN, crowded, ME, { tabId: 12 })!;
+    expect(reminder.lines.length).toBeLessThanOrEqual(8);
+    expect(reminder.lines[0]).toBe(memoryHeader(ORIGIN));
+    expect(reminder.lines.some((line) => line.includes('visits:'))).toBe(true);
+  });
+
+  it('shows the counter under all and under visits, and never under facts', () => {
+    const all = buildMemoryView(ORIGIN, withCounter(), ME, { tabId: 1 });
+    expect(all.items.some((item) => item.kind === 'hidden')).toBe(true);
+    const visits = buildMemoryView(ORIGIN, withCounter(), ME, { tabId: 1, kind: 'visits' });
+    expect(visits.items.some((item) => item.kind === 'hidden')).toBe(true);
+    const facts = buildMemoryView(ORIGIN, withCounter(), ME, { tabId: 1, kind: 'facts' });
+    expect(facts.items.every((item) => item.kind !== 'hidden')).toBe(true);
+  });
+
+  it('shows the shape fact with its path in the view', () => {
+    const view = buildMemoryView(ORIGIN, withShape(), ME, { tabId: 1 });
+    const item = view.items.find((entry) => entry.kind === 'ui.form.shape');
+    expect(item?.text).toContain('form shape at /login');
+  });
+});

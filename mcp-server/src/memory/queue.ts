@@ -22,7 +22,7 @@ export type DropReason = (typeof DROP_REASONS)[number];
 /** One capture waiting to be committed. `opId` is the daemon call id. */
 export interface CaptureOp {
   opId: string;
-  type: 'visit' | 'facts';
+  type: 'visit' | 'facts' | 'hidden';
   /** Verified `browserId` of the observing profile. */
   profileId: string;
   /** Canonical origin. */
@@ -38,7 +38,7 @@ export interface CaptureOp {
   enqueuedAt: string;
   /** Set by the queue when operations fold: the earliest `at` among them (`at` is the latest). */
   firstAt?: string;
-  /** Set by the queue when operations fold: how many operations (visits, or identical observations) this one stands for. */
+  /** Set by the queue when operations fold: how many operations (visits, hidden-control failures, or identical observations) this one stands for. */
   count?: number;
 }
 
@@ -314,8 +314,8 @@ export class MemoryQueue {
 
   /** The entry `op` may fold into without changing the result, or null. */
   private foldTarget(group: OriginGroup, op: CaptureOp, policy: () => MemoryPolicy | null): QueuedEntry | null {
-    if (op.type === 'visit') {
-      return group.entries.find((entry) => entry.op.type === 'visit' && entry.op.profileId === op.profileId && this.sameVerdict(entry, op, policy)) ?? null;
+    if (op.type === 'visit' || op.type === 'hidden') {
+      return group.entries.find((entry) => entry.op.type === op.type && entry.op.profileId === op.profileId && this.sameVerdict(entry, op, policy)) ?? null;
     }
     const values = factsValues(op);
     const key = factsKey(op, values);
@@ -333,7 +333,7 @@ export class MemoryQueue {
     const firstAt = earlier(merged.firstAt ?? merged.at, op.firstAt ?? op.at);
     merged.enqueuedAt = earlier(merged.enqueuedAt, op.enqueuedAt);
     entry.lastEnqueuedAt = later(op.enqueuedAt, entry.lastEnqueuedAt);
-    if (op.type !== 'visit' && Date.parse(op.at) >= Date.parse(merged.at)) {
+    if (op.type === 'facts' && Date.parse(op.at) >= Date.parse(merged.at)) {
       // The newest observation supplies the verification (tool and path), as it would applied last.
       merged.tool = op.tool;
       merged.path = op.path;

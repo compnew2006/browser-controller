@@ -192,6 +192,32 @@ export interface SiteContextFixture {
   passwordField?: boolean;
   anonymous?: boolean | null;
   anonymityReason?: string;
+  /** The measured form's shape, when the page has one inside its main landmark (007). */
+  formShape?: FormShapeFixture;
+}
+
+/** The shape of a measured form: counts and closed-vocabulary words (007). */
+export interface FormShapeFixture {
+  fields: number;
+  required: number;
+  types: string[];
+  hidden: boolean;
+}
+
+/** The siteContext of a page whose form inside `main` was measured (007). */
+export function formShapeSiteContext(url: string, shape: FormShapeFixture): SiteContextFixture {
+  return {
+    url,
+    incognito: false,
+    topLevel: true,
+    stable: true,
+    lang: 'en',
+    dir: 'ltr',
+    passwordField: false,
+    anonymous: true,
+    anonymityReason: 'ok',
+    formShape: shape,
+  };
 }
 
 export interface FakeExtensionOptions {

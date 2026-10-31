@@ -1,6 +1,6 @@
 {
-  "$comment": "Owner gate 3. Draft allowlist for website memory facts and the anonymity check. Every stored string must equal an entry here after normalization (NFKC, lower case, whitespace collapsed to one space, trimmed, trailing . : … removed). Changing this file changes what can be stored: review it like a permission change. Version it with the contract. v2 (2026-10-28): owner-requested widening; additions chosen from a names-only survey of public sites; the owner may trim any entry.",
-  "version": 2,
+  "$comment": "Owner gate 3. Draft allowlist for website memory facts and the anonymity check. Every stored string must equal an entry here after normalization (NFKC, lower case, whitespace collapsed to one space, trimmed, trailing . : … removed). Changing this file changes what can be stored: review it like a permission change. Version it with the contract. v2 (2026-10-28): owner-requested widening; additions chosen from a names-only survey of public sites; the owner may trim any entry. v3 (2026-10-31): the form shape facts of specs/007-form-shape-facts — the kind ui.form.shape, the field types, the commit modes, the failure codes and their limits. The shape holds counts and vocabulary words only: no label, no name, no value, no placeholder, no id, no selector.",
+  "version": 3,
   "factKinds": {
     "site.language": {
       "source": "siteContext.lang and siteContext.dir",
@@ -15,6 +15,11 @@
     },
     "ui.control": {
       "source": "snapshot line '<role> \"<name>\"' with role in controlRoles and name in any phrases group except search"
+    },
+    "ui.form.shape": {
+      "source": "siteContext.formShape for the form inside the main landmark; the commit mode is added by the daemon from an observed write on that path and applied at the next observed read of that path",
+      "values": "shape: fields, required, types (each from fieldTypes, each at most once), hidden; commit: from commitModes",
+      "identity": "ui.form.shape:<path> - the path is kept only when every segment is in pathSegments; the root path '/' is kept as well, because it names no topic"
     }
   },
   "searchRoles": [
@@ -290,5 +295,36 @@
       "^_hjSession_[0-9]+$",
       "^wmE-sessionTick[A-Za-z]+$"
     ]
+  },
+  "fieldTypes": [
+    "text",
+    "password",
+    "email",
+    "search",
+    "tel",
+    "url",
+    "number",
+    "date",
+    "checkbox",
+    "radio",
+    "select",
+    "textarea",
+    "file",
+    "other"
+  ],
+  "commitModes": [
+    "unknown",
+    "enter",
+    "button"
+  ],
+  "failureCodes": [
+    "ELEMENT_HIDDEN",
+    "ELEMENT_COVERED"
+  ],
+  "formShapeLimits": {
+    "shapeFactsPerSite": 8,
+    "typesPerShape": 8,
+    "valueBytes": 200,
+    "occurrenceCountMax": 1000000
   }
 }

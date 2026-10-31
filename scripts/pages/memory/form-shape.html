@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory fixture: form shape</title>
+<!--
+  Served at /account/login/form-shape.html.
+
+  One form inside <main> with a required field, a password field and a checkbox drawn with opacity: 0 — a
+  control the snapshot never shows, so the shape is the only place its existence can be seen. A second form
+  sits outside <main> and must never be measured. No cookies or storage of its own: anonymous:true.
+
+  The measured shape is: 3 fields, 1 required, types checkbox/password/text, hidden true.
+-->
+</head>
+<body>
+<h1>Memory fixture: form shape</h1>
+<form action="/search" role="search">
+  <label for="q">Search</label>
+  <input id="q" type="search" name="q">
+</form>
+<main>
+  <h2>Sign in</h2>
+  <form>
+    <label for="u">Username</label>
+    <input id="u" type="text" name="username" required autocomplete="username">
+    <label for="p">Password</label>
+    <input id="p" type="password" name="password" autocomplete="current-password">
+    <label for="remember">Remember me</label>
+    <input id="remember" type="checkbox" name="remember" style="opacity: 0">
+    <button type="submit">Sign in</button>
+  </form>
+</main>
+</body>
+</html>

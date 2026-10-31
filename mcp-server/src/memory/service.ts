@@ -4,6 +4,7 @@ import { OBSERVABLE_TOOLS } from '../bridge-frames.js';
 import type { MemoryObservation } from '../vault/daemon-routing.js';
 import { SITE_CONTEXT_CAPABILITY } from '../protocol.js';
 import { adminFromWire, errorCode, runAdminCommand, type AdminContext } from './admin.js';
+import { ALLOWLIST, DEFAULT_SHAPE_GATE, shapePath, type CommitMode, type ShapeGate } from './allowlist.js';
 import { collectFacts, extractSnapshotFacts, MAX_CANDIDATES } from './facts.js';
 import { MapService, type MapLookupResult } from './map-service.js';
 import type { JsonMapStore } from './map-store.js';
@@ -21,6 +22,8 @@ import {
 import { MemoryQueue, type CaptureOp, type DropReason } from './queue.js';
 import { decideScope, type ScopeDecision, type ScopeSiteContext } from './scope.js';
 import { JsonMemoryStore, MemoryStoreError, type MemoryStore, type SiteRecord } from './store.js';
+import { snapshotRoles } from './tab-state.js';
+import { OutcomeObserver, isRecord } from './outcome-observer.js';
 import type { MemoryToolContext, MemoryToolPurpose } from './tool-route.js';
 
 export { extractSnapshotFacts };
@@ -53,6 +56,11 @@ export interface MemoryServiceDeps {
   reminderTimeoutMs?: number;
   /** Test seam for the site map's store. */
   mapStore?: JsonMapStore;
+  /**
+   * Which option of OD-1 is in force for the shape fact (007): `option1` keeps it behind 003's anonymity gate,
+   * `option2` stores it for every in-scope site. The owner decides; the default is `option1`.
+   */
+  shapeGate?: ShapeGate;
 }
 
 
@@ -82,12 +90,11 @@ interface ParsedSiteContext extends ScopeSiteContext {
   lang: string | null;
   dir: string | null;
   passwordField: boolean;
+  /** The measured form's shape, when the extension reported one (007). */
+  formShape?: unknown;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-
-function parseSiteContext(raw: unknown): ParsedSiteContext | null {
-  if (!isRecord(raw) || typeof raw.url !== 'string') return null;
+function parseSiteContext(raw: unknown): ParsedSiteContext | null {  if (!isRecord(raw) || typeof raw.url !== 'string') return null;
   if (typeof raw.incognito !== 'boolean' || typeof raw.topLevel !== 'boolean' || typeof raw.stable !== 'boolean') return null;
   const anonymous = raw.anonymous === true ? true : raw.anonymous === false ? false : null;
   return {
@@ -99,7 +106,15 @@ function parseSiteContext(raw: unknown): ParsedSiteContext | null {
     lang: typeof raw.lang === 'string' ? raw.lang : null,
     dir: typeof raw.dir === 'string' ? raw.dir : null,
     passwordField: raw.passwordField === true,
+    ...(isRecord(raw.formShape) ? { formShape: raw.formShape } : {}),
   };
+}
+
+/** The code of a failed call: the text before the first colon, as the tools report it (`ELEMENT_HIDDEN: …`). */
+function failureCode(error: string | undefined): string | null {
+  if (typeof error !== 'string' || error === '') return null;
+  const code = error.split(':', 1)[0].trim().toUpperCase();
+  return code === '' ? null : code;
 }
 
 /** Same document ignoring userinfo and fragment (R-05: the navigate result and the tab must agree). */
@@ -148,17 +163,22 @@ export class MemoryService {
   private readonly now: () => number;
   private readonly store: MemoryStore;
   private readonly queue: MemoryQueue;
+  /** What a browser outcome tells the service: the hidden-control counter and the commit mode (007). */
+  private readonly observer: OutcomeObserver;
   private policyTail: Promise<unknown> = Promise.resolve();
   private warmed = false;
   private lastError: { code: string; at: string } | null = null;
   private readonly adminContext: AdminContext;
   /** The site map (specs/004-site-navigation-map). */
   readonly map: MapService;
+  /** OD-1: whether the shape fact passes 003's anonymity gate (007). */
+  private readonly shapeGate: ShapeGate;
 
   constructor(deps: MemoryServiceDeps) {
     this.deps = deps;
     this.memoryDir = path.resolve(deps.memoryDir);
     this.now = deps.now ?? Date.now;
+    this.shapeGate = deps.shapeGate ?? DEFAULT_SHAPE_GATE;
     this.store = deps.store ?? new JsonMemoryStore(this.memoryDir, { now: this.now });
     this.queue = new MemoryQueue({
       store: this.store,
@@ -170,6 +190,13 @@ export class MemoryService {
       },
       onDrained: (drainedThrough) => this.pruneTombstones(drainedThrough),
     });
+    this.observer = new OutcomeObserver(
+      { connection: (sessionId) => this.deps.connection(sessionId), vault: this.deps.vault },
+      this.memoryDir,
+      this.queue,
+      () => this.now(),
+      () => this.iso(),
+    );
     this.map = new MapService({
       memoryDir: this.memoryDir,
       now: this.now,
@@ -220,6 +247,18 @@ export class MemoryService {
    */
   afterCall(call: MemoryCall, outcome: MemoryCallOutcome): void {
     this.map.noteCall(outcome.sessionId, outcome.tool, outcome.params, outcome.result);
+    // The counter and the commit candidate are read from the outcome alone. A failed call carries no
+    // observation and no siteContext, so both run before the observe check (007, C7, C8).
+    try {
+      this.observer.noteHiddenFailure(outcome);
+    } catch (error) {
+      this.noteError(errorCode(error));
+    }
+    try {
+      this.observer.noteCommitCandidate(outcome);
+    } catch (error) {
+      this.noteError(errorCode(error));
+    }
     if (!call.observe) return;
     const { observation } = outcome;
     let scoped: ReturnType<MemoryService['scopeFor']> | null | undefined;
@@ -250,7 +289,7 @@ export class MemoryService {
     call: MemoryCall,
     outcome: MemoryCallOutcome,
     observation: MemoryObservation,
-  ): { decision: ScopeDecision; context: ParsedSiteContext | null; result: Record<string, unknown> } {
+  ): { decision: ScopeDecision; context: ParsedSiteContext | null; result: Record<string, unknown>; tabId: number | undefined } {
     const policy = readPolicy(this.memoryDir);
     const after = this.deps.connection(outcome.sessionId);
     const result = isRecord(outcome.result) ? outcome.result : {};
@@ -270,12 +309,12 @@ export class MemoryService {
       siteContext: context,
       sanitizedUnchanged: observation.sanitizedUnchanged,
     });
-    return { decision, context, result };
+    return { decision, context, result, tabId };
   }
 
   private capture(outcome: MemoryCallOutcome, scoped: ReturnType<MemoryService['scopeFor']> | null): void {
     if (!scoped) return;
-    const { decision, context, result } = scoped;
+    const { decision, context, result, tabId } = scoped;
     if (!decision.in || !context) return;
 
     const navigated = outcome.tool === 'browser_navigate';
@@ -284,21 +323,60 @@ export class MemoryService {
     const base = { profileId: scope.browserId, origin: scope.origin, at, enqueuedAt: at };
     if (navigated) this.queue.enqueue({ ...base, opId: outcome.daemonCallId, type: 'visit', facts: [] });
 
+    // The read is remembered: a later refusal on that tab is attributed to this origin (C7), and a write's
+    // commit mode is applied at the next read of the same path (C8).
+    let connectionId: string | null;
+    try {
+      connectionId = this.deps.connection(outcome.sessionId).connectionId;
+    } catch {
+      connectionId = null;
+    }
+    if (connectionId !== null && tabId !== undefined) {
+      this.observer.tabs.remember(
+        connectionId,
+        tabId,
+        {
+          connectionId,
+          url: context.url,
+          origin: scope.origin,
+          path: scope.path,
+          anonymous: scope.anonymous,
+          roles: snapshotRoles(typeof result.text === 'string' ? result.text : null),
+        },
+        this.now(),
+      );
+    }
+
     const snapshotted = outcome.tool === 'browser_snapshot' || (navigated && outcome.params.snapshot === true);
-    if (!snapshotted || scope.anonymous !== true) return;
+    if (!snapshotted) return;
+    // 003's anonymity gate decides what is kept. Under OD-1's Option 1 the shape fact stands behind it like every
+    // other fact; under Option 2 the shape alone passes it, because it holds counts and vocabulary words only and
+    // no content from the page. The hidden-control counter never passes through here (C6).
+    const anonymous = scope.anonymous === true;
+    const shapeOnly = !anonymous && this.shapeGate === 'option2' && context.formShape !== undefined;
+    if (!anonymous && !shapeOnly) return;
+    // The commit mode is taken only when a shape fact is about to be written: a mode that no fact can carry
+    // stays pending for the next read of that path.
+    const commit = context.formShape !== undefined && connectionId !== null && shapePath(scope.path) !== null
+      ? this.observer.tabs.takeCommitMode(connectionId, scope.origin, scope.path, this.now()) ?? undefined
+      : undefined;
     const facts = collectFacts({
       text: typeof result.text === 'string' ? result.text : null,
       lang: context.lang,
       dir: context.dir,
       passwordField: context.passwordField,
       path: scope.path,
+      ...(context.formShape !== undefined ? { formShape: context.formShape } : {}),
+      ...(commit ? { commit } : {}),
     });
-    if (facts.length === 0) return;
+    // Behind the gate every other fact stays behind it: only the shape may pass under Option 2.
+    const kept = anonymous ? facts : facts.filter((fact) => fact.kind === 'ui.form.shape');
+    if (kept.length === 0) return;
     const op: CaptureOp = {
       ...base,
       opId: navigated ? `${outcome.daemonCallId}#facts` : outcome.daemonCallId,
       type: 'facts',
-      facts: facts.slice(0, MAX_CANDIDATES),
+      facts: kept.slice(0, MAX_CANDIDATES),
       tool: outcome.tool as 'browser_navigate' | 'browser_snapshot',
       ...(scope.path.length <= MAX_PATH ? { path: scope.path } : {}),
     };

@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { controlFact, languageFact, loginFact, searchFact, type CandidateFact } from '../mcp-server/src/memory/allowlist.js';
+import { ALLOWLIST, controlFact, languageFact, loginFact, searchFact, shapeFact, type CandidateFact } from '../mcp-server/src/memory/allowlist.js';
 import { defaultPolicy, writePolicy } from '../mcp-server/src/memory/policy.js';
 import { MemoryQueue, type CaptureOp } from '../mcp-server/src/memory/queue.js';
+import { validateSiteRecord } from '../mcp-server/src/memory/site-record.js';
 import { JsonMemoryStore, MemoryStoreError, type SiteRecord } from '../mcp-server/src/memory/store.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -157,5 +158,101 @@ describe('FR-012: memory text never enters the MCP server instructions', () => {
     for (const file of fs.readdirSync(MEMORY_SRC).filter((name) => name.endsWith('.ts'))) {
       expect(fs.readFileSync(path.join(MEMORY_SRC, file), 'utf8'), file).not.toMatch(/SERVER_INSTRUCTIONS|setInstructions/u);
     }
+  });
+});
+
+describe('007: the bounds of the form shape facts', () => {
+  /** Nine distinct reviewed paths, so the per-site bound is what refuses the ninth. */
+  const PATHS = ['/login', '/account', '/session', '/profile', '/settings', '/docs', '/search', '/cart', '/checkout'];
+
+  const shapeAt = (index: number) => ({
+    factId: `ui.form.shape:${PATHS[index]}`,
+    kind: 'ui.form.shape',
+    value: { shape: { fields: 2, required: 1, types: ['password', 'text'], hidden: true }, commit: 'unknown' },
+    firstObserved: T,
+    lastObserved: T,
+    status: 'current',
+  });
+
+  /** Distinct valid control facts, built from the reviewed vocabulary itself. */
+  const controlFacts = (count: number) => {
+    const names = [
+      ...ALLOWLIST.phrases.account,
+      ...ALLOWLIST.phrases.consent,
+      ...ALLOWLIST.phrases.navigation,
+      ...ALLOWLIST.phrases.commerce,
+      ...ALLOWLIST.phrases.forms,
+    ];
+    const roles = ALLOWLIST.controlRoles;
+    return Array.from({ length: count }, (_, index) => {
+      const name = names[Math.floor(index / roles.length)];
+      const role = roles[index % roles.length];
+      return {
+        factId: `ui.control:${role}:${name}`,
+        kind: 'ui.control',
+        value: { role, name },
+        firstObserved: T,
+        lastObserved: T,
+        status: 'current',
+      };
+    });
+  };
+
+  const record = (facts: unknown[], profiles: Record<string, unknown> = {}): SiteRecord => ({
+    schemaVersion: 1,
+    origin: ORIGIN,
+    facts,
+    profiles,
+    commitSeq: 1,
+    updatedAt: T,
+  } as unknown as SiteRecord);
+
+  it('holds at most eight shape facts per site', () => {
+    const eight = PATHS.slice(0, 8).map((_, index) => shapeAt(index));
+    expect(() => validateSiteRecord(record(eight), 'write')).not.toThrow();
+    const nine = [...eight, shapeAt(8)];
+    let code = '';
+    try {
+      validateSiteRecord(record(nine), 'write');
+    } catch (error) {
+      code = (error as MemoryStoreError).code;
+    }
+    expect(code).toBe('MEMORY_FULL');
+  });
+
+  it("keeps the shape's value inside its byte bound", () => {
+    const widest = {
+      fields: 64,
+      required: 64,
+      types: ['checkbox', 'email', 'number', 'other', 'password', 'search', 'select', 'tel'],
+      hidden: true,
+    };
+    const fact = shapeFact(widest, '/login');
+    expect(fact).not.toBeNull();
+    expect(Buffer.byteLength(JSON.stringify(fact?.value), 'utf8')).toBeLessThanOrEqual(ALLOWLIST.formShapeLimits.valueBytes);
+  });
+
+  it('holds the hidden-control counter under its reviewed cap', () => {
+    const withCounter = (count: number) => record([], { 'profile-1': { hidden: { count } } });
+    expect(() => validateSiteRecord(withCounter(ALLOWLIST.formShapeLimits.occurrenceCountMax), 'write')).not.toThrow();
+    let code = '';
+    try {
+      validateSiteRecord(withCounter(ALLOWLIST.formShapeLimits.occurrenceCountMax + 1), 'write');
+    } catch (error) {
+      code = (error as MemoryStoreError).code;
+    }
+    expect(code).toBe('INVALID_ARGUMENT');
+  });
+
+  it("keeps the site's 64-fact bound unchanged", () => {
+    const facts = controlFacts(64);
+    expect(() => validateSiteRecord(record(facts), 'write')).not.toThrow();
+    let code = '';
+    try {
+      validateSiteRecord(record(controlFacts(65)), 'write');
+    } catch (error) {
+      code = (error as MemoryStoreError).code;
+    }
+    expect(code).toBe('MEMORY_FULL');
   });
 });

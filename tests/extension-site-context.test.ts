@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { installFakePage } from './helpers/fake-dom.js';
 
 /**
  * T017: the extension's siteContext block (R-05, R-07, contracts/site-context.schema.json).
@@ -659,5 +660,75 @@ describe('browser_memory_internal_context (T037)', () => {
 
   it('is an internal action: handled by dispatch, absent from the public tool list', () => {
     expect(dispatchedTools).not.toContain('browser_memory_internal_context');
+  });
+});
+
+describe('the measured form shape (007)', () => {
+  const formPage = (attrs: Record<string, string> = {}) => {
+    const page = installFakePage('https://example.test/login');
+    const main = page.el('main', attrs.role ? { role: attrs.role } : {});
+    main.append(
+      page.el('form', {},
+        page.el('input', { type: 'text', required: 'required' }),
+        page.el('input', { type: 'password' }),
+        page.el('input', { type: 'checkbox', style: 'opacity: 0' }),
+        page.el('button', { type: 'submit' }),
+      ),
+    );
+    page.body.append(page.el('form', {}, page.el('input', { type: 'search' })), main);
+    return page;
+  };
+
+  it('measures the form inside main: the fillable fields, the required ones, the types and a hidden field', async () => {
+    formPage();
+    const probe = await siteContext.probeSitePage();
+    expect(probe.formShape).toEqual({ fields: 3, required: 1, types: ['checkbox', 'password', 'text'], hidden: true });
+  });
+
+  it('measures the form inside a role="main" landmark too', async () => {
+    formPage({ role: 'main' });
+    const probe = await siteContext.probeSitePage();
+    expect(probe.formShape).toEqual({ fields: 3, required: 1, types: ['checkbox', 'password', 'text'], hidden: true });
+  });
+
+  it('reports nothing when the page has no main landmark', async () => {
+    const page = installFakePage('https://example.test/');
+    page.body.append(page.el('form', {}, page.el('input', { type: 'text' })));
+    const probe = await siteContext.probeSitePage();
+    expect(probe.formShape).toBeNull();
+  });
+
+  it('counts a type=hidden input as no field, and a submit button as none', async () => {
+    const page = installFakePage('https://example.test/login');
+    const main = page.el('main');
+    main.append(page.el('form', {},
+      page.el('input', { type: 'text' }),
+      page.el('input', { type: 'hidden', name: 'csrf' }),
+      page.el('input', { type: 'submit', value: 'Send' }),
+    ));
+    page.body.append(main);
+    const probe = await siteContext.probeSitePage();
+    expect(probe.formShape).toEqual({ fields: 1, required: 0, types: ['text'], hidden: false });
+  });
+
+  it('never reports a value, a name or a label', async () => {
+    formPage();
+    const probe = await siteContext.probeSitePage();
+    expect(JSON.stringify(probe.formShape)).not.toMatch(/hunter2|username|csrf|label/iu);
+  });
+
+  it('loses the shape, not the anonymity verdict, when the page is slow (R-09)', async () => {
+    formPage();
+    // The probe's own reads take longer than its budget: the shape is dropped, the anonymity data is not.
+    let calls = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => (calls === 0 ? (calls += 1, 0) : (calls += 1, 1_000)));
+    try {
+      const probe = await siteContext.probeSitePage();
+      expect(probe.formShape).toBeNull();
+      expect(probe.local).not.toBeNull();
+      expect(probe.session).not.toBeNull();
+    } finally {
+      now.mockRestore();
+    }
   });
 });

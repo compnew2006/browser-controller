@@ -31,10 +31,10 @@ function record(facts: Array<{ factId: string; kind: string; value: Record<strin
   };
 }
 
-describe('allowlist v2 (owner amendment 2026-10-28)', () => {
-  it('is version 2 in code and contract', () => {
-    expect(ALLOWLIST.version).toBe(2);
-    expect(CONTRACT.version).toBe(2);
+describe('allowlist version (owner amendments)', () => {
+  it('is version 3 in code and contract', () => {
+    expect(ALLOWLIST.version).toBe(3);
+    expect(CONTRACT.version).toBe(3);
   });
 
   it('declares the search landmark role and the search prefixes in the contract', () => {

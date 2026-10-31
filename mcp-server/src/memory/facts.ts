@@ -1,4 +1,4 @@
-import { controlFact, languageFact, loginFact, searchFact, type CandidateFact } from './allowlist.js';
+import { controlFact, languageFact, loginFact, searchFact, shapeFact, type CandidateFact, type CommitMode } from './allowlist.js';
 
 export const MAX_CANDIDATES = 64;
 
@@ -31,9 +31,13 @@ export interface FactSources {
   passwordField: boolean;
   /** The page path from the verified scope; never a query or fragment. */
   path: string;
+  /** The measured form's shape, when the extension reported one (007). */
+  formShape?: unknown;
+  /** The commit mode observed from a write on that path (007). */
+  commit?: CommitMode;
 }
 
-/** `site.language`, `ui.login` and the snapshot facts for one verified page read, at most 64, one per identity. */
+/** `site.language`, `ui.login`, the form shape and the snapshot facts for one verified page read, at most 64, one per identity. */
 export function collectFacts(sources: FactSources): CandidateFact[] {
   const facts = new Map<string, CandidateFact>();
   const add = (fact: CandidateFact | null) => {
@@ -41,6 +45,7 @@ export function collectFacts(sources: FactSources): CandidateFact[] {
   };
   add(languageFact(sources.lang, sources.dir));
   add(loginFact(sources.passwordField, sources.path));
+  if (sources.formShape !== undefined) add(shapeFact(sources.formShape, sources.path, sources.commit ?? 'unknown'));
   if (sources.text !== null) for (const fact of extractSnapshotFacts(sources.text)) add(fact);
   return [...facts.values()].slice(0, MAX_CANDIDATES);
 }

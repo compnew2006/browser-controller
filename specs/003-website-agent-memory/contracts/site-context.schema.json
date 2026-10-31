@@ -22,6 +22,10 @@
         "lang": { "type": ["string", "null"], "pattern": "^[a-z]{2,8}$" },
         "dir": { "enum": ["ltr", "rtl", null] },
         "passwordField": { "type": "boolean", "description": "A visible input[type=password] exists in the top-level document. Structural only; no value, name or label is read." },
+        "formShape": {
+          "description": "The shape of the form inside the main landmark (specs/007-form-shape-facts). Counts and closed-vocabulary words only: no label, no name, no value, no placeholder, no id, no selector. Absent when the page has no main landmark, no form inside it, or the measurement did not finish inside the probe's budget.",
+          "$ref": "#/$defs/formShape"
+        },
         "anonymous": { "type": ["boolean", "null"], "description": "R-07 verdict; null = could not be determined." },
         "anonymityReason": {
           "enum": ["ok", "cookie", "storage", "indexeddb", "incognito", "query", "unstable", "no_permission", "unavailable"]
@@ -30,6 +34,20 @@
     },
     "anonymityRule": {
       "description": "anonymous:true only if all hold: not incognito; top-level http(s) document; no userinfo, query or fragment; stable; every cookie name from chrome.cookies.getAll({url, storeId}) and every localStorage/sessionStorage key name is in fact-allowlist.json anonymityNames; indexedDB.databases() is empty. Values are never read into the result. Any step that throws or is unavailable → null with reason 'unavailable' (or 'no_permission' without the cookies permission)."
+    },
+    "formShape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fields", "required", "types", "hidden"],
+      "properties": {
+        "fields": { "type": "integer", "minimum": 0, "maximum": 64, "description": "How many fillable controls the measured form has. A type=hidden input is not one: it is not fillable." },
+        "required": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "types": { "type": "array", "maxItems": 8, "uniqueItems": true, "items": { "$ref": "#/$defs/fieldType" }, "description": "The distinct field types, each at most once. Types beyond the eighth are merged into 'other'." },
+        "hidden": { "type": "boolean", "description": "Whether at least one field is visually hidden: display:none, visibility:hidden, opacity:0, aria-hidden, or no client rects." }
+      }
+    },
+    "fieldType": {
+      "enum": ["text", "password", "email", "search", "tel", "url", "number", "date", "checkbox", "radio", "select", "textarea", "file", "other"]
     }
   },
   "$ref": "#/$defs/siteContext"
