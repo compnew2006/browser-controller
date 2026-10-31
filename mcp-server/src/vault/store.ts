@@ -39,6 +39,11 @@ interface StoreOptions {
   beforeLockSync?: () => void | Promise<void>;
   /** Test seam for the stale-lock takeover race. */
   lockReclaimHooks?: ReclaimHooks;
+  /**
+   * The platform whose owner and mode bits are compared. win32 has no comparable mode bits,
+   * so the vault's owner rule is applied without them there; the default is the running platform.
+   */
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -59,14 +64,12 @@ export class CredentialVaultStore {
   private readonly beforeCommit?: StoreOptions['beforeCommit'];
   private readonly beforeLockSync?: StoreOptions['beforeLockSync'];
   private readonly lockReclaimHooks: ReclaimHooks;
+  /** The platform whose owner and mode bits are comparable; win32 has none. */
+  private readonly platform: NodeJS.Platform;
   private key: Buffer | null = null;
   private mutationTail: Promise<void> = Promise.resolve();
   /** The vault's own checks and seams, handed to the shared file policy. */
-  private readonly writeContext: VaultWriteContext = {
-    prepare: () => this.ensureDirectories(true),
-    exists: (file: string) => this.exists(file),
-    beforeCommit: (file: string) => this.beforeCommit?.(file),
-  };
+  private readonly writeContext: VaultWriteContext;
 
   constructor(options: StoreOptions) {
     this.namespace = scopeForBrowser(options.browserId);
@@ -80,6 +83,13 @@ export class CredentialVaultStore {
     this.beforeCommit = options.beforeCommit;
     this.beforeLockSync = options.beforeLockSync;
     this.lockReclaimHooks = options.lockReclaimHooks ?? {};
+    this.platform = options.platform ?? process.platform;
+    this.writeContext = {
+      prepare: () => this.ensureDirectories(true),
+      exists: (file: string) => this.exists(file),
+      beforeCommit: (file: string) => this.beforeCommit?.(file),
+      platform: this.platform,
+    };
   }
 
   get isUnlocked(): boolean { return this.key !== null; }
@@ -249,7 +259,7 @@ export class CredentialVaultStore {
       for (const name of names) {
         if (!/^bkp_[a-f0-9]{32}\.json$/.test(name)) continue;
         const file = path.join(this.backups, name);
-        const bytes = await readSafeFile(file, MAX_BACKUP_BYTES).catch(() => null);
+        const bytes = await readSafeFile(file, MAX_BACKUP_BYTES, this.platform).catch(() => null);
         if (!bytes) continue;
         const backup = parseBackup(parseJson(bytes, ERROR_CODES.VAULT_STORAGE_INVALID, 'backup metadata is invalid'), this.namespace);
         if (backup) result.push({ id: name.slice(0, -5), createdAt: backup.createdAt });
@@ -271,7 +281,7 @@ export class CredentialVaultStore {
         await this.rollbackRestore(pending);
       }
       const backupPath = path.join(this.backups, `${id}.json`);
-      const backupBytes = await readSafeFile(backupPath, MAX_BACKUP_BYTES);
+      const backupBytes = await readSafeFile(backupPath, MAX_BACKUP_BYTES, this.platform);
       const backup = parseBackup(parseJson(backupBytes, ERROR_CODES.VAULT_STORAGE_INVALID, 'backup file is invalid'), this.namespace);
       if (!backup || backup.namespace !== this.namespace) throw new VaultStorageError(ERROR_CODES.VAULT_STORAGE_INVALID, 'backup belongs to another browser namespace');
       const backupKey = Buffer.from(backup.key, 'base64');
@@ -370,7 +380,7 @@ export class CredentialVaultStore {
   }
 
   private async readRawEnvelope(): Promise<VaultEnvelope> {
-    const bytes = await readSafeFile(this.storePath, MAX_STORE_BYTES);
+    const bytes = await readSafeFile(this.storePath, MAX_STORE_BYTES, this.platform);
     const envelope = parseJson(bytes, ERROR_CODES.VAULT_STORAGE_INVALID, 'encrypted vault file is invalid');
     const parsed = VaultEnvelopeSchema.safeParse(envelope);
     if (!parsed.success || parsed.data.namespace !== this.namespace) {
@@ -380,7 +390,7 @@ export class CredentialVaultStore {
   }
 
   private async readKey(): Promise<Buffer> {
-    const bytes = await readSafeFile(this.keyPath, KEY_BYTES);
+    const bytes = await readSafeFile(this.keyPath, KEY_BYTES, this.platform);
     if (bytes.length !== KEY_BYTES) throw new VaultStorageError(ERROR_CODES.VAULT_KEY_MISSING, 'the vault key is invalid; existing data was preserved');
     return Buffer.from(bytes);
   }
@@ -392,7 +402,7 @@ export class CredentialVaultStore {
 
   private async readRestoreJournal(): Promise<RestoreJournal | null> {
     let value: unknown;
-    try { value = parseJson(await readSafeFile(this.restoreJournalPath, 4_096), ERROR_CODES.VAULT_STORAGE_INVALID, 'restore journal is invalid'); }
+    try { value = parseJson(await readSafeFile(this.restoreJournalPath, 4_096, this.platform), ERROR_CODES.VAULT_STORAGE_INVALID, 'restore journal is invalid'); }
     catch { return null; }
     if (!value || typeof value !== 'object') return null;
     const journal = value as Partial<RestoreJournal>;
@@ -479,7 +489,7 @@ export class CredentialVaultStore {
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw fileError(ERROR_CODES.VAULT_STORAGE_INVALID, `${dir.label} could not be created safely`);
         }
       }
-      try { assertOwnerMode(await fs.lstat(dir.path), 'directory', dir.label); }
+      try { assertOwnerMode(await fs.lstat(dir.path), 'directory', dir.label, this.platform); }
       catch (error) {
         if (!create && (error as NodeJS.ErrnoException).code === 'ENOENT') return;
         throw error;
@@ -534,13 +544,13 @@ export class CredentialVaultStore {
 
   private async removeStaleLock(): Promise<void> {
     const stat = await fs.lstat(this.lockPath);
-    assertOwnerMode(stat, 'file', 'vault lock');
+    assertOwnerMode(stat, 'file', 'vault lock', this.platform);
     if (Date.now() - stat.mtimeMs < STALE_LOCK_GRACE_MS) return;
     const judged = { dev: stat.dev, ino: stat.ino, mtimeMs: stat.mtimeMs };
     // A crash between the O_EXCL create and the pid write leaves an empty or
     // torn lock; past the grace period it has no live owner, so it is stale.
     let pid: unknown;
-    try { pid = (parseJson(await readSafeFile(this.lockPath, 1024), ERROR_CODES.VAULT_STORAGE_INVALID, 'vault lock is invalid') as { pid?: unknown } | null)?.pid; }
+    try { pid = (parseJson(await readSafeFile(this.lockPath, 1024, this.platform), ERROR_CODES.VAULT_STORAGE_INVALID, 'vault lock is invalid') as { pid?: unknown } | null)?.pid; }
     catch { pid = undefined; }
     if (Number.isInteger(pid) && (pid as number) >= 1 && pidAlive(pid as number)) return;
     reclaimLock(this.lockPath, judged, this.lockReclaimHooks);

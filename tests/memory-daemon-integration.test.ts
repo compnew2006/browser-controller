@@ -18,6 +18,7 @@ import {
   type FakeExtension,
   type IpcClient,
 } from './helpers/memory-fixtures.js';
+import { freePort } from './helpers/net.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ORIGIN = 'http://127.0.0.1:4010';
@@ -36,17 +37,6 @@ const siteContext = (over: Record<string, unknown> = {}) => ({
   anonymityReason: 'ok',
   ...over,
 });
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as net.AddressInfo;
-      server.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(read: () => T | null | undefined | false, ms = 5000): Promise<T> {
   const end = Date.now() + ms;

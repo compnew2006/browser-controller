@@ -20,6 +20,7 @@ import {
   type DaemonHandle,
   type IpcClient,
 } from './helpers/memory-fixtures.js';
+import { freePort } from './helpers/net.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CLI = path.join(ROOT, 'scripts', 'memory.mjs');
@@ -105,17 +106,6 @@ let stateDir: string;
 let daemon: DaemonHandle | null;
 let client: IpcClient | null;
 const extraDirs: string[] = [];
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as net.AddressInfo;
-      server.close(() => resolve(port));
-    });
-  });
-}
 
 async function boot(): Promise<void> {
   daemon = await startIsolatedDaemon(stateDir, { wsPort: await freePort() });

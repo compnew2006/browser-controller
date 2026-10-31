@@ -10,6 +10,8 @@ import type { VaultCredential } from '../mcp-server/src/vault/types.js';
 let stateDir: string;
 const roots: string[] = [];
 const browserId = `test-browser-${process.pid}`;
+/** win32 has no comparable owner or mode bits, so the owner rule cannot be checked there. */
+const posix = process.platform !== 'win32';
 
 async function newStore(options: { beforeCommit?: (file: string) => void | Promise<void> } = {}) {
   const store = new CredentialVaultStore({ stateDir, browserId, ...options });
@@ -123,8 +125,25 @@ describe('CredentialVaultStore', () => {
     await expect(newStore().then((s) => s.unlock())).rejects.toMatchObject({ code: 'VAULT_STORAGE_INVALID' });
     expect((await fs.readFile(storePath)).equals(Buffer.from('{bad json'))).toBe(true);
     await fs.writeFile(storePath, before, { mode: 0o600 });
-    await fs.chmod(keyPath, 0o644);
-    await expect(newStore().then((s) => s.unlock())).rejects.toMatchObject({ code: 'VAULT_STORAGE_INVALID' });
+    // The owner rule reads mode bits, and only a platform that has them can refuse on them.
+    if (posix) {
+      await fs.chmod(keyPath, 0o644);
+      await expect(newStore().then((s) => s.unlock())).rejects.toMatchObject({ code: 'VAULT_STORAGE_INVALID' });
+    }
+  });
+
+  it('skips the owner rule where the platform has no mode bits, and enforces it where it has them', async () => {
+    const store = await newStore();
+    await store.initialize();
+    await fs.chmod(path.join(store.directory, 'key'), 0o644);
+
+    // No comparable mode bits: the rule cannot be evaluated, and the vault still works.
+    const withoutBits = new CredentialVaultStore({ stateDir, browserId, platform: 'win32' });
+    await withoutBits.unlock();
+
+    // Comparable mode bits, open to others: the vault refuses the file.
+    const withBits = new CredentialVaultStore({ stateDir, browserId, platform: 'linux' });
+    await expect(withBits.unlock()).rejects.toMatchObject({ code: 'VAULT_STORAGE_INVALID' });
   });
 
   it('refuses symlink store files', async () => {
