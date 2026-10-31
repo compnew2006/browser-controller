@@ -15,6 +15,7 @@
  */
 import { spawn, execSync } from 'node:child_process';
 import { ERROR_CODES, formatError } from './core/error-codes.js';
+import { currentCorrelationId } from './core/logger.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -297,7 +298,7 @@ class DaemonClient {
       }, 210_000);
       this.pending.set(id, { resolve, reject, t });
       try {
-        this.socket.write(JSON.stringify({ kind: 'call', id, tool, params }) + '\n');
+        this.socket.write(JSON.stringify({ kind: 'call', id, tool, params, cid: currentCorrelationId() ?? undefined }) + '\n');
       } catch (err) {
         clearTimeout(t);
         this.pending.delete(id);

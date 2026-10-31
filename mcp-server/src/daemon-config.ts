@@ -277,14 +277,14 @@ export interface MemoryAdminResult {
 
 export type IpcClientMessage =
   | { kind: 'hello'; token: string; agentName?: string; protocolVersion?: number; capabilities?: string[] }
-  | { kind: 'call'; id: string; tool: string; params: Record<string, unknown> }
+  | { kind: 'call'; id: string; tool: string; params: Record<string, unknown>; cid?: string }
   | MemoryAdminRequest
   | { kind: 'pong' }; // heartbeat reply — daemon evicts a silent client after 3 missed pings
 
 export type IpcDaemonMessage =
   | { kind: 'welcome'; sessionId: string; ok: true; protocolVersion: number; capabilities: readonly string[] }
   | { kind: 'denied'; reason: string; ok: false }
-  | { kind: 'result'; id: string; success: boolean; result?: unknown; error?: string }
+  | { kind: 'result'; id: string; cid?: string; success: boolean; result?: unknown; error?: string }
   | MemoryAdminResult
   | { kind: 'status'; connectionState: string; connectedSince: number | null }
   | { kind: 'ping' }; // heartbeat probe — client must reply with { kind: 'pong' }

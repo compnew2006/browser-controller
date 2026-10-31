@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ESLint } from 'eslint';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -73,6 +74,18 @@ function describeCrossings(crossingList: Crossing[]): string[] {
 }
 
 describe('architectural layering', () => {
+  it('enforces the core allowlist in ESLint for new layers and external packages', async () => {
+    const eslint = new ESLint({ cwd: ROOT });
+    const filePath = path.join(ROOT, 'mcp-server/src/core/boundary-check.ts');
+    for (const specifier of ['../session/new.js', '../daemon.js', 'some-package']) {
+      const [result] = await eslint.lintText(`import '${specifier}';`, { filePath });
+      expect(result.messages.some((message) => message.ruleId === 'no-restricted-imports'), specifier).toBe(true);
+    }
+    for (const specifier of ['node:fs/promises', './logger.js', '../core/logger.js']) {
+      const [result] = await eslint.lintText(`import '${specifier}';`, { filePath });
+      expect(result.messages.some((message) => message.ruleId === 'no-restricted-imports'), specifier).toBe(false);
+    }
+  });
   it('keeps core/ neutral: it depends on nobody but node builtins and core/ siblings', () => {
     const violations: Crossing[] = [];
     for (const file of layerFiles('core')) {

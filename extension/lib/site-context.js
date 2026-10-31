@@ -133,15 +133,19 @@ export async function probeSitePage() {
     // document. The scan is bounded so that a huge page cannot cost the probe its budget (R-09).
     let fields = [];
     const forms = document.querySelectorAll('form');
-    const scanned = Math.min(forms.length, MAX_FORMS_SCANNED);
-    for (let index = 0; index < scanned; index += 1) {
+    let scanned = 0;
+    for (let index = 0; index < forms.length && scanned < MAX_FORMS_SCANNED; index += 1) {
       const form = forms[index];
       if (performance.now() > deadline) return null;
       if (!nearestLandmark(form)) continue;
+      scanned += 1;
       const candidates = [];
+      let examined = 0;
       for (const element of form.querySelectorAll('input, textarea, select, [contenteditable]')) {
-        if (candidates.length >= MAX_CONTROLS_SCANNED) break;
+        if (candidates.length >= MAX_CONTROLS_SCANNED || examined >= MAX_CONTROLS_SCANNED * 4) break;
+        examined += 1;
         if (isFillable(element)) candidates.push(element);
+        if ((examined & 31) === 0 && performance.now() > deadline) return null;
       }
       if (candidates.length > fields.length) fields = candidates;
     }
