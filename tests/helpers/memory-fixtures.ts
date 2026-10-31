@@ -9,6 +9,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
+import { freePort } from './free-port.js';
 import {
   buildIpcHello,
   EXTENSION_PROTOCOL_CAPABILITIES,
@@ -73,7 +74,7 @@ export async function startIsolatedDaemon(
   opts: { wsPort?: number; env?: Record<string, string> } = {},
 ): Promise<DaemonHandle> {
   if (!fs.existsSync(DIST_DAEMON)) throw new Error(`${DIST_DAEMON} missing — run \`npm run build\` first`);
-  const wsPort = opts.wsPort ?? 31_000 + (process.pid % 5_000);
+  const wsPort = opts.wsPort ?? await freePort();
   const sockPath = socketPath(stateDir);
   const proc = spawn(process.execPath, [DIST_DAEMON], {
     env: {

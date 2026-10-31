@@ -32,11 +32,11 @@ jobs:
       - run: npm run context:lint
       # Token-budget check. The command is wired in, but the CAP is still an open owner
       # decision, so no threshold is enforced yet: this step only fails if the measurement
-      # itself fails. Value measured 2026-10-31: 2,488 tokens across the 2 rule files
-      # (.cursor/rules/project.mdc 1,599 + AGENTS.md 889). That number moves while
-      # .cursor/rules/project.mdc is edited, so re-run `npm run context:measure` rather than
-      # trusting this comment. Add the cap here once the owner decides it; until then this
-      # is a tripwire, not a budget.
+      # itself fails. Value measured 2026-10-31: 2,538 tokens across the 2 rule files
+      # (.cursor/rules/project.mdc 1,581 + AGENTS.md 957). That number moves while
+      # .cursor/rules/project.mdc or AGENTS.md is edited, so re-run `npm run context:measure`
+      # rather than trusting this comment. Add the cap here once the owner decides it; until
+      # then this is a tripwire, not a budget.
       - run: npm run context:measure
       - run: npm run lint
       # Architectural fitness functions: the layering boundaries (core/ neutral,

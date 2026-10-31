@@ -698,6 +698,28 @@ describe('the measured form shape (007)', () => {
     expect(probe.formShape).toBeNull();
   });
 
+  it('finds a landmark form after more than fifty unrelated forms', async () => {
+    const page = installFakePage('https://example.test/');
+    for (let i = 0; i < 60; i++) page.body.append(page.el('form', {}, page.el('input', { type: 'search' })));
+    page.body.append(page.el('main', {}, page.el('form', {}, page.el('input', { type: 'email' }))));
+    expect((await siteContext.probeSitePage()).formShape).toEqual({ fields: 1, required: 0, types: ['email'], hidden: false });
+  });
+
+  it('checks the deadline while examining non-fillable controls', async () => {
+    const page = installFakePage('https://example.test/');
+    const form = page.el('form');
+    for (let i = 0; i < 100; i++) form.append(page.el('input', { type: 'hidden' }));
+    page.body.append(page.el('main', {}, form));
+    let calls = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => (++calls < 3 ? 0 : 1_000));
+    try {
+      expect((await siteContext.probeSitePage()).formShape).toBeNull();
+      expect(calls).toBeGreaterThanOrEqual(3);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('counts a type=hidden input as no field, and a submit button as none', async () => {
     const page = installFakePage('https://example.test/login');
     const main = page.el('main');

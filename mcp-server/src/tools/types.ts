@@ -191,7 +191,7 @@ export function outcomeOf(raw: unknown): ToolResult {
   const { image, ...fields } = raw as Record<string, unknown>;
   const failed = fields.success === false;
   const text = failed
-    ? typeof fields.error === "string" ? fields.error : JSON.stringify(fields)
+    ? codedMessageOf(typeof fields.error === "string" ? fields.error : JSON.stringify(fields))
     : typeof fields.text === "string" ? fields.text : JSON.stringify(fields);
   const picture = image as { data?: unknown; mimeType?: unknown } | undefined;
   const content: ToolResult["content"] = [];

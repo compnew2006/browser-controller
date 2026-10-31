@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { buildIpcHello } from '../mcp-server/src/protocol/index.js';
 import { isKnownWireTool } from '../mcp-server/src/protocol/wire-tools.js';
 import { allTools } from '../mcp-server/src/tools/index.js';
+import { freePort } from './helpers/free-port.js';
 
 /**
  * Daemon-side tool allow-list (audit F6-3): an authenticated IPC client other
@@ -40,7 +41,7 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
     if (!fs.existsSync(DAEMON_JS)) throw new Error(`${DAEMON_JS} missing, run \`npm run build\` first`);
     proc = spawn(process.execPath, [DAEMON_JS], {
       // No extension ever connects here: keep the plain 5 s wait (no reconnect wait after the start).
-      env: { ...process.env, BC_STATE_DIR: stateDir, BC_RECONNECT_WAIT_MS: '0', WS_PORT: String(36_000 + Math.floor(Math.random() * 2_000)), WS_HOST: '127.0.0.1' },
+      env: { ...process.env, BC_STATE_DIR: stateDir, BC_RECONNECT_WAIT_MS: '0', WS_PORT: String(await freePort()), WS_HOST: '127.0.0.1' },
       stdio: 'ignore',
     });
     for (let i = 0; i < 100; i++) {
@@ -61,12 +62,12 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
   });
 
   /** Hello, then send each call and return the results by id. */
-  function callAll(tools: string[]): Promise<Record<string, { success: boolean; error?: string }>> {
+  function callAll(tools: string[], cid?: string): Promise<Record<string, { success: boolean; error?: string; cid?: string }>> {
     const token = JSON.parse(fs.readFileSync(path.join(stateDir, 'token.json'), 'utf8')).token;
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(sock);
       socket.setEncoding('utf8');
-      const out: Record<string, { success: boolean; error?: string }> = {};
+      const out: Record<string, { success: boolean; error?: string; cid?: string }> = {};
       const timer = setTimeout(() => { socket.destroy(); reject(new Error('timeout')); }, 8_000);
       let buf = '';
       socket.on('connect', () => socket.write(JSON.stringify(buildIpcHello(token, 'WireToolsTest')) + '\n'));
@@ -77,7 +78,7 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
           const msg = JSON.parse(buf.slice(0, nl));
           buf = buf.slice(nl + 1);
           if (msg.kind === 'welcome') {
-            tools.forEach((tool, i) => socket.write(JSON.stringify({ kind: 'call', id: `c${i}`, tool, params: {} }) + '\n'));
+            tools.forEach((tool, i) => socket.write(JSON.stringify({ kind: 'call', id: `c${i}`, tool, params: {}, cid }) + '\n'));
           } else if (msg.kind === 'ping') {
             socket.write(JSON.stringify({ kind: 'pong' }) + '\n');
           } else if (msg.kind === 'result') {
@@ -99,5 +100,10 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
       expect(res[name].success).toBe(false);
       expect(res[name].error).not.toMatch(/^UNKNOWN_TOOL/);
     }
+  });
+
+  it('echoes a valid correlation id and replaces malformed ids', async () => {
+    expect((await callAll(['browser_nope'], 'abc12345')).browser_nope.cid).toBe('abc12345');
+    expect((await callAll(['browser_nope'], 'invalid\nvalue')).browser_nope.cid).toMatch(/^[a-z0-9]{8}$/u);
   });
 });

@@ -14,7 +14,7 @@ import {
 } from './bridge-security.js';
 import { createBridgeHttpHandler, type HttpRequestHandler } from './bridge-http.js';
 import { ERROR_CODES, formatError } from './core/error-codes.js';
-import { createLogger, newCorrelationId } from './core/logger.js';
+import { createLogger, currentCorrelationId, newCorrelationId } from './core/logger.js';
 export type { HttpRequestHandler } from './bridge-http.js';
 import {
   BridgeHttpAuthenticator,
@@ -476,7 +476,7 @@ export class ExtensionBridge {
     return this.sendToolCall(tool, params, 0, sessionId, signal, agentName);
   }
 
-  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal, agentName?: string, correlationId: string = newCorrelationId()): Promise<unknown> {
+  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal, agentName?: string, correlationId: string = currentCorrelationId() ?? newCorrelationId()): Promise<unknown> {
     // If the caller already aborted (e.g. client evicted before we even sent),
     // reject immediately rather than firing the action into the void.
     if (signal?.aborted) {

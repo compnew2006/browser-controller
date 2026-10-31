@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { authenticatedHttpGet } from '../mcp-server/src/bridge-auth.js';
+import { freePort } from './helpers/free-port.js';
 
 /**
  * Daemon restarts with real processes: the compiled daemon and thin MCP
@@ -24,7 +25,6 @@ const DIST_INDEX = path.join(ROOT, 'mcp-server', 'dist', 'index.js');
 
 const children: ChildProcess[] = [];
 const stateDirs: string[] = [];
-let nextPort = 21_000 + Math.floor(Math.random() * 900) * 4;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
@@ -32,13 +32,16 @@ const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catc
 interface State { dir: string; port: number; enrollment: string }
 
 /** A state folder with the token and enrollment secret already written (as after a first run). */
-function makeState(): State {
+async function makeState(): Promise<State> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-restart-'));
   stateDirs.push(dir);
   const enrollment = 'e'.repeat(48);
   fs.writeFileSync(path.join(dir, 'token.json'), JSON.stringify({ token: 't'.repeat(48), createdAt: Date.now() }), { mode: 0o600 });
   fs.writeFileSync(path.join(dir, 'enrollment.json'), JSON.stringify({ secret: enrollment, createdAt: Date.now() }), { mode: 0o600 });
-  return { dir, port: nextPort++, enrollment };
+  // An ephemeral port the OS says is free: a random pick from a narrow
+  // window could collide with a second test process, and the daemon refuses
+  // to evict whoever owns the port it cannot bind.
+  return { dir, port: await freePort(), enrollment };
 }
 
 function env(state: State, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -171,7 +174,7 @@ afterEach(async () => {
 
 describe('daemon start race', { timeout: 30_000 }, () => {
   it('a daemon that finds the lock held exits at once: one line, exit code 0, no stack', async () => {
-    const state = makeState();
+    const state = await makeState();
     const first = await startDaemon(state);
     const second = track(spawn(process.execPath, [DIST_DAEMON], { env: env(state), stdio: ['ignore', 'pipe', 'pipe'] }));
     const text = output(second);
@@ -186,7 +189,7 @@ describe('daemon start race', { timeout: 30_000 }, () => {
 
 describe('thin clients across daemon restarts', { timeout: 60_000 }, () => {
   it('a connect-mode client rejoins after every restart, and a call made while the daemon is down waits for it', async () => {
-    const state = makeState();
+    const state = await makeState();
     let daemon = await startDaemon(state);
     const client = startClient(state, 'Rejoin', { BROWSER_CONTROLLER_DAEMON_MODE: 'connect' });
     const clientLog = output(client);
@@ -214,7 +217,7 @@ describe('thin clients across daemon restarts', { timeout: 60_000 }, () => {
   });
 
   it('three self-starting clients race to start the daemon and all rejoin it after each of two restarts; the log has no fatal stack', async () => {
-    const state = makeState();
+    const state = await makeState();
     const names = ['RaceA', 'RaceB', 'RaceC'];
     const clients = names.map((n) => startClient(state, n));
     const logs = clients.map(output);

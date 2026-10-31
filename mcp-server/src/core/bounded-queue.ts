@@ -333,7 +333,16 @@ export class BoundedQueue<Op, SideOp = never, G extends QueueGroup<Op> = QueueGr
 
   private dropEntry(entry: QueueEntry<Op>, reason: QueueDropReason): void {
     this.dropped[reason] += entry.count;
-    for (const op of this.options.members(entry)) this.report(op, reason);
+    for (const op of this.members(entry)) this.report(op, reason);
+  }
+
+  private members(entry: QueueEntry<Op>): Op[] {
+    try {
+      return this.options.members(entry);
+    } catch {
+      // The representative remains reportable even if the profile cannot expand it.
+      return [entry.op];
+    }
   }
 
   private report(op: Op | SideOp, reason: QueueDropReason): void {
@@ -347,7 +356,7 @@ export class BoundedQueue<Op, SideOp = never, G extends QueueGroup<Op> = QueueGr
   private schedule(): void {
     if (!this.running && !this.scheduled) {
       this.scheduled = true;
-      setImmediate(() => void this.pump());
+      setImmediate(() => void this.pump().catch(() => {}));
     }
   }
 
@@ -371,7 +380,9 @@ export class BoundedQueue<Op, SideOp = never, G extends QueueGroup<Op> = QueueGr
           }
         }
         this.inFlight = group.entries;
-        const done = this.commitGroup(group);
+        const done = this.commitGroup(group).catch(() => {
+          for (const entry of group.entries) this.dropEntry(entry, 'io_error');
+        });
         this.current = { key: group.key, origin: group.origin, done };
         await done;
         this.current = null;
@@ -383,13 +394,17 @@ export class BoundedQueue<Op, SideOp = never, G extends QueueGroup<Op> = QueueGr
       this.inFlightIds.clear();
       this.current = null;
       this.running = false;
+      if (this.pending.size > 0 || this.side.length > 0) {
+        this.schedule();
+      } else {
+        try {
+          this.options.onDrained?.(new Date(this.options.now()).toISOString());
+        } catch {
+          // Same as onDrop.
+        }
+        for (const resolve of this.waiters.splice(0)) resolve();
+      }
     }
-    try {
-      this.options.onDrained?.(new Date(this.options.now()).toISOString());
-    } catch {
-      // Same as onDrop.
-    }
-    for (const resolve of this.waiters.splice(0)) resolve();
   }
 
   /**
@@ -412,7 +427,7 @@ export class BoundedQueue<Op, SideOp = never, G extends QueueGroup<Op> = QueueGr
       this.committed += entry.count;
       for (const id of entry.opIds) this.rememberCommitted(id);
       const result = results[index];
-      for (const op of this.options.members(entry)) {
+      for (const op of this.members(entry)) {
         try {
           this.options.onCommitted?.(op, result);
         } catch {
@@ -430,7 +445,14 @@ export class BoundedQueue<Op, SideOp = never, G extends QueueGroup<Op> = QueueGr
     for (const entry of ops) {
       for (const id of entry.opIds) this.pendingIds.delete(id);
     }
-    await side.commit(ops.map((entry) => entry.op));
+    try {
+      await side.commit(ops.map((entry) => entry.op));
+    } catch {
+      for (const entry of ops) {
+        this.dropped.io_error += entry.count;
+        this.report(entry.op, 'io_error');
+      }
+    }
   }
 
   /** Runs the write under the commit timeout; the signal is aborted when the timeout wins. */
@@ -443,8 +465,11 @@ export class BoundedQueue<Op, SideOp = never, G extends QueueGroup<Op> = QueueGr
         resolve('timeout');
       }, this.commitTimeoutMs);
     });
-    const finished = await Promise.race([run(controller.signal).then(() => 'done' as const), timeout]);
-    clearTimeout(timer);
-    return finished === 'timeout';
+    try {
+      const finished = await Promise.race([Promise.resolve().then(() => run(controller.signal)).then(() => 'done' as const), timeout]);
+      return finished === 'timeout';
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }

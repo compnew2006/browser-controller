@@ -758,7 +758,7 @@ To fully reset: stop your MCP clients, delete the folder, and the next run recre
 - **Idempotent read tools** (snapshot, text, screenshot, inspect_element) are retried on timeout; **every other tool** is never retried, so a click can't fire twice.
 - A browser response over the WebSocket message limit fails that one call with `RESPONSE_TOO_LARGE`; the connection stays up.
 - If another process already holds port 7225, the daemon refuses to start rather than killing a process it didn't spawn — it reports the conflict so you can resolve it deliberately.
-- **A server-side failure carries a correlation id.** Every request gets one, and every log line written while it runs ends with `cid=…`, so the lines of one request can be followed as one thread instead of a failure being one anonymous line among many. The scope prefixes (`[Bridge]`, `[browser-controller-daemon]`) and the messages themselves are unchanged; the id is an extra field after the message.
+- **A server-side failure carries a correlation id.** Request-scoped client, daemon and bridge logs share a `cid=…` field, so those lines can be followed together. Unrelated background logs need not carry it, and it is not sent to the extension. The scope prefixes (`[Bridge]`, `[browser-controller-daemon]`) and messages are unchanged.
 
 ### Protocol compatibility
 

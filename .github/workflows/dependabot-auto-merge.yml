@@ -5,14 +5,52 @@ on: pull_request
 permissions:
   contents: write
   pull-requests: write
+  checks: read
 
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
     if: github.actor == 'dependabot[bot]'
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - run: gh pr merge --auto --squash "$PR_URL"
+
+      # `gh pr merge --auto` merges as soon as the repository's REQUIRED status
+      # checks are green. While `main` has no branch protection there are no
+      # required checks, so the merge happened seconds after the pull request
+      # opened — while CI was still running, and in one case while CI was
+      # already failing (PR #35, 2026-10-31). Wait for the checks to report,
+      # then wait for them to pass, before enabling the merge.
+      - name: Wait for the pull request checks to report
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            count=$(gh pr checks "$PR_URL" --json name --jq 'length' 2>/dev/null || echo 0)
+            if [ "$count" -gt 0 ]; then
+              echo "reported checks: $count"
+              exit 0
+            fi
+            echo "no checks reported yet (attempt $attempt)"
+            sleep 10
+          done
+          echo "no checks were reported for $PR_URL in time; refusing to merge"
+          exit 1
+
+      - name: Wait for the checks to pass
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh pr checks "$PR_URL" --watch --fail-fast --interval 30
+
+      # `--auto` (not a direct merge) so that the repository's own rules still
+      # apply once branch protection is configured.
+      - name: Merge
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --auto --squash "$PR_URL"

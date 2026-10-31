@@ -45,7 +45,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const DIST_DAEMON = path.join(ROOT, 'mcp-server', 'dist', 'daemon.js');
 
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

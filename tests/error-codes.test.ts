@@ -127,3 +127,16 @@ describe('the coded messages in mcp-server/src', () => {
     expect(unused).toEqual([]);
   });
 });
+
+describe('extension error codes', () => {
+  it('registers every coded string literal produced by the extension', () => {
+    const unknown: string[] = [];
+    for (const file of sourceFiles(EXTENSION_SRC, ['.js', '.ts'])) {
+      for (const literal of stringLiterals(fs.readFileSync(file, 'utf8'))) {
+        const match = /^([A-Z][A-Z0-9_]+): /.exec(literal);
+        if (match && match[1] !== PLACEHOLDER && !isKnownErrorCode(match[1])) unknown.push(`${path.relative(ROOT, file)}: ${match[1]}`);
+      }
+    }
+    expect(unknown).toEqual([]);
+  });
+});
