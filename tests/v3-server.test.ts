@@ -46,7 +46,8 @@ describe('Browser Controller 3.0 server surface', () => {
     const tools = await listedTools();
     const json = JSON.stringify(tools);
     // chars / 4 is the rough o200k estimate: 20 000 chars is about 5 000 tokens (18 000 before browser_memory, T038;
-    // 19 000 before browser_site_map and the map_* policy actions, 004 T020).
+    // 19 000 before browser_site_map and the map_* policy actions, 004 T020; 19 875 after the F8-8 trim of 2026-10-31,
+    // which took the locator text every element tool repeats ten times and some enumerations a tool's own params carry).
     expect(json.length, `tools/list is ${json.length} chars (~${Math.round(json.length / 4)} tokens)`).toBeLessThanOrEqual(20_000);
   });
 
