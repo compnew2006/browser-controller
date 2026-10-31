@@ -364,7 +364,7 @@ NEW: (none)   GONE: 62   → PASS
 
 **تقييم التعرّض:** مؤكَّد أن المستودع لا يستدعي `serveStatic` من هذه الحزمة — البحث في الشجرة يعطي دالة اختبار محلية فقط (`tests/helpers/memory-fixtures.ts`). أي أن التعرّض التشغيلي كان صفراً والتنبيه كان عن حزمة موجودة لا عن مسار مستخدَم؛ وأُصلح على أي حال لأنه داخل النطاق المسموح (`^1.19.9 || ^2.0.5`).
 
-**المخاطر المقبولة:** بقيت 6 تنبيهات `moderate` في **سلسلة أدوات التطوير فقط** (eslint ← @eslint/config-array ← minimatch ← brace-expansion). لا وجود لها في شجرة الإنتاج (`--omit=dev` = 0)، ولا مسار استغلال منها إلى المنتج، وإصلاحها يتطلّب `npm audit fix --force` أي قفزة كاسرة عبر versions لـeslint. قرار مسجَّل في `SECURITY.md` §Dependency and Quality Gates.
+**تنبيهات سلسلة ESLint — مُسحّة بقرار المالك:** كان في شجرة التطوير 6 تنبيهات `moderate`، وأصلها GHSA‑g3hv‑75wg‑m249 (`minimatch` قبل 11.0.1، denial of service عبر تضخيم globparts) عبر `eslint` ← `@eslint/config-array` ← `minimatch`. **طريقان قِستهما:** الآلي `npm audit fix --force` ينصّ npm نفسه على أنه «سيثبّت `@eslint/js@9.39.5`، وهو تغيير كاسر» — أي **تراجع** عن 10.0.1 يُسقط أداة بدل أن يصلح تنبيهاً؛ وغير الكاسر `overrides: { "minimatch": "^11.0.1" }`، وقد جُرّب **قبل** التطبيق على `eslint.config.js` الحقيقي وعلى أهداف lint الحقيقية فجاء **صفر أخطاء** (eslint 10.14.0 على minimatch 11.0.3). **قرار المالك: الثاني.** طُبِّق: `minimatch@11.0.3` (مع اعتماده الجديد `@isaacs/nonrecursive-glob-match@1.0.3`)، ولا حزمة مضافة ولا محذوفة، و`npm run lint` على نفس الأهداف = 0، و**`npm audit` على الشجرة كاملة ⇒ 0 ثغرات**. التحفّظ المسجَّل: الـoverride يدفع `@eslint/config-array` خارج النطاق الذي يعلنه (`minimatch: ^10.2.4`)، فتركيبة لم يخبرها صانع الحزمة ⇒ تُراجَع عند ترقية ESLint. التفاصيل في `SECURITY.md` §Dependency and Quality Gates.
 
 ### 9.3 الـworktree غير المُدار — لا وجود له
 
@@ -380,6 +380,7 @@ NEW: (none)   GONE: 62   → PASS
 |---|---|---|
 | `npm run lint` / `typecheck` / `build` | 0 / 0 / 0 | **0 / 0 / 0** |
 | `npm audit --omit=dev` | 1 moderate | **0** |
+| `npm audit` (الشجرة كاملة) | 6 moderate | **0** |
 | مجموع الاختبارات | 2,555 | **2,555** |
 | ناجح / فاشل | 2,456 / 62 | **2,456 / 62** |
 | فشل جديد بالاسم | — | **0** |

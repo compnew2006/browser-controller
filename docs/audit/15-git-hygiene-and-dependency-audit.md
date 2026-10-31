@@ -12,11 +12,12 @@
 |---|---|---|
 | 1 — stashdrops الثلاثة `c466658` / `794b282` / `cb9ac85` | **مُسترجَع** | عادوا إلى `refs/stash` بنسخ مُسمّاة + إثبات مكتوب (§1) |
 | 2 — تنبيه dependabot #9 (`@hono/node-server`) | **مُصلَح** | `npm audit --omit=dev` ⇒ **0 ثغرات** (§2) |
+| 2b — سلسلة ESLint (تنبيه `minimatch`) | **مُسحّة** | `overrides` على minimatch 11 ⇒ `npm audit` الكامل **0 ثغرات** (§2.5) |
 | 3 — الـworktree غير المُدار `mewing-feather` | **لا يوجد** | لم يعد موجوداً قبل هذه الجلسة؛ لا إجراء (§3) |
 | 4 — `pr_body_fix.json` | **متتبَّع** | البند مسحوب من المراجعة أصلاً؛ لا إجراء (§4) |
 | 5 — حذف فرع dependabot | **مُثبت آمن** | الشجرة مطابقة بايت‑ببايت لسلف `main` (§5) |
 
-**ما لم يتغيّر:** لا ملف مصدري. التغيير الوحيد في الشجرة هو `package-lock.json` (§2). البوابة: lint/typecheck/build = 0، والاختبارات بلا فشل جديد بالاسم (§7).
+**ما لم يتغيّر:** لا ملف مصدري. التغيير في الشجرة: `package.json` (حقل `overrides`) و`package-lock.json`. البوابة: lint/typecheck/build = 0، والاختبارات بلا فشل جديد بالاسم (§7).
 
 ---
 
@@ -89,7 +90,16 @@ stash@{3}: On main: local console-main.js sourceURL edit (before pull to 3.0.5)
 
 الـstash الأصلي (`73104f1` — `console-main.js`) **باقٍ سليم** ومنزلق إلى `stash@{3}`.
 
-**حالة الوصول (reachability):** بعد الاسترجاع، `git fsck --no-reflogs` لا يبلّغ عن `c466658` و`cb9ac85` (أصبحا في سلسلة `refs/stash`)، ويبقي `794b282` معلّقاً لأن `git fsck --no-reflogs` يتجاهل سجلات المراجع عمداً — وهو في سجل مراجع `refs/stash`، أي أنه **قابل للوصول وليس مرشّحاً للـGC**. أي أن الثلاثة محفوظة داخل المستودع، لا تعتمد على نافذة استرجاع أسبوعين.
+**حالة الوصول (reachability) — مُقيسة بالطريقتين:** `git fsck` (الوضع الافتراضي، وهو يحتسب سجلات المراجع) **لا يبلّغ عن أيٍّ من الثلاثة**: كلها قابلة للوصول. والتفصيل الذي لا يظهر في الأمر العادي: `refs/stash` يشير إلى `cb9ac85` مباشرةً (فهو محميّ بالمرجع نفسه)، أمّا `c466658` و`794b282` فيحميهما **سجلّ مراجع `refs/stash`** — ولهذا يبلّغ `git fsck --no-reflogs` (الذي يتجاهل السجلات عمداً) عنهما بأنهما «معلّقان»، ولا يبلّغ عن `cb9ac85`:
+
+```
+$ git fsck            → (nothing for the three)     ← reflogs honored
+$ git fsck --no-reflogs
+dangling commit 794b282…
+dangling commit c466658…
+```
+
+**ليستا مرشَّحين للـGC:** الـGC يحترم سجلات المراجع افتراضياً. لكن التحفّظ الصادق: حداثة السجلَّين القديمين تتبع سياسة انتهاء سجلات المراجع (`gc.reflogExpire` = 90 يوماً افتراضياً)، فإذا أراد المالك بقاءهما أطول فالمرجع الدائم (tag) هو الطريق، لا الـstash. أي أن الثلاثة محفوظة داخل المستودع، ولا تعتمد على نافذة استرجاع أسبوعين.
 
 ### 1.4 ملاحظة على نطاق الممنوع
 
@@ -154,18 +164,59 @@ $ npm ls @hono/node-server @modelcontextprotocol/sdk
 
 بوّابة CI (`npm run security:audit`) صارت نظيفة تماماً، بعد أن كانت تمرّ متجاهِلةً التنبيه لأنها `moderate` مقابل `--audit-level=high`.
 
-### 2.5 المخاطر المقبولة (السلسلة التطويرية فقط)
+### 2.5 تنبيهات سلسلة ESLint — مُسحّة بالـoverride (قرار المالك)
 
-يبقى في شجرة التطوير `6 moderate` من سلسلة ESLint: `eslint` → `@eslint/config-array` → `minimatch` → `brace-expansion` / `@eslint-community/eslint-utils`.
+تنبيه شجرة التطوير كان GHSA‑g3hv‑75wg‑m249: `minimatch` قبل 11.0.1، denial of service عبر تضخيم globparts، وهو يصل إلى الشجرة عبر `eslint` → `@eslint/config-array` → `minimatch` (6 مسارات). والمثبَّت كان `10.2.6` — داخل النطاق المتأثر.
 
-| البند | السبب |
-|---|---|
-| **الطبيعة** | سلسلة أدوات تطوير (lint) فقط، **ليست في شجرة الإنتاج** (`--omit=dev` = 0) ولا في أي ما يُشحن للمستخدم |
-| **مسار الاستغلال** | لا يوجد: لا reaches هذه الحزم من أي مسار تنفيذ في المنتج |
-| **لماذا لم يُصلَح** | الإصلاح يتطلّب `npm audit fix --force` ⇒ قفزة `eslint` عبر versions كاسرة (خارج نطاق semver)، ونتيجة الفحص لم تكن خطأً واحداً |
-| **متى يُراجَع** | عند ترقية ESLint في دورة التبعيات القادمة، أو عند نشر CI يحاسب شجرة التطوير |
+**قرار المالك:** تطبيق الـ`overrides` بدل قبول المخاطرة. التطبيق:
 
-**قرار مسجَّل:** سلسلة التطوير مقبولة كما هي. بوابة الإنتاج صفر.
+```json
+"overrides": {
+  "minimatch": "^11.0.1"
+}
+```
+
+**النتيجة بعد التطبيق:**
+
+```
+$ npm ls minimatch
+`-- eslint@10.14.0
+  +-- @eslint/config-array@0.23.5
+  | `-- minimatch@11.0.3 deduped
+  `-- minimatch@11.0.3 overridden          ← لا وسم invalid
+
+$ npm audit              → found 0 vulnerabilities   (exit 0)   ← الشجرة كاملة
+$ npm run security:audit → found 0 vulnerabilities   (exit 0)
+$ npm run lint           → EXIT=0
+```
+
+فرق القفل: `minimatch` 10.2.6 → 11.0.3، واعتمادٌ جديد `@isaacs/nonrecursive-glob-match@1.0.3`، ونطاق `brace-expansion` من `^5.0.8` إلى `^5.0.12` — **لا حزمة مضافة ولا محذوفة**، ولا أداة تغيّرت.
+
+#### 2.5.1 لماذا الطريق الآلي مرفوض، والطريق المختار مُقاس
+
+**الطريق الآلي (`npm audit fix --force`) — كاسر، ومُقاس:**
+
+```
+Will install @eslint/js@9.39.5, which is a breaking change
+```
+
+أي **تراجع** لـ`@eslint/js` من 10.0.1 إلى 9.39.5 — لا ترقية. يفكّ التنبيه بإسقاط نسخة من أدوات الفحص، فليس تحسّناً.
+
+**الطريق غير الكاسر (`overrides`) — مُقاس قبل التطبيق، لا بعده:** نسخة معزولة من ESLint 10.14.0 عليها `minimatch@11.0.3`، شغّلتُ بها **ملفات المستودع الحقيقية** و**`eslint.config.js` الحقيقي** بنفس أهداف `npm run lint`:
+
+```
+$ node -e "require.resolve('minimatch', { paths: ['<probe>/node_modules/eslint'] })"
+<probe>/node_modules/minimatch\dist\commonjs\index.js      ← 11.0.3، لا 10.2.6
+
+$ eslint mcp-server/src tests extension vitest.config.ts eslint.config.js
+eslint EXIT=0        ← صفر أخطاء
+```
+
+وقبلها اختُبرت أنماط `files`/`ignores` صراحةً: النمط طابق والقاعدة اشتغلت. والحزمة نفسها قابلة للاستدعاء من CJS (توزّع `exports.require` ⇒ `dist/commonjs/index.js`)، فليس هناك كسر ESM/CJS.
+
+**ما لا يغطيه هذا القياس — ويُسجَّل:** `overrides` يدفع `@eslint/config-array` إلى ما هو خارج النطاق الذي يعلنه (`minimatch: ^10.2.4`) — تركيبة لم يخبرها صانع الحزمة. وعلى مستوى المستودع تُركّب `minimatch` من `@eslint/config-array` و`@eslint-community/eslint-utils` معاً. لذا: **الـoverride يُراجَع عند ترقية ESLint القادمة**، ويُحذف إن أعلنته الأداة بنفسها.
+
+**أثره على بوابة CI:** `npm run security:audit` = `npm audit --omit=dev --audit-level=high` — بوابة الإنتاج. البوابة **لا تفحص شجرة التطوير**، فالتنبيهاتُ ومنها كانت ستعبر دون أن تُرى. بعد التطبيق، الشجرة كاملة نظيفة، لكن فحص شجرة التطوير يبقى خارج CI — وهذا بندٌ يستحق قراراً منفصلاً (هل يُضاف `npm audit` كاملاً إلى CI؟).
 
 ---
 
@@ -239,6 +290,8 @@ git stash list
 npm run security:audit
 npm audit fix
 npm run security:audit
+npm install            # بعد إضافة overrides: { "minimatch": "^11.0.1" }
+npm audit              # الشجرة كاملة
 
 # 3) فحص الـworktree
 git worktree list
@@ -256,6 +309,7 @@ git worktree list
 | `npm run typecheck` | 0 | **0** |
 | `npm run build` | 0 | **0** |
 | `npm audit --omit=dev` | 1 moderate | **0** |
+| `npm audit` (الشجرة كاملة) | 6 moderate | **0** |
 | `npm ls` (سلامة الشجرة) | `@modelcontextprotocol/sdk` = `invalid` | **صالح** |
 | مجموع الاختبارات | 2,555 | **2,555** |
 | ناجح / فاشل | 2,456 / 62 | **2,456 / 62** |
