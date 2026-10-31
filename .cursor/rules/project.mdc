@@ -34,7 +34,7 @@ Agent ─stdio─ thin MCP client (index.ts) ─IPC─► daemon (daemon.ts, own
 - `TabLockMap`: implicit per-session tab ownership (a tab `browser_navigate` opens without `tabId`). Another session's call on it fails `TAB_LOCKED`. No explicit lock tool in 3.0.
 - `isIdempotent` (`mcp-server/src/tools/index.ts`, from each definition's `idempotent` flag): read tools retry on timeout; **click/type/navigate/evaluate NEVER retry**.
 
-## Tool inventory (17 tools)
+## Tool inventory (22 tools)
 
 Navigation: browser_navigate (tabId optional: without it, opens a new background tab owned by the session), browser_tabs (list/close/focus; browser picks the Chrome profile), browser_emulate
 Reading: browser_snapshot (refs e<n>; query, target, maxChars), browser_text, browser_screenshot, browser_inspect_element
@@ -42,6 +42,8 @@ Interaction: browser_click (target; hover, dragTo), browser_type, browser_fill, 
 Chain: browser_batch (up to 50 steps)
 JS/Dialogs: browser_evaluate (CDP), browser_handle_dialog
 Debug: browser_logs (console + network, per-tab buffers), browser_mock (tab-scoped Fetch rules)
+Safety: browser_safety (allow, ask or block for submit, delete and upload actions and for browser_evaluate; per site or as the default), browser_vault (private credential vault: status, list, unlock, save_login or fill; the owner approves a site once)
+Memory: browser_memory (read-only notes on the tab's site: language, search, login, common controls, a form's shape, visits), browser_memory_policy (owner-confirmed enable, disable, exclude, include, inspect, export, delete and map_* actions), browser_site_map (read-only map of one site in this profile: remembered pages and controls)
 
 ## browser_evaluate
 

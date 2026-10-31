@@ -6,6 +6,10 @@
  * ceiling below, and the soft cap is applied here: an oversized response fails
  * only the call it answers, and the connection stays up for every agent.
  */
+import { ERROR_CODES, formatError } from './core/error-codes.js';
+import { createLogger } from './core/logger.js';
+
+const log = createLogger('Bridge');
 
 /** Soft cap for one extension frame. BC_MAX_WS_MESSAGE_BYTES overrides it. */
 export const MAX_WS_MESSAGE_BYTES = Math.max(
@@ -38,12 +42,12 @@ export function rejectOversizedFrame(
   if (data.length <= limit) return false;
   const id = /^\{\s*"id"\s*:\s*"([^"\\]{1,128})"/.exec(data.subarray(0, 256).toString('utf8'))?.[1];
   const ours = id !== undefined && pending.get(id)?.conn === conn;
-  console.error(`[Bridge] Oversized frame from a browser: ${data.length} bytes > ${limit}${ours ? `; failing call ${id}` : ''}`);
+  log.error(`Oversized frame from a browser: ${data.length} bytes > ${limit}${ours ? `; failing call ${id}` : ''}`);
   if (id !== undefined && ours) {
     fail({
       id,
       success: false,
-      error: `RESPONSE_TOO_LARGE: the browser sent a ${data.length}-byte response (limit ${limit} bytes). This call failed; the connection stays up. Ask for less (e.g. a smaller screenshot).`,
+      error: formatError(ERROR_CODES.RESPONSE_TOO_LARGE, `the browser sent a ${data.length}-byte response (limit ${limit} bytes). This call failed; the connection stays up. Ask for less (e.g. a smaller screenshot).`),
     });
   }
   return true;

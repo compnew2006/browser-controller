@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildIpcHello } from '../mcp-server/src/protocol.js';
-import { isKnownWireTool } from '../mcp-server/src/wire-tools.js';
+import { buildIpcHello } from '../mcp-server/src/protocol/index.js';
+import { isKnownWireTool } from '../mcp-server/src/protocol/wire-tools.js';
 import { allTools } from '../mcp-server/src/tools/index.js';
 
 /**

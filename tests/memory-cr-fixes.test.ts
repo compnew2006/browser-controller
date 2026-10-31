@@ -17,7 +17,7 @@ import { runAdminCommand, type AdminContext } from '../mcp-server/src/memory/adm
 import { routeMemoryTool, CONTEXT_ACTION, type MemoryToolBridge } from '../mcp-server/src/memory/tool-route.js';
 import { routeMemoryPolicyTool } from '../mcp-server/src/memory/policy-tool-route.js';
 import { toolTimeoutMs } from '../mcp-server/src/tools/index.js';
-import { isKnownWireTool } from '../mcp-server/src/wire-tools.js';
+import { isKnownWireTool } from '../mcp-server/src/protocol/wire-tools.js';
 import type { MemoryAdminStatus } from '../mcp-server/src/daemon-config.js';
 
 const ORIGIN = 'https://example.com';

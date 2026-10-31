@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 export const VAULT_VERSION = 1 as const;
 export const VAULT_MAX_ENTRIES = 1_000;
@@ -14,16 +15,16 @@ export function canonicalizeOrigin(value: string): string {
   try {
     url = new URL(value);
   } catch {
-    throw new Error('VAULT_ORIGIN_MISMATCH: a valid site origin is required');
+    throw new Error(formatError(ERROR_CODES.VAULT_ORIGIN_MISMATCH, 'a valid site origin is required'));
   }
   if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-    throw new Error('VAULT_ORIGIN_MISMATCH: credentials, paths, queries, and fragments are not site origins');
+    throw new Error(formatError(ERROR_CODES.VAULT_ORIGIN_MISMATCH, 'credentials, paths, queries, and fragments are not site origins'));
   }
   if (url.protocol !== 'https:') {
     const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
     const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '::ffff:127.0.0.1';
     if (url.protocol !== 'http:' || !loopback) {
-      throw new Error('VAULT_ORIGIN_MISMATCH: only HTTPS sites and loopback HTTP fixtures are supported');
+      throw new Error(formatError(ERROR_CODES.VAULT_ORIGIN_MISMATCH, 'only HTTPS sites and loopback HTTP fixtures are supported'));
     }
   }
   return url.origin;

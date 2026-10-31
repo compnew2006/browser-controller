@@ -24,7 +24,8 @@ import { maskPath, normalizeForMatch } from './map-text.js';
 import { MemoryPolicyError, canonicalOrigin, readPolicy, type MemoryPolicy } from './policy.js';
 import type { ScopeDecision } from './scope.js';
 import { MemoryStoreError } from './site-record.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES, formatError, type ErrorCode } from '../core/error-codes.js';
 
 /**
  * Calls that leave the page as it is, or that capture already handles (navigate, snapshot, click). Any other call on
@@ -81,7 +82,7 @@ export type MapLookupResult = MapLookup | { success: false; error: string };
 const MAP_POLICY_FAILURES = new WeakSet<Error>();
 
 export function mapErrorCode(error: unknown): string {
-  return error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.code : 'MEMORY_UNAVAILABLE';
+  return error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.code : ERROR_CODES.MEMORY_UNAVAILABLE;
 }
 
 /** `example.com` tries https, then the www or non-www form; an http(s) origin is used as given (R-16, CHK015). */
@@ -141,7 +142,7 @@ export class MapService {
       now: deps.now,
       onDrop: (op, reason) => {
         if (reason !== 'duplicate') this.dropped.set(op.profile, (this.dropped.get(op.profile) ?? 0) + 1);
-        const code = ({ io_error: 'MEMORY_UNAVAILABLE', timeout: 'MEMORY_UNAVAILABLE', corrupt: 'MEMORY_CORRUPT', capacity: 'MEMORY_FULL', queue_full: 'MEMORY_QUEUE_FULL' } as Partial<Record<MapDropReason, string>>)[reason];
+        const code = ({ io_error: ERROR_CODES.MEMORY_UNAVAILABLE, timeout: ERROR_CODES.MEMORY_UNAVAILABLE, corrupt: ERROR_CODES.MEMORY_CORRUPT, capacity: ERROR_CODES.MEMORY_FULL, queue_full: ERROR_CODES.MEMORY_QUEUE_FULL } as Partial<Record<MapDropReason, string>>)[reason];
         if (code) this.noteError(code);
       },
       onDrained: (drainedThrough) => {
@@ -278,7 +279,7 @@ export class MapService {
   private async readMap(profile: string, origin: string, timeoutMs: number): Promise<MapRecord | null> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new MemoryStoreError('MEMORY_UNAVAILABLE', 'the map store did not answer in time')), timeoutMs);
+      timer = setTimeout(() => reject(new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'the map store did not answer in time')), timeoutMs);
       timer.unref?.();
     });
     try {
@@ -319,18 +320,18 @@ export class MapService {
    * `origin` the profile comes from the session's connection and must be verified. Never lists origins.
    */
   async lookup(params: Record<string, unknown>, sessionId: string, tabDecision: (tabId: number) => ScopeDecision): Promise<MapLookupResult> {
-    const fail = (code: string, message: string): MapLookupResult => ({ success: false, error: `${code}: ${message}` });
+    const fail = (code: ErrorCode, message: string): MapLookupResult => ({ success: false, error: formatError(code, message) });
     // Each policy failure names its policy, so the owner is sent to the reset that fixes the file that failed.
     const policyFailure = (error: unknown, subject: string, reset: string): MapLookupResult => {
       const code = mapErrorCode(error);
       this.noteError(code);
-      return error instanceof MemoryPolicyError && code === 'MEMORY_CORRUPT'
-        ? fail('MEMORY_CORRUPT', `${subject} could not be read; ${reset}`)
-        : fail('MAP_UNAVAILABLE', `${subject} could not be read.`);
+      return error instanceof MemoryPolicyError && code === ERROR_CODES.MEMORY_CORRUPT
+        ? fail(ERROR_CODES.MEMORY_CORRUPT, `${subject} could not be read; ${reset}`)
+        : fail(ERROR_CODES.MAP_UNAVAILABLE, `${subject} could not be read.`);
     };
     try {
       const input = parseLookup(params);
-      if (typeof input === 'string') return fail('INVALID_ARGUMENT', input);
+      if (typeof input === 'string') return fail(ERROR_CODES.INVALID_ARGUMENT, input);
       let memory: MemoryPolicy;
       let map: MapPolicy;
       try {
@@ -343,36 +344,36 @@ export class MapService {
       } catch (error) {
         return policyFailure(error, 'the site map policy', 'the owner can reset it with map disable or map delete --all.');
       }
-      if (!memory.enabled) return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
+      if (!memory.enabled) return fail(ERROR_CODES.MEMORY_DISABLED, 'website memory is off; the owner controls it.');
       let profile: string;
       let candidates: string[];
       if (input.tabId !== undefined) {
         const decision = tabDecision(input.tabId);
         if (!decision.in) {
-          if (decision.outcome === 'disabled') return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
-          if (decision.outcome === 'excluded') return fail('MEMORY_EXCLUDED', 'this site is excluded from website memory.');
-          if (decision.reason === 'no_site_context_capability') return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
-          return fail('MEMORY_SCOPE_UNKNOWN', "this tab's profile, site or privacy state could not be verified, so no map is shown.");
+          if (decision.outcome === 'disabled') return fail(ERROR_CODES.MEMORY_DISABLED, 'website memory is off; the owner controls it.');
+          if (decision.outcome === 'excluded') return fail(ERROR_CODES.MEMORY_EXCLUDED, 'this site is excluded from website memory.');
+          if (decision.reason === 'no_site_context_capability') return fail(ERROR_CODES.MEMORY_NOT_SUPPORTED, 'the connected browser extension does not support website memory.');
+          return fail(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, "this tab's profile, site or privacy state could not be verified, so no map is shown.");
         }
         profile = decision.scope.browserId;
         candidates = [decision.scope.origin];
       } else {
         const named = originCandidates(input.origin as string);
-        if (!named) return fail('INVALID_ARGUMENT', 'origin must be an http(s) origin or a host name.');
+        if (!named) return fail(ERROR_CODES.INVALID_ARGUMENT, 'origin must be an http(s) origin or a host name.');
         let connection: MapConnection;
         try {
           connection = this.deps.connection(sessionId);
         } catch {
-          return fail('MEMORY_SCOPE_UNKNOWN', 'no browser extension is connected for this session.');
+          return fail(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, 'no browser extension is connected for this session.');
         }
-        if (!connection.supportsSiteContext) return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
-        if (connection.browserId === 'default' || connection.ambiguous) return fail('MEMORY_SCOPE_UNKNOWN', "this session's browser profile could not be verified.");
-        if (this.deps.vault.memoryEligibility(connection.browserId) !== 'clear') return fail('MEMORY_SCOPE_UNKNOWN', "this session's browser profile is protected by the credential vault.");
+        if (!connection.supportsSiteContext) return fail(ERROR_CODES.MEMORY_NOT_SUPPORTED, 'the connected browser extension does not support website memory.');
+        if (connection.browserId === 'default' || connection.ambiguous) return fail(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, "this session's browser profile could not be verified.");
+        if (this.deps.vault.memoryEligibility(connection.browserId) !== 'clear') return fail(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, "this session's browser profile is protected by the credential vault.");
         profile = connection.browserId;
         candidates = named.filter((origin) => !memory.excluded.includes(origin));
-        if (candidates.length === 0) return fail('MEMORY_EXCLUDED', 'this site is excluded from website memory.');
+        if (candidates.length === 0) return fail(ERROR_CODES.MEMORY_EXCLUDED, 'this site is excluded from website memory.');
       }
-      if (map.profiles[profile]?.enabled !== true) return fail('MAP_DISABLED', 'the site map is off for this browser profile; the owner controls it.');
+      if (map.profiles[profile]?.enabled !== true) return fail(ERROR_CODES.MAP_DISABLED, 'the site map is off for this browser profile; the owner controls it.');
 
       let origin = candidates[0];
       let record: MapRecord | null = null;
@@ -390,7 +391,7 @@ export class MapService {
       this.queue.count({ opId: `lookup-${randomUUID()}`, profile, at: this.iso(), field: 'lookups', delta: 1 });
       return view;
     } catch (error) {
-      if (error instanceof MapCursorError) return fail('INVALID_ARGUMENT', 'cursor is not valid.');
+      if (error instanceof MapCursorError) return fail(ERROR_CODES.INVALID_ARGUMENT, 'cursor is not valid.');
       // A policy read again later (the tab's scope, the re-check of a map read) failed.
       if (error instanceof MemoryPolicyError) {
         return MAP_POLICY_FAILURES.has(error)
@@ -398,7 +399,7 @@ export class MapService {
           : policyFailure(error, 'the memory policy', 'the owner can reset it.');
       }
       this.noteError(mapErrorCode(error));
-      return fail('MAP_UNAVAILABLE', 'the site map could not be read.');
+      return fail(ERROR_CODES.MAP_UNAVAILABLE, 'the site map could not be read.');
     }
   }
 
@@ -413,7 +414,7 @@ export class MapService {
       try {
         current = readMapPolicy(this.memoryDir);
       } catch (error) {
-        if (!options.resetCorrupt || !(error instanceof MemoryPolicyError) || error.code !== 'MEMORY_CORRUPT') throw error;
+        if (!options.resetCorrupt || !(error instanceof MemoryPolicyError) || error.code !== ERROR_CODES.MEMORY_CORRUPT) throw error;
         quarantineMapPolicy(this.memoryDir, this.deps.now());
         current = defaultMapPolicy();
       }

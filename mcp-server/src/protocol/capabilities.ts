@@ -1,33 +1,18 @@
-import { randomInt } from 'node:crypto';
-import {
-  createWebSocketDaemonProof,
-  createWebSocketClientProof,
-  WS_AUTH_PROTOCOL_VERSION,
-} from './bridge-auth.js';
+import { WS_AUTH_PROTOCOL_VERSION } from './auth.js';
+
+/**
+ * The capabilities the peers of this product advertise, and the gate that
+ * refuses a peer that does not speak this contract.
+ *
+ * This module owns the vocabulary of the wire: the version, the capability
+ * names, the lists both sides must send, and the validators that decide
+ * whether a hello is acceptable. The frames that carry them live in frames.ts.
+ */
 
 /** Wire-protocol contract shared by the thin client, daemon, and extension. */
 export const PROTOCOL_VERSION = 1;
 /** Version for extension WebSocket authentication; IPC remains at PROTOCOL_VERSION. */
 export const EXTENSION_PROTOCOL_VERSION = WS_AUTH_PROTOCOL_VERSION;
-
-/** Random id: 8 base36 characters. */
-export function newDaemonInstanceId(): string {
-  let id = '';
-  for (let i = 0; i < 8; i++) id += randomInt(36).toString(36);
-  return id;
-}
-
-/**
- * The id of this daemon process. The extension gets it in the hello and drops
- * the locks of any previous instance; it is also the prefix of every session id
- * this process hands out, so session ids never repeat across daemon restarts.
- */
-export const DAEMON_INSTANCE_ID = newDaemonInstanceId();
-
-/** `s-<instance>-<n>`: unique across daemon restarts, readable in logs and UI. */
-export function buildSessionId(instanceId: string, seq: number): string {
-  return `s-${instanceId}-${seq}`;
-}
 
 /** The 3.0 tool contract. A peer without it is a 2.x build. */
 export const TOOLS_V3_CAPABILITY = 'tools-v3';
@@ -85,6 +70,14 @@ export const OLDER_EXTENSION_REASON =
  */
 export const HANDSHAKE_TIMEOUT_REASON =
   'A browser connection did not finish the handshake in time. If the extension is older than 3.0, reload it at chrome://extensions.';
+
+/** Thin client's reason when the daemon it reached is from before 3.0. */
+export const OLDER_DAEMON_IPC_REASON =
+  'The running Browser Controller daemon is older than 3.0: stop it (npm run daemon:stop, or end the pid in its daemon.lock), then restart your MCP client so the 3.0 daemon starts.';
+
+/** Daemon's reason when the MCP client that connected is from before 3.0. */
+export const OLDER_CLIENT_IPC_REASON =
+  'This MCP client is older than 3.0: restart your MCP client so it starts the 3.0 client.';
 
 export interface ProtocolCheck {
   ok: boolean;
@@ -153,14 +146,6 @@ export function validateExtensionHelloAck(message: { protocolVersion?: unknown; 
   return validateExtensionCapabilities(message.capabilities);
 }
 
-/** Thin client's reason when the daemon it reached is from before 3.0. */
-export const OLDER_DAEMON_IPC_REASON =
-  'The running Browser Controller daemon is older than 3.0: stop it (npm run daemon:stop, or end the pid in its daemon.lock), then restart your MCP client so the 3.0 daemon starts.';
-
-/** Daemon's reason when the MCP client that connected is from before 3.0. */
-export const OLDER_CLIENT_IPC_REASON =
-  'This MCP client is older than 3.0: restart your MCP client so it starts the 3.0 client.';
-
 /**
  * IPC handshake gate, run on both sides: the thin client checks the daemon's welcome,
  * the daemon checks the client's hello. A peer with no explicit protocolVersion, or
@@ -178,79 +163,4 @@ export function validateIpcHandshake(message: { protocolVersion?: unknown; capab
     return { ok: false, legacy: false, reason: olderReason };
   }
   return validateCapabilities(capabilities, IPC_PROTOCOL_CAPABILITIES);
-}
-
-export function buildIpcHello(token: string, agentName?: string) {
-  return {
-    kind: 'hello' as const,
-    token,
-    ...(agentName ? { agentName } : {}),
-    protocolVersion: PROTOCOL_VERSION,
-    capabilities: IPC_PROTOCOL_CAPABILITIES,
-  };
-}
-
-/** `memoryAdmin: true` only when the daemon can really serve `memory-admin` messages. */
-export function buildIpcWelcome(sessionId: string, options: { memoryAdmin?: boolean } = {}) {
-  return {
-    kind: 'welcome' as const,
-    sessionId,
-    ok: true as const,
-    protocolVersion: PROTOCOL_VERSION,
-    capabilities: options.memoryAdmin ? [...IPC_PROTOCOL_CAPABILITIES, MEMORY_ADMIN_CAPABILITY] : IPC_PROTOCOL_CAPABILITIES,
-  };
-}
-
-export function buildExtensionHello(
-  appVersion: string,
-  instanceId?: string,
-  auth?: { clientNonce: string; serverNonce: string; enrollmentSecret: string },
-) {
-  const hello = {
-    type: 'hello' as const,
-    protocolVersion: EXTENSION_PROTOCOL_VERSION,
-    appVersion,
-    capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
-    // Optional: a daemon from before instance ids sends none.
-    ...(instanceId ? { instanceId } : {}),
-    ...(auth ? { clientNonce: auth.clientNonce, serverNonce: auth.serverNonce } : {}),
-  };
-  return auth && instanceId
-    ? { ...hello, authProof: createWebSocketDaemonProof(auth.enrollmentSecret, {
-      protocolVersion: EXTENSION_PROTOCOL_VERSION,
-      clientNonce: auth.clientNonce,
-      serverNonce: auth.serverNonce,
-      instanceId,
-      capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
-    }) }
-    : hello;
-}
-
-export function buildExtensionHelloAck(
-  appVersion?: string,
-  auth?: { token: string; clientNonce: string; serverNonce: string; instanceId: string; browserId?: string; browserLabel?: string },
-) {
-  const acknowledgement = {
-    type: 'helloAck' as const,
-    protocolVersion: EXTENSION_PROTOCOL_VERSION,
-    ...(appVersion ? { appVersion } : {}),
-    capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
-    ...(auth ? {
-      clientNonce: auth.clientNonce,
-      instanceId: auth.instanceId,
-      ...(auth.browserId ? { browserId: auth.browserId } : {}),
-      ...(auth.browserLabel ? { browserLabel: auth.browserLabel } : {}),
-    } : {}),
-  };
-  return auth
-    ? { ...acknowledgement, authProof: createWebSocketClientProof(auth.token, {
-      protocolVersion: EXTENSION_PROTOCOL_VERSION,
-      clientNonce: auth.clientNonce,
-      serverNonce: auth.serverNonce,
-      instanceId: auth.instanceId,
-      browserId: auth.browserId,
-      browserLabel: auth.browserLabel,
-      capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
-    }) }
-    : acknowledgement;
 }

@@ -7,6 +7,15 @@ import { codedMessageOf, rawResultOf, withNotes } from './tools/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from './tools/types.js';
 import { attachSafetyController } from './tools/action-support.js';
 import { noteOwnedTab, sessionGate } from './tools/session-mode.js';
+import { ERROR_CODES, formatError } from './core/error-codes.js';
+import { createLogger, newCorrelationId, runWithCorrelationId } from './core/logger.js';
+
+/**
+ * The logger of the MCP process. The tool layer and the thin client share it,
+ * so a line written by one of them and a line written by the other belong to
+ * the same scope — and, inside a request, to the same correlation id.
+ */
+export const log = createLogger('browser-controller');
 
 // Re-exported for tests/register-tools.test.ts, which drives validation through
 // the bootstrap; the implementation lives in tools/params.ts now.
@@ -34,6 +43,20 @@ function codedResult(result: ToolResult): ToolResult {
   if (!result.isError) return result;
   const content = result.content.map((item) => (item.type === 'text' ? { ...item, text: codedText(item.text) } : item));
   return { ...result, content };
+}
+
+/**
+ * Log a failed call with the correlation id of the request it belongs to.
+ *
+ * Only the tool name and the error CODE are logged: the message itself can
+ * quote page content, and a log file is not the place for that.
+ */
+function logFailure(tool: string, result: ToolResult): void {
+  const text = result.content.find((item) => item.type === 'text');
+  const first = typeof text?.text === 'string' ? text.text.split('\n')[0] : '';
+  const candidate = first.includes(': ') ? first.slice(0, first.indexOf(': ')) : first;
+  const code = /^[A-Z][A-Z_]*$/u.test(candidate) ? candidate : 'FAILED';
+  log.error(`tool ${tool} failed: ${code}`);
 }
 
 /** Run a tool: validate, call its handler, and turn every failure into a `CODE: message` result (never a protocol error). */
@@ -99,7 +122,19 @@ export function registerTools(server: McpServer, host: ToolHost): void {
   // CODE: message; tools/list still advertises the JSON Schema built from the same shapes.
   server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const run = runs.get(request.params.name);
-    if (!run) return failure(`INVALID_ARGUMENT: unknown tool ${request.params.name}`);
-    return run(request.params.arguments ?? {});
+    // One correlation id per incoming request: every line logged while this
+    // call runs carries it, so a failure can be followed from the agent's
+    // call to the extension that answered it.
+    const correlationId = newCorrelationId();
+    return runWithCorrelationId(correlationId, async () => {
+      if (!run) {
+        const result = failure(formatError(ERROR_CODES.INVALID_ARGUMENT, `unknown tool ${request.params.name}`));
+        logFailure(request.params.name, result);
+        return result;
+      }
+      const result = await run(request.params.arguments ?? {});
+      if (result.isError) logFailure(request.params.name, result);
+      return result;
+    });
   });
 }

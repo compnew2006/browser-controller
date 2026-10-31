@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { failureResult, rawResultOf } from './types.js';
 import type { ToolHost, ToolResult } from './types.js';
 import { waitForPageToSettle } from './page-stability.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 export type SafetyAction = 'allow' | 'ask' | 'block';
 
@@ -137,7 +138,7 @@ export async function runActionSafety(
   try {
     classification = await classify(host, tool, params);
   } catch (error) {
-    return { refusal: refuse(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`) };
+    return { refusal: refuse(formatError(ERROR_CODES.SAFETY_CHECK_FAILED, `${error instanceof Error ? error.message : String(error)}; no action was dispatched.`)) };
   }
   // Page JS has no element to compare: evaluate is gated by the site rule alone.
   const wire = (fingerprints: string[]): SafetyOutcome => ({ refusal: null, ...(tool === 'browser_evaluate' ? {} : { expectFingerprints: fingerprints }) });
@@ -147,11 +148,11 @@ export async function runActionSafety(
   const decision = rule?.action ?? settings.defaultAction;
   if (decision === 'allow') return wire(classification.fingerprints);
   if (decision === 'block') {
-    return { refusal: refuse(`ACTION_BLOCKED: safety policy blocks ${classification.categories.join(', ')} on ${classification.site}; no action was dispatched.`) };
+    return { refusal: refuse(formatError(ERROR_CODES.ACTION_BLOCKED, `safety policy blocks ${classification.categories.join(', ')} on ${classification.site}; no action was dispatched.`)) };
   }
 
   const controller = controllerByHost.get(host);
-  if (!controller) return { refusal: refuse('CLIENT_CONFIRMATION_UNAVAILABLE: no confirmation channel is available; no action was dispatched.') };
+  if (!controller) return { refusal: refuse(formatError(ERROR_CODES.CLIENT_CONFIRMATION_UNAVAILABLE, 'no confirmation channel is available; no action was dispatched.')) };
   let confirmation: 'approved' | 'declined' | 'unavailable';
   try {
     const fillTargets = tool === 'browser_fill' && Array.isArray(params.fields)
@@ -169,10 +170,10 @@ export async function runActionSafety(
     confirmation = 'unavailable';
   }
   if (confirmation === 'unavailable') {
-    return { refusal: refuse('CLIENT_CONFIRMATION_UNAVAILABLE: this MCP client cannot ask for confirmation; no action was dispatched.') };
+    return { refusal: refuse(formatError(ERROR_CODES.CLIENT_CONFIRMATION_UNAVAILABLE, 'this MCP client cannot ask for confirmation; no action was dispatched.')) };
   }
   if (confirmation !== 'approved') {
-    return { refusal: refuse(`ACTION_NOT_CONFIRMED: ${classification.categories.join(', ')} on ${classification.site} was declined or dismissed; no action was dispatched.`) };
+    return { refusal: refuse(formatError(ERROR_CODES.ACTION_NOT_CONFIRMED, `${classification.categories.join(', ')} on ${classification.site} was declined or dismissed; no action was dispatched.`)) };
   }
 
   // A page can change while the confirmation UI is open. Recheck the category and
@@ -182,11 +183,11 @@ export async function runActionSafety(
     const before = [...classification.categories].sort().join(',');
     const after = [...current.categories].sort().join(',');
     if (current.site !== classification.site || after !== before || current.fingerprints.length !== classification.fingerprints.length || current.fingerprints.some((value, i) => value !== classification.fingerprints[i])) {
-      return { refusal: refuse('SAFETY_TARGET_CHANGED: the page action changed while confirmation was open; no action was dispatched. Review the page and try again.') };
+      return { refusal: refuse(formatError(ERROR_CODES.SAFETY_TARGET_CHANGED, 'the page action changed while confirmation was open; no action was dispatched. Review the page and try again.')) };
     }
     return wire(current.fingerprints);
   } catch (error) {
-    return { refusal: refuse(`SAFETY_CHECK_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`) };
+    return { refusal: refuse(formatError(ERROR_CODES.SAFETY_CHECK_FAILED, `${error instanceof Error ? error.message : String(error)}; no action was dispatched.`)) };
   }
 }
 
@@ -323,7 +324,7 @@ export function actionHandler(
 
     const expectedValues = wanted ? [wanted.urlIncludes, wanted.textIncludes].filter((value): value is string => value !== undefined) : [];
     if (wanted && (expectedValues.length === 0 || expectedValues.some((value) => value.length === 0))) {
-      const failed = failureResult('INVALID_ARGUMENT: expect needs a non-empty urlIncludes or textIncludes value');
+      const failed = failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, 'expect needs a non-empty urlIncludes or textIncludes value'));
       return withReceipt(failed, tool, { status: 'not_dispatched', reason: 'invalid_expectation' }, false);
     }
 
@@ -331,7 +332,7 @@ export function actionHandler(
       try {
         before = await snapshot(host, tabId);
       } catch (error) {
-        const failed = failureResult(`OBSERVATION_FAILED: ${error instanceof Error ? error.message : String(error)}; no action was dispatched.`);
+        const failed = failureResult(formatError(ERROR_CODES.OBSERVATION_FAILED, `${error instanceof Error ? error.message : String(error)}; no action was dispatched.`));
         return withReceipt(failed, tool, { status: 'not_dispatched', reason: 'before_snapshot_failed' }, false);
       }
     }
@@ -388,7 +389,7 @@ export function actionHandler(
     const expectUnavailable = !!wanted && !after;
     let output = result;
     if ((expectFailed || expectUnavailable) && !result.isError) {
-      const code = expectUnavailable ? 'EXPECTATION_UNAVAILABLE' : 'EXPECTATION_FAILED';
+      const code = expectUnavailable ? ERROR_CODES.EXPECTATION_UNAVAILABLE : ERROR_CODES.EXPECTATION_FAILED;
       const message = expectUnavailable
         ? 'the action completed, but the postcondition could not be checked; do not repeat it without checking the page.'
         : `the action completed, but the requested postcondition did not match${waitedMs ? ` after waiting ${waitedMs} ms` : ''}; do not repeat it without checking the page.`;
@@ -403,7 +404,7 @@ export function actionHandler(
     // A hidden element is a refusal, not a dead end: the hint says how to go on.
     output = withHint(
       output,
-      'ELEMENT_HIDDEN',
+      ERROR_CODES.ELEMENT_HIDDEN,
       'the element exists but is not visible (a control drawn by a sibling label is often like this); use browser_evaluate to act on it, or hover it first.',
     );
 

@@ -12,7 +12,9 @@ import { buildMapOutline } from './map-output.js';
 import type { MapRecord } from './map-record.js';
 import { canonicalPagePath, canonicalPrefix } from './map-text.js';
 import { mapActionArgsProblem, type MapPolicyAction } from './policy-actions.js';
-import { fail, isRecord, resolveTab, unknownScope, type MemoryToolBridge, type MemoryToolHost } from './tool-route.js';
+import { fail, resolveTab, unknownScope, type MemoryToolBridge, type MemoryToolHost } from './tool-route.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 const TEXT_MAX = 4_000;
 
@@ -35,13 +37,13 @@ interface MapArguments {
 
 function parseArguments(action: MapPolicyAction, params: Record<string, unknown>): MapArguments | string {
   const allowed = ['action', 'tabId', 'path', 'ownerConfirmed', 'confirmedOrigin', 'confirmedPath', 'confirmedProfile'];
-  if (Object.keys(params).some((key) => !allowed.includes(key))) return 'INVALID_ARGUMENT: map actions take action, tabId and path only';
+  if (Object.keys(params).some((key) => !allowed.includes(key))) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'map actions take action, tabId and path only');
   const problem = mapActionArgsProblem(action, params.tabId, params.path);
-  if (problem) return `INVALID_ARGUMENT: ${problem}`;
+  if (problem) return formatError(ERROR_CODES.INVALID_ARGUMENT, problem);
   const { ownerConfirmed, confirmedOrigin, confirmedPath, confirmedProfile } = params;
-  if (ownerConfirmed !== undefined && typeof ownerConfirmed !== 'boolean') return 'INVALID_ARGUMENT: ownerConfirmed must be a boolean';
+  if (ownerConfirmed !== undefined && typeof ownerConfirmed !== 'boolean') return formatError(ERROR_CODES.INVALID_ARGUMENT, 'ownerConfirmed must be a boolean');
   for (const value of [confirmedOrigin, confirmedPath, confirmedProfile]) {
-    if (value !== undefined && (typeof value !== 'string' || value.length > 300)) return 'INVALID_ARGUMENT: confirmed fields must be strings';
+    if (value !== undefined && (typeof value !== 'string' || value.length > 300)) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'confirmed fields must be strings');
   }
   return {
     action,
@@ -118,13 +120,13 @@ export async function routeMapPolicyTool(
   if (args.path !== undefined) {
     // map_delete names one page (the root too); exclusions name a prefix, never "/".
     const canonical = action === 'map_delete' ? canonicalPagePath(args.path) : canonicalPrefix(args.path);
-    if (!canonical) return fail(action === 'map_delete' ? 'INVALID_ARGUMENT: path must start with "/" and must have no query or fragment' : 'INVALID_ARGUMENT: path must start with "/", must not be "/", and must have no query or fragment');
+    if (!canonical) return fail(action === 'map_delete' ? formatError(ERROR_CODES.INVALID_ARGUMENT, 'path must start with "/" and must have no query or fragment') : formatError(ERROR_CODES.INVALID_ARGUMENT, 'path must start with "/", must not be "/", and must have no query or fragment'));
     path = canonical;
   }
 
   const preview = { action, ...(origin ? { origin } : {}), ...(path ? { path } : {}), profile, profileLabel: label };
   if (!args.ownerConfirmed) {
-    return { ...fail('ACTION_NOT_CONFIRMED: the owner has not confirmed this change; nothing was changed.'), result: { success: false, ownerConfirmationRequired: true, ...preview } };
+    return { ...fail(formatError(ERROR_CODES.ACTION_NOT_CONFIRMED, 'the owner has not confirmed this change; nothing was changed.')), result: { success: false, ownerConfirmationRequired: true, ...preview } };
   }
   if (args.confirmedProfile !== profile || (origin !== undefined && args.confirmedOrigin !== origin) || (path !== undefined && args.confirmedPath !== path)) {
     return unknownScope('the tab, path or browser profile changed while the owner was deciding, so nothing was changed.');
@@ -132,7 +134,7 @@ export async function routeMapPolicyTool(
 
   try {
     const outcome = await memory.admin({ kind: 'memory-admin', id: `map-policy-${randomUUID()}`, command: 'map', map: adminRequest(action, profile, origin, path) });
-    if (!outcome.success) return fail(outcome.error ?? 'MAP_UNAVAILABLE: the site map failed');
+    if (!outcome.success) return fail(outcome.error ?? formatError(ERROR_CODES.MAP_UNAVAILABLE, 'the site map failed'));
     const text = doneText(action, label, origin, path);
     const records = (outcome.records ?? []).filter((record): record is MapRecord => isRecord(record) && record.profile === profile);
     // An agent sees outlines only, as with 003's inspect and export; the full JSON export is the owner CLI's (RV-15).
@@ -140,6 +142,6 @@ export async function routeMapPolicyTool(
     if (action === 'map_export') return { success: true, result: await sanitize({ success: true, ...preview, text: inspectText(`${text} The full export is available to the owner with \`npm run memory -- map export\`.`, records) }) };
     return { success: true, result: await sanitize({ success: true, ...preview, text }) };
   } catch {
-    return fail('MAP_UNAVAILABLE: the site map failed');
+    return fail(formatError(ERROR_CODES.MAP_UNAVAILABLE, 'the site map failed'));
   }
 }

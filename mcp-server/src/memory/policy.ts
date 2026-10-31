@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFile } from './atomic-file.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 export const POLICY_SCHEMA_VERSION = 1;
 export const MAX_EXCLUDED_ORIGINS = 5_000;
@@ -9,7 +10,11 @@ const MAX_POLICY_BYTES = 4 * 1024 * 1024;
 const EPOCH = '1970-01-01T00:00:00.000Z';
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u;
 
-export type MemoryPolicyErrorCode = 'MEMORY_CORRUPT' | 'MEMORY_FULL' | 'MEMORY_UNAVAILABLE' | 'INVALID_ARGUMENT';
+export type MemoryPolicyErrorCode =
+  | typeof ERROR_CODES.MEMORY_CORRUPT
+  | typeof ERROR_CODES.MEMORY_FULL
+  | typeof ERROR_CODES.MEMORY_UNAVAILABLE
+  | typeof ERROR_CODES.INVALID_ARGUMENT;
 
 export class MemoryPolicyError extends Error {
   readonly code: MemoryPolicyErrorCode;
@@ -56,7 +61,7 @@ export function defaultPolicy(): MemoryPolicy {
 type Mode = 'read' | 'write';
 
 function invalid(mode: Mode, message: string): MemoryPolicyError {
-  return new MemoryPolicyError(mode === 'read' ? 'MEMORY_CORRUPT' : 'INVALID_ARGUMENT', message);
+  return new MemoryPolicyError(mode === 'read' ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.INVALID_ARGUMENT, message);
 }
 
 function isTime(value: unknown): value is string {
@@ -77,7 +82,7 @@ function validatePolicy(raw: unknown, mode: Mode): MemoryPolicy {
   const excludedRaw = raw.excluded ?? [];
   if (!Array.isArray(excludedRaw)) throw invalid(mode, 'policy.excluded is not an array');
   if (excludedRaw.length > MAX_EXCLUDED_ORIGINS) {
-    throw new MemoryPolicyError(mode === 'read' ? 'MEMORY_CORRUPT' : 'MEMORY_FULL', `policy.excluded exceeds ${MAX_EXCLUDED_ORIGINS} origins`);
+    throw new MemoryPolicyError(mode === 'read' ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.MEMORY_FULL, `policy.excluded exceeds ${MAX_EXCLUDED_ORIGINS} origins`);
   }
   const seen = new Set<string>();
   for (const entry of excludedRaw) {
@@ -118,17 +123,17 @@ export function readPolicy(memoryDir: string): MemoryPolicy {
     fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return defaultPolicy();
-    throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file could not be read');
+    throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'policy file could not be read');
   }
   try {
     const st = fs.fstatSync(fd);
-    if (!st.isFile()) throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file is not a regular file');
+    if (!st.isFile()) throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'policy file is not a regular file');
     if (process.platform !== 'win32') {
       const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-      if (uid !== undefined && st.uid !== uid) throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file is owned by another user');
-      if ((st.mode & 0o022) !== 0) throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file can be written by other users');
+      if (uid !== undefined && st.uid !== uid) throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'policy file is owned by another user');
+      if ((st.mode & 0o022) !== 0) throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'policy file can be written by other users');
     }
-    if (st.size > MAX_POLICY_BYTES) throw new MemoryPolicyError('MEMORY_CORRUPT', 'policy file is too large');
+    if (st.size > MAX_POLICY_BYTES) throw new MemoryPolicyError(ERROR_CODES.MEMORY_CORRUPT, 'policy file is too large');
     // Replacing the file (as writePolicy does) changes its inode and times, so the cache never serves a stale policy.
     const key = `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
     const hit = policyCache.get(file);
@@ -137,13 +142,13 @@ export function readPolicy(memoryDir: string): MemoryPolicy {
     try {
       text = fs.readFileSync(fd, 'utf8');
     } catch {
-      throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file could not be read');
+      throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'policy file could not be read');
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
     } catch {
-      throw new MemoryPolicyError('MEMORY_CORRUPT', 'policy file is not valid JSON');
+      throw new MemoryPolicyError(ERROR_CODES.MEMORY_CORRUPT, 'policy file is not valid JSON');
     }
     const policy = validatePolicy(parsed, 'read');
     policyCache.set(file, { key, policy: structuredClone(policy) });
@@ -157,7 +162,7 @@ const policyCache = new Map<string, { key: string; policy: MemoryPolicy }>();
 
 function requireOrigin(value: string): string {
   const origin = canonicalOrigin(value);
-  if (!origin) throw new MemoryPolicyError('INVALID_ARGUMENT', 'origin must be an http or https origin');
+  if (!origin) throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'origin must be an http or https origin');
   return origin;
 }
 
@@ -173,7 +178,7 @@ export function excludeOrigin(policy: MemoryPolicy, origin: string, now: string)
   const canonical = requireOrigin(origin);
   if (policy.excluded.includes(canonical)) return { ...policy, updatedAt: now };
   if (policy.excluded.length >= MAX_EXCLUDED_ORIGINS) {
-    throw new MemoryPolicyError('MEMORY_FULL', `at most ${MAX_EXCLUDED_ORIGINS} origins can be excluded`);
+    throw new MemoryPolicyError(ERROR_CODES.MEMORY_FULL, `at most ${MAX_EXCLUDED_ORIGINS} origins can be excluded`);
   }
   return { ...policy, excluded: [...policy.excluded, canonical], updatedAt: now };
 }
@@ -219,7 +224,7 @@ export async function writePolicy(memoryDir: string, policy: MemoryPolicy, optio
   try {
     await atomicWriteFile(memoryDir, 'policy.json', data, options);
   } catch {
-    throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file could not be written');
+    throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'policy file could not be written');
   }
 }
 
@@ -233,7 +238,7 @@ export function quarantinePolicy(memoryDir: string, now: number): void {
   try {
     fs.renameSync(policyPath(memoryDir), path.join(memoryDir, `policy.json.corrupt-${now}`));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'policy file could not be set aside');
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'policy file could not be set aside');
   }
 }
 

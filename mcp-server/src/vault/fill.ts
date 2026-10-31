@@ -1,10 +1,12 @@
 import { scopeForBrowser } from './store.js';
 import type { CredentialVaultStore } from './store.js';
 import { randomId } from './types.js';
-import { VAULT_FILL_OPERATION_TIMEOUT_MS, publicError, isRecord } from './service-common.js';
+import { VAULT_FILL_OPERATION_TIMEOUT_MS, publicError } from './service-common.js';
+import { isRecord } from '../core/guards.js';
 import type { ProtectedDocument, VaultBrowserContext, VaultInspection } from './service-common.js';
 import type { GrantRegistry } from './grants.js';
 import type { OperationRegistry } from './operations.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 export interface FillWorkflowOptions {
   grants: GrantRegistry;
@@ -47,7 +49,7 @@ export class FillWorkflow {
     const store = this.options.storeFor(context.browserId);
     const operationId = randomId('fillop');
     const oneShotGrant = grantId ? this.options.grants.get(grantId) : undefined;
-    if (!this.options.grants.claimOneShot(oneShotGrant, operationId)) return publicError('VAULT_PERMISSION_DENIED');
+    if (!this.options.grants.claimOneShot(oneShotGrant, operationId)) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
     const operation = this.options.operations.track(operationId, {
       scope,
       sessionId,
@@ -60,22 +62,22 @@ export class FillWorkflow {
     // Whether the page gets secret text, and so redaction and protection; settled once the account is read.
     let protects = initial.mode !== 'identifier';
     try {
-      if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError('VAULT_PERMISSION_DENIED');
-      if (!store.isUnlocked) return publicError('VAULT_LOCKED', { origin: initial.origin });
-      if (!initial.suitable) return publicError('VAULT_TARGET_UNSAFE', { origin: initial.origin });
+      if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
+      if (!store.isUnlocked) return publicError(ERROR_CODES.VAULT_LOCKED, { origin: initial.origin });
+      if (!initial.suitable) return publicError(ERROR_CODES.VAULT_TARGET_UNSAFE, { origin: initial.origin });
       // Recheck before decrypting. The extension performs the final origin,
       // document, nonce and element-identity checks immediately before writing.
       const inspection = await this.options.inspectPage(tabId, sessionId, fillSignal);
-      if (inspection.origin !== initial.origin) return publicError('VAULT_ORIGIN_MISMATCH');
-      if (inspection.documentId !== initial.documentId) return publicError('VAULT_DOCUMENT_CHANGED');
-      if (!inspection.suitable) return publicError('VAULT_TARGET_UNSAFE', { origin: inspection.origin });
-      if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError('VAULT_PERMISSION_DENIED');
+      if (inspection.origin !== initial.origin) return publicError(ERROR_CODES.VAULT_ORIGIN_MISMATCH);
+      if (inspection.documentId !== initial.documentId) return publicError(ERROR_CODES.VAULT_DOCUMENT_CHANGED);
+      if (!inspection.suitable) return publicError(ERROR_CODES.VAULT_TARGET_UNSAFE, { origin: inspection.origin });
+      if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
       const entry = await store.get(handle);
-      if (fillSignal.aborted) return publicError('VAULT_PERMISSION_DENIED');
-      if (!entry) return publicError('VAULT_PERMISSION_DENIED');
-      if (entry.origin !== inspection.origin) return publicError('VAULT_ORIGIN_MISMATCH');
-      if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError('VAULT_PERMISSION_DENIED');
-      if (fillSignal.aborted) return publicError('VAULT_PERMISSION_DENIED');
+      if (fillSignal.aborted) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
+      if (!entry) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
+      if (entry.origin !== inspection.origin) return publicError(ERROR_CODES.VAULT_ORIGIN_MISMATCH);
+      if (grantId && !await this.grantStillUsable(grantId, context, sessionId, initial.origin, handle, fillSignal, operationId)) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
+      if (fillSignal.aborted) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
       // A first sign-in step asks for the username only: no password reaches the page, so the
       // page is neither registered for redaction nor protected (specs/006 FR-012) — unless the
       // username itself carries the password.
@@ -100,14 +102,14 @@ export class FillWorkflow {
       const expectedFields = identifierOnly ? 1 : identifierFilled ? 2 : 1;
       if (fillSignal.aborted || !isRecord(result) || result.success !== true || result.filled_fields !== expectedFields
         || (identifierOnly && !identifierFilled)) {
-        if (!protects) return publicError(fillSignal.aborted ? 'VAULT_OUTCOME_UNKNOWN' : 'VAULT_TARGET_UNSAFE', { origin: inspection.origin });
+        if (!protects) return publicError(fillSignal.aborted ? ERROR_CODES.VAULT_OUTCOME_UNKNOWN : ERROR_CODES.VAULT_TARGET_UNSAFE, { origin: inspection.origin });
         this.options.markProtected(scope, { tabId, documentId: inspection.documentId, origin: inspection.origin, state: 'recovery_required', current: true });
-        return publicError('VAULT_OUTCOME_UNKNOWN', { origin: inspection.origin });
+        return publicError(ERROR_CODES.VAULT_OUTCOME_UNKNOWN, { origin: inspection.origin });
       }
       await this.options.auditFill(store, handle, sessionId, inspection.origin, 'success');
       if (fillSignal.aborted) {
         if (protects) this.options.markProtected(scope, { tabId, documentId: inspection.documentId, origin: inspection.origin, state: 'recovery_required', current: true });
-        return publicError('VAULT_OUTCOME_UNKNOWN', { origin: inspection.origin });
+        return publicError(ERROR_CODES.VAULT_OUTCOME_UNKNOWN, { origin: inspection.origin });
       }
       return {
         success: true,
@@ -119,11 +121,11 @@ export class FillWorkflow {
     } catch {
       if (!protects) {
         await this.options.auditFill(store, handle, sessionId, initial.origin, 'failed').catch(() => {});
-        return publicError('VAULT_OUTCOME_UNKNOWN', { origin: initial.origin });
+        return publicError(ERROR_CODES.VAULT_OUTCOME_UNKNOWN, { origin: initial.origin });
       }
       this.options.markProtected(scope, { tabId, documentId: initial.documentId, origin: initial.origin, state: 'recovery_required', current: true });
       await this.options.auditFill(store, handle, sessionId, initial.origin, 'failed').catch(() => {});
-      return publicError('VAULT_OUTCOME_UNKNOWN', { origin: initial.origin });
+      return publicError(ERROR_CODES.VAULT_OUTCOME_UNKNOWN, { origin: initial.origin });
     } finally {
       clearTimeout(operationTimeout);
       this.options.grants.consumeOneShot(oneShotGrant);

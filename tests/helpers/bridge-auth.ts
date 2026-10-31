@@ -1,6 +1,6 @@
 import { newAuthNonce } from '../../mcp-server/src/bridge-auth.js';
 import { createWebSocketClientProof } from '../../mcp-server/src/bridge-auth.js';
-import { EXTENSION_PROTOCOL_CAPABILITIES, EXTENSION_PROTOCOL_VERSION } from '../../mcp-server/src/protocol.js';
+import { EXTENSION_PROTOCOL_CAPABILITIES, EXTENSION_PROTOCOL_VERSION } from '../../mcp-server/src/protocol/index.js';
 
 export const TEST_BRIDGE_TOKEN = 'synthetic-bridge-token-for-tests';
 export const TEST_ENROLLMENT_SECRET = 'synthetic-enrollment-secret-for-tests';

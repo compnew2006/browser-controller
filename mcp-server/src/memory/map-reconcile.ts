@@ -19,6 +19,7 @@ import {
 } from './map-record.js';
 import { isDataChanging, pathUnderPrefix, samePath } from './map-text.js';
 import { MemoryStoreError } from './site-record.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 export interface ObservedControl {
   key: string;
@@ -251,7 +252,7 @@ function applyClick(record: MapRecord, op: MapClickOp): ApplyResult {
     control.useCount += 1;
     control.lastUse = { result: 'worked', at: op.at };
   } else if (use === 'failed') {
-    control.lastUse = { result: 'failed', code: 'MISMATCH', at: op.at };
+    control.lastUse = { result: 'failed', code: ERROR_CODES.MISMATCH, at: op.at };
   }
   return { changed: true, use, usedPath: use === 'worked' ? page.path : null, usedKind: use === 'worked' ? 'control' : null };
 }
@@ -327,7 +328,7 @@ export function enforceMapLimits(record: MapRecord, byteLimit: number = MAP_LIMI
   if (record.pages.length > MAX_MAP_PAGES) record.pages.length = MAX_MAP_PAGES;
   const sizes = record.pages.map((page) => Buffer.byteLength(JSON.stringify(page)));
   while (sizeOf(record, sizes) > byteLimit) {
-    if (record.pages.length === 0) throw new MemoryStoreError('MEMORY_FULL', 'the map does not fit its size limit');
+    if (record.pages.length === 0) throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, 'the map does not fit its size limit');
     record.pages.pop();
     sizes.pop();
   }

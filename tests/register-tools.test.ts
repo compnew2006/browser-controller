@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import { parseToolParams, registerTools } from '../mcp-server/src/register-tools.js';
+import { ERROR_CODES, formatError } from '../mcp-server/src/core/error-codes.js';
 import { allTools } from '../mcp-server/src/tools/index.js';
 import type { ToolDefinition, ToolHost } from '../mcp-server/src/tools/types.js';
 import { withoutStabilityProbe } from './helpers/stability-probe.js';
@@ -168,8 +169,11 @@ describe('registerTools', () => {
 
   it('the thin client says NOT_CONNECTED when the daemon link is down (index.ts cannot be imported: its main() runs)', () => {
     const source = fs.readFileSync(path.join(ROOT, 'mcp-server/src/index.ts'), 'utf8');
-    expect(source).toContain("reject(new Error('NOT_CONNECTED: Not connected to daemon'));");
-    expect(source).toContain("this.failAll('NOT_CONNECTED: daemon connection closed');");
+    expect(source).toContain("reject(new Error(formatError(ERROR_CODES.NOT_CONNECTED, 'Not connected to daemon')));");
+    expect(source).toContain("this.failAll(formatError(ERROR_CODES.NOT_CONNECTED, 'daemon connection closed'));");
+    // The text on the wire is the same as before the codes moved into the registry.
+    expect(formatError(ERROR_CODES.NOT_CONNECTED, 'Not connected to daemon')).toBe('NOT_CONNECTED: Not connected to daemon');
+    expect(formatError(ERROR_CODES.NOT_CONNECTED, 'daemon connection closed')).toBe('NOT_CONNECTED: daemon connection closed');
   });
 
   it('tools/list advertises the strict schemas: no extra parameter is listed as allowed', async () => {

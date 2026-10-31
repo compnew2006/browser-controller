@@ -1,50 +1,28 @@
 /**
- * File helpers shared by the website-memory store (003) and the site-map store (004): the private
- * file and directory check, the quarantine name and the cleanup of temp files a crash left behind.
+ * The file helpers the memory stores share now live in the JSON-store engine
+ * (`core/json-store.ts`); this module keeps the old import path working and
+ * holds the memory store's own permission rule.
  */
 import type fs from 'node:fs';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
+import { assertOwnerOnly, type OwnerModePolicy } from '../core/json-store.js';
 import { MemoryStoreError } from './site-record.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
-export function errorCode(error: unknown): string | undefined {
-  return (error as NodeJS.ErrnoException | undefined)?.code;
+export { errorCode, quarantineName, removeTemps } from '../core/json-store.js';
+
+/** The memory store's rule: a plain file or directory of this user, with no access for others. */
+function privateRule(platform: NodeJS.Platform): OwnerModePolicy {
+  return {
+    fail: (message) => new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, message),
+    notRegular: (kind) => `memory ${kind} is not a regular ${kind}`,
+    foreignOwner: (kind) => `memory ${kind} is owned by another user`,
+    openPermissions: (kind) => `memory ${kind} permissions allow other users`,
+    // win32 has no comparable mode bits, so the rule cannot be checked there.
+    checkOwner: platform !== 'win32',
+  };
 }
 
 /** The POSIX owner and mode-bit check; win32 has no comparable mode bits, so it is skipped there. */
 export function assertPrivate(st: fs.Stats, kind: 'directory' | 'file', platform: NodeJS.Platform): void {
-  if (st.isSymbolicLink() || (kind === 'directory' ? !st.isDirectory() : !st.isFile())) {
-    throw new MemoryStoreError('MEMORY_UNAVAILABLE', `memory ${kind} is not a regular ${kind}`);
-  }
-  if (platform === 'win32') return;
-  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-  if (uid !== undefined && st.uid !== uid) throw new MemoryStoreError('MEMORY_UNAVAILABLE', `memory ${kind} is owned by another user`);
-  if ((Number(st.mode) & 0o077) !== 0) throw new MemoryStoreError('MEMORY_UNAVAILABLE', `memory ${kind} permissions allow other users`);
-}
-
-/** Removes matching temp files; with `minAgeMs`, only those not modified for that long (a write may be in flight). */
-export async function removeTemps(dir: string, pattern: RegExp, minAgeMs = 0): Promise<void> {
-  let names: string[];
-  try {
-    names = await fsp.readdir(dir);
-  } catch {
-    return;
-  }
-  // File times come from the wall clock, not the injectable one.
-  const cutoff = Date.now() - minAgeMs;
-  await Promise.all(
-    names
-      .filter((name) => pattern.test(name))
-      .map(async (name) => {
-        const file = path.join(dir, name);
-        if (minAgeMs > 0 && (await fsp.lstat(file)).mtimeMs > cutoff) return;
-        await fsp.rm(file, { force: true });
-      })
-      .map((removal) => removal.catch(() => undefined)),
-  );
-}
-
-/** The name a corrupt file is moved to. */
-export function quarantineName(fileName: string, now: number): string {
-  return `${fileName}.corrupt-${now}`;
+  assertOwnerOnly(st, kind, privateRule(platform));
 }

@@ -30,7 +30,20 @@ jobs:
       - run: npm ci
       - run: npm run security:audit
       - run: npm run context:lint
+      # Token-budget check. The command is wired in, but the CAP is still an open owner
+      # decision, so no threshold is enforced yet: this step only fails if the measurement
+      # itself fails. Value measured 2026-10-31: 2,488 tokens across the 2 rule files
+      # (.cursor/rules/project.mdc 1,599 + AGENTS.md 889). That number moves while
+      # .cursor/rules/project.mdc is edited, so re-run `npm run context:measure` rather than
+      # trusting this comment. Add the cap here once the owner decides it; until then this
+      # is a tripwire, not a budget.
+      - run: npm run context:measure
       - run: npm run lint
+      # Architectural fitness functions: the layering boundaries (core/ neutral,
+      # vault/ independent of memory/, protocol/ free of the tools layer) proved
+      # by parsing the real imports, so a wrong dependency fails the build
+      # instead of waiting for a review to notice it.
+      - run: npm run arch:check
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:coverage

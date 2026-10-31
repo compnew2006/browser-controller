@@ -1,7 +1,9 @@
 import { scopeForBrowser } from './store.js';
 import { canonicalizeOrigin } from './types.js';
-import { PROFILE_WIDE_DENIED_TOOLS, PROTECTED_ALLOWED_TOOLS, VaultServiceError, isRecord, publicError } from './service-common.js';
+import { PROFILE_WIDE_DENIED_TOOLS, PROTECTED_ALLOWED_TOOLS, VaultServiceError, publicError } from './service-common.js';
+import { isRecord } from '../core/guards.js';
 import { VaultServicePrivate } from './service-private.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 /**
  * Owns when a redaction record may be removed. Removal waits for every browser
@@ -69,10 +71,10 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
   );
 
   async pinBrowserId(sessionId: string, agentName?: string): Promise<string> {
-    if (!sessionId || !this.isSessionLive(sessionId)) throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'session is no longer active');
+    if (!sessionId || !this.isSessionLive(sessionId)) throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'session is no longer active');
     if (agentName) this.sessionAgentNames.set(sessionId, agentName);
     const context = await this.transport.getBrowserContext(sessionId);
-    if (!context.browserId || !context.connectionId) throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'browser identity is unavailable');
+    if (!context.browserId || !context.connectionId) throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'browser identity is unavailable');
     const previous = this.sessionBrowserIds.get(sessionId);
     if (previous && previous !== context.browserId) this.revokeSession(sessionId);
     this.sessionBrowserIds.set(sessionId, context.browserId);
@@ -101,25 +103,25 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
     }
     browserId ??= this.sessionBrowserIds.get(sessionId);
     if (typeof value === 'string' && value.startsWith('NOT_CONNECTED:')) {
-      return 'NOT_CONNECTED: The selected browser is unavailable. Select a connected browser with browser_tabs.';
+      return formatError(ERROR_CODES.NOT_CONNECTED, 'The selected browser is unavailable. Select a connected browser with browser_tabs.');
     }
     if (!browserId) {
       // Bridge-generated disconnect errors contain no browser/page payload.
       // Keep their useful ordinary browsing diagnosis while dropping selected
       // browser labels and arbitrary error detail from an unknown scope.
-      return publicError('VAULT_PERMISSION_DENIED');
+      return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
     }
     const scope = scopeForBrowser(browserId);
     const documents = this.protectedDocuments.get(scope);
     if (this.protectionUnknownScopes.has(scope)) {
       if (toolName === 'browser_navigate') return navigationSummary(value);
-      return publicError('VAULT_RECOVERY_REQUIRED');
+      return publicError(ERROR_CODES.VAULT_RECOVERY_REQUIRED);
     }
     if (toolName === 'browser_navigate' && [...(documents?.values() ?? [])].some((document) => document.state === 'recovery_required')) {
       return navigationSummary(value);
     }
     if (toolName && PROFILE_WIDE_DENIED_TOOLS.has(toolName) && (documents?.size ?? 0) > 0) {
-      return publicError('VAULT_CONTEXT_PROTECTED');
+      return publicError(ERROR_CODES.VAULT_CONTEXT_PROTECTED);
     }
     return this.redaction.sanitize(scope, value, { toolName });
   }
@@ -150,19 +152,19 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
     if (this.protectionUnknownScopes.has(scope)) {
       if (tool === 'browser_tabs' && (params.action === 'close' || params.action === 'focus')) return;
       if (tool === 'browser_navigate' && params.snapshot !== true) return;
-      throw new VaultServiceError('VAULT_RECOVERY_REQUIRED', 'the extension protection state could not be recovered safely');
+      throw new VaultServiceError(ERROR_CODES.VAULT_RECOVERY_REQUIRED, 'the extension protection state could not be recovered safely');
     }
     if (!docs || docs.size === 0) return;
     // Named/opener windows and active-window capture are profile-wide surfaces.
     // Keep these operations unavailable while any protected page may contain
     // a value, even when the agent selected a different tab after fill.
-    if (PROFILE_WIDE_DENIED_TOOLS.has(tool)) throw new VaultServiceError('VAULT_CONTEXT_PROTECTED', 'profile outputs are blocked while a protected page is live');
+    if (PROFILE_WIDE_DENIED_TOOLS.has(tool)) throw new VaultServiceError(ERROR_CODES.VAULT_CONTEXT_PROTECTED, 'profile outputs are blocked while a protected page is live');
     if (tool === 'browser_batch') {
       const actions = Array.isArray(params.actions) ? params.actions : [];
       for (const action of actions) {
         if (isRecord(action) && typeof action.tool === 'string'
           && (PROFILE_WIDE_DENIED_TOOLS.has(action.tool) || action.tool === 'browser_batch')) {
-          throw new VaultServiceError('VAULT_CONTEXT_PROTECTED', 'this batch contains an operation blocked while a protected page is live');
+          throw new VaultServiceError(ERROR_CODES.VAULT_CONTEXT_PROTECTED, 'this batch contains an operation blocked while a protected page is live');
         }
       }
     }
@@ -176,9 +178,9 @@ export abstract class VaultServiceProtection extends VaultServicePrivate {
         if (params.action === 'close' || params.action === 'focus') return;
       }
       if (tool === 'browser_navigate' && params.snapshot !== true) return;
-      throw new VaultServiceError('VAULT_RECOVERY_REQUIRED', 'protected document outputs are blocked until the page is safely recovered');
+      throw new VaultServiceError(ERROR_CODES.VAULT_RECOVERY_REQUIRED, 'protected document outputs are blocked until the page is safely recovered');
     }
-    if (!PROTECTED_ALLOWED_TOOLS.has(tool)) throw new VaultServiceError('VAULT_CONTEXT_PROTECTED', 'this page may contain a saved password');
+    if (!PROTECTED_ALLOWED_TOOLS.has(tool)) throw new VaultServiceError(ERROR_CODES.VAULT_CONTEXT_PROTECTED, 'this page may contain a saved password');
   }
 
   /** Full state from an authenticated extension connection; no secret values are accepted. */

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { explainNoWindow, isNoWindow } from "./browser-selection.js";
+import { ERROR_CODES, formatError, isCodedMessage } from "../core/error-codes.js";
 
 /**
  * Minimal structural host a tool handler needs. Both {@link ExtensionBridge}
@@ -133,16 +134,18 @@ export function unknownParameterHint(name: string): string | undefined {
   return UNKNOWN_PARAMETER_HINTS.get(name);
 }
 
-const CODED_MESSAGE = /^[A-Z][A-Z0-9_]+: /;
-
 /**
  * The `CODE: message` text of a thrown error. A message that already carries a
- * code passes through; anything else is INTERNAL_ERROR. Used for failed tool
- * results and for each step of a batch, so both read the same way.
+ * registered code passes through; anything else is INTERNAL_ERROR. Used for
+ * failed tool results and for each step of a batch, so both read the same way.
+ *
+ * The code has to be one the registry knows: a line that only looks like a
+ * coded message (`TAB_OWNED: ...`) is not one, so it becomes INTERNAL_ERROR
+ * instead of reaching the agent as a code nobody produces.
  */
 export function codedMessageOf(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
-  return CODED_MESSAGE.test(message) ? message : `INTERNAL_ERROR: ${message}`;
+  return isCodedMessage(message) ? message : formatError(ERROR_CODES.INTERNAL_ERROR, message);
 }
 
 /**

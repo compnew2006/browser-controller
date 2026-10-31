@@ -6,13 +6,14 @@ import { routeSiteMapTool } from './map-tool-route.js';
 import { MEMORY_POLICY_ACTIONS, SITE_SCOPED_ACTIONS, isMapPolicyAction, type MemoryPolicyAction } from './policy-actions.js';
 import {
   fail,
-  isRecord,
   resolveTab,
   routeMemoryTool,
   unknownScope,
   type MemoryToolBridge,
   type MemoryToolHost,
 } from './tool-route.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 const ACTIONS = MEMORY_POLICY_ACTIONS;
 type Action = MemoryPolicyAction;
@@ -34,16 +35,16 @@ interface PolicyArguments {
 /** Validates the arguments; IPC clients other than the MCP server skip the zod schema. */
 function parseArguments(params: Record<string, unknown>): PolicyArguments | string {
   const unknown = Object.keys(params).filter((key) => !['action', 'tabId', 'ownerConfirmed', 'confirmedOrigin'].includes(key));
-  if (unknown.length) return 'INVALID_ARGUMENT: browser_memory_policy takes action and tabId only';
+  if (unknown.length) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'browser_memory_policy takes action and tabId only');
   const action = ACTIONS.find((candidate) => candidate === params.action);
-  if (!action) return 'INVALID_ARGUMENT: action must be enable, disable, exclude, include, inspect, export, delete or a map_ action';
+  if (!action) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'action must be enable, disable, exclude, include, inspect, export, delete or a map_ action');
   const { tabId, ownerConfirmed, confirmedOrigin } = params;
-  if (ownerConfirmed !== undefined && typeof ownerConfirmed !== 'boolean') return 'INVALID_ARGUMENT: ownerConfirmed must be a boolean';
-  if (confirmedOrigin !== undefined && (typeof confirmedOrigin !== 'string' || confirmedOrigin.length > 300)) return 'INVALID_ARGUMENT: confirmedOrigin must be a string';
+  if (ownerConfirmed !== undefined && typeof ownerConfirmed !== 'boolean') return formatError(ERROR_CODES.INVALID_ARGUMENT, 'ownerConfirmed must be a boolean');
+  if (confirmedOrigin !== undefined && (typeof confirmedOrigin !== 'string' || confirmedOrigin.length > 300)) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'confirmedOrigin must be a string');
   if (SCOPED.has(action)) {
-    if (typeof tabId !== 'number' || !Number.isInteger(tabId) || tabId < 0) return `INVALID_ARGUMENT: ${action} needs a tabId`;
+    if (typeof tabId !== 'number' || !Number.isInteger(tabId) || tabId < 0) return formatError(ERROR_CODES.INVALID_ARGUMENT, `${action} needs a tabId`);
   } else if (tabId !== undefined) {
-    return `INVALID_ARGUMENT: ${action} covers all sites and takes no tabId`;
+    return formatError(ERROR_CODES.INVALID_ARGUMENT, `${action} covers all sites and takes no tabId`);
   }
   return {
     action,
@@ -105,7 +106,7 @@ export async function routeMemoryPolicyTool(
 
   if (!args.ownerConfirmed) {
     return {
-      ...fail('ACTION_NOT_CONFIRMED: the owner has not confirmed this change; nothing was changed.'),
+      ...fail(formatError(ERROR_CODES.ACTION_NOT_CONFIRMED, 'the owner has not confirmed this change; nothing was changed.')),
       result: { success: false, ownerConfirmationRequired: true, action, ...(origin ? { origin } : {}) },
     };
   }
@@ -117,8 +118,8 @@ export async function routeMemoryPolicyTool(
     if (action === 'inspect' || action === 'export') {
       // The requesting profile's view of this one origin: the same answer browser_memory gives, never the owner's full records.
       const answer = await memory.handleTool('browser_memory', { tabId: args.tabId, kind: 'all' }, sessionId, { siteContext, connectionIdBefore });
-      if (!isRecord(answer)) return fail('MEMORY_UNAVAILABLE: website memory returned no answer');
-      if (answer.success === false) return fail(typeof answer.error === 'string' ? answer.error : 'MEMORY_UNAVAILABLE: website memory failed');
+      if (!isRecord(answer)) return fail(formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'website memory returned no answer'));
+      if (answer.success === false) return fail(typeof answer.error === 'string' ? answer.error : formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'website memory failed'));
       const text = typeof answer.text === 'string' ? answer.text.slice(0, TEXT_MAX) : '';
       return { success: true, result: await sanitize({ success: true, action, origin, text }) };
     }
@@ -129,10 +130,10 @@ export async function routeMemoryPolicyTool(
       ...(origin ? { origin } : {}),
     };
     const outcome = await memory.admin(request);
-    if (!outcome.success) return fail(outcome.error ?? 'MEMORY_UNAVAILABLE: website memory failed');
+    if (!outcome.success) return fail(outcome.error ?? formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'website memory failed'));
     return { success: true, result: await sanitize({ success: true, action, ...(origin ? { origin } : {}), text: confirmationText(action, origin) }) };
   } catch {
-    return fail('MEMORY_UNAVAILABLE: website memory failed');
+    return fail(formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'website memory failed'));
   }
 }
 

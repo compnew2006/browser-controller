@@ -7,12 +7,14 @@ import {
   buildExtensionHello,
   HANDSHAKE_TIMEOUT_REASON,
   validateExtensionHelloAck,
-} from './protocol.js';
+} from './protocol/index.js';
 import {
   isDaemonResponsiveOnPort,
   isAllowedOrigin,
 } from './bridge-security.js';
 import { createBridgeHttpHandler, type HttpRequestHandler } from './bridge-http.js';
+import { ERROR_CODES, formatError } from './core/error-codes.js';
+import { createLogger, newCorrelationId } from './core/logger.js';
 export type { HttpRequestHandler } from './bridge-http.js';
 import {
   BridgeHttpAuthenticator,
@@ -31,6 +33,8 @@ import { VaultBridgeTransport } from './vault/bridge-transport.js';
 
 export { isDaemonResponsiveOnPort } from './bridge-security.js';
 export { MAX_WS_MESSAGE_BYTES } from './bridge-frames.js';
+
+const log = createLogger('Bridge');
 
 /**
  * Outbound backpressure limit: a tool call is refused while more than this many
@@ -153,7 +157,7 @@ export class ExtensionBridge {
     this.startPingLoop();
     this.connectionWaiters.forEach((waiter) => waiter.resolve());
     this.connectionWaiters = [];
-    console.error(`[Bridge] Extension connected (browser ${conn.label})`);
+    log.info(`Extension connected (browser ${conn.label})`);
     // Only this connection: it alone may have missed releaseSession frames (F4-2).
     if (this.sessionRoster) {
       try {
@@ -327,18 +331,18 @@ export class ExtensionBridge {
             if (this.vaultTransport.handleMessage(msg, conn)) return;
             this.handleResponse(msg, conn);
           } catch (err) {
-            console.error('[Bridge] Parse error:', err);
+            log.error('Parse error:', err);
           }
         });
 
         ws.on('close', () => {
           if (!this.conns.has(conn)) return; // replaced or already dropped
-          console.error(`[Bridge] Extension disconnected (browser ${conn.label})`);
+          log.info(`Extension disconnected (browser ${conn.label})`);
           this.dropConn(conn, 'Extension disconnected');
         });
 
         ws.on('error', (err: Error) => {
-          console.error('[Bridge] Socket error:', err.message);
+          log.error('Socket error:', err.message);
         });
 
         conn.handshakeTimer = setTimeout(() => {
@@ -347,12 +351,12 @@ export class ExtensionBridge {
       });
 
       server.on('listening', () => {
-        console.error(`[Bridge] Listening on http/ws://${this.host}:${this.port}`);
+        log.info(`Listening on http/ws://${this.host}:${this.port}`);
         resolve();
       });
 
       server.on('error', (err: Error) => {
-        console.error('[Bridge] Server error:', err.message);
+        log.error('Server error:', err.message);
         reject(err);
       });
 
@@ -366,7 +370,7 @@ export class ExtensionBridge {
       for (const conn of this.conns.live()) {
         conn.missedPongs++;
         if (conn.missedPongs >= 3) {
-          console.error(`[Bridge] Extension unresponsive (3 missed pongs), closing (browser ${conn.label})`);
+          log.warn(`Extension unresponsive (3 missed pongs), closing (browser ${conn.label})`);
           conn.ws.close();
           continue;
         }
@@ -435,7 +439,7 @@ export class ExtensionBridge {
         this.connectionWaiters = this.connectionWaiters.filter(
           w => w.resolve !== resolve,
         );
-        reject(new Error(`NOT_CONNECTED: no Browser Controller extension connected within ${timeoutMs / 1000} s; check that it is installed and enabled`));
+        reject(new Error(formatError(ERROR_CODES.NOT_CONNECTED, `no Browser Controller extension connected within ${timeoutMs / 1000} s; check that it is installed and enabled`)));
       }, timeoutMs);
 
       this.connectionWaiters.push({
@@ -461,18 +465,18 @@ export class ExtensionBridge {
         // Every "no extension" failure reads with the NOT_CONNECTED code the agent acts on.
         const wait = error instanceof Error ? error.message : String(error);
         const refusal = this.handshakeError ?? this.lastRefusal;
-        if (refusal) throw new Error(`NOT_CONNECTED: ${refusal}`, { cause: error });
-        if (wait.startsWith('NOT_CONNECTED: ')) throw error;
+        if (refusal) throw new Error(formatError(ERROR_CODES.NOT_CONNECTED, refusal), { cause: error });
+        if (wait.startsWith(`${ERROR_CODES.NOT_CONNECTED}: `)) throw error;
         throw new Error(/protocol|capabilit/i.test(wait)
-          ? `NOT_CONNECTED: ${wait}`
-          : 'NOT_CONNECTED: Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.', { cause: error });
+          ? formatError(ERROR_CODES.NOT_CONNECTED, wait)
+          : formatError(ERROR_CODES.NOT_CONNECTED, 'Chrome extension not connected. Make sure the Browser Controller extension is installed and enabled.'), { cause: error });
       }
     }
 
     return this.sendToolCall(tool, params, 0, sessionId, signal, agentName);
   }
 
-  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal, agentName?: string): Promise<unknown> {
+  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal, agentName?: string, correlationId: string = newCorrelationId()): Promise<unknown> {
     // If the caller already aborted (e.g. client evicted before we even sent),
     // reject immediately rather than firing the action into the void.
     if (signal?.aborted) {
@@ -486,10 +490,12 @@ export class ExtensionBridge {
     }
     // Backpressure: fail fast instead of queueing frames for a browser that is not reading. Never retried.
     if (conn.ws.bufferedAmount > MAX_WS_BUFFERED_BYTES) {
-      return Promise.reject(new Error('BROWSER_BUSY: the browser is not reading its connection; try again shortly'));
+      return Promise.reject(new Error(formatError(ERROR_CODES.BROWSER_BUSY, 'the browser is not reading its connection; try again shortly')));
     }
     return new Promise((resolve, reject) => {
       const id = String(++this.requestId);
+      // One correlation id per call: the retries of the same call share it.
+      const callLog = log.withCorrelationId(correlationId);
       // Timeout policy (audit M3): the tool registry is the single source of
       // truth — each tool declares its own `timeoutMs`. The bridge default
       // (30s) is only a backstop if a tool ever omits it; the registry guard
@@ -511,12 +517,12 @@ export class ExtensionBridge {
         // navigate pins its tab for up to 55s.
         this.sendControl('cancel', { id });
         if (canRetry && retryCount < this.maxRetries) {
-          console.error(`[Bridge] Timeout on ${tool}, retry ${retryCount + 1}/${this.maxRetries}`);
-          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName).then(resolve, reject);
+          callLog.warn(`Timeout on ${tool}, retry ${retryCount + 1}/${this.maxRetries}`);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId).then(resolve, reject);
         } else if (!canRetry) {
-          reject(new Error(`TIMEOUT: ${tool} did not answer in ${timeoutMs} ms; it may still have run — check the page (browser_snapshot) before repeating it`));
+          reject(new Error(formatError(ERROR_CODES.TIMEOUT, `${tool} did not answer in ${timeoutMs} ms; it may still have run — check the page (browser_snapshot) before repeating it`)));
         } else {
-          reject(new Error(`TIMEOUT: ${tool} did not answer in ${timeoutMs} ms (${retryCount + 1} attempts)`));
+          reject(new Error(formatError(ERROR_CODES.TIMEOUT, `${tool} did not answer in ${timeoutMs} ms (${retryCount + 1} attempts)`)));
         }
       }, timeoutMs);
 
@@ -554,7 +560,7 @@ export class ExtensionBridge {
         if (signal) signal.removeEventListener('abort', onAbort);
         this.pendingRequests.delete(id);
         if (canRetry && retryCount < this.maxRetries && this.isConnected()) {
-          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName).then(resolve, reject);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId).then(resolve, reject);
         } else {
           reject(err instanceof Error ? err : new Error('Send failed'));
         }
@@ -569,7 +575,7 @@ export class ExtensionBridge {
       clearTimeout(pending.timeout);
       if (pending.onAbort && pending.signal) pending.signal.removeEventListener('abort', pending.onAbort);
       // The call was already sent: it may have run in the page before the browser went away.
-      pending.reject(new Error(`NOT_CONNECTED: ${reason}; the call may still have run, so check the page before repeating it`));
+      pending.reject(new Error(formatError(ERROR_CODES.NOT_CONNECTED, `${reason}; the call may still have run, so check the page before repeating it`)));
       this.pendingRequests.delete(id);
     }
     this.vaultTransport.rejectPending(reason, onlyConn);

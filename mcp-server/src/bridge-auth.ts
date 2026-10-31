@@ -1,10 +1,34 @@
 import crypto from 'node:crypto';
+import {
+  assertSecret,
+  mac,
+  matchesMac,
+  newAuthNonce,
+  validNonce,
+} from './protocol/auth.js';
+
+/**
+ * The local HTTP authentication of the daemon's own endpoints (the popup's
+ * challenge, the pairing route) — the half of the authentication that is not
+ * the wire handshake.
+ *
+ * The wire half (the nonces, the transcripts and the proofs the daemon and
+ * the extension exchange) now lives in protocol/auth.ts, because a transcript
+ * IS the wire contract. Its names are re-exported here so that every importer
+ * of bridge-auth.js keeps working unchanged.
+ */
+export {
+  WS_AUTH_PROTOCOL_VERSION,
+  createWebSocketClientProof,
+  createWebSocketDaemonProof,
+  isValidAuthNonce,
+  newAuthNonce,
+  verifyWebSocketClientProof,
+} from './protocol/auth.js';
 
 export const HTTP_AUTH_PROTOCOL_VERSION = 1;
 export const HTTP_AUTH_CHALLENGE_PATH = '/auth/challenge';
-export const WS_AUTH_PROTOCOL_VERSION = 2;
 
-const NONCE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const DEFAULT_CHALLENGE_TTL_MS = 30_000;
 const DEFAULT_MAX_CHALLENGES = 1_024;
 
@@ -32,31 +56,6 @@ export interface BridgeHttpAuthenticatorOptions {
   ttlMs?: number;
   maxChallenges?: number;
   now?: () => number;
-}
-
-function assertSecret(secret: string): void {
-  if (typeof secret !== 'string' || secret.length === 0) {
-    throw new Error('An enrollment secret is required for HTTP authentication.');
-  }
-}
-
-function validNonce(nonce: unknown): nonce is string {
-  return typeof nonce === 'string' && NONCE_PATTERN.test(nonce);
-}
-
-export function isValidAuthNonce(nonce: unknown): nonce is string {
-  return validNonce(nonce);
-}
-
-function mac(secret: string, transcript: string): string {
-  return crypto.createHmac('sha256', secret).update(transcript, 'utf8').digest('base64url');
-}
-
-function matchesMac(secret: string, transcript: string, proof: unknown): boolean {
-  if (typeof proof !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(proof)) return false;
-  const actual = Buffer.from(proof, 'base64url');
-  const expected = Buffer.from(mac(secret, transcript), 'base64url');
-  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
 function serverTranscript(challenge: Pick<HttpAuthChallenge, 'protocolVersion' | 'instanceId' | 'clientNonce' | 'serverNonce'>): string {
@@ -97,54 +96,6 @@ function responseTranscript(input: HttpResponseProofInput): string {
   ].join('\n');
 }
 
-function normalizedCapabilities(capabilities: unknown): string {
-  return Array.isArray(capabilities) && capabilities.every((item) => typeof item === 'string')
-    ? [...capabilities].sort().join(',')
-    : '';
-}
-
-function webSocketServerTranscript(input: {
-  protocolVersion: number;
-  clientNonce: string;
-  serverNonce: string;
-  instanceId: string;
-  capabilities: unknown;
-}): string {
-  return [
-    'bc-ws-server-v1',
-    String(input.protocolVersion),
-    input.clientNonce,
-    input.serverNonce,
-    input.instanceId,
-    normalizedCapabilities(input.capabilities),
-  ].join('\n');
-}
-
-function webSocketClientTranscript(input: {
-  protocolVersion: number;
-  clientNonce: string;
-  serverNonce: string;
-  instanceId: string;
-  browserId?: unknown;
-  browserLabel?: unknown;
-  capabilities: unknown;
-}): string {
-  return [
-    'bc-ws-client-v1',
-    String(input.protocolVersion),
-    input.clientNonce,
-    input.serverNonce,
-    input.instanceId,
-    typeof input.browserId === 'string' ? input.browserId : '',
-    typeof input.browserLabel === 'string' ? input.browserLabel : '',
-    normalizedCapabilities(input.capabilities),
-  ].join('\n');
-}
-
-export function newAuthNonce(): string {
-  return crypto.randomBytes(32).toString('base64url');
-}
-
 export function createHttpClientProof(
   secret: string,
   clientNonce: string,
@@ -171,67 +122,6 @@ export function verifyHttpResponseProof(
   if (!secret || !validNonce(input.clientNonce) || !validNonce(input.serverNonce) ||
       !Number.isInteger(input.status) || typeof input.body !== 'string') return false;
   return matchesMac(secret, responseTranscript(input), input.proof);
-}
-
-export function createWebSocketDaemonProof(secret: string, input: {
-  protocolVersion: number;
-  clientNonce: string;
-  serverNonce: string;
-  instanceId: string;
-  capabilities: unknown;
-}): string {
-  assertSecret(secret);
-  if (!validNonce(input.clientNonce) || !validNonce(input.serverNonce) || !input.instanceId) {
-    throw new Error('Invalid WebSocket authentication context.');
-  }
-  return mac(secret, webSocketServerTranscript(input));
-}
-
-export function createWebSocketClientProof(token: string, input: {
-  protocolVersion: number;
-  clientNonce: string;
-  serverNonce: string;
-  instanceId: string;
-  browserId?: unknown;
-  browserLabel?: unknown;
-  capabilities: unknown;
-}): string {
-  assertSecret(token);
-  if (!validNonce(input.clientNonce) || !validNonce(input.serverNonce) || !input.instanceId) {
-    throw new Error('Invalid WebSocket authentication context.');
-  }
-  return mac(token, webSocketClientTranscript(input));
-}
-
-export function verifyWebSocketClientProof(
-  token: string,
-  acknowledgement: {
-    protocolVersion?: unknown;
-    clientNonce?: unknown;
-    instanceId?: unknown;
-    browserId?: unknown;
-    browserLabel?: unknown;
-    capabilities?: unknown;
-    authProof?: unknown;
-  },
-  expectedNonce: string,
-  expectedInstanceId: string,
-  // Chosen by the daemon for this socket: an acknowledgement captured from another one never matches.
-  expectedServerNonce: string,
-): boolean {
-  if (!token || !acknowledgement || acknowledgement.protocolVersion !== WS_AUTH_PROTOCOL_VERSION ||
-      acknowledgement.clientNonce !== expectedNonce || !validNonce(expectedNonce) || !validNonce(expectedServerNonce) ||
-      acknowledgement.instanceId !== expectedInstanceId || !Array.isArray(acknowledgement.capabilities) ||
-      acknowledgement.capabilities.some((item) => typeof item !== 'string')) return false;
-  return matchesMac(token, webSocketClientTranscript({
-    protocolVersion: WS_AUTH_PROTOCOL_VERSION,
-    clientNonce: expectedNonce,
-    serverNonce: expectedServerNonce,
-    instanceId: expectedInstanceId,
-    browserId: acknowledgement.browserId,
-    browserLabel: acknowledgement.browserLabel,
-    capabilities: acknowledgement.capabilities,
-  }), acknowledgement.authProof);
 }
 
 export class BridgeHttpAuthenticator {

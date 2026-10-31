@@ -11,6 +11,7 @@ import {
   type MemoryPolicyAction,
   type PolicyAction,
 } from '../memory/policy-actions.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 const NAME = 'browser_memory_policy';
 const forward = forwardHandler(NAME);
@@ -35,7 +36,7 @@ function promptSafe(value: unknown, max: number, pattern?: RegExp): string | nul
 }
 
 function invalid(message: string): ToolResult {
-  return failureResult(`INVALID_ARGUMENT: ${message}`);
+  return failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, message));
 }
 
 /**
@@ -52,7 +53,7 @@ async function preview(host: ToolHost, params: Record<string, unknown>): Promise
     return payload;
   }
   // The daemon never succeeds without a confirmation; a success here is not a state to act on.
-  return failureResult('MEMORY_UNAVAILABLE: the daemon did not ask for confirmation, so nothing was changed.');
+  return failureResult(formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'the daemon did not ask for confirmation, so nothing was changed.'));
 }
 
 /** The owner prompts from specs/004-site-navigation-map/contracts/README.md. */
@@ -80,14 +81,14 @@ async function memoryConfirmation(host: ToolHost, action: MemoryPolicyAction, re
   const answer = await preview(host, request);
   if ('content' in answer) return answer as ToolResult;
   const origin = canonicalOrigin(answer.origin);
-  if (!origin) return failureResult('MEMORY_SCOPE_UNKNOWN: the tab\'s site could not be verified, so nothing was changed.');
+  if (!origin) return failureResult(formatError(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, 'the tab\'s site could not be verified, so nothing was changed.'));
   return { message: `Allow ${action} of website memory for ${origin}?`, fields: { confirmedOrigin: origin } };
 }
 
 async function mapConfirmation(host: ToolHost, action: MapPolicyAction, request: Record<string, unknown>): Promise<Confirmed | ToolResult> {
   const answer = await preview(host, request);
   if ('content' in answer) return answer as ToolResult;
-  const unverified = failureResult('MEMORY_SCOPE_UNKNOWN: the site, path or browser profile could not be verified, so nothing was changed.');
+  const unverified = failureResult(formatError(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, 'the site, path or browser profile could not be verified, so nothing was changed.'));
   const profile = promptSafe(answer.profile, 200);
   const label = promptSafe(answer.profileLabel, 100);
   const origin = answer.origin === undefined ? undefined : canonicalOrigin(answer.origin);
@@ -116,7 +117,7 @@ async function handler(host: ToolHost, params: Record<string, unknown>): Promise
   const recent = (unconfirmed.get(host) ?? []).filter((at) => Date.now() - at < UNCONFIRMED_WINDOW_MS);
   unconfirmed.set(host, recent);
   if (recent.length >= MAX_UNCONFIRMED) {
-    return failureResult('ACTION_NOT_CONFIRMED: too many recent requests were not confirmed, so no prompt is shown for now; nothing was changed.');
+    return failureResult(formatError(ERROR_CODES.ACTION_NOT_CONFIRMED, 'too many recent requests were not confirmed, so no prompt is shown for now; nothing was changed.'));
   }
 
   let request: Record<string, unknown>;
@@ -137,11 +138,11 @@ async function handler(host: ToolHost, params: Record<string, unknown>): Promise
   if ('content' in confirmation) return confirmation as ToolResult;
   const answer = await requestOwnerConfirmation(host, NAME, confirmation.message);
   if (answer === 'unavailable') {
-    return failureResult('CLIENT_CONFIRMATION_UNAVAILABLE: this MCP client cannot ask the owner for confirmation; nothing was changed.');
+    return failureResult(formatError(ERROR_CODES.CLIENT_CONFIRMATION_UNAVAILABLE, 'this MCP client cannot ask the owner for confirmation; nothing was changed.'));
   }
   if (answer !== 'approved') {
     recent.push(Date.now());
-    return failureResult('ACTION_NOT_CONFIRMED: the owner declined or did not answer; nothing was changed.');
+    return failureResult(formatError(ERROR_CODES.ACTION_NOT_CONFIRMED, 'the owner declined or did not answer; nothing was changed.'));
   }
   return forward(host, { ...request, ownerConfirmed: true, ...confirmation.fields });
 }

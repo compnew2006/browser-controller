@@ -5,6 +5,7 @@ import {
   type LiveGrant, type SiteGrant, type VaultBrowserContext, type VaultInspection,
 } from './service-common.js';
 import { VaultServiceProtection } from './service-protection.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 export * from './service-common.js';
 
@@ -16,7 +17,7 @@ export class VaultService extends VaultServiceProtection {
     const action = params.action;
     if (action === 'status') return this.publicStatus(sessionId, params);
     const requestedTab = params.tabId;
-    if (!Number.isInteger(requestedTab) || (requestedTab as number) < 0) throw new VaultServiceError('INVALID_ARGUMENT', 'tabId is required');
+    if (!Number.isInteger(requestedTab) || (requestedTab as number) < 0) throw new VaultServiceError(ERROR_CODES.INVALID_ARGUMENT, 'tabId is required');
     const tabId = requestedTab as number;
     const context = await this.contextForSession(sessionId);
     if (action === 'save_login') {
@@ -47,7 +48,7 @@ export class VaultService extends VaultServiceProtection {
       };
     }
     if (action === 'fill') {
-      if (typeof params.handle !== 'string') throw new VaultServiceError('INVALID_ARGUMENT', 'account handle is required');
+      if (typeof params.handle !== 'string') throw new VaultServiceError(ERROR_CODES.INVALID_ARGUMENT, 'account handle is required');
       const handle: string = params.handle;
       const inspection = await this.inspectSupportedSite(tabId, sessionId, signal);
       const asked = await this.grantOrAsk(context, sessionId, tabId, inspection, 'fill', handle, signal);
@@ -56,7 +57,7 @@ export class VaultService extends VaultServiceProtection {
       const current = asked.waited ? await this.inspectSupportedSite(tabId, sessionId, signal) : inspection;
       return this.fill.run(context, sessionId, tabId, current, handle, signal, asked.grant.grantId);
     }
-    throw new VaultServiceError('INVALID_ARGUMENT', 'unsupported vault action');
+    throw new VaultServiceError(ERROR_CODES.INVALID_ARGUMENT, 'unsupported vault action');
   }
 
   /**
@@ -90,7 +91,7 @@ export class VaultService extends VaultServiceProtection {
     if (pending.surface !== 'card') return { reply: this.requestRequired(pending, inspection.origin) };
     await this.requests.waitForEnd(pending, VAULT_CARD_WAIT_MS, signal);
     const state = pending.request.state;
-    if (state === 'declined') return { reply: publicError('VAULT_DECLINED', { requestId: pending.request.requestId, origin: inspection.origin }) };
+    if (state === 'declined') return { reply: publicError(ERROR_CODES.VAULT_DECLINED, { requestId: pending.request.requestId, origin: inspection.origin }) };
     if (state === 'accepted' && pending.outcome) return { reply: pending.outcome };
     if (state === 'accepted') {
       const granted = this.grants.find(context, sessionId, inspection.origin, purpose, handle);

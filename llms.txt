@@ -10,7 +10,7 @@ browser-controller is a Model Context Protocol (MCP) server paired with a Chrome
 
 Unlike Playwright MCP or Chrome DevTools MCP, which launch or attach to a separate browser, browser-controller controls the browser the user is already using. For projects with authentication, complex state, or corporate SSO, this means no re-login, no session setup, no cookie recreation.
 
-## Tools (17)
+## Tools (22)
 
 Every page tool takes a tabId from browser_tabs list. Only browser_navigate makes it optional (without it, the call opens a new background tab that the session owns).
 
@@ -21,6 +21,8 @@ Reading: browser_snapshot (accessibility tree with refs; query, target, maxChars
 Interaction: browser_click (trusted click, hover, drag to a target), browser_type (text, or keys and combos in order), browser_fill (up to 50 form fields in one call: text, date/time/colour/range, select, checkbox, radio, switch, file input), browser_scroll (wheel scroll, or bring an element into view), browser_wait (an element, a URL or a delay)
 Navigation and tabs: browser_navigate (URL, back, forward or reload), browser_tabs (list, close, focus; choose the Chrome profile), browser_emulate (viewport, offline or slow network, CPU throttling, geolocation, colour scheme, reduced motion, user agent), browser_batch (up to 50 tool calls in one round trip, stops at the first failure)
 JavaScript, dialogs and network: browser_evaluate (JavaScript over CDP: top-level await, last value returned), browser_handle_dialog (accept or dismiss an alert, confirm or prompt), browser_mock (block or fake responses for one tab)
+Safety and credentials: browser_safety (allow, ask or block for submit, delete and upload actions and for browser_evaluate; per site or as the default), browser_vault (private credential vault: status, list, unlock, save_login or fill; the owner approves a site once, passwords never pass through the call)
+Website memory: browser_memory (read-only notes on the tab's site: language, search, login, common controls, a form's shape, visits; untrusted hints), browser_memory_policy (owner-confirmed enable, disable, exclude, include, inspect, export, delete and map_* actions), browser_site_map (read-only map of one site in this profile: remembered pages and controls; a query searches it, otherwise it outlines)
 
 Full per-tool reference (parameters, behavior, timeouts): the "Tool reference" section of README.md.
 

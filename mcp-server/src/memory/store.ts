@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { AtomicWriteAborted, atomicWriteFile, type AtomicWriteOptions } from './atomic-file.js';
+import { AtomicWriteAborted, atomicWriteFile, errorCode, isVanished, quarantineName, removeTemps, type AtomicWriteOptions } from '../core/json-store.js';
 import { canonicalOrigin } from './policy.js';
-import { assertPrivate, errorCode, quarantineName, removeTemps } from './record-files.js';
+import { assertPrivate } from './record-files.js';
 import {
   MAX_ORIGINS,
   MAX_SITE_BYTES,
@@ -12,6 +12,7 @@ import {
   validateSiteRecord,
   type SiteRecord,
 } from './site-record.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 export * from './site-record.js';
 
@@ -65,7 +66,7 @@ export function siteFileName(origin: string): string {
 
 function requireOrigin(origin: string): string {
   const canonical = typeof origin === 'string' ? canonicalOrigin(origin) : null;
-  if (!canonical || canonical !== origin) throw new MemoryStoreError('INVALID_ARGUMENT', 'origin must be a canonical http or https origin');
+  if (!canonical || canonical !== origin) throw new MemoryStoreError(ERROR_CODES.INVALID_ARGUMENT, 'origin must be a canonical http or https origin');
   return canonical;
 }
 
@@ -137,18 +138,18 @@ export class JsonMemoryStore implements MemoryStore {
     return this.serialize(async () => {
       const valid = validateSiteRecord(record, 'write');
       await this.ready();
-      if (options.signal?.aborted) throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'write abandoned before it started');
+      if (options.signal?.aborted) throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'write abandoned before it started');
       const data = `${JSON.stringify(valid)}\n`;
       const bytes = Buffer.byteLength(data);
-      if (bytes > MAX_SITE_BYTES) throw new MemoryStoreError('MEMORY_FULL', `a site file is limited to ${MAX_SITE_BYTES} bytes`);
+      if (bytes > MAX_SITE_BYTES) throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, `a site file is limited to ${MAX_SITE_BYTES} bytes`);
       const fileName = siteFileName(valid.origin);
       const usage = await this.loadUsage();
       const previous = usage.sizes.get(fileName);
       if (previous === undefined && usage.sizes.size >= this.maxOrigins) {
-        throw new MemoryStoreError('MEMORY_FULL', `at most ${this.maxOrigins} origins can be stored`);
+        throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, `at most ${this.maxOrigins} origins can be stored`);
       }
       if (usage.bytes - (previous ?? 0) + bytes > this.maxTotalBytes) {
-        throw new MemoryStoreError('MEMORY_FULL', 'the total size limit for stored memory was reached');
+        throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, 'the total size limit for stored memory was reached');
       }
       try {
         await atomicWriteFile(this.sitesDir, fileName, data, {
@@ -159,10 +160,10 @@ export class JsonMemoryStore implements MemoryStore {
           signal: options.signal,
         });
       } catch (error) {
-        if (error instanceof AtomicWriteAborted) throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'write abandoned before the rename');
+        if (error instanceof AtomicWriteAborted) throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'write abandoned before the rename');
         const code = errorCode(error);
-        if (code === 'ENOSPC' || code === 'EDQUOT') throw new MemoryStoreError('MEMORY_FULL', 'no space left for memory');
-        throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'site file could not be written');
+        if (code === 'ENOSPC' || code === 'EDQUOT') throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, 'no space left for memory');
+        throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'site file could not be written');
       }
       this.epoch += 1;
       usage.bytes += bytes - (previous ?? 0);
@@ -181,7 +182,7 @@ export class JsonMemoryStore implements MemoryStore {
         await fsp.unlink(path.join(this.sitesDir, fileName));
         removed = true;
       } catch (error) {
-        if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'site file could not be deleted');
+        if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'site file could not be deleted');
       }
       for (const name of await this.listDir()) {
         if (name.startsWith(`${fileName}.corrupt-`)) await fsp.rm(path.join(this.sitesDir, name), { force: true });
@@ -207,7 +208,7 @@ export class JsonMemoryStore implements MemoryStore {
           await fsp.unlink(path.join(this.sitesDir, name));
           if (isSite) removed += 1;
         } catch (error) {
-          if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'site file could not be deleted');
+          if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'site file could not be deleted');
         }
       }
       this.epoch += 1;
@@ -225,7 +226,7 @@ export class JsonMemoryStore implements MemoryStore {
         const record = await this.readSiteFile(name);
         if (record) sites.push(record);
       } catch (error) {
-        if (error instanceof MemoryStoreError && error.code === 'MEMORY_CORRUPT') continue;
+        if (error instanceof MemoryStoreError && error.code === ERROR_CODES.MEMORY_CORRUPT) continue;
         throw error;
       }
     }
@@ -263,9 +264,17 @@ export class JsonMemoryStore implements MemoryStore {
     }
   }
 
+  /**
+   * Is the file simply gone, rather than unreadable? The rule lives in the
+   * shared JSON-store engine (`core/json-store.ts`), because the map store
+   * reads files the same way and must answer the same way.
+   */
+  private vanished(error: unknown): boolean {
+    return isVanished(error, this.platform);
+  }
+
   /** Once per store: check the directory is private and remove temp files a crash left behind. A failure is retried on the next call. */
-  private ready(): Promise<void> {
-    if (!this.readyPromise) {
+  private ready(): Promise<void> {    if (!this.readyPromise) {
       this.readyPromise = this.prepare().catch((error: unknown) => {
         this.readyPromise = null;
         throw error;
@@ -283,7 +292,7 @@ export class JsonMemoryStore implements MemoryStore {
         await removeTemps(this.memoryDir, /^policy\.json\..+\.tmp$/u, STALE_POLICY_TEMP_MS);
         return;
       }
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'memory directory could not be read');
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'memory directory could not be read');
     }
     assertPrivate(st, 'directory', this.platform);
     await removeTemps(this.sitesDir, /\.tmp$/u);
@@ -295,7 +304,7 @@ export class JsonMemoryStore implements MemoryStore {
       return await fsp.readdir(this.sitesDir);
     } catch (error) {
       if (errorCode(error) === 'ENOENT') return [];
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'memory directory could not be read');
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'memory directory could not be read');
     }
   }
 
@@ -316,7 +325,7 @@ export class JsonMemoryStore implements MemoryStore {
           try {
             return { name, size: (await fsp.stat(path.join(this.sitesDir, name))).size };
           } catch (error) {
-            if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'memory directory could not be read');
+            if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'memory directory could not be read');
             return null;
           }
         }),
@@ -342,8 +351,8 @@ export class JsonMemoryStore implements MemoryStore {
     try {
       st = await fsp.lstat(file);
     } catch (error) {
-      if (errorCode(error) === 'ENOENT') return null;
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'site file could not be read');
+      if (this.vanished(error)) return null;
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'site file could not be read');
     }
     assertPrivate(st, 'file', this.platform);
     if (st.size > MAX_SITE_BYTES) return this.quarantine(fileName, 'site file is too large');
@@ -351,8 +360,8 @@ export class JsonMemoryStore implements MemoryStore {
     try {
       text = await fsp.readFile(file, 'utf8');
     } catch (error) {
-      if (errorCode(error) === 'ENOENT') return null;
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'site file could not be read');
+      if (this.vanished(error)) return null;
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'site file could not be read');
     }
     let record: SiteRecord;
     try {
@@ -375,6 +384,6 @@ export class JsonMemoryStore implements MemoryStore {
       this.usage.bytes -= this.usage.sizes.get(fileName) ?? 0;
       this.usage.sizes.delete(fileName);
     }
-    throw new MemoryStoreError('MEMORY_CORRUPT', reason);
+    throw new MemoryStoreError(ERROR_CODES.MEMORY_CORRUPT, reason);
   }
 }

@@ -140,10 +140,19 @@ The owner turns the memory off, excludes a site, or deletes a site, and the new 
 
 - A page with several forms: only the one inside `main` is measured; a form in the header, the sidebar or the footer is not (C3), so a small search box never stands in for the page's real form.
 - A page with no `main` landmark: no form is measured at all, and no shape fact is stored.
+- A page with more than one landmark: a form belongs to its **nearest** landmark ancestor (D-05), so a form inside a nested landmark belongs to that one; a form with no landmark ancestor is not measured at all.
+- A form nested inside another form: invalid HTML, and the rule above applies — the form with the most fillable fields wins (D-07). A form inside a shadow root is not measured: the query does not cross a shadow boundary.
+- A page with an enormous form or thousands of forms: the scan is bounded (50 forms, 200 controls per form), so the measurement cannot cost the probe its budget (R-09). A form beyond the bound is simply not measured.
 - A form inside an iframe: the top document's `main` is measured; a same-origin frame's form is not counted twice.
-- A page that changes its form between two reads: the newer shape replaces the older one, and the fact keeps its first observation time.
+- A page that changes its form between two reads: the newer shape replaces the older one, and — as in 003's R-10 rule for any fact whose value changed — the fact's first observation time moves to the observation that the new value replaces, so a changed value never claims to have been seen earlier than the value it replaced.
+- A site with more than eight form paths: the bound costs one shape fact, not the record. The freshest eight shapes are kept and the oldest is replaced by the newest one; a shape strictly older than all eight is not stored. The site's visits and its other facts are never refused because of it.
+- A form with a password field: the site gets **both** facts — `ui.login` ("a login form exists at this path", 003's fact) and `ui.form.shape` ("this form has so many fields, of these types"). They answer different questions, and the shape never says that a form is a login form: it counts fields, it does not name a purpose.
 - A form whose commit is not yet observed: the commit mode is `unknown` (C4) — never guessed from the markup.
 - A path written to with a click on a button whose address did not change: the commit mode stays `unknown`, because nothing was observed and nothing proves how it is committed (C8).
+- "The address changed" means the tab's address changed within **300 ms** of the input (`SETTLE_MS` in `extension/handlers/interaction.js`): the extension watches that window for a navigation and reports it. A slower navigation is not seen as the input's doing, so the mode stays `unknown` — the mode is never guessed from a later change.
+- A commit mode observed on a path whose next read is excluded, truncated or gated away: the mode is **held** for that path and applied at the next observed read of it, and dropped when the 120-second attribution window passes (D-08). It is never applied to a different path.
+- A commit mode observed by one profile: it is a fact of the site, not of the profile, so the other profiles of that origin read it too. The **hidden-control counter** is the opposite — it belongs to the profile that saw the failure (C2).
+- The `button` mode is decided by the last snapshot read in that tab: if that snapshot marked the control as a button, the mode is `button`.
 - A site whose controls are hidden only sometimes (a responsive layout): the counter counts occurrences, so it stays true while the count rises; the count never falls.
 - A site with a hidden-control counter whose controls become visible later: the counter stays (it is a hint with a date); the agent's own click either works or fails, and the failure stops rising.
 - A read of a page whose path holds a query: the query is never part of the path, so the path rule applies to the path alone.
@@ -175,14 +184,14 @@ The owner turns the memory off, excludes a site, or deletes a site, and the new 
 
 ### Measurable Outcomes
 
-- **SC-001**: In a synthetic site with a three-field form (one required, one password, one visually hidden) inside `main`, one complete read produces exactly one shape fact, and after one refused click on that tab exactly one hidden-control counter, in 100% of runs. The shape's commit mode is `unknown` until a write is observed.
+- **SC-001**: In a synthetic site with a three-field form (one required, one password, one visually hidden) inside `main`, one complete read produces exactly one shape fact, and after one refused click on that tab exactly one hidden-control counter, in every run of the test (the behaviour is deterministic: nothing in it depends on timing or on a run's order). The shape's commit mode is `unknown` until a write is observed.
 - **SC-002**: The stored bytes for that site contain none of the form's labels, values, placeholders or help texts; a test compares the record against a fixture that carries them.
 - **SC-003**: Under OD-1 Option 1, a site that looks signed-in holds no shape fact (its hidden-control counter is still counted, because the counter is not behind the gate — C6); under Option 2 it holds the shape fact and no name, value or path outside the reviewed list. The privacy test covers the chosen option.
-- **SC-004**: The owner can delete every trace of the new facts for an origin with one `delete <origin>`, and `delete --all` leaves no new fact in any file; the export lists the new facts in the documented shape.
+- **SC-004**: The owner can delete every trace of the new facts for an origin with one `delete <origin>`, and `delete --all` leaves no new fact in any file; the export lists the new facts in the store's own shape — the export returns the site records exactly as they are stored, so the new facts appear in it unchanged (`specs/003-website-agent-memory/contracts/memory-store.schema.json` is that shape).
 - **SC-005**: The reminder stays within 8 lines and 600 characters with the new facts present, and `browser_memory` stays within its documented bounds.
 - **SC-006**: The drift test fails when a vocabulary entry is added or removed without a version bump of the reviewed vocabulary.
 - **SC-007**: Every existing 003 test still passes unchanged, including the privacy, boundary, scope and store tests.
-- **SC-008**: A hidden-control counter raised in one profile never appears in another profile's record for the same origin, in 100% of runs.
+- **SC-008**: A hidden-control counter raised in one profile never appears in another profile's record for the same origin, in every run of the test.
 - **SC-009**: A path written to once with Enter, whose address changed, reports `enter` at the next read of that path; a path written to with a click on a control the last snapshot marked `button`, whose address changed, reports `button`; a path whose write moved nothing, and a path never written to, report `unknown`; no shape fact ever carries a commit mode that the markup alone suggested.
 
 ## Assumptions

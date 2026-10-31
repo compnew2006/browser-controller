@@ -7,10 +7,12 @@ import { GrantRegistry } from './grants.js';
 import { RequestJournal } from './requests.js';
 import { FillWorkflow } from './fill.js';
 import {
-  VaultServiceError, isRecord, publicError, safeCode, safeMessage, type VaultBrowserContext,
+  VaultServiceError, publicError, safeCode, safeMessage, type VaultBrowserContext,
   type VaultInspection, type VaultTransport, type ProtectedDocument, type InternalPending,
   type PrivateConnection, type PendingOperation,
 } from './service-common.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES, isKnownErrorCode } from '../core/error-codes.js';
 
 export abstract class VaultServiceCore {
 
@@ -65,10 +67,10 @@ export abstract class VaultServiceCore {
   protected async publicStatus(sessionId: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const context = await this.contextForSession(sessionId);
     if (params.requestId !== undefined) {
-      if (typeof params.requestId !== 'string') throw new VaultServiceError('INVALID_ARGUMENT', 'request id is invalid');
+      if (typeof params.requestId !== 'string') throw new VaultServiceError(ERROR_CODES.INVALID_ARGUMENT, 'request id is invalid');
       const pending = this.requests.get(params.requestId);
       if (!pending || pending.request.sessionId !== sessionId || pending.request.browserScope !== scopeForBrowser(context.browserId)) {
-        return publicError('VAULT_PERMISSION_DENIED');
+        return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
       }
       return {
         success: true,
@@ -89,12 +91,12 @@ export abstract class VaultServiceCore {
   }
 
   protected async contextForSession(sessionId: string, requireVault = true): Promise<VaultBrowserContext> {
-    if (!sessionId || !this.isSessionLive(sessionId)) throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'session is no longer active');
+    if (!sessionId || !this.isSessionLive(sessionId)) throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'session is no longer active');
     const current = await this.transport.getBrowserContext(sessionId);
     const context = { ...current, ...(this.sessionAgentNames.get(sessionId) ? { agentName: this.sessionAgentNames.get(sessionId) } : {}) };
-    if (requireVault && !context.supportsVault) throw new VaultServiceError('VAULT_EXTENSION_REQUIRED', 'the connected extension does not support the credential vault');
+    if (requireVault && !context.supportsVault) throw new VaultServiceError(ERROR_CODES.VAULT_EXTENSION_REQUIRED, 'the connected extension does not support the credential vault');
     if (requireVault && (context.ambiguous || !context.browserId || context.browserId === 'default')) {
-      throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'browser identity is not unique and verified');
+      throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'browser identity is not unique and verified');
     }
     return context;
   }
@@ -158,7 +160,9 @@ export abstract class VaultServiceCore {
       || typeof result.origin !== 'string' || typeof result.documentId !== 'string'
       || typeof result.targetDocumentId !== 'string' || typeof result.nonce !== 'string' || !result.nonce
       || !Number.isInteger(result.frameId) || (result.frameId as number) < 0) {
-      const code = isRecord(result) && typeof result.code === 'string' ? result.code : 'VAULT_TARGET_UNSAFE';
+      // The extension names its own vault failure; a code the registry does not know falls back to the safe one.
+      const reported = isRecord(result) && typeof result.code === 'string' ? result.code : '';
+      const code = isKnownErrorCode(reported) ? reported : ERROR_CODES.VAULT_TARGET_UNSAFE;
       throw new VaultServiceError(code, 'the page could not be inspected safely');
     }
     const origin = canonicalizeOrigin(result.origin);
@@ -178,20 +182,20 @@ export abstract class VaultServiceCore {
 
   protected assertOrigin(origin: string): void {
     try { canonicalizeOrigin(origin); }
-    catch { throw new VaultServiceError('VAULT_ORIGIN_MISMATCH', 'the current site is unsupported'); }
+    catch { throw new VaultServiceError(ERROR_CODES.VAULT_ORIGIN_MISMATCH, 'the current site is unsupported'); }
   }
 
   protected requestRequired(pending: InternalPending, origin?: string): Record<string, unknown> {
     return {
       success: true,
       status: pending.request.state === 'pending' ? 'user_action_required' : pending.request.state,
-      code: 'VAULT_USER_ACTION_REQUIRED',
+      code: ERROR_CODES.VAULT_USER_ACTION_REQUIRED,
       requestId: pending.request.requestId,
       purpose: pending.request.purpose,
       ...(origin ? { origin } : {}),
       message: pending.surface === 'card'
         ? 'The owner was asked on an approval card on this tab and has not decided yet. Call browser_vault again with the same action to keep waiting.'
-        : safeMessage('VAULT_USER_ACTION_REQUIRED'),
+        : safeMessage(ERROR_CODES.VAULT_USER_ACTION_REQUIRED),
     };
   }
 
@@ -227,11 +231,11 @@ export abstract class VaultServiceCore {
     if (pending.request.tabId === undefined || !pending.request.documentId || !pending.request.origin) return;
     const current = await this.transport.getBrowserContext(pending.request.sessionId);
     if (current.browserId !== connection.browserId || current.connectionId !== connection.connectionId || !current.supportsVault || current.ambiguous) {
-      throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'the initiating browser identity changed');
+      throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'the initiating browser identity changed');
     }
     const inspection = await this.inspect(pending.request.tabId, pending.request.sessionId);
     if (inspection.origin !== pending.request.origin || inspection.documentId !== pending.request.documentId) {
-      throw new VaultServiceError('VAULT_DOCUMENT_CHANGED', 'the page changed while the private request was open');
+      throw new VaultServiceError(ERROR_CODES.VAULT_DOCUMENT_CHANGED, 'the page changed while the private request was open');
     }
   }
 
@@ -242,7 +246,7 @@ export abstract class VaultServiceCore {
   protected async ensureUiUnlocked(store: CredentialVaultStore): Promise<void> {
     const state = await store.status();
     if (state === 'empty') await store.initialize();
-    else if (state === 'incomplete') throw new VaultServiceError('VAULT_RECOVERY_REQUIRED', 'the vault files are incomplete');
+    else if (state === 'incomplete') throw new VaultServiceError(ERROR_CODES.VAULT_RECOVERY_REQUIRED, 'the vault files are incomplete');
     else if (!store.isUnlocked) await store.unlock();
   }
 

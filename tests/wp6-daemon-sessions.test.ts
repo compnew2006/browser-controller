@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
-import { buildIpcHello, buildSessionId, newDaemonInstanceId } from '../mcp-server/src/protocol.js';
+import { buildIpcHello, buildSessionId, newDaemonInstanceId } from '../mcp-server/src/protocol/index.js';
 import { newAuthNonce } from '../mcp-server/src/bridge-auth.js';
 
 /**

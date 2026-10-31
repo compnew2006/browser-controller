@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { toolMap, allTools, isIdempotent, toolTimeoutMs } from '../mcp-server/src/tools/index.js';
-import { isKnownWireTool, DAEMON_ONLY_WIRE_TOOLS } from '../mcp-server/src/wire-tools.js';
+import { isKnownWireTool, DAEMON_ONLY_WIRE_TOOLS } from '../mcp-server/src/protocol/wire-tools.js';
 import { routeMemoryTool, type MemoryToolBridge, type MemoryToolHost } from '../mcp-server/src/memory/tool-route.js';
 import type { ToolHost } from '../mcp-server/src/tools/types.js';
 

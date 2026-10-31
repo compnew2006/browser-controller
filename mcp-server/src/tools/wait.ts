@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { tabIdParam, targetParam, forwardHandler, failureResult, textResult } from './types.js';
 import { STABLE_WAIT_DEFAULT_MS, waitUntilStable } from './page-stability.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 const forwardWait = forwardHandler('browser_wait');
 
@@ -21,9 +22,9 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
   const outcome = await waitUntilStable(host, tabId, timeout);
   if (outcome.settled) return textResult(`page settled after ${outcome.waitedMs} ms`);
   if (outcome.reason === 'unreadable') {
-    return failureResult(`TIMEOUT: the page could not be read after ${outcome.waitedMs} ms; it never settled within ${timeout} ms.`);
+    return failureResult(formatError(ERROR_CODES.TIMEOUT, `the page could not be read after ${outcome.waitedMs} ms; it never settled within ${timeout} ms.`));
   }
-  return failureResult(`TIMEOUT: the page was still changing after ${outcome.waitedMs} ms; it never settled within ${timeout} ms.`);
+  return failureResult(formatError(ERROR_CODES.TIMEOUT, `the page was still changing after ${outcome.waitedMs} ms; it never settled within ${timeout} ms.`));
 };
 (handler as { toolName?: string }).toolName = 'browser_wait';
 

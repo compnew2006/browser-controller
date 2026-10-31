@@ -1,12 +1,11 @@
 import type { RoutedCallResult } from '../vault/daemon-routing.js';
 import { canonicalOrigin } from './policy.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 /** The tab-context action the daemon sends to the extension; see DAEMON_ONLY_WIRE_TOOLS in wire-tools.ts. */
 export const CONTEXT_ACTION = 'browser_memory_internal_context';
 const KINDS = new Set(['all', 'facts', 'visits']);
-
-export { isRecord };
 
 export interface MemoryToolBridge {
   callTool(tool: string, params: Record<string, unknown>, sessionId: string, signal: AbortSignal, agentName: string): Promise<unknown>;
@@ -37,20 +36,20 @@ export const fail = (error: string): RoutedCallResult => ({ success: false, erro
 /** Validates the agent's arguments; IPC clients other than the MCP server skip the zod schema. */
 function parseArguments(params: Record<string, unknown>): { tabId: number; kind?: string; cursor?: string } | string {
   const unknown = Object.keys(params).filter((key) => key !== 'tabId' && key !== 'kind' && key !== 'cursor');
-  if (unknown.length) return 'INVALID_ARGUMENT: browser_memory takes tabId, kind and cursor only';
+  if (unknown.length) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'browser_memory takes tabId, kind and cursor only');
   const { tabId, kind, cursor } = params;
-  if (typeof tabId !== 'number' || !Number.isInteger(tabId) || tabId < 0) return 'INVALID_ARGUMENT: tabId must be a non-negative integer';
-  if (kind !== undefined && (typeof kind !== 'string' || !KINDS.has(kind))) return 'INVALID_ARGUMENT: kind must be all, facts or visits';
-  if (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 64)) return 'INVALID_ARGUMENT: cursor must be a string of at most 64 characters';
+  if (typeof tabId !== 'number' || !Number.isInteger(tabId) || tabId < 0) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'tabId must be a non-negative integer');
+  if (kind !== undefined && (typeof kind !== 'string' || !KINDS.has(kind))) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'kind must be all, facts or visits');
+  if (cursor !== undefined && (typeof cursor !== 'string' || cursor.length > 64)) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'cursor must be a string of at most 64 characters');
   return { tabId, ...(kind !== undefined ? { kind } : {}), ...(cursor !== undefined ? { cursor } : {}) };
 }
 
 /** Failure text for a refused or failed context read. Only the code survives; no page text. */
 export function contextFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/^TAB_LOCKED\b/.test(message)) return message.slice(0, 300);
-  if (/Unknown tool/i.test(message)) return 'MEMORY_NOT_SUPPORTED: the browser extension does not support website memory';
-  return 'MEMORY_UNAVAILABLE: website memory could not read the tab';
+  if (message.startsWith(`${ERROR_CODES.TAB_LOCKED}:`)) return message.slice(0, 300);
+  if (/Unknown tool/i.test(message)) return formatError(ERROR_CODES.MEMORY_NOT_SUPPORTED, 'the browser extension does not support website memory');
+  return formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'website memory could not read the tab');
 }
 
 /**
@@ -80,15 +79,15 @@ export async function routeMemoryTool(
   const siteContext = isRecord(raw) ? raw.siteContext ?? null : null;
   try {
     const answer = await memory.handleTool('browser_memory', args, sessionId, { siteContext, connectionIdBefore: prepared.connectionId });
-    if (!isRecord(answer)) return fail('MEMORY_UNAVAILABLE: website memory returned no answer');
-    if (answer.success === false) return fail(typeof answer.error === 'string' ? answer.error : 'MEMORY_UNAVAILABLE: website memory failed');
+    if (!isRecord(answer)) return fail(formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'website memory returned no answer'));
+    if (answer.success === false) return fail(typeof answer.error === 'string' ? answer.error : formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'website memory failed'));
     return { success: true, result: await sanitize(answer) };
   } catch {
-    return fail('MEMORY_UNAVAILABLE: website memory failed');
+    return fail(formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'website memory failed'));
   }
 }
 
-export const unknownScope = (reason: string): RoutedCallResult => fail(`MEMORY_SCOPE_UNKNOWN: ${reason}`);
+export const unknownScope = (reason: string): RoutedCallResult => fail(formatError(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, reason));
 
 /**
  * The tab's canonical origin, read from the browser under the normal tab lock. A private tab, a frame that is

@@ -1,7 +1,8 @@
-import { SITE_CONTEXT_CAPABILITY } from '../protocol.js';
+import { SITE_CONTEXT_CAPABILITY } from '../protocol/capabilities.js';
 import { canonicalOrigin, type MemoryPolicy } from './policy.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
-export const MEMORY_SCOPE_UNKNOWN = 'MEMORY_SCOPE_UNKNOWN';
+export const MEMORY_SCOPE_UNKNOWN = ERROR_CODES.MEMORY_SCOPE_UNKNOWN;
 
 export type ScopeUnknownReason =
   | 'default_browser_id'

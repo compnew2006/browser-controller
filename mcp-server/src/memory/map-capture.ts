@@ -10,6 +10,7 @@ import type { MapClickOp, MapReadOp, ObservedControl } from './map-reconcile.js'
 import { parseMapSnapshot } from './map-snapshot.js';
 import { boundTitle, maskPath, normalizeForMatch } from './map-text.js';
 import { canonicalOrigin } from './policy.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 const ERROR_WINDOW_MS = MAP_LIMITS.errorAttributionSeconds * 1_000;
 const LANG = /^[a-z]{2,8}$/u;
@@ -422,7 +423,7 @@ export function noteTabAction(cache: TabReadCache, connectionId: string, tabId: 
 /** A failed click names its code only; it is attributed through the cache alone (≤ 120 s, same connection; R-08). */
 function captureClickError(cache: TabReadCache, input: CaptureInput): QueuedMapOp[] {
   const code = (input.error ?? '').split(':')[0].trim();
-  if (!LOCATOR_FAILURES.includes(code as LocatorFailure) || code === 'MISMATCH') return [];
+  if (!LOCATOR_FAILURES.includes(code as LocatorFailure) || code === ERROR_CODES.MISMATCH) return [];
   const entry = cache.get(input.connectionId, input.tabId);
   if (!entry || entry.stub || input.nowMs - entry.atMs > ERROR_WINDOW_MS) return [];
   const control = resolveTarget(entry, input.params.target);

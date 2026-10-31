@@ -330,7 +330,7 @@ async function main() {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-memory-bench-'));
   const wsPort = await freePort();
 
-  const protocolMod = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'protocol.js')).href);
+  const protocolMod = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'protocol', 'index.js')).href);
   const authMod = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'bridge-auth.js')).href);
 
   writePolicy(stateDir, args.mode !== 'baseline');

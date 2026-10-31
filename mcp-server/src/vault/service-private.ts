@@ -1,10 +1,12 @@
 import { CredentialVaultStore, scopeForBrowser } from './store.js';
 import { canonicalizeOrigin, metadataOf, randomId, VaultCredentialSchema, type VaultCredential } from './types.js';
 import {
-  VaultServiceError, isRecord, publicError, requireStrictKeys, safeCode,
+  VaultServiceError, publicError, requireStrictKeys, safeCode,
   type PrivateConnection, type InternalPending, type VaultBrowserContext, type VaultPrivateRequest,
 } from './service-common.js';
+import { isRecord } from '../core/guards.js';
 import { VaultServiceCore } from './service-core.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 /** What the owner chose on an approval card. */
 type CardChoice = 'allow' | 'deny' | 'page' | 'cancel';
@@ -17,7 +19,7 @@ function stateOf(pending: InternalPending): VaultPrivateRequest['state'] {
 export abstract class VaultServicePrivate extends VaultServiceCore {
   async handlePrivateUi(connection: PrivateConnection, payload: unknown): Promise<Record<string, unknown>> {
     this.requests.expire();
-    if (!isRecord(payload) || typeof payload.operation !== 'string') return publicError('INVALID_ARGUMENT');
+    if (!isRecord(payload) || typeof payload.operation !== 'string') return publicError(ERROR_CODES.INVALID_ARGUMENT);
     const operation = payload.operation;
     const requestId = typeof payload.requestId === 'string' ? payload.requestId : undefined;
     const operationBefore = requestId ? this.operations.get(requestId) : undefined;
@@ -67,7 +69,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
           requireStrictKeys(payload, ['operation', 'backupId']);
           return await this.privateRestore(connection, payload.backupId);
         default:
-          return publicError('INVALID_ARGUMENT');
+          return publicError(ERROR_CODES.INVALID_ARGUMENT);
       }
     } catch (error) {
       const pending = requestId ? this.requests.forConnection(connection, requestId) : undefined;
@@ -83,7 +85,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
   private async assertInitiator(connection: PrivateConnection, sessionId: string): Promise<VaultBrowserContext> {
     const current = await this.contextForSession(sessionId);
     if (current.browserId !== connection.browserId || current.connectionId !== connection.connectionId) {
-      throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'the initiating browser identity changed');
+      throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'the initiating browser identity changed');
     }
     return current;
   }
@@ -97,7 +99,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const requests = this.requests.activeFor(scope, connection.connectionId)
       .map((item) => this.safeRequestView(item, entries));
     const request = typeof requestId === 'string' ? this.requests.get(requestId) : undefined;
-    if (request && (request.request.browserScope !== scope || request.connectionId !== connection.connectionId)) return publicError('VAULT_PERMISSION_DENIED');
+    if (request && (request.request.browserScope !== scope || request.connectionId !== connection.connectionId)) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
     const allowlist = unlocked ? await store.allowlist() : [];
     return {
       success: true,
@@ -150,8 +152,8 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
   private async privateUnlock(connection: PrivateConnection, requestId: unknown): Promise<Record<string, unknown>> {
     const scope = scopeForBrowser(connection.browserId);
     const pending = requestId === undefined ? undefined : this.requests.forConnection(connection, requestId);
-    if (requestId !== undefined && !pending) return publicError('VAULT_PERMISSION_DENIED');
-    if (pending && !['unlock', 'fill', 'save', 'approve'].includes(pending.request.purpose)) return publicError('VAULT_PERMISSION_DENIED');
+    if (requestId !== undefined && !pending) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
+    if (pending && !['unlock', 'fill', 'save', 'approve'].includes(pending.request.purpose)) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
     if (pending?.request.purpose === 'unlock' && !this.requests.claim(pending)) return this.requestState(pending);
     if (pending && pending.request.purpose !== 'unlock' && !this.requests.revalidate(pending)) {
       this.requests.settle(pending, 'cancelled');
@@ -160,7 +162,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     if (pending && pending.request.purpose !== 'unlock' && pending.request.state !== 'pending') return this.requestState(pending);
     const store = this.storeFor(connection.browserId);
     const state = await store.status();
-    if (state === 'incomplete') throw new VaultServiceError('VAULT_RECOVERY_REQUIRED', 'the vault files are incomplete');
+    if (state === 'incomplete') throw new VaultServiceError(ERROR_CODES.VAULT_RECOVERY_REQUIRED, 'the vault files are incomplete');
     if (state === 'empty') await store.initialize();
     else if (!store.isUnlocked) await store.unlock();
     const audit = this.auditEvent('unlock', scope, pending?.request.sessionId, pending?.request.origin, 'success');
@@ -189,18 +191,18 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
 
   private async privateSave(connection: PrivateConnection, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const pending = payload.requestId === undefined ? undefined : this.requests.forConnection(connection, payload.requestId);
-    if (payload.requestId !== undefined && !pending) return publicError('VAULT_PERMISSION_DENIED');
-    if (pending && pending.request.purpose !== 'save') return publicError('VAULT_PERMISSION_DENIED');
+    if (payload.requestId !== undefined && !pending) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
+    if (pending && pending.request.purpose !== 'save') return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
     if (pending && !this.requests.claim(pending)) return this.requestState(pending);
     const store = this.storeFor(connection.browserId);
     await this.ensureUiUnlocked(store);
     if (pending && pending.request.state !== 'processing') return this.requestState(pending);
     const existingId = typeof payload.handle === 'string' ? payload.handle : undefined;
     const existing = existingId ? await store.get(existingId) : null;
-    if (existingId && !existing) throw new VaultServiceError('INVALID_ARGUMENT', 'account handle was not found');
+    if (existingId && !existing) throw new VaultServiceError(ERROR_CODES.INVALID_ARGUMENT, 'account handle was not found');
     const origin = pending?.request.origin ?? canonicalizeOrigin(typeof payload.origin === 'string' ? payload.origin : '');
-    if (existing && existing.origin !== origin) throw new VaultServiceError('VAULT_ORIGIN_MISMATCH', 'an account cannot be moved to a different origin');
-    if (pending && pending.request.origin !== origin) throw new VaultServiceError('VAULT_ORIGIN_MISMATCH', 'the save request is bound to a different origin');
+    if (existing && existing.origin !== origin) throw new VaultServiceError(ERROR_CODES.VAULT_ORIGIN_MISMATCH, 'an account cannot be moved to a different origin');
+    if (pending && pending.request.origin !== origin) throw new VaultServiceError(ERROR_CODES.VAULT_ORIGIN_MISMATCH, 'the save request is bound to a different origin');
     const identifier = typeof payload.identifier === 'string' ? payload.identifier : '';
     const password = typeof payload.password === 'string' ? payload.password : '';
     const label = typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : identifier;
@@ -214,16 +216,16 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       createdAt: existing?.createdAt ?? this.now(),
       updatedAt: this.now(),
     });
-    if (!entry.success) throw new VaultServiceError('INVALID_ARGUMENT', 'account fields are invalid');
+    if (!entry.success) throw new VaultServiceError(ERROR_CODES.INVALID_ARGUMENT, 'account fields are invalid');
     const sessionId = pending?.request.sessionId;
     const allowSession = payload.allowSession === true;
     const saveAndFill = payload.saveAndFill === true;
-    if (saveAndFill && !allowSession) throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'Save and fill requires explicit session access consent');
-    if ((allowSession || saveAndFill) && (!pending || !sessionId)) throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'session grants require a live private request');
-    if (pending && !this.requests.revalidate(pending)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
+    if (saveAndFill && !allowSession) throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'Save and fill requires explicit session access consent');
+    if ((allowSession || saveAndFill) && (!pending || !sessionId)) throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'session grants require a live private request');
+    if (pending && !this.requests.revalidate(pending)) throw new VaultServiceError(ERROR_CODES.VAULT_REQUEST_EXPIRED, 'the initiating browser session ended');
     if (pending) await this.revalidateDocument(pending, connection);
     if (pending && pending.request.state !== 'processing') return this.requestState(pending);
-    if (pending && !this.requests.revalidate(pending)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
+    if (pending && !this.requests.revalidate(pending)) throw new VaultServiceError(ERROR_CODES.VAULT_REQUEST_EXPIRED, 'the initiating browser session ended');
     await store.upsert(entry.data);
     if (pending && pending.request.state !== 'processing') return this.requestState(pending);
     await this.writeAudit(store, existing ? 'update' : 'create', entry.data.id, sessionId, origin, 'success');
@@ -238,7 +240,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
         if (pending.request.state !== 'processing' || !this.isSessionLive(sessionId!)) return this.requestState(pending);
         const current = await this.assertInitiator(connection, sessionId!);
         const initial = await this.inspect(pending.request.tabId!, sessionId!);
-        if (initial.origin !== origin || initial.documentId !== pending.request.documentId) throw new VaultServiceError('VAULT_DOCUMENT_CHANGED', 'the page changed while the private form was open');
+        if (initial.origin !== origin || initial.documentId !== pending.request.documentId) throw new VaultServiceError(ERROR_CODES.VAULT_DOCUMENT_CHANGED, 'the page changed while the private form was open');
         const result = await this.fill.run(current, sessionId!, pending.request.tabId!, initial, entry.data.id, this.operations.signalFor(pending.request.requestId), grant.grantId);
         if (pending.request.state === 'processing') this.requests.settle(pending, isRecord(result) && result.status === 'filled' ? 'accepted' : 'failed');
         else pending.terminalAt = this.now();
@@ -254,30 +256,30 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
 
   private async privateApprove(connection: PrivateConnection, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const pending = this.requests.forConnection(connection, payload.requestId);
-    if (!pending || pending.request.purpose !== 'approve' && pending.request.purpose !== 'fill') return publicError('VAULT_PERMISSION_DENIED');
+    if (!pending || pending.request.purpose !== 'approve' && pending.request.purpose !== 'fill') return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
     if (!this.requests.claim(pending)) return this.requestState(pending);
-    if (!this.requests.revalidate(pending)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
+    if (!this.requests.revalidate(pending)) throw new VaultServiceError(ERROR_CODES.VAULT_REQUEST_EXPIRED, 'the initiating browser session ended');
     await this.revalidateDocument(pending, connection);
     const store = this.storeFor(connection.browserId);
     await this.ensureUiUnlocked(store);
     const handle = pending.request.credentialId ?? (typeof payload.credentialId === 'string' ? payload.credentialId : undefined);
-    if (pending.request.credentialId && handle !== pending.request.credentialId) throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'the requested account cannot be changed');
+    if (pending.request.credentialId && handle !== pending.request.credentialId) throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'the requested account cannot be changed');
     const purpose = payload.purpose === 'list' ? 'list' : 'fill';
     if (pending.request.purpose === 'approve' && purpose !== 'list') {
-      throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'an account-list request only accepts account-list consent');
+      throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'an account-list request only accepts account-list consent');
     }
-    if (purpose === 'fill' && !handle) throw new VaultServiceError('INVALID_ARGUMENT', 'choose a saved account before granting fill access');
+    if (purpose === 'fill' && !handle) throw new VaultServiceError(ERROR_CODES.INVALID_ARGUMENT, 'choose a saved account before granting fill access');
     if (pending.request.purpose === 'fill' && (purpose !== 'fill' || handle !== pending.request.credentialId)) {
-      throw new VaultServiceError('VAULT_PERMISSION_DENIED', 'this request only permits the selected account');
+      throw new VaultServiceError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'this request only permits the selected account');
     }
     const entry = handle ? await store.get(handle) : null;
-    if (handle && (!entry || entry.origin !== pending.request.origin)) throw new VaultServiceError('VAULT_ORIGIN_MISMATCH', 'the selected account does not match this site');
+    if (handle && (!entry || entry.origin !== pending.request.origin)) throw new VaultServiceError(ERROR_CODES.VAULT_ORIGIN_MISMATCH, 'the selected account does not match this site');
     if (pending.request.state !== 'processing' || !this.requests.revalidate(pending)) return this.requestState(pending);
     // Every approval approves the site for this browser profile (specs/006 D3): listing and filling
     // its accounts for any session, until the vault locks or the owner revokes it.
     if (pending.request.purpose === 'fill') {
       const initial = await this.inspect(pending.request.tabId!, pending.request.sessionId);
-      if (initial.origin !== pending.request.origin || initial.documentId !== pending.request.documentId) throw new VaultServiceError('VAULT_DOCUMENT_CHANGED', 'the page changed while the private request was open');
+      if (initial.origin !== pending.request.origin || initial.documentId !== pending.request.documentId) throw new VaultServiceError(ERROR_CODES.VAULT_DOCUMENT_CHANGED, 'the page changed while the private request was open');
       const current = await this.assertInitiator(connection, pending.request.sessionId);
       if (pending.request.state !== 'processing' || !this.requests.revalidate(pending)) return this.requestState(pending);
       const grant = this.grants.createSite(pending.request.browserScope, pending.request.origin!, 'page');
@@ -318,11 +320,11 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
    */
   private async cardDecision(connection: PrivateConnection, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
     const pending = this.requests.forConnection(connection, payload.requestId);
-    if (!pending || pending.surface !== 'card' || !pending.request.origin) return publicError('VAULT_PERMISSION_DENIED');
+    if (!pending || pending.surface !== 'card' || !pending.request.origin) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
     const lead = (pending.cardOf ? this.requests.get(pending.cardOf) : undefined) ?? pending;
     if (!['allow', 'deny', 'page', 'cancel'].includes(String(payload.decision)) || typeof payload.always !== 'boolean'
       || (payload.always && payload.decision !== 'allow')) {
-      return publicError('INVALID_ARGUMENT');
+      return publicError(ERROR_CODES.INVALID_ARGUMENT);
     }
     const decision = payload.decision as CardChoice;
     const always = payload.always;
@@ -330,7 +332,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     if (stateOf(lead) === 'processing') return this.requestState(lead);
     // The card's request ended another way and its close may still be on the way: Allow and Deny are
     // refused, so the card does not go away as if they worked, and the extension opens the vault page itself.
-    if (stateOf(lead) !== 'pending') return decision === 'cancel' ? this.requestState(lead) : publicError('VAULT_REQUEST_EXPIRED');
+    if (stateOf(lead) !== 'pending') return decision === 'cancel' ? this.requestState(lead) : publicError(ERROR_CODES.VAULT_REQUEST_EXPIRED);
     const scope = lead.request.browserScope;
     const origin = lead.request.origin!;
     if (decision === 'page') {
@@ -350,7 +352,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     }
     if (!this.requests.claim(lead)) return this.requestState(lead);
     try {
-      if (!this.requests.revalidate(lead)) throw new VaultServiceError('VAULT_REQUEST_EXPIRED', 'the initiating browser session ended');
+      if (!this.requests.revalidate(lead)) throw new VaultServiceError(ERROR_CODES.VAULT_REQUEST_EXPIRED, 'the initiating browser session ended');
       await this.revalidateDocument(lead, connection);
     } catch (error) {
       // The asking session ended during the page check: its card is held, and the decision goes on for the site.
@@ -391,7 +393,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     const joined = this.requests.cardGroup(lead);
     if (decision === 'page') {
       // Nothing left to move: the extension opens the vault page itself.
-      if (joined.length === 0) return publicError('VAULT_REQUEST_EXPIRED');
+      if (joined.length === 0) return publicError(ERROR_CODES.VAULT_REQUEST_EXPIRED);
       await this.requests.moveToPage(joined[0]);
       return { success: true, status: 'moved', requestId: joined[0].request.requestId };
     }
@@ -454,9 +456,9 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
 
   private async privateAllowlistAdd(connection: PrivateConnection, raw: unknown): Promise<Record<string, unknown>> {
     const origin = this.allowlistOrigin(raw);
-    if (!origin) return publicError('INVALID_ARGUMENT');
+    if (!origin) return publicError(ERROR_CODES.INVALID_ARGUMENT);
     const store = this.storeFor(connection.browserId);
-    if (!store.isUnlocked) return publicError('VAULT_LOCKED');
+    if (!store.isUnlocked) return publicError(ERROR_CODES.VAULT_LOCKED);
     const added = await store.allowlistAdd(origin, this.now());
     this.grants.unblockSite(scopeForBrowser(connection.browserId), origin);
     if (added) await this.writeAudit(store, 'grant', undefined, undefined, origin, 'success');
@@ -465,9 +467,9 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
 
   private async privateAllowlistRemove(connection: PrivateConnection, raw: unknown): Promise<Record<string, unknown>> {
     const origin = this.allowlistOrigin(raw);
-    if (!origin) return publicError('INVALID_ARGUMENT');
+    if (!origin) return publicError(ERROR_CODES.INVALID_ARGUMENT);
     const store = this.storeFor(connection.browserId);
-    if (!store.isUnlocked) return publicError('VAULT_LOCKED');
+    if (!store.isUnlocked) return publicError(ERROR_CODES.VAULT_LOCKED);
     const { removed, revoked } = await this.endSite(store, scopeForBrowser(connection.browserId), origin);
     if (removed || revoked > 0) await this.writeAudit(store, 'revoke', undefined, undefined, origin, 'success');
     return { success: true, status: removed ? 'removed' : 'not_found', revoked, origin };
@@ -489,7 +491,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
 
   private finishRequest(connection: PrivateConnection, requestId: unknown, state: 'declined' | 'cancelled'): Record<string, unknown> {
     const pending = this.requests.forConnection(connection, requestId);
-    if (!pending) return publicError('VAULT_PERMISSION_DENIED');
+    if (!pending) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
     if (pending.request.state === 'processing') this.operations.abort(pending.request.requestId);
     if (!['pending', 'processing'].includes(pending.request.state)) return this.requestState(pending);
     this.requests.settle(pending, state);
@@ -497,10 +499,10 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
   }
 
   private async privateRemove(connection: PrivateConnection, handle: unknown): Promise<Record<string, unknown>> {
-    if (typeof handle !== 'string') return publicError('INVALID_ARGUMENT');
+    if (typeof handle !== 'string') return publicError(ERROR_CODES.INVALID_ARGUMENT);
     await this.cancelCredentialOperations(scopeForBrowser(connection.browserId), handle);
     const store = this.storeFor(connection.browserId);
-    if (!store.isUnlocked) return publicError('VAULT_LOCKED');
+    if (!store.isUnlocked) return publicError(ERROR_CODES.VAULT_LOCKED);
     const removed = await store.remove(handle);
     this.grants.revokeCredential(scopeForBrowser(connection.browserId), handle);
     if (removed) await this.writeAudit(store, 'delete', handle, undefined, undefined, 'success');
@@ -508,10 +510,10 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
   }
 
   private async privateRevoke(connection: PrivateConnection, grantId: unknown): Promise<Record<string, unknown>> {
-    if (typeof grantId !== 'string') return publicError('INVALID_ARGUMENT');
+    if (typeof grantId !== 'string') return publicError(ERROR_CODES.INVALID_ARGUMENT);
     const site = this.grants.getSite(grantId);
     if (site) {
-      if (site.browserScope !== scopeForBrowser(connection.browserId)) return publicError('VAULT_PERMISSION_DENIED');
+      if (site.browserScope !== scopeForBrowser(connection.browserId)) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
       const store = this.storeFor(connection.browserId);
       // A site still on the always-allowed list would be approved again by the next list or fill: it leaves the list too.
       const { removed } = await this.endSite(store, site.browserScope, site.origin);
@@ -519,7 +521,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
       return { success: true, status: 'revoked', unlisted: removed };
     }
     const grant = this.grants.get(grantId);
-    if (!grant || grant.browserScope !== scopeForBrowser(connection.browserId) || grant.connectionId !== connection.connectionId) return publicError('VAULT_PERMISSION_DENIED');
+    if (!grant || grant.browserScope !== scopeForBrowser(connection.browserId) || grant.connectionId !== connection.connectionId) return publicError(ERROR_CODES.VAULT_PERMISSION_DENIED);
     this.grants.revoke(grantId);
     await this.cancelGrantOperations(grantId);
     this.requests.abortWorkMatching((pending) => pending.request.sessionId === grant.sessionId
@@ -532,7 +534,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
 
   private async privateBackup(connection: PrivateConnection): Promise<Record<string, unknown>> {
     const store = this.storeFor(connection.browserId);
-    if (!store.isUnlocked) return publicError('VAULT_LOCKED');
+    if (!store.isUnlocked) return publicError(ERROR_CODES.VAULT_LOCKED);
     const backup = await store.createBackup(this.now());
     await this.writeAudit(store, 'backup', undefined, undefined, undefined, 'success');
     return { success: true, status: 'backed_up', backupId: backup.id, createdAt: backup.createdAt };
@@ -543,7 +545,7 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
   }
 
   private async privateRestore(connection: PrivateConnection, backupId: unknown): Promise<Record<string, unknown>> {
-    if (typeof backupId !== 'string') return publicError('INVALID_ARGUMENT');
+    if (typeof backupId !== 'string') return publicError(ERROR_CODES.INVALID_ARGUMENT);
     const scope = scopeForBrowser(connection.browserId);
     await this.cancelScopeOperations(scope);
     this.grants.revokeScope(scope);

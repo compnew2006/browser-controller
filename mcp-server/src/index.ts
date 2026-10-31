@@ -14,6 +14,7 @@
  * port 7225.
  */
 import { spawn, execSync } from 'node:child_process';
+import { ERROR_CODES, formatError } from './core/error-codes.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -52,9 +53,9 @@ import net from 'node:net';
 import fs from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { buildIpcHello, OLDER_DAEMON_IPC_REASON, validateIpcHandshake } from './protocol.js';
+import { buildIpcHello, OLDER_DAEMON_IPC_REASON, validateIpcHandshake } from './protocol/index.js';
 import { allTools } from './tools/index.js';
-import { registerTools } from './register-tools.js';
+import { registerTools, log } from './register-tools.js';
 import { Reconnector, type DaemonState } from './daemon-reconnect.js';
 import { ClientToken } from './daemon-token.js';
 import {
@@ -168,7 +169,7 @@ class DaemonClient {
         try {
           this.handleMessage(JSON.parse(line));
         } catch (err) {
-          console.error(`[${SERVER_NAME}] daemon parse error:`, err);
+          log.error('daemon parse error:', err);
         }
       }
     });
@@ -177,14 +178,14 @@ class DaemonClient {
       // Only the current connection counts: close() (shutdown) has cleared it,
       // and a reconnect only replaces a socket that has already closed.
       if (this.socket !== socket) return;
-      if (this.welcomed) console.error(`[${SERVER_NAME}] daemon connection lost; reconnecting`);
+      if (this.welcomed) log.info('daemon connection lost; reconnecting');
       this.welcomed = false;
-      this.failAll('NOT_CONNECTED: daemon connection closed');
+      this.failAll(formatError(ERROR_CODES.NOT_CONNECTED, 'daemon connection closed'));
       this.welcomeWaiter?.(new Error(this.refusal ?? 'daemon closed before welcome'));
       this.closeHandlers.forEach(h => h());
     });
     socket.on('error', (err: Error) => {
-      console.error(`[${SERVER_NAME}] daemon socket error:`, err.message);
+      log.error('daemon socket error:', err.message);
     });
 
     // authenticate
@@ -228,10 +229,10 @@ class DaemonClient {
         this._sessionId = msg.sessionId ?? null;
         this.welcomed = true;
         this.welcomeWaiter?.();
-        console.error(`[${SERVER_NAME}] joined daemon as ${this.sessionId}`);
+        log.info(`joined daemon as ${this.sessionId}`);
         break;
       case 'denied':
-        console.error(`[${SERVER_NAME}] daemon denied: ${msg.reason}`);
+        log.error(`daemon denied: ${msg.reason}`);
         // A rotated token.json is picked up by the reconnect; exit only when the file has nothing newer.
         if (this.tokens.shouldRetryAfterDenial(this.sentToken)) {
           this.refusal = 'daemon denied the old token; retrying with the rotated one';
@@ -276,12 +277,12 @@ class DaemonClient {
       // A call made while the daemon connection is down (a daemon restart)
       // waits briefly for the reconnect instead of failing at once.
       const why = await this.awaitReconnect(CALL_RECONNECT_WAIT_MS);
-      if (why) throw new Error(`NOT_CONNECTED: Not connected to daemon: ${why}`);
+      if (why) throw new Error(formatError(ERROR_CODES.NOT_CONNECTED, `Not connected to daemon: ${why}`));
     }
     const id = String(++this.daemonCallId);
     return new Promise((resolve, reject) => {
       if (!this.socket || this.socket.destroyed) {
-        reject(new Error('NOT_CONNECTED: Not connected to daemon'));
+        reject(new Error(formatError(ERROR_CODES.NOT_CONNECTED, 'Not connected to daemon')));
         return;
       }
       // Client-side safety-net timeout (audit M4). The BRIDGE owns the real
@@ -292,7 +293,7 @@ class DaemonClient {
       // if the daemon itself hangs. 210s = 60s × 3 + 30s slack.
       const t = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`TIMEOUT: ${tool} did not answer in time (client side)`));
+        reject(new Error(formatError(ERROR_CODES.TIMEOUT, `${tool} did not answer in time (client side)`)));
       }, 210_000);
       this.pending.set(id, { resolve, reject, t });
       try {
@@ -434,7 +435,7 @@ function spawnDaemon(): void {
   if (!fs.existsSync(daemonEntry)) {
     throw new Error(`Daemon entry not found at ${daemonEntry}. Run 'npm run build' first.`);
   }
-  console.error(`[${SERVER_NAME}] starting daemon (detached)…`);
+  log.info('starting daemon (detached)…');
   // Daemon log lives in STATE_DIR (~/.browser-controller) alongside the token
   // and daemon.json. (Previously this wrote to ~/.real-browser-mcp/ — the old
   // product name — splitting state across two directories.) A log past its
@@ -480,7 +481,7 @@ async function main(): Promise<void> {
   const existingEnrollment = readEnrollmentSecret();
   const enrollment = existingEnrollment ?? loadOrCreateEnrollment().secret;
   if (!existingEnrollment) {
-    console.error(`[${SERVER_NAME}] enrollment secret (enter in the popup once): ${enrollment}`);
+    log.info(`enrollment secret (enter in the popup once): ${enrollment}`);
   }
 
   // 2) ensure daemon is up. Desktop/stdio clients default to self-managed
@@ -490,7 +491,7 @@ async function main(): Promise<void> {
   const state = await daemonState();
   if (state !== 'up') {
     if (CONNECT_ONLY_DAEMON) {
-      console.error(`[${SERVER_NAME}] daemon mode=connect; waiting for managed daemon`);
+      log.info('daemon mode=connect; waiting for managed daemon');
       await waitForDaemon();
     } else {
       // A held lock means another client already started one: wait for it
@@ -525,7 +526,7 @@ async function main(): Promise<void> {
     waitForDaemon,
     connectOnly: CONNECT_ONLY_DAEMON,
     daemonLog: DAEMON_LOG_FILE,
-    log: (line) => console.error(`[${SERVER_NAME}] ${line}`),
+    log: (line) => log.info(line),
   });
   client.onClose(() => { void reconnector.reconnect(); });
   client.awaitReconnect = (timeoutMs) => reconnector.waitFor(timeoutMs);
@@ -536,17 +537,17 @@ async function main(): Promise<void> {
   // Registration logic lives in register-tools.ts so the wiring is covered by
   // tests/register-tools.test.ts (this main() needs a live daemon).
   registerTools(server, client);
-  console.error(`[${SERVER_NAME}] ${allTools.length} tools visible`);
+  log.info(`${allTools.length} tools visible`);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`[${SERVER_NAME}] MCP server connected (via daemon as ${client.sessionId ?? '?'})`);
+  log.info(`MCP server connected (via daemon as ${client.sessionId ?? '?'})`);
 
   process.on('SIGINT', () => { client.close(); process.exit(0); });
   process.on('SIGTERM', () => { client.close(); process.exit(0); });
 }
 
 main().catch((err) => {
-  console.error(`[${SERVER_NAME}] Fatal:`, err);
+  log.error('Fatal:', err);
   process.exit(1);
 });

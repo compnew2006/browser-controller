@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { ipcAnswers } from './ipc-probe.js';
 import { pidAlive, reclaimLock, type LockIdentity, type ReclaimHooks } from './lock-file.js';
+import { ERROR_CODES, formatError } from './core/error-codes.js';
 
 /**
  * App version, single-sourced from package.json (extension/manifest.json and
@@ -297,7 +298,7 @@ const MEMORY_ADMIN_ORIGIN_COMMANDS: ReadonlySet<string> = new Set(['exclude', 'i
  * refused where it has no meaning. The origin is returned as given: canonicalizing is the store's job.
  */
 export function parseMemoryAdminRequest(raw: unknown): { ok: true; request: MemoryAdminRequest } | { ok: false; error: string } {
-  const bad = (message: string) => ({ ok: false as const, error: `INVALID_ARGUMENT: ${message}` });
+  const bad = (message: string) => ({ ok: false as const, error: formatError(ERROR_CODES.INVALID_ARGUMENT, message) });
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return bad('memory-admin request must be an object');
   const msg = raw as Record<string, unknown>;
   for (const key of Object.keys(msg)) {

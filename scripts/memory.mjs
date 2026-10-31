@@ -29,7 +29,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const { buildIpcHello, MEMORY_ADMIN_CAPABILITY } = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'protocol.js')).href);
+const { buildIpcHello, MEMORY_ADMIN_CAPABILITY } = await import(pathToFileURL(path.join(ROOT, 'mcp-server', 'dist', 'protocol', 'index.js')).href);
 
 const STATE_DIR = process.env.BC_STATE_DIR || path.join(os.homedir(), '.browser-controller');
 const SOCKET = process.platform === 'win32' ? '\\\\.\\pipe\\browser-controller' : path.join(STATE_DIR, 'daemon.sock');

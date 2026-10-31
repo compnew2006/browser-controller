@@ -58,6 +58,9 @@ export async function probeSitePage() {
   const PROBE_DEADLINE_MS = 900;
   const PROBE_MARGIN_MS = 120;
   const SHAPE_BUDGET_MS = 250;
+  /** The scan is bounded, so a page with thousands of forms cannot cost the probe its budget. */
+  const MAX_FORMS_SCANNED = 50;
+  const MAX_CONTROLS_SCANNED = 200;
   // The shape of the form inside the main landmark (specs/007-form-shape-facts). Counts and reviewed words
   // only: no label, no name, no value, no placeholder, no id, no selector. It is measured in the DOM,
   // because a control the snapshot never shows cannot be counted from the snapshot at all.
@@ -115,12 +118,29 @@ export async function probeSitePage() {
       }
       try { return element.getClientRects().length === 0; } catch { return false; }
     };
-    const main = document.querySelector('main, [role="main"]');
-    if (!main) return null;
+    const isLandmark = (element) => element.tagName === 'MAIN' || element.getAttribute('role') === 'main';
+    // D-05: a form's landmark is its nearest landmark ancestor, so a form inside a nested landmark belongs
+    // to that one. A form outside every landmark is not measured.
+    const nearestLandmark = (element) => {
+      let node = element.parentElement;
+      while (node) {
+        if (isLandmark(node)) return node;
+        node = node.parentElement;
+      }
+      return null;
+    };
+    // D-07: the form with the most fillable fields wins; a tie goes to the form that comes first in the
+    // document. The scan is bounded so that a huge page cannot cost the probe its budget (R-09).
     let fields = [];
-    for (const form of main.querySelectorAll('form')) {
+    const forms = document.querySelectorAll('form');
+    const scanned = Math.min(forms.length, MAX_FORMS_SCANNED);
+    for (let index = 0; index < scanned; index += 1) {
+      const form = forms[index];
+      if (performance.now() > deadline) return null;
+      if (!nearestLandmark(form)) continue;
       const candidates = [];
       for (const element of form.querySelectorAll('input, textarea, select, [contenteditable]')) {
+        if (candidates.length >= MAX_CONTROLS_SCANNED) break;
         if (isFillable(element)) candidates.push(element);
       }
       if (candidates.length > fields.length) fields = candidates;

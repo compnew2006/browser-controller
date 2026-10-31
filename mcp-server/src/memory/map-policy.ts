@@ -9,7 +9,8 @@ import { atomicWriteFile } from './atomic-file.js';
 import { MAP_LIMITS } from './map-allowlist.js';
 import { canonicalPrefix, pathUnderPrefix, samePath } from './map-text.js';
 import { MemoryPolicyError, canonicalOrigin, type MemoryPolicy } from './policy.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 export const MAP_POLICY_SCHEMA_VERSION = 1;
 export const MAX_MAP_PROFILES = 16;
@@ -47,7 +48,7 @@ export function defaultMapPolicy(): MapPolicy {
 }
 
 type Mode = 'read' | 'write';
-const invalid = (mode: Mode, message: string): MemoryPolicyError => new MemoryPolicyError(mode === 'read' ? 'MEMORY_CORRUPT' : 'INVALID_ARGUMENT', message);
+const invalid = (mode: Mode, message: string): MemoryPolicyError => new MemoryPolicyError(mode === 'read' ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.INVALID_ARGUMENT, message);
 const isTime = (value: unknown): value is string => typeof value === 'string' && ISO_UTC.test(value) && Number.isFinite(Date.parse(value));
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const validProfile = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 200 && !UNSAFE_KEYS.has(value);
@@ -62,7 +63,7 @@ function validateMapPolicy(raw: unknown, mode: Mode): MapPolicy {
 
   if (!isRecord(raw.profiles)) throw invalid(mode, 'map policy profiles is not an object');
   const profileEntries = Object.entries(raw.profiles);
-  if (profileEntries.length > MAX_MAP_PROFILES) throw new MemoryPolicyError(mode === 'read' ? 'MEMORY_CORRUPT' : 'MEMORY_FULL', `at most ${MAX_MAP_PROFILES} profiles`);
+  if (profileEntries.length > MAX_MAP_PROFILES) throw new MemoryPolicyError(mode === 'read' ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.MEMORY_FULL, `at most ${MAX_MAP_PROFILES} profiles`);
   const profiles: MapPolicy['profiles'] = {};
   for (const [id, state] of profileEntries) {
     if (!validProfile(id) || !isRecord(state)) throw invalid(mode, 'map policy holds an invalid profile');
@@ -75,7 +76,7 @@ function validateMapPolicy(raw: unknown, mode: Mode): MapPolicy {
   const excludedPaths: MapPolicy['excludedPaths'] = {};
   for (const [origin, prefixes] of Object.entries(raw.excludedPaths)) {
     if (canonicalOrigin(origin) !== origin || !Array.isArray(prefixes)) throw invalid(mode, 'map policy excludedPaths is invalid');
-    if (prefixes.length > MAP_LIMITS.excludedPrefixesPerOrigin) throw new MemoryPolicyError(mode === 'read' ? 'MEMORY_CORRUPT' : 'MEMORY_FULL', 'too many excluded prefixes');
+    if (prefixes.length > MAP_LIMITS.excludedPrefixesPerOrigin) throw new MemoryPolicyError(mode === 'read' ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.MEMORY_FULL, 'too many excluded prefixes');
     const unique = new Set<string>();
     for (const prefix of prefixes) {
       if (canonicalPrefix(prefix) !== prefix || unique.has(prefix)) throw invalid(mode, 'map policy holds an invalid prefix');
@@ -117,17 +118,17 @@ export function readMapPolicy(memoryDir: string): MapPolicy {
     fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return defaultMapPolicy();
-    throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'map policy file could not be read');
+    throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map policy file could not be read');
   }
   try {
     const st = fs.fstatSync(fd);
-    if (!st.isFile()) throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'map policy file is not a regular file');
+    if (!st.isFile()) throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map policy file is not a regular file');
     if (process.platform !== 'win32') {
       const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-      if (uid !== undefined && st.uid !== uid) throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'map policy file is owned by another user');
-      if ((st.mode & 0o022) !== 0) throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'map policy file can be written by other users');
+      if (uid !== undefined && st.uid !== uid) throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map policy file is owned by another user');
+      if ((st.mode & 0o022) !== 0) throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map policy file can be written by other users');
     }
-    if (st.size > MAX_POLICY_BYTES) throw new MemoryPolicyError('MEMORY_CORRUPT', 'map policy file is too large');
+    if (st.size > MAX_POLICY_BYTES) throw new MemoryPolicyError(ERROR_CODES.MEMORY_CORRUPT, 'map policy file is too large');
     const key = `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`;
     const hit = cache.get(file);
     if (hit && hit.key === key) return structuredClone(hit.policy);
@@ -135,7 +136,7 @@ export function readMapPolicy(memoryDir: string): MapPolicy {
     try {
       parsed = JSON.parse(fs.readFileSync(fd, 'utf8'));
     } catch {
-      throw new MemoryPolicyError('MEMORY_CORRUPT', 'map policy file is not valid JSON');
+      throw new MemoryPolicyError(ERROR_CODES.MEMORY_CORRUPT, 'map policy file is not valid JSON');
     }
     const policy = validateMapPolicy(parsed, 'read');
     cache.set(file, { key, policy: structuredClone(policy) });
@@ -150,7 +151,7 @@ export async function writeMapPolicy(memoryDir: string, policy: MapPolicy): Prom
   try {
     await atomicWriteFile(memoryDir, FILE, data);
   } catch {
-    throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'map policy file could not be written');
+    throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map policy file could not be written');
   }
 }
 
@@ -158,7 +159,7 @@ export function quarantineMapPolicy(memoryDir: string, now: number): void {
   try {
     fs.renameSync(path.join(memoryDir, FILE), path.join(memoryDir, `${FILE}.corrupt-${now}`));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new MemoryPolicyError('MEMORY_UNAVAILABLE', 'map policy file could not be set aside');
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new MemoryPolicyError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map policy file could not be set aside');
   }
 }
 
@@ -171,20 +172,20 @@ export function countQuarantinedMapPolicies(memoryDir: string): number {
 }
 
 function requireProfile(profile: string): string {
-  if (!validProfile(profile) || profile === 'default') throw new MemoryPolicyError('INVALID_ARGUMENT', 'a verified browser profile is required');
+  if (!validProfile(profile) || profile === 'default') throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'a verified browser profile is required');
   return profile;
 }
 
 function requireOrigin(origin: string): string {
   const canonical = canonicalOrigin(origin);
-  if (!canonical) throw new MemoryPolicyError('INVALID_ARGUMENT', 'origin must be an http or https origin');
+  if (!canonical) throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'origin must be an http or https origin');
   return canonical;
 }
 
 export function enableMapProfile(policy: MapPolicy, profile: string, now: string): MapPolicy {
   const id = requireProfile(profile);
   const current = policy.profiles[id];
-  if (!current && Object.keys(policy.profiles).length >= MAX_MAP_PROFILES) throw new MemoryPolicyError('MEMORY_FULL', `the map can be enabled for at most ${MAX_MAP_PROFILES} profiles`);
+  if (!current && Object.keys(policy.profiles).length >= MAX_MAP_PROFILES) throw new MemoryPolicyError(ERROR_CODES.MEMORY_FULL, `the map can be enabled for at most ${MAX_MAP_PROFILES} profiles`);
   const enabledAt = current?.enabled && current.enabledAt ? current.enabledAt : now;
   return { ...policy, profiles: { ...policy.profiles, [id]: { enabled: true, enabledAt } }, updatedAt: now };
 }
@@ -199,17 +200,17 @@ export function disableMapProfile(policy: MapPolicy, profile: string, now: strin
 export function excludeMapPath(policy: MapPolicy, origin: string, prefix: string, now: string): MapPolicy {
   const key = requireOrigin(origin);
   const canonical = canonicalPrefix(prefix);
-  if (!canonical) throw new MemoryPolicyError('INVALID_ARGUMENT', 'path must start with "/", must not be "/", and must have no query or fragment');
+  if (!canonical) throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'path must start with "/", must not be "/", and must have no query or fragment');
   const list = policy.excludedPaths[key] ?? [];
   if (list.some((entry) => entry.toLowerCase() === canonical.toLowerCase())) return { ...policy, updatedAt: now };
-  if (list.length >= MAP_LIMITS.excludedPrefixesPerOrigin) throw new MemoryPolicyError('MEMORY_FULL', `at most ${MAP_LIMITS.excludedPrefixesPerOrigin} paths can be excluded per site`);
+  if (list.length >= MAP_LIMITS.excludedPrefixesPerOrigin) throw new MemoryPolicyError(ERROR_CODES.MEMORY_FULL, `at most ${MAP_LIMITS.excludedPrefixesPerOrigin} paths can be excluded per site`);
   return { ...policy, excludedPaths: { ...policy.excludedPaths, [key]: [...list, canonical] }, updatedAt: now };
 }
 
 export function includeMapPath(policy: MapPolicy, origin: string, prefix: string, now: string): MapPolicy {
   const key = requireOrigin(origin);
   const canonical = canonicalPrefix(prefix);
-  if (!canonical) throw new MemoryPolicyError('INVALID_ARGUMENT', 'path must start with "/", must not be "/", and must have no query or fragment');
+  if (!canonical) throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'path must start with "/", must not be "/", and must have no query or fragment');
   const list = (policy.excludedPaths[key] ?? []).filter((entry) => entry.toLowerCase() !== canonical.toLowerCase());
   const excludedPaths = { ...policy.excludedPaths };
   if (list.length) excludedPaths[key] = list;

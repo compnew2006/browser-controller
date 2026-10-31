@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { MemoryAdminRequest, MemoryAdminResult, MemoryAdminStatus } from '../daemon-config.js';
 import { OBSERVABLE_TOOLS } from '../bridge-frames.js';
 import type { MemoryObservation } from '../vault/daemon-routing.js';
-import { SITE_CONTEXT_CAPABILITY } from '../protocol.js';
+import { SITE_CONTEXT_CAPABILITY } from '../protocol/capabilities.js';
 import { adminFromWire, errorCode, runAdminCommand, type AdminContext } from './admin.js';
 import { ALLOWLIST, DEFAULT_SHAPE_GATE, shapePath, type CommitMode, type ShapeGate } from './allowlist.js';
 import { collectFacts, extractSnapshotFacts, MAX_CANDIDATES } from './facts.js';
@@ -25,7 +25,8 @@ import { JsonMemoryStore, MemoryStoreError, type MemoryStore, type SiteRecord } 
 import { snapshotRoles } from './tab-state.js';
 import { OutcomeObserver } from './outcome-observer.js';
 import type { MemoryToolContext, MemoryToolPurpose } from './tool-route.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES, formatError, type ErrorCode } from '../core/error-codes.js';
 
 export { extractSnapshotFacts };
 export type { MemoryToolContext };
@@ -147,11 +148,11 @@ function parseToolInput(params: Record<string, unknown>): { tabId: number; kind:
 }
 
 const DROP_ERROR_CODES: Partial<Record<DropReason, string>> = {
-  io_error: 'MEMORY_UNAVAILABLE',
-  timeout: 'MEMORY_UNAVAILABLE',
-  corrupt: 'MEMORY_CORRUPT',
-  capacity: 'MEMORY_FULL',
-  queue_full: 'MEMORY_QUEUE_FULL',
+  io_error: ERROR_CODES.MEMORY_UNAVAILABLE,
+  timeout: ERROR_CODES.MEMORY_UNAVAILABLE,
+  corrupt: ERROR_CODES.MEMORY_CORRUPT,
+  capacity: ERROR_CODES.MEMORY_FULL,
+  queue_full: ERROR_CODES.MEMORY_QUEUE_FULL,
 };
 
 /**
@@ -424,7 +425,7 @@ export class MemoryService {
   private async readSite(origin: string, timeoutMs: number): Promise<SiteRecord | null> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new MemoryStoreError('MEMORY_UNAVAILABLE', 'the store did not answer in time')), timeoutMs);
+      timer = setTimeout(() => reject(new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'the store did not answer in time')), timeoutMs);
       timer.unref?.();
     });
     try {
@@ -441,19 +442,20 @@ export class MemoryService {
    */
   prepareTool(sessionId: string, purpose: MemoryToolPurpose): { connectionId: string | null } | { error: string } {
     try {
-      if (purpose === 'read' && !readPolicy(this.memoryDir).enabled) return { error: 'MEMORY_DISABLED: website memory is off; the owner controls it.' };
+      if (purpose === 'read' && !readPolicy(this.memoryDir).enabled) return { error: formatError(ERROR_CODES.MEMORY_DISABLED, 'website memory is off; the owner controls it.') };
     } catch (error) {
       const code = errorCode(error);
       this.noteError(code);
-      return { error: `${code === 'MEMORY_CORRUPT' ? 'MEMORY_CORRUPT' : 'MEMORY_UNAVAILABLE'}: website memory could not be read.` };
+      const readCode = code === ERROR_CODES.MEMORY_CORRUPT ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.MEMORY_UNAVAILABLE;
+      return { error: formatError(readCode, 'website memory could not be read.') };
     }
     let connection: MemoryConnection;
     try {
       connection = this.deps.connection(sessionId);
     } catch {
-      return purpose === 'read' ? { error: 'MEMORY_UNAVAILABLE: no browser extension is connected for this session.' } : { connectionId: null };
+      return purpose === 'read' ? { error: formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'no browser extension is connected for this session.') } : { connectionId: null };
     }
-    if (purpose === 'read' && !connection.supportsSiteContext) return { error: 'MEMORY_NOT_SUPPORTED: the connected browser extension does not support website memory.' };
+    if (purpose === 'read' && !connection.supportsSiteContext) return { error: formatError(ERROR_CODES.MEMORY_NOT_SUPPORTED, 'the connected browser extension does not support website memory.') };
     return { connectionId: connection.connectionId };
   }
 
@@ -463,11 +465,11 @@ export class MemoryService {
     try {
       connection = this.deps.connection(sessionId);
     } catch {
-      return { error: 'MEMORY_UNAVAILABLE: no browser extension is connected for this session.' };
+      return { error: formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'no browser extension is connected for this session.') };
     }
-    if (connection.browserId === 'default' || connection.ambiguous) return { error: "MEMORY_SCOPE_UNKNOWN: this session's browser profile could not be verified, so nothing was changed." };
+    if (connection.browserId === 'default' || connection.ambiguous) return { error: formatError(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, "this session's browser profile could not be verified, so nothing was changed.") };
     if (purpose === 'read' && this.deps.vault.memoryEligibility(connection.browserId) !== 'clear') {
-      return { error: "MEMORY_SCOPE_UNKNOWN: this session's browser profile is protected by the credential vault." };
+      return { error: formatError(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, "this session's browser profile is protected by the credential vault.") };
     }
     return { profile: connection.browserId, label: connection.browserLabel || connection.browserId };
   }
@@ -478,31 +480,31 @@ export class MemoryService {
    * `CODE: message`; none names a policy command or carries page content (R-12).
    */
   async handleTool(tool: string, params: Record<string, unknown>, sessionId: string, context: MemoryToolContext): Promise<MemoryToolResult> {
-    const fail = (code: string, message: string): MemoryToolResult => ({ success: false, error: `${code}: ${message}` });
+    const fail = (code: ErrorCode, message: string): MemoryToolResult => ({ success: false, error: formatError(code, message) });
     try {
       if (tool === 'browser_site_map') return await this.map.lookup(params, sessionId, (tabId) => this.toolDecision(sessionId, context, tabId));
-      if (tool !== 'browser_memory') return fail('INVALID_ARGUMENT', `unknown memory tool ${tool}`);
+      if (tool !== 'browser_memory') return fail(ERROR_CODES.INVALID_ARGUMENT, `unknown memory tool ${tool}`);
       const input = parseToolInput(params);
-      if (typeof input === 'string') return fail('INVALID_ARGUMENT', input);
+      if (typeof input === 'string') return fail(ERROR_CODES.INVALID_ARGUMENT, input);
 
-      if (!readPolicy(this.memoryDir).enabled) return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
+      if (!readPolicy(this.memoryDir).enabled) return fail(ERROR_CODES.MEMORY_DISABLED, 'website memory is off; the owner controls it.');
       // The connection now, after the context read; the one before it came from prepareTool (R-04).
-      if (!this.deps.connection(sessionId).supportsSiteContext) return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
+      if (!this.deps.connection(sessionId).supportsSiteContext) return fail(ERROR_CODES.MEMORY_NOT_SUPPORTED, 'the connected browser extension does not support website memory.');
       const decision = this.toolDecision(sessionId, context, input.tabId);
       if (!decision.in) {
-        if (decision.outcome === 'disabled') return fail('MEMORY_DISABLED', 'website memory is off; the owner controls it.');
-        if (decision.outcome === 'excluded') return fail('MEMORY_EXCLUDED', 'this site is excluded from website memory.');
-        if (decision.reason === 'no_site_context_capability') return fail('MEMORY_NOT_SUPPORTED', 'the connected browser extension does not support website memory.');
-        return fail('MEMORY_SCOPE_UNKNOWN', "this tab's profile, site or privacy state could not be verified, so no memory is shown.");
+        if (decision.outcome === 'disabled') return fail(ERROR_CODES.MEMORY_DISABLED, 'website memory is off; the owner controls it.');
+        if (decision.outcome === 'excluded') return fail(ERROR_CODES.MEMORY_EXCLUDED, 'this site is excluded from website memory.');
+        if (decision.reason === 'no_site_context_capability') return fail(ERROR_CODES.MEMORY_NOT_SUPPORTED, 'the connected browser extension does not support website memory.');
+        return fail(ERROR_CODES.MEMORY_SCOPE_UNKNOWN, "this tab's profile, site or privacy state could not be verified, so no memory is shown.");
       }
       const site = await this.readSite(decision.scope.origin, this.deps.reminderTimeoutMs ?? REMINDER_TIMEOUT_MS * 4);
       const view = buildMemoryView(decision.scope.origin, site, decision.scope.browserId, input);
       return { success: true, ...view };
     } catch (error) {
-      if (error instanceof MemoryCursorError) return fail('INVALID_ARGUMENT', 'cursor is not valid.');
+      if (error instanceof MemoryCursorError) return fail(ERROR_CODES.INVALID_ARGUMENT, 'cursor is not valid.');
       const code = errorCode(error);
       this.noteError(code);
-      return fail(code === 'MEMORY_CORRUPT' ? 'MEMORY_CORRUPT' : 'MEMORY_UNAVAILABLE', 'website memory could not be read.');
+      return fail(code === ERROR_CODES.MEMORY_CORRUPT ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.MEMORY_UNAVAILABLE, 'website memory could not be read.');
     }
   }
 
@@ -539,7 +541,7 @@ export class MemoryService {
       try {
         current = readPolicy(this.memoryDir);
       } catch (error) {
-        if (!resetCorrupt || !(error instanceof MemoryPolicyError) || error.code !== 'MEMORY_CORRUPT') throw error;
+        if (!resetCorrupt || !(error instanceof MemoryPolicyError) || error.code !== ERROR_CODES.MEMORY_CORRUPT) throw error;
         quarantinePolicy(this.memoryDir, this.now());
         current = defaultPolicy();
       }

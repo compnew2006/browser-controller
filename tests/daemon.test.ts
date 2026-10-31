@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildIpcHello } from '../mcp-server/src/protocol.js';
+import { buildIpcHello } from '../mcp-server/src/protocol/index.js';
 import { authenticatedHttpGet } from '../mcp-server/src/bridge-auth.js';
 
 /**

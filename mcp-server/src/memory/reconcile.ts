@@ -10,10 +10,13 @@ import {
   type SiteFact,
   type SiteRecord,
 } from './store.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 const MAX_PATH = 120;
 /** The hidden-control counter never grows past the reviewed cap (007). */
 const MAX_HIDDEN_COUNT = ALLOWLIST.formShapeLimits.occurrenceCountMax;
+/** At most 8 shape facts per site (007, FR-004). */
+const MAX_SHAPE_FACTS = ALLOWLIST.formShapeLimits.shapeFactsPerSite;
 const UNSAFE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 
 /** A verification keeps a path only when every segment is on the reviewed path allowlist; the stored form is the normalized one. */
@@ -54,17 +57,20 @@ export function earlier(a: string, b: string): string {
  *   the operations it stands for one by one, except when its earliest
  *   observation predates the value it replaces: then the new value's
  *   `firstObserved` is the replaced value's `lastObserved`.
+ * - A site's shape facts are bounded at eight (007): the freshest shape wins,
+ *   and the rest of the record is still written. The bound never refuses the
+ *   record, because a refused record would lose this origin's other facts too.
  */
 export function applyOp(record: SiteRecord | null, op: CaptureOp, now: string): SiteRecord {
-  if (record && record.origin !== op.origin) throw new MemoryStoreError('INVALID_ARGUMENT', 'operation origin does not match the record');
-  if (UNSAFE_KEYS.has(op.profileId) || op.profileId === '') throw new MemoryStoreError('INVALID_ARGUMENT', 'profile id is invalid');
+  if (record && record.origin !== op.origin) throw new MemoryStoreError(ERROR_CODES.INVALID_ARGUMENT, 'operation origin does not match the record');
+  if (UNSAFE_KEYS.has(op.profileId) || op.profileId === '') throw new MemoryStoreError(ERROR_CODES.INVALID_ARGUMENT, 'profile id is invalid');
   const next: SiteRecord = record
     ? structuredClone(record)
     : { schemaVersion: SITE_SCHEMA_VERSION, origin: op.origin, facts: [], profiles: {}, commitSeq: 0, updatedAt: now };
 
   const profile = (): ProfileSiteState => {
     if (!Object.hasOwn(next.profiles, op.profileId)) {
-      if (Object.keys(next.profiles).length >= MAX_PROFILES) throw new MemoryStoreError('MEMORY_FULL', `a site holds at most ${MAX_PROFILES} profiles`);
+      if (Object.keys(next.profiles).length >= MAX_PROFILES) throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, `a site holds at most ${MAX_PROFILES} profiles`);
       next.profiles[op.profileId] = {};
     }
     return next.profiles[op.profileId];
@@ -92,7 +98,32 @@ export function applyOp(record: SiteRecord | null, op: CaptureOp, now: string): 
       const current = next.facts.find((entry) => entry.factId === candidate.factId);
       let applied = true;
       if (!current) {
-        if (next.facts.length >= MAX_FACTS) throw new MemoryStoreError('MEMORY_FULL', `a site holds at most ${MAX_FACTS} facts`);
+        if (next.facts.length >= MAX_FACTS) throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, `a site holds at most ${MAX_FACTS} facts`);
+        if (candidate.kind === 'ui.form.shape') {
+          // At most 8 shape facts per site (007, FR-004). The bound is applied here, on the one fact that
+          // exceeds it, and not by refusing the record: refusing the record would drop this origin's visits
+          // and its other facts with it, and a site with many form paths would lose every write for good.
+          // The freshest shape wins; a shape strictly older than all eight is not stored. A tie goes to the
+          // shape that was just read, because that is the page the agent is looking at.
+          const shapes = next.facts.filter((entry) => entry.kind === 'ui.form.shape');
+          if (shapes.length >= MAX_SHAPE_FACTS) {
+            const oldest = shapes.reduce((a, b) => (Date.parse(a.lastObserved) <= Date.parse(b.lastObserved) ? a : b));
+            if (Date.parse(op.at) < Date.parse(oldest.lastObserved)) {
+              applied = false;
+            } else {
+              next.facts.splice(next.facts.indexOf(oldest), 1);
+              // A verification belongs to a fact that exists. The evicted shape takes its verifications with
+              // it: left behind, they would grow past the per-profile cap on a site whose forms churn, and
+              // the cap is checked on the whole record.
+              for (const state of Object.values(next.profiles)) {
+                if (state.verifications && Object.hasOwn(state.verifications, oldest.factId)) {
+                  delete state.verifications[oldest.factId];
+                }
+              }
+            }
+          }
+        }
+        if (!applied) continue;
         const created: SiteFact = {
           factId: candidate.factId,
           kind: candidate.kind,

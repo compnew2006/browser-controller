@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EXTENSION_PROTOCOL_CAPABILITIES } from '../mcp-server/src/protocol.js';
+import { EXTENSION_PROTOCOL_CAPABILITIES } from '../mcp-server/src/protocol/index.js';
 import {
   connectFakeExtension,
   connectIpcClient,

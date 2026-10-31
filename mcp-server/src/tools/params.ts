@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { unknownParameterHint } from './types.js';
 import type { ToolDefinition } from './types.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 const MAX_TOOL_ARGUMENT_BYTES = 1_000_000;
 const MAX_TOOL_STRING_CHARS = 200_000;
@@ -120,7 +121,7 @@ export function parseToolParams(tool: ToolDefinition, params: Record<string, unk
       if (err.issues.some((issue) => issue.code === 'unrecognized_keys' && issue.path.length === 0)) {
         problems.push(`${tool.name} takes: ${Object.keys(tool.inputSchema.shape).join(', ')}`);
       }
-      throw new Error(`INVALID_ARGUMENT: ${problems.join('; ')}`, { cause: err });
+      throw new Error(formatError(ERROR_CODES.INVALID_ARGUMENT, problems.join('; ')), { cause: err });
     }
     throw err;
   }

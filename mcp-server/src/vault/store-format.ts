@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { VaultDataSchema, VaultEnvelopeSchema, VAULT_VERSION, type VaultData, type VaultEnvelope } from './types.js';
 import { VaultStorageError, fileError } from './store-errors.js';
+import { ERROR_CODES, type ErrorCode } from '../core/error-codes.js';
 
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
@@ -41,9 +42,9 @@ export function envelopeFor(data: VaultData, namespace: string, key: Buffer): Va
 
 export function dataFromEnvelope(value: unknown, namespace: string, key: Buffer): VaultData {
   const envelopeParsed = VaultEnvelopeSchema.safeParse(value);
-  if (!envelopeParsed.success) throw fileError('VAULT_STORAGE_INVALID', 'encrypted store envelope is invalid');
+  if (!envelopeParsed.success) throw fileError(ERROR_CODES.VAULT_STORAGE_INVALID, 'encrypted store envelope is invalid');
   const envelope = envelopeParsed.data;
-  if (envelope.namespace !== namespace) throw fileError('VAULT_STORAGE_INVALID', 'encrypted store belongs to another browser namespace');
+  if (envelope.namespace !== namespace) throw fileError(ERROR_CODES.VAULT_STORAGE_INVALID, 'encrypted store belongs to another browser namespace');
   try {
     const nonce = Buffer.from(envelope.nonce, 'base64');
     const ciphertext = Buffer.from(envelope.ciphertext, 'base64');
@@ -51,22 +52,22 @@ export function dataFromEnvelope(value: unknown, namespace: string, key: Buffer)
     if (nonce.length !== NONCE_BYTES || nonce.toString('base64') !== envelope.nonce
       || tag.length !== TAG_BYTES || tag.toString('base64') !== envelope.tag
       || ciphertext.toString('base64') !== envelope.ciphertext) {
-      throw fileError('VAULT_STORAGE_INVALID', 'encrypted store envelope encoding is invalid');
+      throw fileError(ERROR_CODES.VAULT_STORAGE_INVALID, 'encrypted store envelope encoding is invalid');
     }
     const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce, { authTagLength: TAG_BYTES });
     decipher.setAAD(Buffer.from(`browser-controller-vault:${VAULT_VERSION}:${namespace}`, 'utf8'));
     decipher.setAuthTag(tag);
     const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
     const parsed = VaultDataSchema.safeParse(JSON.parse(plaintext));
-    if (!parsed.success) throw fileError('VAULT_STORAGE_INVALID', 'decrypted store data is invalid');
+    if (!parsed.success) throw fileError(ERROR_CODES.VAULT_STORAGE_INVALID, 'decrypted store data is invalid');
     return parsed.data;
   } catch (error) {
     if (error instanceof VaultStorageError) throw error;
-    throw fileError('VAULT_STORAGE_INVALID', 'encrypted store authentication failed');
+    throw fileError(ERROR_CODES.VAULT_STORAGE_INVALID, 'encrypted store authentication failed');
   }
 }
 
-export function parseJson(bytes: Buffer, code: string, message: string): unknown {
+export function parseJson(bytes: Buffer, code: ErrorCode, message: string): unknown {
   try { return JSON.parse(bytes.toString('utf8')); }
   catch { throw fileError(code, message); }
 }

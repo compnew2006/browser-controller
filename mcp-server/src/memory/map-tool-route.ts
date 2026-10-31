@@ -1,18 +1,20 @@
 import type { RoutedCallResult } from '../vault/daemon-routing.js';
-import { CONTEXT_ACTION, contextFailure, fail, isRecord, type MemoryToolBridge, type MemoryToolHost } from './tool-route.js';
+import { CONTEXT_ACTION, contextFailure, fail, type MemoryToolBridge, type MemoryToolHost } from './tool-route.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 const CURSOR = /^p\d{1,4}$/u;
 
 /** Validates the agent's arguments; IPC clients other than the MCP server skip the zod schema. */
 function parseArguments(params: Record<string, unknown>): { tabId?: number; origin?: string; query?: string; cursor?: string } | string {
   const unknown = Object.keys(params).filter((key) => !['tabId', 'origin', 'query', 'cursor'].includes(key));
-  if (unknown.length) return 'INVALID_ARGUMENT: browser_site_map takes tabId or origin, query and cursor only';
+  if (unknown.length) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'browser_site_map takes tabId or origin, query and cursor only');
   const { tabId, origin, query, cursor } = params;
-  if ((tabId === undefined) === (origin === undefined)) return 'INVALID_ARGUMENT: give exactly one of tabId and origin';
-  if (tabId !== undefined && (typeof tabId !== 'number' || !Number.isInteger(tabId) || tabId < 0)) return 'INVALID_ARGUMENT: tabId must be a non-negative integer';
-  if (origin !== undefined && (typeof origin !== 'string' || origin.length === 0 || origin.length > 300)) return 'INVALID_ARGUMENT: origin must be a string of at most 300 characters';
-  if (query !== undefined && (typeof query !== 'string' || query.trim().length === 0 || query.length > 100)) return 'INVALID_ARGUMENT: query must be 1-100 characters';
-  if (cursor !== undefined && (typeof cursor !== 'string' || !CURSOR.test(cursor))) return 'INVALID_ARGUMENT: cursor is not valid';
+  if ((tabId === undefined) === (origin === undefined)) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'give exactly one of tabId and origin');
+  if (tabId !== undefined && (typeof tabId !== 'number' || !Number.isInteger(tabId) || tabId < 0)) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'tabId must be a non-negative integer');
+  if (origin !== undefined && (typeof origin !== 'string' || origin.length === 0 || origin.length > 300)) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'origin must be a string of at most 300 characters');
+  if (query !== undefined && (typeof query !== 'string' || query.trim().length === 0 || query.length > 100)) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'query must be 1-100 characters');
+  if (cursor !== undefined && (typeof cursor !== 'string' || !CURSOR.test(cursor))) return formatError(ERROR_CODES.INVALID_ARGUMENT, 'cursor is not valid');
   return {
     ...(typeof tabId === 'number' ? { tabId } : {}),
     ...(typeof origin === 'string' ? { origin } : {}),
@@ -53,10 +55,10 @@ export async function routeSiteMapTool(
   }
   try {
     const answer = await memory.handleTool('browser_site_map', args, sessionId, { siteContext, connectionIdBefore });
-    if (!isRecord(answer)) return fail('MAP_UNAVAILABLE: the site map returned no answer');
-    if (answer.success === false) return fail(typeof answer.error === 'string' ? answer.error : 'MAP_UNAVAILABLE: the site map failed');
+    if (!isRecord(answer)) return fail(formatError(ERROR_CODES.MAP_UNAVAILABLE, 'the site map returned no answer'));
+    if (answer.success === false) return fail(typeof answer.error === 'string' ? answer.error : formatError(ERROR_CODES.MAP_UNAVAILABLE, 'the site map failed'));
     return { success: true, result: await sanitize(answer) };
   } catch {
-    return fail('MAP_UNAVAILABLE: the site map failed');
+    return fail(formatError(ERROR_CODES.MAP_UNAVAILABLE, 'the site map failed'));
   }
 }

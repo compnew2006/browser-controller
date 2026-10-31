@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { controlFact, languageFact, loginFact, searchFact, type CandidateFact } from '../mcp-server/src/memory/allowlist.js';
+import { controlFact, languageFact, loginFact, searchFact, shapeFact, type CandidateFact } from '../mcp-server/src/memory/allowlist.js';
 import { MemoryPolicyError, defaultPolicy, policyPath, writePolicy, type MemoryPolicy } from '../mcp-server/src/memory/policy.js';
 import {
   DROP_REASONS,
@@ -18,6 +18,7 @@ import {
   JsonMemoryStore,
   MemoryStoreError,
   siteFileName,
+  validateSiteRecord,
   type MemoryStore,
   type MemoryStoreStatus,
   type PutSiteOptions,
@@ -709,6 +710,44 @@ describe('applyOp reconciliation (R-10)', () => {
     expect(Object.keys(site.profiles)).toHaveLength(16);
     expect(() => applyOp(site, visit(T1, 'profile-16'), T2)).toThrowError(expect.objectContaining({ code: 'MEMORY_FULL' }));
     expect(() => applyOp(site, visit(T2, 'profile-3'), T2)).not.toThrow();
+  });
+
+  it('bounds a site at eight shape facts, keeps the freshest, and still writes the rest of the record (007)', () => {
+    const paths = ['/login', '/account', '/session', '/profile', '/settings', '/docs', '/search', '/cart'];
+    const shape = (path: string, fields: number) =>
+      fact(shapeFact({ fields, required: 1, types: ['text'], hidden: false }, path));
+    let site = applyOp(null, visit(T1), T1);
+    for (const [index, path] of paths.entries()) {
+      const at = new Date(Date.parse(T1) + (index + 1) * 1_000).toISOString();
+      site = applyOp(site, op({ type: 'facts', facts: [shape(path, 2)], at, tool: 'browser_snapshot', path }), at);
+    }
+    expect(site.facts.filter((entry) => entry.kind === 'ui.form.shape')).toHaveLength(8);
+
+    // The ninth shape replaces the oldest one instead of refusing the record.
+    const at = new Date(Date.parse(T1) + 10_000).toISOString();
+    const ninth = applyOp(site, op({ type: 'facts', facts: [shape('/checkout', 3)], at, tool: 'browser_snapshot', path: '/checkout' }), at);
+    const shapes = ninth.facts.filter((entry) => entry.kind === 'ui.form.shape');
+    expect(shapes).toHaveLength(8);
+    expect(shapes.map((entry) => entry.factId)).toContain('ui.form.shape:/checkout');
+    expect(shapes.map((entry) => entry.factId)).not.toContain('ui.form.shape:/login');
+    // The record is intact: the visit and the other facts are still there, and the site stays writable.
+    expect(ninth.profiles['profile-a'].visit).toEqual({ firstAt: T1, lastAt: T1, count: 1 });
+    expect(() => applyOp(ninth, visit(at), at)).not.toThrow();
+  });
+
+  it('keeps the verifications bounded when a site\'s shapes churn, so the record stays writable (007)', () => {
+    const pool = ['login', 'account', 'session', 'profile', 'settings', 'docs', 'search', 'cart', 'checkout', 'support'];
+    let site = applyOp(null, visit(T1), T1);
+    for (let index = 0; index < 90; index += 1) {
+      const path = `/${pool[Math.floor(index / pool.length)]}/${pool[index % pool.length]}`;
+      const at = new Date(Date.parse(T1) + (index + 1) * 1_000).toISOString();
+      site = applyOp(site, op({ type: 'facts', facts: [fact(shapeFact({ fields: 2, required: 1, types: ['text'], hidden: false }, path))], at, tool: 'browser_snapshot', path }), at);
+    }
+    // Eight shapes and eight verifications: a verification belongs to a fact that exists, so the evicted
+    // shape takes its verifications with it and the per-profile cap cannot be reached on its own.
+    expect(site.facts.filter((entry) => entry.kind === 'ui.form.shape')).toHaveLength(8);
+    expect(Object.keys(site.profiles['profile-a'].verifications ?? {})).toHaveLength(8);
+    expect(() => validateSiteRecord(site, 'write')).not.toThrow();
   });
 });
 

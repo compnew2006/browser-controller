@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildExtensionHello } from '../mcp-server/src/protocol.js';
+import { buildExtensionHello } from '../mcp-server/src/protocol/index.js';
 import { BridgeHttpAuthenticator, newAuthNonce, verifyWebSocketClientProof } from '../mcp-server/src/bridge-auth.js';
 
 /**

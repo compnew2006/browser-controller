@@ -59,17 +59,38 @@ describe('maintenance quality gates', () => {
     expect(files.length).toBeGreaterThan(8);
     const allowedBuiltins = new Set(['node:fs', 'node:fs/promises', 'node:path', 'node:crypto']);
     const allowedSiblings = new Set(['../protocol.js', '../daemon-config.js', '../bridge-frames.js', '../vault/daemon-routing.js']);
+    // `core/` is the neutral layer: it holds what the memory and vault subsystems
+    // share (the type guard, the error-code registry, the JSON store engine), so
+    // both may depend on it. It depends on nobody, which the next gate proves.
+    const allowedCore = /^\.\.\/core\/[a-z0-9-]+\.js$/u;
+    // `protocol/` owns the wire contract: the capability names and the frame
+    // builders. A memory or vault module may ask what the wire offers, but it
+    // must not reach into the tools layer or the transport to find out.
+    const allowedProtocol = /^\.\.\/protocol\/[a-z0-9-]+\.js$/u;
     const banned = /\b(?:net|http|https|http2|dns|dgram|tls|child_process|cluster|worker_threads|ws|undici|node-fetch)\b/u;
     for (const file of files) {
       const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
       const specifiers = [...source.matchAll(/(?:from|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/gu)].map((match) => match[1]);
       for (const specifier of specifiers) {
         if (specifier.startsWith('./')) continue;
-        if (specifier.startsWith('../')) expect(allowedSiblings.has(specifier), `${file} imports ${specifier}`).toBe(true);
+        if (specifier.startsWith('../')) expect(allowedSiblings.has(specifier) || allowedCore.test(specifier) || allowedProtocol.test(specifier), `${file} imports ${specifier}`).toBe(true);
         else expect(allowedBuiltins.has(specifier), `${file} imports ${specifier}`).toBe(true);
         expect(banned.test(specifier.replace(/^node:/u, '')), `${file} imports ${specifier}`).toBe(false);
       }
       expect(source, file).not.toMatch(/\bfetch\s*\(|new\s+WebSocket\b|XMLHttpRequest|\bglobalThis\.fetch\b/u);
+    }
+  });
+
+  it('keeps core/ neutral: it depends on nobody but node builtins and itself', () => {
+    const files = sourceFiles('mcp-server/src/core', '.ts');
+    for (const file of files) {
+      const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+      const specifiers = [...source.matchAll(/(?:from|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/gu)].map((match) => match[1]);
+      for (const specifier of specifiers) {
+        if (specifier.startsWith('node:')) continue;
+        if (specifier.startsWith('./')) continue;
+        expect(specifier.startsWith('../core/'), `${file} imports ${specifier}`).toBe(true);
+      }
     }
   });
 

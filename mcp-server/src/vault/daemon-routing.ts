@@ -1,8 +1,9 @@
 import { VaultService } from './service.js';
-import { isRecord } from './service-common.js';
+import { isRecord } from '../core/guards.js';
 import { isCredentialVaultPath } from './protected-paths.js';
 import { createHash } from 'node:crypto';
 import { OBSERVABLE_TOOLS, withObserve } from '../bridge-frames.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 const INTERNAL_VAULT_TOOL_NAMES = new Set([
   'browser_vault_internal_inspect', 'browser_vault_internal_fill',
@@ -69,7 +70,7 @@ function safeErrorText(value: unknown): string {
   if (isRecord(value) && typeof value.message === 'string') {
     return `${typeof value.code === 'string' ? `${value.code}: ` : ''}${value.message}`.slice(0, 2_000);
   }
-  return 'VAULT_PERMISSION_DENIED: the result could not be safely returned';
+  return formatError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'the result could not be safely returned');
 }
 
 /** Applies profile selection, vault authorization and result scrubbing at the daemon boundary. */
@@ -93,7 +94,7 @@ export async function routeVaultAwareCall(options: RouteOptions): Promise<Routed
       if (tool === 'browser_vault') throw error;
     }
     if (INTERNAL_VAULT_TOOL_NAMES.has(tool) || tool.startsWith('browser_vault_internal_')) {
-      throw new Error('VAULT_PERMISSION_DENIED: private vault actions are daemon-owned');
+      throw new Error(formatError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'private vault actions are daemon-owned'));
     }
 
     let result: unknown;
@@ -135,7 +136,7 @@ async function assertVaultPathsNotUploaded(fields: unknown[]): Promise<void> {
     if (!isRecord(field) || !Array.isArray(field.value)) continue;
     for (const candidate of field.value) {
       if (typeof candidate === 'string' && await isCredentialVaultPath(candidate)) {
-        throw new Error('FILE_NOT_ALLOWED: credential vault files cannot be uploaded.');
+        throw new Error(formatError(ERROR_CODES.FILE_NOT_ALLOWED, 'credential vault files cannot be uploaded.'));
       }
     }
   }

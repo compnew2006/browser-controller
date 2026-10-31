@@ -1,5 +1,6 @@
 import type { ToolHost, ToolResult } from './types.js';
 import { failureResult } from './types.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 /**
  * Which tabs the agent may act on.
@@ -141,7 +142,7 @@ export async function sessionGate(
 ): Promise<ToolResult | null> {
   const policy = getSessionPolicy(host);
   if (policy.access === 'read-only' && MUTATING_TOOLS.has(tool)) {
-    return failureResult(`READ_ONLY: this session is read-only, so ${tool} was not dispatched. Read what you need, then open a write session with browser_tabs {action:"session", access:"full"}.`);
+    return failureResult(formatError(ERROR_CODES.READ_ONLY, `this session is read-only, so ${tool} was not dispatched. Read what you need, then open a write session with browser_tabs {action:"session", access:"full"}.`));
   }
   if (policy.isolation !== 'isolated') return null;
   const tabId = typeof params.tabId === 'number' ? params.tabId : undefined;
@@ -151,7 +152,7 @@ export async function sessionGate(
     // A miss may be a tab the session opened a moment ago: read the list again.
     owned = await ownedTabs(host, true);
     if (!owned.has(tabId)) {
-      return failureResult(`TAB_NOT_OWNED: tab ${tabId} does not belong to this session, so ${tool} was not dispatched. In isolated mode the agent only touches the tabs it opened: open one with browser_navigate, or switch back with browser_tabs {action:"session", isolation:"trusted"}.`);
+      return failureResult(formatError(ERROR_CODES.TAB_NOT_OWNED, `tab ${tabId} does not belong to this session, so ${tool} was not dispatched. In isolated mode the agent only touches the tabs it opened: open one with browser_navigate, or switch back with browser_tabs {action:"session", isolation:"trusted"}.`));
     }
   }
   return null;

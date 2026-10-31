@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
-import { CREDENTIAL_VAULT_CAPABILITY, EXTENSION_PROTOCOL_CAPABILITIES, VAULT_SITE_APPROVAL_CAPABILITY } from '../mcp-server/src/protocol.js';
+import { CREDENTIAL_VAULT_CAPABILITY, EXTENSION_PROTOCOL_CAPABILITIES, VAULT_SITE_APPROVAL_CAPABILITY } from '../mcp-server/src/protocol/index.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
 
 let port = 31_000 + (process.pid % 3_000);

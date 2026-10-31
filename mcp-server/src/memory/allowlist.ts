@@ -7,6 +7,7 @@
  * A stored string must equal an entry here after normalizeText(); anything
  * else is discarded, never truncated or rewritten.
  */
+import { ERROR_CODES } from '../core/error-codes.js';
 
 export const ALLOWLIST = {
   version: 3,
@@ -91,7 +92,7 @@ export const ALLOWLIST = {
   /** How a form commits, as observed from an action. There is no `none`: nothing observed proves a form never commits. */
   commitModes: ['unknown', 'enter', 'button'],
   /** The action failures that raise the hidden-control counter (007). */
-  failureCodes: ['ELEMENT_HIDDEN', 'ELEMENT_COVERED'],
+  failureCodes: [ERROR_CODES.ELEMENT_HIDDEN, ERROR_CODES.ELEMENT_COVERED],
   formShapeLimits: {
     shapeFactsPerSite: 8,
     typesPerShape: 8,

@@ -13,7 +13,7 @@ import {
   buildIpcWelcome,
   validateExtensionCapabilities,
   validateIpcHandshake,
-} from '../mcp-server/src/protocol.js';
+} from '../mcp-server/src/protocol/index.js';
 import { parseMemoryAdminRequest } from '../mcp-server/src/daemon-config.js';
 import { OBSERVABLE_TOOLS, withObserve } from '../mcp-server/src/bridge-frames.js';
 import { VaultService, type VaultBrowserContext, type VaultTransport } from '../mcp-server/src/vault/service.js';

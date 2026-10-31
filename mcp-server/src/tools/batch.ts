@@ -4,6 +4,7 @@ import { tabIdParam, textResult, failureResult, rawResultOf, codedMessageOf } fr
 import { prepareToolParams } from './params.js';
 import { BATCH_BUDGET_MS, BATCH_MAX_DELAY_MS, BATCH_MAX_STEPS, BATCH_MAX_OUTPUT_CHARS, NOT_BATCHABLE, NO_DEFAULT_TAB, TAB_OR_ORIGIN } from './batch-limits.js';
 import { noteOwnedTab, sessionGate } from './session-mode.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 /**
  * Resolve a sibling tool by name. tools/registry.ts installs the map at load;
@@ -226,7 +227,7 @@ function continuedBatchResult(
 ): ToolResult {
   const completed = entries.filter((entry) => entry.status === 'completed').length;
   const first = failures[0];
-  const head = `STEP_FAILED: ${failures.length} step(s) failed, ${completed} completed. First failure — ${first.label}: ${first.message}`;
+  const head = formatError(ERROR_CODES.STEP_FAILED, `${failures.length} step(s) failed, ${completed} completed. First failure — ${first.label}: ${first.message}`);
   const rest = failures.slice(1).map((failure) => `${failure.label}: ${failure.message}`);
   const context = blocksOf(steps, maxChars);
   const cutNote: ToolResult['content'] = context.cut > 0
@@ -290,7 +291,7 @@ export const batchTool: ToolDefinition = {
     for (const [i, step] of actions.entries()) {
       const label = `step ${i + 1}/${actions.length} ${step.tool}`;
       if (Date.now() >= deadline) {
-        const timedOut = { label, message: `TIMEOUT: batch budget used; ${actions.length - i} skipped` };
+        const timedOut = { label, message: formatError(ERROR_CODES.TIMEOUT, `batch budget used; ${actions.length - i} skipped`) };
         return keepGoing
           ? continuedBatchResult(steps, entries, maxChars, [...failures, timedOut])
           : batchResult(steps, entries, maxChars, timedOut);
@@ -299,9 +300,9 @@ export const batchTool: ToolDefinition = {
       let result: ToolResult;
       let notes: string[] = [];
       if (!def) {
-        result = failureResult(`INVALID_ARGUMENT: unknown tool ${step.tool}`);
+        result = failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, `unknown tool ${step.tool}`));
       } else if (NOT_BATCHABLE.has(step.tool)) {
-        result = failureResult(`INVALID_ARGUMENT: ${step.tool} cannot be used inside a batch`);
+        result = failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, `${step.tool} cannot be used inside a batch`));
       } else {
         const stepParams = { ...(step.params ?? {}) };
         const namesOrigin = TAB_OR_ORIGIN.has(def.name) && stepParams.origin !== undefined;
@@ -323,7 +324,7 @@ export const batchTool: ToolDefinition = {
             if (outcome === BUDGET_USED) {
               // A cut write step may have completed in the page: say so, as VAULT_OUTCOME_UNKNOWN does.
               const unknown = def.idempotent === true ? '' : '; outcome unknown, the step may have completed: check the page before retrying';
-              const timedOut = { label, message: `TIMEOUT: batch budget used${unknown}; ${actions.length - i - 1} skipped` };
+              const timedOut = { label, message: formatError(ERROR_CODES.TIMEOUT, `batch budget used${unknown}; ${actions.length - i - 1} skipped`) };
               return keepGoing
                 ? continuedBatchResult(steps, entries, maxChars, [...failures, timedOut])
                 : batchResult(steps, entries, maxChars, timedOut);

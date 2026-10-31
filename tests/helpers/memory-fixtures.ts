@@ -13,7 +13,7 @@ import {
   buildIpcHello,
   EXTENSION_PROTOCOL_CAPABILITIES,
   EXTENSION_PROTOCOL_VERSION,
-} from '../../mcp-server/src/protocol.js';
+} from '../../mcp-server/src/protocol/index.js';
 import { createWebSocketClientProof, newAuthNonce } from '../../mcp-server/src/bridge-auth.js';
 
 /**

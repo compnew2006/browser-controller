@@ -10,7 +10,8 @@ import {
   type FactValue,
 } from './allowlist.js';
 import { canonicalOrigin } from './policy.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 export const SITE_SCHEMA_VERSION = 1;
 export const MAX_FACTS = 64;
@@ -27,7 +28,11 @@ const FACT_KINDS: readonly string[] = ['site.language', 'ui.search', 'ui.login',
 const TOOLS: readonly string[] = ['browser_snapshot', 'browser_navigate'];
 const UNSAFE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 
-export type MemoryStoreErrorCode = 'MEMORY_CORRUPT' | 'MEMORY_FULL' | 'MEMORY_UNAVAILABLE' | 'INVALID_ARGUMENT';
+export type MemoryStoreErrorCode =
+  | typeof ERROR_CODES.MEMORY_CORRUPT
+  | typeof ERROR_CODES.MEMORY_FULL
+  | typeof ERROR_CODES.MEMORY_UNAVAILABLE
+  | typeof ERROR_CODES.INVALID_ARGUMENT;
 
 export class MemoryStoreError extends Error {
   readonly code: MemoryStoreErrorCode;
@@ -86,11 +91,11 @@ export interface SiteRecord {
 type Mode = 'read' | 'write';
 
 function bad(mode: Mode, message: string): MemoryStoreError {
-  return new MemoryStoreError(mode === 'read' ? 'MEMORY_CORRUPT' : 'INVALID_ARGUMENT', message);
+  return new MemoryStoreError(mode === 'read' ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.INVALID_ARGUMENT, message);
 }
 
 function full(mode: Mode, message: string): MemoryStoreError {
-  return new MemoryStoreError(mode === 'read' ? 'MEMORY_CORRUPT' : 'MEMORY_FULL', message);
+  return new MemoryStoreError(mode === 'read' ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.MEMORY_FULL, message);
 }
 
 function isTime(value: unknown): value is string {

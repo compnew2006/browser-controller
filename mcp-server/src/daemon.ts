@@ -18,6 +18,8 @@
  * in its `hello` frame; connections without a valid token are dropped.
  */
 import net from 'node:net';
+import { ERROR_CODES, formatError } from './core/error-codes.js';
+import { createLogger } from './core/logger.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -47,9 +49,9 @@ import {
   buildIpcWelcome,
   buildSessionId,
   validateIpcHandshake,
-} from './protocol.js';
+} from './protocol/index.js';
 import { ExtensionBridge } from './bridge.js';
-import { isKnownWireTool } from './wire-tools.js';
+import { isKnownWireTool } from './protocol/wire-tools.js';
 import { armIpcHelloTimer } from './ipc-hello-timer.js';
 import { VaultService, type VaultTransport } from './vault/service.js';
 import { routeVaultAwareCall } from './vault/daemon-routing.js';
@@ -57,6 +59,7 @@ import { MemoryService } from './memory/service.js';
 import { isMemoryTool, routeMemoryToolCall } from './memory/policy-tool-route.js';
 
 const SERVER_NAME = 'browser-controller-daemon';
+const log = createLogger(SERVER_NAME);
 
 interface IpcClient {
   socket: net.Socket;
@@ -170,12 +173,12 @@ class Daemon {
       this.heartbeatTimer = this.startHeartbeat();
       this.writeDaemonInfo();
 
-      console.error(`[${SERVER_NAME}] listening. WS=${DEFAULT_WS_HOST}:${DEFAULT_WS_PORT} IPC=${IPC_SOCKET_PATH}`);
-      console.error(`[${SERVER_NAME}] auth token at ${TOKEN_FILE}`);
-      console.error(`[${SERVER_NAME}] enrollment secret stored at ${ENROLLMENT_FILE}`);
+      log.info(`listening. WS=${DEFAULT_WS_HOST}:${DEFAULT_WS_PORT} IPC=${IPC_SOCKET_PATH}`);
+      log.info(`auth token at ${TOKEN_FILE}`);
+      log.info(`enrollment secret stored at ${ENROLLMENT_FILE}`);
 
       const shutdown = (sig: string) => {
-        console.error(`[${SERVER_NAME}] ${sig} received, shutting down`);
+        log.info(`${sig} received, shutting down`);
         this.stop();
         process.exit(0);
       };
@@ -202,9 +205,9 @@ class Daemon {
     server.listen(IPC_SOCKET_PATH);
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
-        console.error(`[${SERVER_NAME}] IPC socket in use (${IPC_SOCKET_PATH}). Another daemon running?`);
+        log.error(`IPC socket in use (${IPC_SOCKET_PATH}). Another daemon running?`);
       } else {
-        console.error(`[${SERVER_NAME}] IPC server error:`, err.message);
+        log.error('IPC server error:', err.message);
       }
       process.exit(1);
     });
@@ -226,7 +229,7 @@ class Daemon {
 
     socket.setEncoding('utf8');
     const disarmHelloTimer = armIpcHelloTimer(socket, IPC_HELLO_GRACE_MS, () => {
-      console.error(`[${SERVER_NAME}] IPC socket sent no hello within ${IPC_HELLO_GRACE_MS} ms; closing it`);
+      log.warn(`IPC socket sent no hello within ${IPC_HELLO_GRACE_MS} ms; closing it`);
     });
     // Enable TCP keepalive so the kernel surfaces half-open sockets faster
     // (e.g. IDE killed mid-session). This complements the application-level
@@ -295,11 +298,11 @@ class Daemon {
             if (existing.agentName !== name) continue;
             const stale = existing.missedPongs >= HEARTBEAT_MAX_MISSED;
             if (stale) {
-              console.error(`[${SERVER_NAME}] replacing dead client ${existing.sessionId} (${name}, ${existing.missedPongs} missed pongs)`);
+              log.warn(`replacing dead client ${existing.sessionId} (${name}, ${existing.missedPongs} missed pongs)`);
               existingSocket.destroy();
               this.clients.delete(existingSocket);
             } else {
-              console.error(`[${SERVER_NAME}] co-existing session ${existing.sessionId} (${name}, missedPongs=${existing.missedPongs}) — new connection accepted as ${sessionId}`);
+              log.warn(`co-existing session ${existing.sessionId} (${name}, missedPongs=${existing.missedPongs}) — new connection accepted as ${sessionId}`);
             }
           }
           client = {
@@ -314,7 +317,7 @@ class Daemon {
           };
           this.clients.set(socket, client);
           safeSend(buildIpcWelcome(client.sessionId, { memoryAdmin: true }));
-          console.error(`[${SERVER_NAME}] client connected: ${client.sessionId} (${client.agentName})`);
+          log.info(`client connected: ${client.sessionId} (${client.agentName})`);
           return;
         }
 
@@ -339,7 +342,7 @@ class Daemon {
 
     socket.on('close', () => {
       if (client) {
-        console.error(`[${SERVER_NAME}] client disconnected: ${client.sessionId} (${client.agentName})`);
+        log.info(`client disconnected: ${client.sessionId} (${client.agentName})`);
         // CANCEL this client's in-flight calls (audit C2). Previously this only
         // deleted the tracking entry, leaving the bridge awaiting a WS reply —
         // so a non-idempotent action (click/type) kept running after the agent
@@ -377,7 +380,7 @@ class Daemon {
       for (const [socket, client] of this.clients) {
         client.missedPongs++;
         if (client.missedPongs >= HEARTBEAT_MAX_MISSED) {
-          console.error(`[${SERVER_NAME}] evicting dead client ${client.sessionId} (${client.agentName}) — ${client.missedPongs} missed pongs`);
+          log.warn(`evicting dead client ${client.sessionId} (${client.agentName}) — ${client.missedPongs} missed pongs`);
           socket.destroy();
           continue;
         }
@@ -407,7 +410,7 @@ class Daemon {
   private async routeCall(client: IpcClient, msg: IpcClientMessage & { kind: 'call' }): Promise<void> {
     if (msg.kind !== 'call') return;
     if (!isKnownWireTool(msg.tool)) {
-      this.sendToClient(client, { kind: 'result', id: msg.id, success: false, error: `UNKNOWN_TOOL: ${String(msg.tool).slice(0, 80)}` });
+      this.sendToClient(client, { kind: 'result', id: msg.id, success: false, error: formatError(ERROR_CODES.UNKNOWN_TOOL, String(msg.tool).slice(0, 80)) });
       return;
     }
 
@@ -428,7 +431,7 @@ class Daemon {
           kind: 'result',
           id: msg.id,
           success: false,
-          error: `RATE_LIMITED: Rate limit exceeded (${RATE_LIMIT_PER_MIN} calls/min). Retry in ~${retryInSec}s.`,
+          error: formatError(ERROR_CODES.RATE_LIMITED, `Rate limit exceeded (${RATE_LIMIT_PER_MIN} calls/min). Retry in ~${retryInSec}s.`),
         });
         return;
       }
@@ -472,7 +475,7 @@ class Daemon {
         kind: 'result',
         id: msg.id,
         success: false,
-        error: 'VAULT_PERMISSION_DENIED: the result could not be safely returned',
+        error: formatError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'the result could not be safely returned'),
       });
     } finally {
       client.pending.delete(msg.id);
@@ -508,7 +511,7 @@ class Daemon {
       if (!victim) return { ok: false, error: 'session not found' };
       // destroy() fires `close`, which runs the existing cleanup (fail in-flight
       // calls, delete from the map) — no duplicated teardown.
-      console.error(`[${SERVER_NAME}] /kill evicting ${victim.sessionId} (${victim.agentName}) by popup request`);
+      log.warn(`/kill evicting ${victim.sessionId} (${victim.agentName}) by popup request`);
       victim.socket.destroy();
       return { ok: true, killed: sid };
     }
@@ -586,10 +589,10 @@ main().catch((err) => {
   // first lose the lock. That is the normal end of a start race, not a
   // failure: one line, exit 0, and the clients connect to the winner.
   if (err instanceof DaemonLockHeldError) {
-    console.error(`[${SERVER_NAME}] ${err.message}; this daemon exits and clients use that one`);
+    log.info(`${err.message}; this daemon exits and clients use that one`);
     process.exit(0);
   }
-  console.error(`[${SERVER_NAME}] Fatal:`, err);
+  log.error('Fatal:', err);
   process.exit(1);
 });
 

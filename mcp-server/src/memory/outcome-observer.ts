@@ -12,12 +12,12 @@
  * Both need the tab cache, which lives here rather than in the service, so that the service keeps its size.
  */
 import { ALLOWLIST, type CommitMode } from './allowlist.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
 import { readPolicy } from './policy.js';
 import { decideScope } from './scope.js';
 import { TabStateCache } from './tab-state.js';
 import type { MemoryQueue } from './queue.js';
-import { SITE_CONTEXT_CAPABILITY } from '../protocol.js';
+import { SITE_CONTEXT_CAPABILITY } from '../protocol/capabilities.js';
 
 /** The fields of a browser outcome this module reads. */
 export interface ObservedOutcome {

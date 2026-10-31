@@ -28,7 +28,7 @@ import {
   validateExtensionHelloAck,
   validateIpcHandshake,
   validateProtocolVersion,
-} from '../mcp-server/src/protocol.js';
+} from '../mcp-server/src/protocol/index.js';
 import {
   EXTENSION_PROTOCOL_VERSION as BROWSER_PROTOCOL_VERSION,
   EXTENSION_PROTOCOL_CAPABILITIES as BROWSER_CAPABILITIES,

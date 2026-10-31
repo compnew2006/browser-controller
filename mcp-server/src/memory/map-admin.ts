@@ -13,6 +13,7 @@ import { mapErrorCode, type MapService } from './map-service.js';
 import { canonicalPagePath, canonicalPrefix } from './map-text.js';
 import { MemoryPolicyError, canonicalOrigin } from './policy.js';
 import { MemoryStoreError } from './site-record.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 /**
  * Profiles that may hold maps: the policy's entries (disable keeps them) and the profiles of the stored records,
@@ -45,19 +46,19 @@ export async function deleteMapsWithMemory(map: MapService, key: string): Promis
 
 function requireOrigin(value: string | undefined): string {
   const origin = value === undefined ? null : canonicalOrigin(value);
-  if (!origin) throw new MemoryPolicyError('INVALID_ARGUMENT', 'origin must be an http or https origin');
+  if (!origin) throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'origin must be an http or https origin');
   return origin;
 }
 
 function requirePagePath(value: string | undefined): string {
   const pagePath = canonicalPagePath(value);
-  if (!pagePath) throw new MemoryPolicyError('INVALID_ARGUMENT', 'path must start with "/" and must have no query or fragment');
+  if (!pagePath) throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'path must start with "/" and must have no query or fragment');
   return pagePath;
 }
 
 function requirePrefix(value: string | undefined): string {
   const prefix = canonicalPrefix(value);
-  if (!prefix) throw new MemoryPolicyError('INVALID_ARGUMENT', 'path must start with "/", must not be "/", and must have no query or fragment');
+  if (!prefix) throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'path must start with "/", must not be "/", and must have no query or fragment');
   return prefix;
 }
 
@@ -115,7 +116,7 @@ async function sanitizeMaps(map: MapService, files: ReadonlyArray<{ profile: str
   for (const { profile, origin } of files) {
     const record = await map.store.getMap(profile, origin, { afterWrites: true });
     if (record && map.applyPolicy(record)) {
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'the change is saved and lookups no longer show the entries, but the map file could not be rewritten yet; run the command again');
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'the change is saved and lookups no longer show the entries, but the map file could not be rewritten yet; run the command again');
     }
   }
 }
@@ -191,7 +192,7 @@ async function inspect(map: MapService, request: MapAdminRequest): Promise<MapRe
         records.push(record);
       }
     } catch (error) {
-      if (!(error instanceof MemoryStoreError) || error.code !== 'MEMORY_CORRUPT') throw error;
+      if (!(error instanceof MemoryStoreError) || error.code !== ERROR_CODES.MEMORY_CORRUPT) throw error;
     }
   }
   return records;
@@ -247,7 +248,7 @@ export async function runMapAdmin(map: MapService, id: string, request: MapAdmin
   } catch (error) {
     const code = mapErrorCode(error);
     let message = error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.message : 'map operation failed';
-    if (error instanceof MemoryPolicyError && code === 'MEMORY_CORRUPT') message += '; run "map disable" or "map delete --all" to reset the map';
+    if (error instanceof MemoryPolicyError && code === ERROR_CODES.MEMORY_CORRUPT) message += '; run "map disable" or "map delete --all" to reset the map';
     return { kind: 'memory-admin-result', id, success: false, error: `${code}: ${message}` };
   }
 }

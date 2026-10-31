@@ -1,4 +1,5 @@
 import type { ToolHost } from './types.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 /**
  * A short fingerprint of the page's visible text: its length and a hash of it.
@@ -74,7 +75,7 @@ export interface FingerprintRead {
  * all. Every other failure is treated as transient, because the debugger
  * detaching clears on the next call.
  */
-const PERMANENT_READ_FAILURES = ['TAB_NOT_FOUND', 'TAB_REPLACED', 'NO_WINDOW', 'INVALID_ARGUMENT'];
+const PERMANENT_READ_FAILURES: readonly string[] = [ERROR_CODES.TAB_NOT_FOUND, ERROR_CODES.TAB_REPLACED, ERROR_CODES.NO_WINDOW, ERROR_CODES.INVALID_ARGUMENT];
 
 /** The failure's coded name: the text before the first colon of an error payload. */
 function failureCode(raw: unknown): string | undefined {

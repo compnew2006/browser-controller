@@ -13,7 +13,8 @@ import { deleteMapsWithMemory, runMapAdmin } from './map-admin.js';
 import type { MapService } from './map-service.js';
 import type { MemoryQueue } from './queue.js';
 import { MemoryStoreError, type MemoryStore } from './store.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 /** What the owner commands need from the service: the one policy writer, the store, the queue and a clock. */
 export interface AdminContext {
@@ -29,7 +30,7 @@ export interface AdminContext {
 
 
 export function errorCode(error: unknown): string {
-  return error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.code : 'MEMORY_UNAVAILABLE';
+  return error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.code : ERROR_CODES.MEMORY_UNAVAILABLE;
 }
 
 /** Validates an untrusted `memory-admin` line, then runs it. Always answers; never throws. */
@@ -54,11 +55,11 @@ export async function runAdminCommand(context: AdminContext, request: MemoryAdmi
   const done = (extra: Partial<MemoryAdminResult> = {}): MemoryAdminResult => ({ kind: 'memory-admin-result', id, success: true, ...extra });
   try {
     const origin = request.origin === undefined ? null : canonicalOrigin(request.origin);
-    if (request.origin !== undefined && origin === null) throw new MemoryPolicyError('INVALID_ARGUMENT', 'origin must be an http or https origin');
+    if (request.origin !== undefined && origin === null) throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'origin must be an http or https origin');
     const at = context.iso();
     switch (request.command) {
       case 'map':
-        if (!request.map) throw new MemoryPolicyError('INVALID_ARGUMENT', 'map needs its map field');
+        if (!request.map) throw new MemoryPolicyError(ERROR_CODES.INVALID_ARGUMENT, 'map needs its map field');
         return await runMapAdmin(context.map, id, request.map);
       case 'status':
         return done({ status: await context.status() });
@@ -98,7 +99,7 @@ export async function runAdminCommand(context: AdminContext, request: MemoryAdmi
   } catch (error) {
     const code = errorCode(error);
     let message = error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.message : 'memory operation failed';
-    if (error instanceof MemoryPolicyError && error.code === 'MEMORY_CORRUPT') message += '; run "disable" or "delete --all" to reset memory';
+    if (error instanceof MemoryPolicyError && error.code === ERROR_CODES.MEMORY_CORRUPT) message += '; run "disable" or "delete --all" to reset memory';
     return { kind: 'memory-admin-result', id, success: false, error: `${code}: ${message}` };
   }
 }

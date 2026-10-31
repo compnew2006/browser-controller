@@ -1,4 +1,5 @@
 import type { ToolHost } from './types.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 interface BrowserInfo {
   id: string;
@@ -44,7 +45,7 @@ export async function explainNoWindow(host: ToolHost, message: string): Promise<
   for (const browser of browsers) {
     if (await tabCount(host, browser.id) > 0) open.push(`${browser.id} "${browser.label}"`);
   }
-  const head = `NOT_CONNECTED: the selected browser has no open window (Chrome said "${message}").`;
+  const head = formatError(ERROR_CODES.NOT_CONNECTED, `the selected browser has no open window (Chrome said "${message}").`);
   if (open.length > 0) {
     return `${head} A browser with an open window: ${open.join(', ')}. Select it with browser_tabs {browser:"<id>"} and retry.`;
   }

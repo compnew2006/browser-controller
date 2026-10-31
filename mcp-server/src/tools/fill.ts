@@ -7,6 +7,7 @@ import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { tabIdParam, targetParam, forwardHandler, failureResult } from './types.js';
 import { actionHandler, actionOptionsShape, runActionSafety, withExpectedFingerprints } from './action-support.js';
 import { isCredentialVaultPath } from '../vault/protected-paths.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 /**
  * Local paths that are not readable regular files. The extension cannot stat
@@ -106,10 +107,10 @@ const handler = async (
       const expanded = expandHome(item);
       const refusal = await refusalReason(expanded);
       if (refusal === 'vault') {
-        return failureResult('FILE_NOT_ALLOWED: credential vault files are private and cannot be uploaded.');
+        return failureResult(formatError(ERROR_CODES.FILE_NOT_ALLOWED, 'credential vault files are private and cannot be uploaded.'));
       }
       if (refusal === 'hidden') {
-        return failureResult(`FILE_NOT_ALLOWED: ${nameOf(expanded)} is a hidden or credential file; upload only files the user chose.`);
+        return failureResult(formatError(ERROR_CODES.FILE_NOT_ALLOWED, `${nameOf(expanded)} is a hidden or credential file; upload only files the user chose.`));
       }
     }
     const absolute = items.map(expandHome);

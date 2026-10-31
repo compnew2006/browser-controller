@@ -731,4 +731,37 @@ describe('the measured form shape (007)', () => {
       now.mockRestore();
     }
   });
+
+  it('measures the form whose nearest landmark ancestor is the landmark, not the first one (D-05)', async () => {
+    const page = installFakePage('https://example.test/');
+    const outer = page.el('main');
+    const inner = page.el('section', { role: 'main' });
+    outer.append(
+      page.el('form', {}, page.el('input', { type: 'text' })),
+      inner.append(page.el('form', {},
+        page.el('input', { type: 'email' }),
+        page.el('input', { type: 'password' }),
+      )),
+    );
+    page.body.append(outer);
+    const probe = await siteContext.probeSitePage();
+    // The inner landmark's form is the one with the most fillable fields, and it belongs to that landmark.
+    expect(probe.formShape).toEqual({ fields: 2, required: 0, types: ['email', 'password'], hidden: false });
+  });
+
+  it('never measures a form that has no landmark ancestor, however many fields it has (D-05)', async () => {
+    const page = installFakePage('https://example.test/');
+    const main = page.el('main');
+    main.append(page.el('form', {}, page.el('input', { type: 'text' })));
+    page.body.append(
+      main,
+      page.el('form', {},
+        page.el('input', { type: 'text' }),
+        page.el('input', { type: 'email' }),
+        page.el('input', { type: 'password' }),
+      ),
+    );
+    const probe = await siteContext.probeSitePage();
+    expect(probe.formShape).toEqual({ fields: 1, required: 0, types: ['text'], hidden: false });
+  });
 });

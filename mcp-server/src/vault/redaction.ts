@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 /** Shortest secret that also gets encoded forms: the base64 or URL form of a few characters would match ordinary text. */
 export const MIN_ENCODED_SECRET_LENGTH = 8;
@@ -110,13 +111,13 @@ const VAULT_STATUS_VALUES = new Set([
   'deleted', 'not_found', 'restored', 'backed_up', 'user_action_required', 'recovery_required',
 ]);
 const VAULT_PURPOSE_VALUES = new Set(['list', 'fill', 'save', 'unlock', 'approve']);
-const VAULT_CODE_VALUES = new Set([
-  'VAULT_EXTENSION_REQUIRED', 'VAULT_PERMISSION_DENIED', 'VAULT_ORIGIN_MISMATCH',
-  'VAULT_ORIGIN_UNSUPPORTED', 'VAULT_PAGE_UNRESPONSIVE',
-  'VAULT_DOCUMENT_CHANGED', 'VAULT_TARGET_UNSAFE', 'VAULT_CONTEXT_PROTECTED',
-  'VAULT_RECOVERY_REQUIRED', 'VAULT_KEY_MISSING', 'VAULT_STORAGE_INVALID', 'VAULT_LOCKED',
-  'VAULT_BUSY', 'VAULT_USER_ACTION_REQUIRED', 'VAULT_REQUEST_EXPIRED', 'VAULT_DECLINED',
-  'VAULT_OUTCOME_UNKNOWN', 'INVALID_ARGUMENT', 'NOT_CONNECTED',
+const VAULT_CODE_VALUES: ReadonlySet<string> = new Set([
+  ERROR_CODES.VAULT_EXTENSION_REQUIRED, ERROR_CODES.VAULT_PERMISSION_DENIED, ERROR_CODES.VAULT_ORIGIN_MISMATCH,
+  ERROR_CODES.VAULT_ORIGIN_UNSUPPORTED, ERROR_CODES.VAULT_PAGE_UNRESPONSIVE,
+  ERROR_CODES.VAULT_DOCUMENT_CHANGED, ERROR_CODES.VAULT_TARGET_UNSAFE, ERROR_CODES.VAULT_CONTEXT_PROTECTED,
+  ERROR_CODES.VAULT_RECOVERY_REQUIRED, ERROR_CODES.VAULT_KEY_MISSING, ERROR_CODES.VAULT_STORAGE_INVALID, ERROR_CODES.VAULT_LOCKED,
+  ERROR_CODES.VAULT_BUSY, ERROR_CODES.VAULT_USER_ACTION_REQUIRED, ERROR_CODES.VAULT_REQUEST_EXPIRED, ERROR_CODES.VAULT_DECLINED,
+  ERROR_CODES.VAULT_OUTCOME_UNKNOWN, ERROR_CODES.INVALID_ARGUMENT, ERROR_CODES.NOT_CONNECTED,
 ]);
 
 /**
@@ -128,7 +129,7 @@ export class VaultRedactionRegistry {
   private readonly byScope = new Map<string, Map<string, SecretRecord>>();
 
   register(scope: string, value: string, documentId: string): void {
-    if (!scope || !value || !documentId) throw new Error('VAULT_STORAGE_INVALID: redaction context is incomplete');
+    if (!scope || !value || !documentId) throw new Error(formatError(ERROR_CODES.VAULT_STORAGE_INVALID, 'redaction context is incomplete'));
     let records = this.byScope.get(scope);
     if (!records) {
       records = new Map();

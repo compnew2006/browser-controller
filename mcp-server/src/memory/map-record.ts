@@ -7,7 +7,8 @@ import { MAP_LIMITS, type MapArea, type MapRole } from './map-allowlist.js';
 import { looksUnmasked } from './map-text.js';
 import { canonicalOrigin } from './policy.js';
 import { MemoryStoreError } from './site-record.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 export const MAP_SCHEMA_VERSION = 1;
 export const MAX_MAP_PAGES = MAP_LIMITS.pagesPerOrigin;
@@ -20,8 +21,27 @@ export const MAX_MAP_ENTRANCES = 5;
 
 export type ReadContext = 'public' | 'not_public' | 'unknown';
 export const READ_CONTEXTS: readonly ReadContext[] = ['public', 'not_public', 'unknown'];
-export type LocatorFailure = 'NOT_FOUND' | 'AMBIGUOUS' | 'ELEMENT_HIDDEN' | 'ELEMENT_DISABLED' | 'ELEMENT_COVERED' | 'REF_GONE' | 'REF_NOT_FOUND' | 'CLICK_MISSED' | 'MISMATCH';
-export const LOCATOR_FAILURES: readonly LocatorFailure[] = ['NOT_FOUND', 'AMBIGUOUS', 'ELEMENT_HIDDEN', 'ELEMENT_DISABLED', 'ELEMENT_COVERED', 'REF_GONE', 'REF_NOT_FOUND', 'CLICK_MISSED', 'MISMATCH'];
+export type LocatorFailure =
+  | typeof ERROR_CODES.NOT_FOUND
+  | typeof ERROR_CODES.AMBIGUOUS
+  | typeof ERROR_CODES.ELEMENT_HIDDEN
+  | typeof ERROR_CODES.ELEMENT_DISABLED
+  | typeof ERROR_CODES.ELEMENT_COVERED
+  | typeof ERROR_CODES.REF_GONE
+  | typeof ERROR_CODES.REF_NOT_FOUND
+  | typeof ERROR_CODES.CLICK_MISSED
+  | typeof ERROR_CODES.MISMATCH;
+export const LOCATOR_FAILURES: readonly LocatorFailure[] = [
+  ERROR_CODES.NOT_FOUND,
+  ERROR_CODES.AMBIGUOUS,
+  ERROR_CODES.ELEMENT_HIDDEN,
+  ERROR_CODES.ELEMENT_DISABLED,
+  ERROR_CODES.ELEMENT_COVERED,
+  ERROR_CODES.REF_GONE,
+  ERROR_CODES.REF_NOT_FOUND,
+  ERROR_CODES.CLICK_MISSED,
+  ERROR_CODES.MISMATCH,
+];
 export type OpenResultKind = 'same' | 'elsewhere' | 'other_origin' | 'sign_in' | 'not_found' | 'error';
 
 /** Exactly one of path, origin, opens or excluded. */
@@ -134,7 +154,7 @@ const ROLES: readonly string[] = ['link', 'button', 'tab', 'menuitem'];
 const OPEN_KINDS: readonly string[] = ['same', 'elsewhere', 'other_origin', 'sign_in', 'not_found', 'error'];
 const REASONS: readonly string[] = ['root', 'destination', 'hub', 'landing', 'read'];
 
-const bad = (mode: Mode, message: string): MemoryStoreError => new MemoryStoreError(mode === 'read' ? 'MEMORY_CORRUPT' : 'INVALID_ARGUMENT', message);
+const bad = (mode: Mode, message: string): MemoryStoreError => new MemoryStoreError(mode === 'read' ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.INVALID_ARGUMENT, message);
 const isTime = (value: unknown): value is string => typeof value === 'string' && ISO_UTC.test(value) && Number.isFinite(Date.parse(value));
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 

@@ -6,7 +6,7 @@
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { AtomicWriteAborted, atomicWriteFile, type AtomicWriteOptions } from './atomic-file.js';
+import { AtomicWriteAborted, atomicWriteFile, errorCode, isVanished, quarantineName, removeTemps, type AtomicWriteOptions } from '../core/json-store.js';
 import {
   MAX_MAP_BYTES,
   MAX_MAP_FILES_PER_PROFILE,
@@ -17,9 +17,10 @@ import {
   type MapRecord,
 } from './map-record.js';
 import { canonicalOrigin } from './policy.js';
-import { assertPrivate, errorCode, quarantineName, removeTemps } from './record-files.js';
+import { assertPrivate } from './record-files.js';
 import { MemoryStoreError } from './site-record.js';
-import { isRecord } from './guards.js';
+import { isRecord } from '../core/guards.js';
+import { ERROR_CODES } from '../core/error-codes.js';
 
 const DEFAULT_CACHE_ENTRIES = 128;
 const PROFILE_DIR = /^[0-9a-f]{64}$/u;
@@ -64,16 +65,16 @@ export function emptyCounters(): MapCountersFile {
 }
 
 function requireOrigin(origin: string): void {
-  if (typeof origin !== 'string' || canonicalOrigin(origin) !== origin) throw new MemoryStoreError('INVALID_ARGUMENT', 'origin must be a canonical http or https origin');
+  if (typeof origin !== 'string' || canonicalOrigin(origin) !== origin) throw new MemoryStoreError(ERROR_CODES.INVALID_ARGUMENT, 'origin must be a canonical http or https origin');
 }
 
 function requireProfile(profile: string): void {
-  if (typeof profile !== 'string' || profile.length === 0 || profile.length > 200) throw new MemoryStoreError('INVALID_ARGUMENT', 'a browser profile is required');
+  if (typeof profile !== 'string' || profile.length === 0 || profile.length > 200) throw new MemoryStoreError(ERROR_CODES.INVALID_ARGUMENT, 'a browser profile is required');
 }
 
 
 function validateCounters(raw: unknown, mode: 'read' | 'write'): MapCountersFile {
-  const fail = (message: string): MemoryStoreError => new MemoryStoreError(mode === 'read' ? 'MEMORY_CORRUPT' : 'INVALID_ARGUMENT', message);
+  const fail = (message: string): MemoryStoreError => new MemoryStoreError(mode === 'read' ? ERROR_CODES.MEMORY_CORRUPT : ERROR_CODES.INVALID_ARGUMENT, message);
   if (!isRecord(raw) || raw.schemaVersion !== 1 || !isRecord(raw.profiles)) throw fail('map counters are invalid');
   if (Object.keys(raw).some((key) => key !== 'schemaVersion' && key !== 'profiles')) throw fail('map counters have an unknown field');
   const profiles: Record<string, MapCounters> = {};
@@ -171,17 +172,17 @@ export class JsonMapStore {
     return this.serialize(async () => {
       const valid = validateMapRecord(record, 'write');
       await this.ready();
-      if (options.signal?.aborted) throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'write abandoned before it started');
+      if (options.signal?.aborted) throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'write abandoned before it started');
       const data = `${JSON.stringify(valid)}\n`;
       const bytes = Buffer.byteLength(data);
-      if (bytes > this.maxFileBytes) throw new MemoryStoreError('MEMORY_FULL', `a map file is limited to ${this.maxFileBytes} bytes`);
+      if (bytes > this.maxFileBytes) throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, `a map file is limited to ${this.maxFileBytes} bytes`);
       const key = mapFileName(valid.profile, valid.origin);
       const [dir, file] = key.split('/');
       const usage = await this.loadUsage();
       const files = usage.profiles.get(dir) ?? new Map<string, number>();
       const previous = files.get(file);
-      if (previous === undefined && files.size >= this.maxFilesPerProfile) throw new MemoryStoreError('MEMORY_FULL', `at most ${this.maxFilesPerProfile} site maps can be stored per profile`);
-      if (usage.bytes - (previous ?? 0) + bytes > this.maxTotalBytes) throw new MemoryStoreError('MEMORY_FULL', 'the total size limit for site maps was reached');
+      if (previous === undefined && files.size >= this.maxFilesPerProfile) throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, `at most ${this.maxFilesPerProfile} site maps can be stored per profile`);
+      if (usage.bytes - (previous ?? 0) + bytes > this.maxTotalBytes) throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, 'the total size limit for site maps was reached');
       try {
         await atomicWriteFile(path.join(this.mapsDir, dir), file, data, {
           platform: this.options.platform,
@@ -191,10 +192,10 @@ export class JsonMapStore {
           signal: options.signal,
         });
       } catch (error) {
-        if (error instanceof AtomicWriteAborted) throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'write abandoned before the rename');
+        if (error instanceof AtomicWriteAborted) throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'write abandoned before the rename');
         const code = errorCode(error);
-        if (code === 'ENOSPC' || code === 'EDQUOT') throw new MemoryStoreError('MEMORY_FULL', 'no space left for site maps');
-        throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map file could not be written');
+        if (code === 'ENOSPC' || code === 'EDQUOT') throw new MemoryStoreError(ERROR_CODES.MEMORY_FULL, 'no space left for site maps');
+        throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map file could not be written');
       }
       this.epoch += 1;
       usage.bytes += bytes - (previous ?? 0);
@@ -260,7 +261,7 @@ export class JsonMapStore {
           const record = await this.readMapFile(`${dir}/${file}`);
           if (record) maps.push(structuredClone(record));
         } catch (error) {
-          if (error instanceof MemoryStoreError && error.code === 'MEMORY_CORRUPT') continue;
+          if (error instanceof MemoryStoreError && error.code === ERROR_CODES.MEMORY_CORRUPT) continue;
           throw error;
         }
       }
@@ -275,8 +276,8 @@ export class JsonMapStore {
     try {
       st = await fsp.lstat(file);
     } catch (error) {
-      if (errorCode(error) === 'ENOENT') return emptyCounters();
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map counters could not be read');
+      if (isVanished(error, this.platform)) return emptyCounters();
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map counters could not be read');
     }
     assertPrivate(st, 'file', this.platform);
     if (st.size > MAX_COUNTERS_BYTES) return this.quarantineCounters();
@@ -284,9 +285,9 @@ export class JsonMapStore {
     try {
       text = await fsp.readFile(file, 'utf8');
     } catch (error) {
-      if (errorCode(error) === 'ENOENT') return emptyCounters();
+      if (isVanished(error, this.platform)) return emptyCounters();
       // A read error is not corruption: the file stays where it is (as for map files).
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map counters could not be read');
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map counters could not be read');
     }
     try {
       return validateCounters(JSON.parse(text), 'read');
@@ -302,7 +303,7 @@ export class JsonMapStore {
       try {
         await atomicWriteFile(this.memoryDir, COUNTERS_FILE, data, { platform: this.options.platform, rename: this.options.rename, sleep: this.options.sleep });
       } catch {
-        throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map counters could not be written');
+        throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map counters could not be written');
       }
     });
   }
@@ -363,7 +364,7 @@ export class JsonMapStore {
       await fsp.unlink(path.join(dirPath, file));
       removed = true;
     } catch (error) {
-      if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map file could not be deleted');
+      if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map file could not be deleted');
     }
     for (const name of await this.listDir(dirPath)) {
       if (name.startsWith(`${file}.corrupt-`)) await fsp.rm(path.join(dirPath, name), { force: true });
@@ -384,7 +385,7 @@ export class JsonMapStore {
     try {
       await fsp.rm(dirPath, { recursive: true, force: true });
     } catch {
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map directory could not be deleted');
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map directory could not be deleted');
     }
     this.epoch += 1;
     for (const key of [...this.cache.keys()]) if (key.startsWith(`${dir}/`)) this.cache.delete(key);
@@ -401,7 +402,7 @@ export class JsonMapStore {
         try {
           await fsp.unlink(path.join(this.memoryDir, name));
         } catch (error) {
-          if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map counters could not be deleted');
+          if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map counters could not be deleted');
         }
       }
     }
@@ -426,7 +427,7 @@ export class JsonMapStore {
       st = await fsp.lstat(this.mapsDir);
     } catch (error) {
       if (errorCode(error) === 'ENOENT') return;
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map directory could not be read');
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map directory could not be read');
     }
     assertPrivate(st, 'directory', this.platform);
     for (const dir of (await this.listDir(this.mapsDir)).filter((name) => PROFILE_DIR.test(name))) {
@@ -440,7 +441,7 @@ export class JsonMapStore {
       return await fsp.readdir(dir);
     } catch (error) {
       if (errorCode(error) === 'ENOENT') return [];
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map directory could not be read');
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map directory could not be read');
     }
   }
 
@@ -465,7 +466,7 @@ export class JsonMapStore {
             files.set(name, size);
             bytes += size;
           } catch (error) {
-            if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map directory could not be read');
+            if (errorCode(error) !== 'ENOENT') throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map directory could not be read');
           }
         }
         profiles.set(dir, files);
@@ -483,8 +484,8 @@ export class JsonMapStore {
     try {
       st = await fsp.lstat(file);
     } catch (error) {
-      if (errorCode(error) === 'ENOENT') return null;
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map file could not be read');
+      if (isVanished(error, this.platform)) return null;
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map file could not be read');
     }
     assertPrivate(st, 'file', this.platform);
     if (st.size > this.maxFileBytes) return this.quarantine(key, 'map file is too large');
@@ -492,8 +493,8 @@ export class JsonMapStore {
     try {
       text = await fsp.readFile(file, 'utf8');
     } catch (error) {
-      if (errorCode(error) === 'ENOENT') return null;
-      throw new MemoryStoreError('MEMORY_UNAVAILABLE', 'map file could not be read');
+      if (isVanished(error, this.platform)) return null;
+      throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map file could not be read');
     }
     let record: MapRecord;
     try {
@@ -519,7 +520,7 @@ export class JsonMapStore {
       files.delete(file);
     }
     this.cache.delete(key);
-    throw new MemoryStoreError('MEMORY_CORRUPT', reason);
+    throw new MemoryStoreError(ERROR_CODES.MEMORY_CORRUPT, reason);
   }
 
   private async quarantineCounters(): Promise<MapCountersFile> {
