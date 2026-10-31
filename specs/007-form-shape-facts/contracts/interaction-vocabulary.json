@@ -1,0 +1,115 @@
+{
+  "$comment": "Proposed vocabulary for feature 007 (form shape facts). DRAFT for owner review: this file is NOT yet part of the reviewed allowlist and nothing may be stored from it until the owner approves it and its content is moved into specs/003-website-agent-memory/contracts/fact-allowlist.json as version 3. Every stored string must equal an entry here after normalisation (NFKC, lower case, whitespace collapsed to one space, trimmed). Changing this file changes what can be stored: review it like a permission change.",
+  "version": 0,
+  "status": "draft",
+  "appliesTo": "007-form-shape-facts",
+  "clarificationsApplied": {
+    "C1": "the agent reads the shape; no tool changes its behaviour",
+    "C2": "the hidden-control counter is per browser profile, not a shared fact",
+    "C3": "only the form inside the 'main' landmark is measured",
+    "C4": "the commit mode is observed from actions, never inferred from the markup",
+    "C5": "no staleness marker is added",
+    "C6": "the hidden-control counter is not behind 003's anonymity gate; it counts one profile's own failed actions and holds no page content",
+    "C7": "a failed action is attributed through the last observed read of its tab, inside the attribution window",
+    "C8": "the commit mode is a positive observation or nothing: 'unknown', 'enter' or 'button'. There is no 'none'"
+  },
+  "newFactKinds": {
+    "ui.form.shape": {
+      "source": "the extension's siteContext.formShape block for the form inside the 'main' landmark; the commit mode is added by the daemon from an observed write on that path and applied at the next observed read of that path",
+      "identity": "ui.form.shape:<path> - the path is kept only when every segment is on the reviewed pathSegments list; the root path '/' is kept as well, because it names no topic (D-06); a page whose path is not allowlisted gets no shape fact",
+      "value": {
+        "shape": {
+          "fields": "how many fields the measured form has",
+          "required": "how many of them are required",
+          "types": "the field types, each from fieldTypes, each type at most once",
+          "hidden": "whether any field is visually hidden"
+        },
+        "commit": "from commitModes"
+      },
+      "maxProperties": 2
+    }
+  },
+  "profileCounters": {
+    "hidden": {
+      "source": "an action on this origin that failed with a code from failureCodes",
+      "scope": "per origin and per browser profile; never shared between profiles; not behind 003's anonymity gate (C6); the origin comes from the last observed read of the tab, inside the attribution window (C7)",
+      "value": {
+        "count": "how many such failures this profile observed"
+      },
+      "maxProperties": 1
+    }
+  },
+  "fieldTypes": [
+    "text",
+    "password",
+    "email",
+    "search",
+    "tel",
+    "url",
+    "number",
+    "date",
+    "checkbox",
+    "radio",
+    "select",
+    "textarea",
+    "file",
+    "other"
+  ],
+  "commitModes": [
+    "unknown",
+    "enter",
+    "button"
+  ],
+  "failureCodes": [
+    "ELEMENT_HIDDEN",
+    "ELEMENT_COVERED"
+  ],
+  "fixedWords": {
+    "en": {
+      "shape": "form shape",
+      "fields": "fields",
+      "required": "required",
+      "hidden": "hidden field",
+      "commitOnEnter": "commits on Enter",
+      "commitOnButton": "commits on its button",
+      "commitUnknown": "commit unknown",
+      "hiddenControl": "some controls on this site are not visible",
+      "actWith": "act on them with browser_evaluate",
+      "structureOnly": "describes the form's structure, not its content"
+    },
+    "ar": {
+      "shape": "شكل النموذج",
+      "fields": "حقول",
+      "required": "مطلوب",
+      "hidden": "حقل مخفي",
+      "commitOnEnter": "يُرسل بـEnter",
+      "commitOnButton": "يُرسل بزره",
+      "commitUnknown": "طريقة الإرسال غير معروفة",
+      "hiddenControl": "بعض عناصر هذا الموقع غير مرئية",
+      "actWith": "تعامل معها بـbrowser_evaluate",
+      "structureOnly": "يصف بنية النموذج لا محتواه"
+    }
+  },
+  "bounds": {
+    "shapeFactsPerSite": 8,
+    "typesPerShape": 8,
+    "occurrenceCountMax": 1000000,
+    "valueBytes": 200
+  },
+  "notAllowed": [
+    "a field label, a name, a placeholder, a help text or any other string from the page",
+    "a value, a typed character or the content of a field",
+    "the target of a failed action (its selector, its name, its role or its position)",
+    "a path whose segments are not all on the reviewed pathSegments list",
+    "a field type outside fieldTypes: it is counted as 'other' and never guessed",
+    "a commit mode that the markup alone suggested: the mode comes from what an action did",
+    "a commit mode of 'none': a write that moved nothing proves nothing, and the mode stays 'unknown'",
+    "the tool, target, tab or time of the write that produced the commit mode: only the mode is kept",
+    "the purpose of a field, however its count looks (a name, an address, a card number are not distinguished)",
+    "a form outside the 'main' landmark",
+    "a shape fact about a site that 003's anonymity gate excludes, unless the owner approves OD-1 Option 2",
+    "a hidden-control count shared between browser profiles",
+    "a hidden-control count for a failed action on a tab that was never observed: no origin is known for it",
+    "anything about another tab, another profile's tabs, or another origin than the one the action ran on"
+  ]
+}
