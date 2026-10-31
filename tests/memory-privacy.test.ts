@@ -20,6 +20,7 @@ import {
   type IpcClient,
 } from './helpers/memory-fixtures.js';
 import { MemoryService } from '../mcp-server/src/memory/service.js';
+import { freePort } from './helpers/free-port.js';
 import { defaultPolicy, enablePolicy, writePolicy } from '../mcp-server/src/memory/policy.js';
 import { routeMemoryPolicyTool } from '../mcp-server/src/memory/policy-tool-route.js';
 
@@ -78,16 +79,6 @@ let snapshot = '';
 let lang = 'en';
 let lastOutputs: string[];
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as net.AddressInfo;
-      server.close(() => resolve(port));
-    });
-  });
-}
 
 const context = () => ({
   url: `${ORIGIN}/page.html`,

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
 import { createWebSocketDaemonProof, newAuthNonce } from '../mcp-server/src/bridge-auth.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials, TEST_ENROLLMENT_SECRET } from './helpers/bridge-auth.js';
+import { allocatePorts } from './helpers/free-port.js';
 import {
   EXTENSION_PROTOCOL_CAPABILITIES,
   EXTENSION_PROTOCOL_VERSION,
@@ -44,8 +45,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const DIST_DAEMON = path.join(ROOT, 'mcp-server', 'dist', 'daemon.js');
 
-let portCounter = 24_000 + (process.pid % 4_000);
-function nextPort() { return portCounter++; }
+// Ports come from the OS, not from a range picked by arithmetic: a band
+// derived from the pid collides with another test process whose pid lands
+// in the same band, and the daemon refuses to evict the port's owner.
+const PORT_POOL = await allocatePorts(32);
+let portCursor = 0;
+function nextPort(): number {
+  const port = PORT_POOL[portCursor++];
+  if (port === undefined) throw new Error('this test file needs more ports than the pool holds');
+  return port;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
