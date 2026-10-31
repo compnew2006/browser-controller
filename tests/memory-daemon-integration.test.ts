@@ -4,7 +4,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXTENSION_PROTOCOL_CAPABILITIES } from '../mcp-server/src/protocol/index.js';
-import { freePort } from './helpers/free-port.js'; (fix(tests): take daemon test ports from the OS instead of a picked range)
+import { freePort } from './helpers/free-port.js';
 import {
   connectFakeExtension,
   connectIpcClient,
