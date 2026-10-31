@@ -276,7 +276,7 @@ export class JsonMapStore {
     try {
       st = await fsp.lstat(file);
     } catch (error) {
-      if (isVanished(error, this.platform)) return emptyCounters();
+      if (isVanished(error)) return emptyCounters();
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map counters could not be read');
     }
     assertPrivate(st, 'file', this.platform);
@@ -285,7 +285,7 @@ export class JsonMapStore {
     try {
       text = await fsp.readFile(file, 'utf8');
     } catch (error) {
-      if (isVanished(error, this.platform)) return emptyCounters();
+      if (isVanished(error)) return emptyCounters();
       // A read error is not corruption: the file stays where it is (as for map files).
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map counters could not be read');
     }
@@ -484,7 +484,7 @@ export class JsonMapStore {
     try {
       st = await fsp.lstat(file);
     } catch (error) {
-      if (isVanished(error, this.platform)) return null;
+      if (isVanished(error)) return null;
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map file could not be read');
     }
     assertPrivate(st, 'file', this.platform);
@@ -493,7 +493,7 @@ export class JsonMapStore {
     try {
       text = await fsp.readFile(file, 'utf8');
     } catch (error) {
-      if (isVanished(error, this.platform)) return null;
+      if (isVanished(error)) return null;
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map file could not be read');
     }
     let record: MapRecord;

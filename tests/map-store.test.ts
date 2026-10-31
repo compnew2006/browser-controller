@@ -129,6 +129,26 @@ describe('JsonMapStore (T009)', () => {
     expect(fs.existsSync(`${file}.corrupt-7`)).toBe(false);
   });
 
+  it('fails closed on Windows access and sharing errors when existing files cannot be read', async () => {
+    const store = new JsonMapStore(dir.memoryDir, { platform: 'win32' });
+    await store.putMap(withPage('browser-a', A));
+    await store.putCounters({ schemaVersion: 1, profiles: {} });
+    const reader = new JsonMapStore(dir.memoryDir, { platform: 'win32' });
+    await reader.warm();
+    const original = fs.promises.readFile;
+    try {
+      for (const code of ['EACCES', 'EPERM', 'EBUSY']) {
+        fs.promises.readFile = (() => Promise.reject(Object.assign(new Error('denied'), { code }))) as typeof original;
+        await rejectsWith(reader.getCounters(), 'MEMORY_UNAVAILABLE');
+        await rejectsWith(reader.getMap('browser-a', A), 'MEMORY_UNAVAILABLE');
+      }
+    } finally {
+      fs.promises.readFile = original;
+    }
+    expect(await store.getMap('browser-a', A)).not.toBeNull();
+    expect((await store.getCounters()).profiles).toEqual({});
+  });
+
   it('removes temp files a crash left behind', async () => {
     const store = new JsonMapStore(dir.memoryDir);
     await store.putMap(withPage('browser-a', A));

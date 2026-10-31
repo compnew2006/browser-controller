@@ -14,7 +14,7 @@
  * The generated module is mcp-server/src/protocol/tool-names.ts. Regenerate it
  * with:
  *
- *   npm run build && node scripts/generate-tool-names.mjs --out mcp-server/src/protocol/tool-names.ts
+ *   npm run build
  *
  * (--out writes the file itself, so the encoding stays UTF-8 whatever the
  * shell does with a redirect.)

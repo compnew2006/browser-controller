@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -159,6 +159,24 @@ describe('registerTools', () => {
     const coded: ToolHost = { async callTool() { return { success: false, error: 'NOT_FOUND: no element' }; } };
     const second = await setup(coded);
     expect(textOf(await second.client.callTool({ name: 'browser_text', arguments: { tabId: 3 } }))).toBe('NOT_FOUND: no element');
+    const typo: ToolHost = { async callTool() { return { success: false, error: 'TAB_OWNED: wrong code' }; } };
+    const third = await setup(typo);
+    expect(textOf(await third.client.callTool({ name: 'browser_text', arguments: { tabId: 3 } }))).toBe('INTERNAL_ERROR: TAB_OWNED: wrong code');
+  });
+
+  it('logs the registered code of a failed batch step without its message', async () => {
+    const host: ToolHost = { async callTool() { return { success: false, error: 'REF_GONE: private page detail' }; } };
+    const { client } = await setup(host);
+    const logs = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = await client.callTool({ name: 'browser_batch', arguments: { tabId: 3, actions: [{ tool: 'browser_text', params: {} }] } });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('REF_GONE: private page detail');
+      expect(logs.mock.calls.flat().join(' ')).toContain('tool browser_batch failed: REF_GONE');
+      expect(logs.mock.calls.flat().join(' ')).not.toContain('private page detail');
+    } finally {
+      logs.mockRestore();
+    }
   });
 
   it('parseToolParams: an unknown key is INVALID_ARGUMENT: unknown parameter, with the 3.0 name for a 2.x one', () => {

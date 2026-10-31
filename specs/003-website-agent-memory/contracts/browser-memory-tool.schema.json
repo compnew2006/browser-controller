@@ -46,11 +46,10 @@
         "MEMORY_NOT_SUPPORTED",
         "MEMORY_UNAVAILABLE",
         "MEMORY_CORRUPT",
-        "VAULT_CONTEXT_PROTECTED",
         "TAB_LOCKED",
         "INVALID_ARGUMENT"
       ],
-      "description": "Failures are 'CODE: message'. No failure text contains page content or names a policy command."
+      "description": "Failures are 'CODE: message'. No failure text contains page content or names a policy command. A profile the credential vault protects is not a failure code of this tool: the vault's tool guard does not cover the memory tools, and a profile whose scope cannot be established fails closed to MEMORY_SCOPE_UNKNOWN."
     }
   },
   "$ref": "#/$defs/input"
