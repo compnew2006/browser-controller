@@ -6,7 +6,7 @@
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { AtomicWriteAborted, atomicWriteFile, errorCode, isVanished, quarantineName, removeTemps, type AtomicWriteOptions } from '../core/json-store.js';
+import { AtomicWriteAborted, atomicWriteFile, errorCode, isGoneAfterError, quarantineName, removeTemps, type AtomicWriteOptions } from '../core/json-store.js';
 import {
   MAX_MAP_BYTES,
   MAX_MAP_FILES_PER_PROFILE,
@@ -276,7 +276,7 @@ export class JsonMapStore {
     try {
       st = await fsp.lstat(file);
     } catch (error) {
-      if (isVanished(error)) return emptyCounters();
+      if (await isGoneAfterError(error, file, this.platform)) return emptyCounters();
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map counters could not be read');
     }
     assertPrivate(st, 'file', this.platform);
@@ -285,7 +285,7 @@ export class JsonMapStore {
     try {
       text = await fsp.readFile(file, 'utf8');
     } catch (error) {
-      if (isVanished(error)) return emptyCounters();
+      if (await isGoneAfterError(error, file, this.platform)) return emptyCounters();
       // A read error is not corruption: the file stays where it is (as for map files).
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map counters could not be read');
     }
@@ -484,7 +484,7 @@ export class JsonMapStore {
     try {
       st = await fsp.lstat(file);
     } catch (error) {
-      if (isVanished(error)) return null;
+      if (await isGoneAfterError(error, file, this.platform)) return null;
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map file could not be read');
     }
     assertPrivate(st, 'file', this.platform);
@@ -493,7 +493,7 @@ export class JsonMapStore {
     try {
       text = await fsp.readFile(file, 'utf8');
     } catch (error) {
-      if (isVanished(error)) return null;
+      if (await isGoneAfterError(error, file, this.platform)) return null;
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'map file could not be read');
     }
     let record: MapRecord;
