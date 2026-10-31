@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { AtomicWriteAborted, atomicWriteFile, errorCode, isVanished, quarantineName, removeTemps, type AtomicWriteOptions } from '../core/json-store.js';
+import { AtomicWriteAborted, atomicWriteFile, errorCode, isGoneAfterError, quarantineName, removeTemps, type AtomicWriteOptions } from '../core/json-store.js';
 import { canonicalOrigin } from './policy.js';
 import { assertPrivate } from './record-files.js';
 import {
@@ -265,12 +265,12 @@ export class JsonMemoryStore implements MemoryStore {
   }
 
   /**
-   * Is the file simply gone, rather than unreadable? The rule lives in the
-   * shared JSON-store engine (`core/json-store.ts`), because the map store
-   * reads files the same way and must answer the same way.
+   * Did the file go away, or is it still there and merely unreadable? The rule
+   * lives in the shared JSON-store engine (`core/json-store.ts`), because the
+   * map store reads files the same way and must answer the same way.
    */
-  private vanished(error: unknown): boolean {
-    return isVanished(error);
+  private gone(error: unknown, file: string): Promise<boolean> {
+    return isGoneAfterError(error, file, this.platform);
   }
 
   /** Once per store: check the directory is private and remove temp files a crash left behind. A failure is retried on the next call. */
@@ -351,7 +351,7 @@ export class JsonMemoryStore implements MemoryStore {
     try {
       st = await fsp.lstat(file);
     } catch (error) {
-      if (this.vanished(error)) return null;
+      if (await this.gone(error, file)) return null;
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'site file could not be read');
     }
     assertPrivate(st, 'file', this.platform);
@@ -360,7 +360,7 @@ export class JsonMemoryStore implements MemoryStore {
     try {
       text = await fsp.readFile(file, 'utf8');
     } catch (error) {
-      if (this.vanished(error)) return null;
+      if (await this.gone(error, file)) return null;
       throw new MemoryStoreError(ERROR_CODES.MEMORY_UNAVAILABLE, 'site file could not be read');
     }
     let record: SiteRecord;

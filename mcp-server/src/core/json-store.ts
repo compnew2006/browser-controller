@@ -33,12 +33,39 @@ export function errorCode(error: unknown): string | undefined {
 /**
  * Is the file simply gone, rather than unreadable?
  *
- * Permission and sharing errors can also occur while a Windows file is being
- * deleted, but they do not prove it is gone. Treat them as unreadable so a
- * read-modify-write cannot replace data it failed to read.
+ * A permission problem is an error on every platform: EACCES means the file
+ * is there and this process may not read it, which must fail closed. The
+ * ambiguous Windows sharing errors are not decided here, because the error
+ * code alone cannot tell a delete racing a read from a locked file. Use
+ * `isGoneAfterError` where the file's own path is known.
  */
 export function isVanished(error: unknown): boolean {
   return errorCode(error) === 'ENOENT';
+}
+
+/**
+ * Did the file go away, or is it still there and merely unreadable?
+ *
+ * A delete that races a read removes the file under the reader's feet. On
+ * POSIX the read then fails with ENOENT, but on Windows a file that is being
+ * deleted cannot be opened at all: the open fails with EPERM (or EACCES, or
+ * EBUSY) even though the file is on its way out. A permission problem looks
+ * the same from the error code alone, so this asks the filesystem instead of
+ * guessing: if the file is gone now, the record is gone and the read answers
+ * "no record"; if it is still there, it exists and this process may not read
+ * it, which must fail closed.
+ */
+export async function isGoneAfterError(error: unknown, file: string, platform: NodeJS.Platform = process.platform): Promise<boolean> {
+  if (isVanished(error)) return true;
+  if (platform !== 'win32') return false;
+  const code = errorCode(error);
+  if (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY') return false;
+  try {
+    await fsp.lstat(file);
+    return false;
+  } catch (statError) {
+    return isVanished(statError);
+  }
 }
 
 /** A write that was abandoned after its temp file was durable but before the rename. */
