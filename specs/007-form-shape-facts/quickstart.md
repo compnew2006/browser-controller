@@ -69,8 +69,10 @@ The measurement rules (D-01 to D-07) need a page that holds one form inside `mai
 node scripts/memory.mjs inspect https://example.test/login
 ```
 
-4. Trigger a refusal and look again: an action on a control that is drawn invisible fails with `ELEMENT_HIDDEN`, and the counter rises for the acting profile.
-5. Measure the surface: the benchmark that measured the settle change (`bc-bench3-out.json`) is the yardstick. The feature must not slow a read by more than the probe budget it uses, and it must not add a call to a flow that has none.
+**Read the page at a path whose every segment is on the reviewed path list.** A shape fact is stored only under such a path (`shapePath` keeps a path only when every segment is on the list; the root path is kept as well, because it names no topic). The synthetic page's own file name is not on that list, so reading it at `/account/login/form-shape.html` measures the shape and then drops it — the agent sees the other facts and no shape line. Read it at `/account/login` instead. This is the path allowlist working; nothing failed.
+
+4. Trigger a refusal and look again: an action on a control that is drawn invisible fails with `ELEMENT_HIDDEN`, and the counter rises for the acting profile. **Aim the refusal by a selector** (`browser_click` with `#remember`): a hidden control has no visible accessible node, so the role/name locator answers `NOT_FOUND`, and `NOT_FOUND` is not among the failure codes that raise the counter. The selector path resolves the element, finds it hidden, and fails with `ELEMENT_HIDDEN`.
+5. Measure the surface: the benchmark that measured the settle change (`bc-bench3-out.json`) is the yardstick. The feature must not slow a read by more than the probe budget it uses, and it must not add a call to a flow that has none. The shape measurement rides inside the probe that 003 already ran, so no flow gains a call; the measured cost of the whole probe on the synthetic page is 1.4–2.3 ms per read, against a 900 ms probe deadline and a 250 ms shape budget.
 
 ## 6. What the agent should see
 

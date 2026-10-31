@@ -379,6 +379,10 @@ export function makeFakeClock(startMs: number = Date.now()) {
 const PATH_OVERRIDES: Record<string, string> = {
   '/account/login': 'login.html',
   '/login': 'changed.html',
+  // The form shape fixture also needs a path whose every segment is on the reviewed
+  // list, or the shape is measured and then dropped by the store (shapePath keeps a
+  // path only when every segment is on the list). Its file name is not on that list.
+  '/account/signin': 'form-shape.html',
 };
 
 const COOKIE_SETTERS: Record<string, (res: http.ServerResponse) => void> = {
