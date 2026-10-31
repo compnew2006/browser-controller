@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
+import { freePort } from './helpers/free-port.js';
 
 /**
  * WP6 item 3: the default browser is the EARLIEST-seen live browser. A browser
  * keeps its place across reconnects (service-worker recycles), so connecting a
  * second browser, or recycling the other one, never moves new sessions.
  */
-let port = 40_000 + (process.pid % 4_000); // own band: other suites use 20k-28k and 30k-35k
 const sockets: WebSocket[] = [];
 const bridges: ExtensionBridge[] = [];
 
@@ -21,7 +21,10 @@ afterEach(async () => {
 });
 
 async function startBridge() {
-  const bridge = new ExtensionBridge({ port: ++port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
+  // An OS-assigned ephemeral port per bridge, not a pid-derived band another
+  // test process can land in at the same time.
+  const port = await freePort();
+  const bridge = new ExtensionBridge({ port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
   bridges.push(bridge);
   await bridge.start();
   return { bridge, port };

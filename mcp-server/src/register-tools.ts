@@ -7,7 +7,7 @@ import { codedMessageOf, rawResultOf, withNotes } from './tools/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from './tools/types.js';
 import { attachSafetyController } from './tools/action-support.js';
 import { noteOwnedTab, sessionGate } from './tools/session-mode.js';
-import { ERROR_CODES, formatError } from './core/error-codes.js';
+import { ERROR_CODES, formatError, isKnownErrorCode } from './core/error-codes.js';
 import { createLogger, newCorrelationId, runWithCorrelationId } from './core/logger.js';
 
 /**
@@ -26,8 +26,12 @@ export { parseToolParams } from './tools/params.js';
  * `step i/n <tool>: ` prefix kept in front of it. The lines after it are context —
  * the earlier steps of a batch — and stay as they are.
  */
+function stepPrefix(text: string): string {
+  return /^step \d+\/\d+ \S+: /.exec(text)?.[0] ?? '';
+}
+
 function codedText(text: string): string {
-  const step = /^step \d+\/\d+ \S+: /.exec(text)?.[0] ?? '';
+  const step = stepPrefix(text);
   const rest = text.slice(step.length);
   const lineEnd = rest.indexOf('\n');
   if (lineEnd < 0) return step + codedMessageOf(rest);
@@ -54,8 +58,9 @@ function codedResult(result: ToolResult): ToolResult {
 function logFailure(tool: string, result: ToolResult): void {
   const text = result.content.find((item) => item.type === 'text');
   const first = typeof text?.text === 'string' ? text.text.split('\n')[0] : '';
-  const candidate = first.includes(': ') ? first.slice(0, first.indexOf(': ')) : first;
-  const code = /^[A-Z][A-Z_]*$/u.test(candidate) ? candidate : 'FAILED';
+  const message = first.slice(stepPrefix(first).length);
+  const candidate = message.includes(': ') ? message.slice(0, message.indexOf(': ')) : '';
+  const code = isKnownErrorCode(candidate) ? candidate : 'FAILED';
   log.error(`tool ${tool} failed: ${code}`);
 }
 
@@ -122,9 +127,7 @@ export function registerTools(server: McpServer, host: ToolHost): void {
   // CODE: message; tools/list still advertises the JSON Schema built from the same shapes.
   server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const run = runs.get(request.params.name);
-    // One correlation id per incoming request: every line logged while this
-    // call runs carries it, so a failure can be followed from the agent's
-    // call to the extension that answered it.
+    // One correlation id ties request-scoped client, daemon and bridge logs together.
     const correlationId = newCorrelationId();
     return runWithCorrelationId(correlationId, async () => {
       if (!run) {

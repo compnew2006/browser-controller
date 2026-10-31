@@ -19,7 +19,7 @@
  */
 import net from 'node:net';
 import { ERROR_CODES, formatError } from './core/error-codes.js';
-import { createLogger } from './core/logger.js';
+import { createLogger, newCorrelationId, runWithCorrelationId } from './core/logger.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -333,8 +333,10 @@ class Daemon {
         }
 
         if (msg.kind === 'call' && client) {
-          this.routeCall(client, msg).catch((err) => {
-            safeSend({ kind: 'result', id: msg.id, success: false, error: String(err) });
+          const cid = typeof msg.cid === 'string' && /^[a-z0-9]{8}$/u.test(msg.cid) ? msg.cid : newCorrelationId();
+          const caller = client;
+          runWithCorrelationId(cid, () => this.routeCall(caller, { ...msg, cid })).catch((err) => {
+            safeSend({ kind: 'result', id: msg.id, cid, success: false, error: String(err) });
           });
         }
       }
@@ -410,7 +412,7 @@ class Daemon {
   private async routeCall(client: IpcClient, msg: IpcClientMessage & { kind: 'call' }): Promise<void> {
     if (msg.kind !== 'call') return;
     if (!isKnownWireTool(msg.tool)) {
-      this.sendToClient(client, { kind: 'result', id: msg.id, success: false, error: formatError(ERROR_CODES.UNKNOWN_TOOL, String(msg.tool).slice(0, 80)) });
+      this.sendToClient(client, { kind: 'result', id: msg.id, cid: msg.cid, success: false, error: formatError(ERROR_CODES.UNKNOWN_TOOL, String(msg.tool).slice(0, 80)) });
       return;
     }
 
@@ -428,8 +430,7 @@ class Daemon {
         const retryInMs = RATE_LIMIT_WINDOW_MS - (now - client.rateWindowStart);
         const retryInSec = Math.max(1, Math.ceil(retryInMs / 1000));
         this.sendToClient(client, {
-          kind: 'result',
-          id: msg.id,
+          kind: 'result', id: msg.id, cid: msg.cid,
           success: false,
           error: formatError(ERROR_CODES.RATE_LIMITED, `Rate limit exceeded (${RATE_LIMIT_PER_MIN} calls/min). Retry in ~${retryInSec}s.`),
         });
@@ -468,12 +469,11 @@ class Daemon {
       const { observation, ...agentOutcome } = outcome;
       const memoryOutcome = { sessionId: client.sessionId, tool: msg.tool, params: msg.params, daemonCallId, result: agentOutcome.result, observation, ...(agentOutcome.success ? {} : { error: agentOutcome.error }) };
       if (agentOutcome.success) agentOutcome.result = await this.memory.withReminder(memoryCall, memoryOutcome);
-      this.sendToClient(client, { kind: 'result', id: msg.id, ...agentOutcome });
+      this.sendToClient(client, { kind: 'result', id: msg.id, cid: msg.cid, ...agentOutcome });
       this.memory.afterCall(memoryCall, memoryOutcome);
     } catch (err) {
       this.sendToClient(client, {
-        kind: 'result',
-        id: msg.id,
+        kind: 'result', id: msg.id, cid: msg.cid,
         success: false,
         error: formatError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'the result could not be safely returned'),
       });

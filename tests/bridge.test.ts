@@ -7,7 +7,6 @@ import { WS_HARD_MAX_PAYLOAD_BYTES } from '../mcp-server/src/bridge-frames.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials, TEST_BRIDGE_TOKEN, TEST_ENROLLMENT_SECRET } from './helpers/bridge-auth.js';
 import { freePort } from './helpers/net.js';
 
-
 describe('isDaemonResponsiveOnPort', () => {
   let servers: http.Server[] = [];
   afterEach(async () => {

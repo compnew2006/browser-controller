@@ -6,9 +6,9 @@ import { randomInt } from 'node:crypto';
  * id that ties the lines of one request together.
  *
  * Why it exists: the daemon, the bridge and the MCP client each used raw
- * `console.error` calls, so a failure could not be followed from the call the
- * agent made to the extension that answered it. Every line now carries the id
- * of the request it belongs to.
+ * `console.error` calls, so request-scoped logs could not be connected across
+ * those processes. Request-scoped lines now carry the same id; the extension
+ * does not receive it.
  *
  * Two rules the format keeps:
  *   - The scope prefix stays the first token (`[Bridge]`, `[browser-controller]`),

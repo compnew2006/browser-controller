@@ -33,20 +33,12 @@ export function errorCode(error: unknown): string | undefined {
 /**
  * Is the file simply gone, rather than unreadable?
  *
- * A delete that races a read removes the file under the reader's feet. On
- * POSIX the read then fails with ENOENT, but on Windows a file that is being
- * deleted cannot be opened at all: the open fails with EPERM (or EACCES, or
- * EBUSY) even though the file is on its way out. Both mean the same thing —
- * the record is gone — so a read must answer "no record" instead of failing.
- *
- * A permission problem is still an error on POSIX: there, EACCES means the
- * file is there and this process may not read it, which must fail closed.
+ * Permission and sharing errors can also occur while a Windows file is being
+ * deleted, but they do not prove it is gone. Treat them as unreadable so a
+ * read-modify-write cannot replace data it failed to read.
  */
-export function isVanished(error: unknown, platform: NodeJS.Platform = process.platform): boolean {
-  const code = errorCode(error);
-  if (code === 'ENOENT') return true;
-  if (platform !== 'win32') return false;
-  return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY';
+export function isVanished(error: unknown): boolean {
+  return errorCode(error) === 'ENOENT';
 }
 
 /** A write that was abandoned after its temp file was durable but before the rename. */

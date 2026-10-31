@@ -65,19 +65,7 @@ export default [
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [{
-          group: [
-            '../tools/**',
-            '../memory/**',
-            '../vault/**',
-            '../protocol/**',
-            '../bridge*',
-            '../daemon*',
-            '../ipc-*',
-            '../lock-file*',
-            '../register-tools*',
-            '../index*',
-            '../native-host*',
-          ],
+          regex: '^(?!node:|\\./|\\.\\./core/).+',
           message: 'core/ is the neutral base layer: it may depend on node builtins and core/ siblings only. tools/, memory/, vault/, protocol/ and the transport modules all sit above it and must not be pulled in from below.',
         }],
       }],

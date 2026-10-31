@@ -270,7 +270,7 @@ export class JsonMemoryStore implements MemoryStore {
    * reads files the same way and must answer the same way.
    */
   private vanished(error: unknown): boolean {
-    return isVanished(error, this.platform);
+    return isVanished(error);
   }
 
   /** Once per store: check the directory is private and remove temp files a crash left behind. A failure is retried on the next call. */

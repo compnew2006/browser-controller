@@ -2,13 +2,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
+import { freePort } from './helpers/free-port.js';
 
 /**
  * F4-2: when an extension connection becomes ready the bridge sends that connection (only) the
  * live session ids, so the extension frees locks whose release was lost while it was away.
  */
-// A range no other bridge test uses: vitest runs test files in parallel.
-let port = 45_000 + (process.pid % 2_000);
+// The OS assigns the port: vitest runs test files in parallel, and a range
+// picked by arithmetic can collide with another file in the same run.
+let port = 0;
 const sockets: WebSocket[] = [];
 const bridges: ExtensionBridge[] = [];
 
@@ -21,7 +23,8 @@ afterEach(async () => {
 });
 
 async function startBridge(roster?: () => string[]) {
-  const bridge = new ExtensionBridge({ port: ++port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
+  port = await freePort();
+  const bridge = new ExtensionBridge({ port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, handshakeGraceMs: 500 });
   if (roster) bridge.setSessionRoster(roster);
   bridges.push(bridge);
   await bridge.start();

@@ -15,14 +15,14 @@ MCP clients connect to a local daemon that validates calls and routes them over 
 
 - `npm ci` installs locked dependencies (Node.js 20+); `npm run dev` watches TypeScript; `npm run build` compiles to `mcp-server/dist/`.
 - `npm test` runs Vitest; focus one with `npm test -- tests/v3-mock.test.ts`.
-- CI runs `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:coverage`, `npm run security:audit`, and `npm run context:lint` on Node 20 and 22.
+- CI runs `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:coverage`, `npm run security:audit`, `npm run context:lint`, `npm run context:measure`, and `npm run arch:check` on Node 20 and 22. Run the same set before calling a change done.
 - `npm run smoke:real-chrome` requires a built server and enrolled extension; it restarts the daemon and uses the normal Chrome profile.
 - Code-graph indexes are machine-local output: `.codebase-memory/` and `graphify-out/` stay uncommitted, and a clone that still tracks the former clears it once with `rm -rf .codebase-memory` before pulling past `8777e78`. The tool rebuilds the index on the next run.
 - A release is an annotated tag `vX.Y.Z` on the commit that sets that version, with notes read from the tagged tree's `CHANGELOG.md` section, never from the working tree.
 
 ## Style and Testing
 
-Use ES modules, two spaces, semicolons, and nearby naming. Keep tools and handlers focused; Vitest files end in `*.test.ts`. Add regressions for protocol, tab ownership, timeouts, and credential redaction; prefer isolated tests. Use real-Chrome smoke checks when needed.
+Use ES modules, two spaces, semicolons, and nearby naming. Keep tools and handlers focused; Vitest files end in `*.test.ts`. Add regressions for protocol, tab ownership, timeouts, and credential redaction; prefer isolated tests. Use real-Chrome smoke checks when needed. `docs/lessons.md` holds the four engineering laws this codebase learned from shipped defects — read it before adding a parallel config table, an alias, or a comment that claims behavior the code does not have.
 
 ## Spec Kit, Evidence, and Agent Workflow
 

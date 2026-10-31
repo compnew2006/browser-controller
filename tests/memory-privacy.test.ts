@@ -20,6 +20,7 @@ import {
   type IpcClient,
 } from './helpers/memory-fixtures.js';
 import { MemoryService } from '../mcp-server/src/memory/service.js';
+import { freePort } from './helpers/free-port.js';
 import { defaultPolicy, enablePolicy, writePolicy } from '../mcp-server/src/memory/policy.js';
 import { routeMemoryPolicyTool } from '../mcp-server/src/memory/policy-tool-route.js';
 import { freePort } from './helpers/net.js';

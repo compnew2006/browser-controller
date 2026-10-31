@@ -17,8 +17,11 @@ export default defineConfig({
       // previous list covered 4 files (~2.4% of production lines) while the
       // thresholds claimed 80%, so the gate could never fail. Chrome lifecycle
       // entry points, popup rendering, and native debugger plumbing still
-      // require a real extension runtime and are verified by integration/E2E
-      // tests instead of unit coverage.
+      // require a real extension runtime, so no unit test reaches them. The
+      // only checks that exercise them are the local smoke scripts
+      // (`npm run smoke:real-chrome`, `smoke:vault-isolated`, `smoke:vault-card`),
+      // and CI does not run those — a green pipeline therefore does NOT prove
+      // them. Do not read the coverage number as coverage of the extension.
       include: [
         'mcp-server/src/**/*.ts',
         'extension/**/*.js',
