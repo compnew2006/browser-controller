@@ -60,11 +60,102 @@ describe('browser_wait until:stable', () => {
 
   it('a page that cannot be read does not wait forever', async () => {
     const host: ToolHost = {
-      async callTool() { return { success: false, error: 'TAB_GONE: the tab is gone' }; },
+      async callTool() { return { success: false, error: 'TAB_NOT_FOUND: tab 1 is closed or was never opened.' }; },
     };
     const res = await run(host, { tabId: 1, until: 'stable', timeout: 400 });
     expect(res.isError).toBe(true);
     expect(text(res)).toContain('TIMEOUT');
+  });
+
+  it('a tab that is gone ends the wait at once', async () => {
+    let reads = 0;
+    const host: ToolHost = {
+      async callTool(tool) {
+        if (tool === 'browser_evaluate') {
+          reads += 1;
+          // The extension's own code for a tab that is gone (extension/lib/page-exec.js).
+          return { success: false, error: 'TAB_NOT_FOUND: tab 1 is closed or was never opened.' };
+        }
+        return { success: true, text: 'ok' };
+      },
+    };
+    const res = await run(host, { tabId: 1, until: 'stable', timeout: 5000 });
+    expect(res.isError).toBe(true);
+    // A tab that is gone never comes back, so the wait does not retry it.
+    expect(reads).toBe(1);
+  });
+
+  it('a tab that was replaced ends the wait at once', async () => {
+    let reads = 0;
+    const host: ToolHost = {
+      async callTool(tool) {
+        if (tool === 'browser_evaluate') {
+          reads += 1;
+          return { success: false, error: 'TAB_REPLACED: tab 1 was replaced by tab 2.' };
+        }
+        return { success: true, text: 'ok' };
+      },
+    };
+    const res = await run(host, { tabId: 1, until: 'stable', timeout: 5000 });
+    expect(res.isError).toBe(true);
+    expect(reads).toBe(1);
+  });
+
+  it('a transient read failure is retried, so a settled page still settles', async () => {
+    // The debugger detached for one read: the extension says the next call
+    // reattaches on its own, so the wait must read again rather than report a
+    // page that had already settled as one that never settled.
+    let reads = 0;
+    const host: ToolHost = {
+      async callTool(tool) {
+        if (tool === 'browser_evaluate') {
+          reads += 1;
+          if (reads === 1) {
+            return { success: false, error: 'DEBUGGER_UNAVAILABLE: the debugger session failed; the next call reattaches' };
+          }
+          return { success: true, text: '10:a', result: '10:a' };
+        }
+        return { success: true, text: 'ok' };
+      },
+    };
+    const res = await run(host, { tabId: 1, until: 'stable', timeout: 2000 });
+    expect(res.isError).toBeFalsy();
+    expect(text(res)).toMatch(/^page settled after \d+ ms$/);
+    expect(reads).toBe(3);
+  });
+
+  it('a page that stays unreadable ends the wait instead of looping', async () => {
+    let reads = 0;
+    const host: ToolHost = {
+      async callTool(tool) {
+        if (tool === 'browser_evaluate') {
+          reads += 1;
+          return { success: false, error: 'DEBUGGER_UNAVAILABLE: the debugger session failed' };
+        }
+        return { success: true, text: 'ok' };
+      },
+    };
+    const res = await run(host, { tabId: 1, until: 'stable', timeout: 5000 });
+    expect(res.isError).toBe(true);
+    // Three consecutive failures end it: the wait does not spend its whole budget.
+    expect(reads).toBe(3);
+  });
+
+  it('a thrown call is treated as transient, not as an unreadable page', async () => {
+    let reads = 0;
+    const host: ToolHost = {
+      async callTool(tool) {
+        if (tool === 'browser_evaluate') {
+          reads += 1;
+          if (reads === 1) throw new Error('bridge went away');
+          return { success: true, text: '10:a', result: '10:a' };
+        }
+        return { success: true, text: 'ok' };
+      },
+    };
+    const res = await run(host, { tabId: 1, until: 'stable', timeout: 2000 });
+    expect(res.isError).toBeFalsy();
+    expect(text(res)).toMatch(/^page settled after \d+ ms$/);
   });
 
   it('the other waits still go to the extension', async () => {

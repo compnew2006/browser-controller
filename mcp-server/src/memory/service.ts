@@ -22,6 +22,7 @@ import { MemoryQueue, type CaptureOp, type DropReason } from './queue.js';
 import { decideScope, type ScopeDecision, type ScopeSiteContext } from './scope.js';
 import { JsonMemoryStore, MemoryStoreError, type MemoryStore, type SiteRecord } from './store.js';
 import type { MemoryToolContext, MemoryToolPurpose } from './tool-route.js';
+import { isRecord } from './guards.js';
 
 export { extractSnapshotFacts };
 export type { MemoryToolContext };
@@ -84,7 +85,6 @@ interface ParsedSiteContext extends ScopeSiteContext {
   passwordField: boolean;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function parseSiteContext(raw: unknown): ParsedSiteContext | null {
   if (!isRecord(raw) || typeof raw.url !== 'string') return null;

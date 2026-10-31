@@ -9,6 +9,7 @@ import {
   type FactValue,
 } from './allowlist.js';
 import { canonicalOrigin } from './policy.js';
+import { isRecord } from './guards.js';
 
 export const SITE_SCHEMA_VERSION = 1;
 export const MAX_FACTS = 64;
@@ -82,10 +83,6 @@ function bad(mode: Mode, message: string): MemoryStoreError {
 
 function full(mode: Mode, message: string): MemoryStoreError {
   return new MemoryStoreError(mode === 'read' ? 'MEMORY_CORRUPT' : 'MEMORY_FULL', message);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isTime(value: unknown): value is string {

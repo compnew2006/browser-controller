@@ -19,6 +19,7 @@ import {
 import { canonicalOrigin } from './policy.js';
 import { assertPrivate, errorCode, quarantineName, removeTemps } from './record-files.js';
 import { MemoryStoreError } from './site-record.js';
+import { isRecord } from './guards.js';
 
 const DEFAULT_CACHE_ENTRIES = 128;
 const PROFILE_DIR = /^[0-9a-f]{64}$/u;
@@ -70,7 +71,6 @@ function requireProfile(profile: string): void {
   if (typeof profile !== 'string' || profile.length === 0 || profile.length > 200) throw new MemoryStoreError('INVALID_ARGUMENT', 'a browser profile is required');
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function validateCounters(raw: unknown, mode: 'read' | 'write'): MapCountersFile {
   const fail = (message: string): MemoryStoreError => new MemoryStoreError(mode === 'read' ? 'MEMORY_CORRUPT' : 'INVALID_ARGUMENT', message);

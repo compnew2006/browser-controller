@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFile } from './atomic-file.js';
+import { isRecord } from './guards.js';
 
 export const POLICY_SCHEMA_VERSION = 1;
 export const MAX_EXCLUDED_ORIGINS = 5_000;
@@ -60,10 +61,6 @@ function invalid(mode: Mode, message: string): MemoryPolicyError {
 
 function isTime(value: unknown): value is string {
   return typeof value === 'string' && ISO_UTC.test(value) && Number.isFinite(Date.parse(value));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Strict validation: a safety control that cannot be understood must not be silently relaxed. */

@@ -13,6 +13,7 @@ import { deleteMapsWithMemory, runMapAdmin } from './map-admin.js';
 import type { MapService } from './map-service.js';
 import type { MemoryQueue } from './queue.js';
 import { MemoryStoreError, type MemoryStore } from './store.js';
+import { isRecord } from './guards.js';
 
 /** What the owner commands need from the service: the one policy writer, the store, the queue and a clock. */
 export interface AdminContext {
@@ -26,7 +27,6 @@ export interface AdminContext {
   map: MapService;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export function errorCode(error: unknown): string {
   return error instanceof MemoryPolicyError || error instanceof MemoryStoreError ? error.code : 'MEMORY_UNAVAILABLE';
