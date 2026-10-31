@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { batchTool } from '../mcp-server/src/tools/batch.js';
-import { freePort } from './helpers/free-port.js';
 import '../mcp-server/src/tools/registry.js';
 import { ALLOWLIST } from '../mcp-server/src/memory/allowlist.js';
 import { JsonMemoryStore, type SiteFact, type SiteRecord } from '../mcp-server/src/memory/store.js';
