@@ -21,7 +21,7 @@ import {
   type FakeExtension,
   type IpcClient,
 } from './helpers/memory-fixtures.js';
-import { freePort } from './helpers/net.js';
+import { freePort } from './helpers/free-port.js';
 
 const ORIGIN = 'http://127.0.0.1:4010';
 const PUBLIC = `${ORIGIN}/public.html`;

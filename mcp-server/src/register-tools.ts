@@ -60,7 +60,10 @@ function logFailure(tool: string, result: ToolResult): void {
   const first = typeof text?.text === 'string' ? text.text.split('\n')[0] : '';
   const message = first.slice(stepPrefix(first).length);
   const candidate = message.includes(': ') ? message.slice(0, message.indexOf(': ')) : '';
-  const code = isKnownErrorCode(candidate) ? candidate : 'FAILED';
+  // Every line reaching here is already coded, so a candidate the registry does
+  // not know is not a code at all: log INTERNAL_ERROR, never an unregistered
+  // string the rest of the vocabulary does not produce.
+  const code = isKnownErrorCode(candidate) ? candidate : ERROR_CODES.INTERNAL_ERROR;
   log.error(`tool ${tool} failed: ${code}`);
 }
 
