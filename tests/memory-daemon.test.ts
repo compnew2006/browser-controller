@@ -22,6 +22,7 @@ import {
   type FakeExtension,
   type IpcClient,
 } from './helpers/memory-fixtures.js';
+import { freePort } from './helpers/net.js';
 
 const ORIGIN = 'http://127.0.0.1:4010';
 const PUBLIC = `${ORIGIN}/public.html`;
@@ -58,17 +59,6 @@ const siteContext = (url: string, page: Page) => ({
   anonymityReason: 'ok',
   ...page.context,
 });
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address() as net.AddressInfo;
-      server.close(() => resolve(port));
-    });
-  });
-}
 
 async function until<T>(read: () => T | null | undefined | false, ms = 5000): Promise<T> {
   const end = Date.now() + ms;

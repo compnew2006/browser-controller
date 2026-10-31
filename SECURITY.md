@@ -152,6 +152,10 @@ npm run test:coverage
 
 Production dependencies must have no known audit findings at release time, lint runs with zero warnings, and coverage is held to the configured 80% thresholds for the deterministic protocol, action, state, lock, and bridge-security core. Chrome lifecycle entry points, popup rendering, and native debugger plumbing need a real extension runtime and remain integration/E2E concerns rather than inflating this unit-coverage number. Audit data changes as advisories are published, so a previously clean lockfile must be checked again rather than assumed safe.
 
+**Accepted risk — development toolchain only.** The production gate (`npm run security:audit`, which is `npm audit --omit=dev --audit-level=high`) reports no findings. The full tree still reports 6 moderate advisories, all in the lint toolchain (`eslint` → `@eslint/config-array` → `minimatch` → `brace-expansion` / `@eslint-community/eslint-utils`). They are dev dependencies: they are not installed by a production install and nothing the daemon, the MCP server or the extension runs reaches them. Clearing them requires `npm audit fix --force`, which crosses a breaking eslint major version for lint-tool advisories that no product path can reach, so the risk is accepted as recorded. Revisit it at the next dependency upgrade, or when CI starts to account for the dev tree.
+
+**A finding in the production tree is not a finding in the code.** A dependency advisory names a package and a version range, not a reachable path. Before a fix changes a lockfile, check whether the affected function is called at all (for example, a package reached only transitively through the MCP SDK, with no call into the vulnerable API). That check is recorded in `docs/audit/15-git-hygiene-and-dependency-audit.md`, which covers both the exposure assessment and the fix.
+
 ## Scope
 
 In-scope:

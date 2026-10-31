@@ -18,14 +18,21 @@ import {
   type OwnerModePolicy,
 } from '../core/json-store.js';
 
-/** The vault's rule: a plain file or directory of this user, with no access for others. */
-function ownerRule(label: string): OwnerModePolicy {
+/**
+ * The vault's rule: a plain file or directory of this user, with no access for others.
+ *
+ * `platform` decides whether the owner and mode bits can be compared at all: win32 has no
+ * comparable mode bits, so the check is skipped there — the same rule the memory store applies.
+ * The symlink and regular-file checks are not platform-dependent and always run.
+ */
+function ownerRule(label: string, platform: NodeJS.Platform): OwnerModePolicy {
   return {
     fail: (message) => fileError(ERROR_CODES.VAULT_STORAGE_INVALID, message),
     notRegular: (kind) => `${label} is not a safe ${kind}`,
     foreignOwner: () => `${label} is owned by another user`,
     openPermissions: () => `${label} permissions allow other users`,
-    checkOwner: true,
+    // win32 has no comparable mode bits, so the rule cannot be checked there.
+    checkOwner: platform !== 'win32',
   };
 }
 
@@ -33,15 +40,15 @@ function ownerRule(label: string): OwnerModePolicy {
  * Owner-only file access for the vault store: a path must be a plain file or directory of this
  * user, with no access for others, and is opened without following a symbolic link.
  */
-export function assertOwnerMode(stat: Awaited<ReturnType<typeof fs.lstat>>, kind: 'directory' | 'file', label: string): void {
-  assertOwnerOnly(stat, kind, ownerRule(label));
+export function assertOwnerMode(stat: Awaited<ReturnType<typeof fs.lstat>>, kind: 'directory' | 'file', label: string, platform: NodeJS.Platform = process.platform): void {
+  assertOwnerOnly(stat, kind, ownerRule(label, platform));
 }
 
-export async function readSafeFile(file: string, maxBytes: number): Promise<Buffer> {
+export async function readSafeFile(file: string, maxBytes: number, platform: NodeJS.Platform = process.platform): Promise<Buffer> {
   return readBoundedFile(file, maxBytes, {
     fail: (message) => fileError(ERROR_CODES.VAULT_STORAGE_INVALID, message),
     isOwnError: (error) => error instanceof VaultStorageError,
-    check: (stat, kind) => assertOwnerMode(stat, kind, 'vault file'),
+    check: (stat, kind) => assertOwnerMode(stat, kind, 'vault file', platform),
     unavailable: 'vault file is unavailable',
     tooLarge: 'vault file exceeds the supported size limit',
     unreadable: 'vault file could not be read safely',
@@ -67,6 +74,8 @@ export interface VaultWriteContext {
   exists: (file: string) => Promise<boolean>;
   /** Runs after the temp file is durable and before the rename. */
   beforeCommit?: (file: string) => void | Promise<void>;
+  /** The platform whose owner and mode bits are comparable; win32 has none. */
+  platform: NodeJS.Platform;
 }
 
 /**
@@ -85,7 +94,7 @@ export async function writeVaultFile(file: string, data: Buffer, maxBytes: numbe
         await context.prepare();
         if (!await context.exists(file)) return;
         if (exclusive) throw new VaultStorageError(ERROR_CODES.VAULT_STORAGE_INVALID, 'backup already exists');
-        assertOwnerMode(await fs.lstat(file), 'file', 'vault file');
+        assertOwnerMode(await fs.lstat(file), 'file', 'vault file', context.platform);
       },
       beforeCommit: async () => {
         if (exclusive && await context.exists(file)) throw new VaultStorageError(ERROR_CODES.VAULT_STORAGE_INVALID, 'backup already exists');

@@ -36,6 +36,7 @@ import {
   buildExtensionHelloAck as buildBrowserHelloAck,
   validateDaemonHello,
 } from '../extension/lib/protocol.js';
+import { freePort } from './helpers/net.js';
 
 /** The capability list a 2.x extension advertised: no tools-v3. */
 const V2_EXTENSION_CAPABILITIES = ['tool-dispatch', 'ping-pong', 'cancellation', 'observe-act-v2', 'tab-locks', 'webmcp'];
@@ -44,8 +45,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const DIST_DAEMON = path.join(ROOT, 'mcp-server', 'dist', 'daemon.js');
 
-let portCounter = 24_000 + (process.pid % 4_000);
-function nextPort() { return portCounter++; }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -313,7 +312,7 @@ describe('ExtensionBridge protocol handshake', () => {
   }
 
   it('sends an authenticated daemon hello after authInit and accepts a proven helloAck', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -340,7 +339,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('rejects tool calls while extension protocol negotiation fails', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { defaultTimeoutMs: 80 });
     await bridge.start();
 
@@ -353,7 +352,7 @@ describe('ExtensionBridge protocol handshake', () => {
 
   // Any local process can open the socket, so a refusal before the proof must not fail agents' calls.
   it('keeps a pending call alive when an unauthenticated socket fails its handshake, and routes it to a genuine extension', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -384,7 +383,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('does not fail a later call fast after an unauthenticated refusal, and reports the reason on timeout', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -399,7 +398,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('rejects a browser control frame before the peer proves the extension token', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { defaultTimeoutMs: 80 });
     await bridge.start();
 
@@ -413,7 +412,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('closes a socket whose first frame is not authInit, before sending any hello', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -435,7 +434,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('closes a socket that sends any frame other than helloAck after the daemon hello', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -449,7 +448,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('refuses a helloAck replayed on a new connection that reuses the earlier nonce', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -478,7 +477,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('never repeats a peer-chosen protocol version to the agent', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { defaultTimeoutMs: 80 });
     await bridge.start();
 
@@ -494,7 +493,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('processes no frame from a socket after its handshake was refused', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
     const internals = bridge as unknown as {
@@ -518,7 +517,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('rejects a 2.x extension whose helloAck lacks tools-v3 and tells the user to reload it', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { defaultTimeoutMs: 80 });
     await bridge.start();
 
@@ -532,7 +531,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('accepts a current extension helloAck', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -553,7 +552,7 @@ describe('ExtensionBridge protocol handshake', () => {
     ['no protocolVersion', { type: 'helloAck', capabilities: EXTENSION_PROTOCOL_CAPABILITIES }],
     ['no capabilities', { type: 'helloAck', protocolVersion: EXTENSION_PROTOCOL_VERSION }],
   ])('refuses a pre-3.0 helloAck with %s: no tool call is routed to it', async (_label, ack) => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { defaultTimeoutMs: 80 });
     await bridge.start();
 
@@ -565,7 +564,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('refuses a peer that sends no helloAck within the handshake grace', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { handshakeGraceMs: 50 });
     await bridge.start();
 
@@ -581,7 +580,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('a silent peer never overwrites the reason a peer actually sent', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { handshakeGraceMs: 50 });
     await bridge.start();
 
@@ -601,7 +600,7 @@ describe('ExtensionBridge protocol handshake', () => {
   // A daemon restart drops the extension, which reconnects after its 1, 2, 4 s backoff: a call made
   // meanwhile waits for it instead of failing NOT_CONNECTED at the short wait.
   it('right after start, a call waits the longer reconnect wait for the extension', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { reconnectWait: { ms: 3_000 } });
     await bridge.start();
 
@@ -618,7 +617,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('with no extension seen inside the window, a call fails after the short wait', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { reconnectWait: { ms: 3_000, windowMs: 0 } });
     await bridge.start();
 
@@ -628,7 +627,7 @@ describe('ExtensionBridge protocol handshake', () => {
   });
 
   it('holds a tool call until the helloAck arrives, then routes it', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -654,7 +653,7 @@ describe('daemon IPC protocol handshake', { timeout: 30_000 }, () => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-proto-'));
   const sock = path.join(stateDir, 'daemon.sock');
   const tokenFile = path.join(stateDir, 'token.json');
-  const wsPort = nextPort();
+  let wsPort = 0;
   let daemonProc: ChildProcess | null = null;
   let token = '';
 
@@ -662,6 +661,7 @@ describe('daemon IPC protocol handshake', { timeout: 30_000 }, () => {
     if (!fs.existsSync(DIST_DAEMON)) {
       throw new Error(`${DIST_DAEMON} missing - run npm run build first`);
     }
+    wsPort = await freePort();
     daemonProc = spawn(process.execPath, [DIST_DAEMON], {
       env: {
         ...process.env,

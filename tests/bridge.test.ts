@@ -5,9 +5,8 @@ import { ExtensionBridge, isDaemonResponsiveOnPort } from '../mcp-server/src/bri
 import { authenticatedHttpGet } from '../mcp-server/src/bridge-auth.js';
 import { WS_HARD_MAX_PAYLOAD_BYTES } from '../mcp-server/src/bridge-frames.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials, TEST_BRIDGE_TOKEN, TEST_ENROLLMENT_SECRET } from './helpers/bridge-auth.js';
+import { freePort } from './helpers/net.js';
 
-let portCounter = 20_000 + (process.pid % 5_000);
-function nextPort() { return portCounter++; }
 
 describe('isDaemonResponsiveOnPort', () => {
   let servers: http.Server[] = [];
@@ -17,7 +16,7 @@ describe('isDaemonResponsiveOnPort', () => {
   });
 
   it('returns true only when a daemon proves its identity on the occupied port', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = new ExtensionBridge({ port, ...testBridgeCredentials() });
     bridge.registerHttpHandler(() => ({ ok: true }));
     await bridge.start();
@@ -29,12 +28,12 @@ describe('isDaemonResponsiveOnPort', () => {
   });
 
   it('returns false when nothing is listening on the port', async () => {
-    const port = nextPort(); // nothing bound
+    const port = await freePort(); // nothing bound
     await expect(isDaemonResponsiveOnPort('127.0.0.1', port, 1200, TEST_ENROLLMENT_SECRET)).resolves.toBe(false);
   });
 
   it('returns false when a non-daemon server holds the port (wrong body shape)', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const seen: Array<{ url?: string; hasEnrollmentHeader: boolean; hasProofHeader: boolean }> = [];
     const s = http.createServer((req, res) => {
       seen.push({
@@ -55,7 +54,7 @@ describe('isDaemonResponsiveOnPort', () => {
   });
 
   it('returns false when the server hangs (timeout, no response)', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const s = http.createServer(() => { /* never responds */ });
     servers.push(s);
     await new Promise<void>((r) => s.listen(port, '127.0.0.1', r));
@@ -115,13 +114,13 @@ describe('ExtensionBridge', () => {
   }
 
   it('starts WebSocket server', async () => {
-    const bridge = createBridge(nextPort());
+    const bridge = createBridge(await freePort());
     await bridge.start();
     expect(bridge.isConnected()).toBe(false);
   });
 
   it('accepts extension connection', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -132,7 +131,7 @@ describe('ExtensionBridge', () => {
   // Regression (audit #2): one oversized response used to close the socket with
   // 1009, failing every agent's in-flight call. Now it fails only its own call.
   it('an oversized response fails only the call it answers; the connection stays up', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -152,7 +151,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('an oversized frame with no call to fail is dropped and the connection stays up', async () => {
-    const port = nextPort();
+    const port = await freePort();
     // 500 bytes fit the authenticated helloAck; the 600-byte frame does not.
     const bridge = createBridge(port, { maxWsPayloadBytes: 500 });
     await bridge.start();
@@ -164,7 +163,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('sends tool call and receives response', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -181,7 +180,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('a frame above the hard ceiling still closes the socket (1009)', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -194,7 +193,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('rejects on error response', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -214,7 +213,7 @@ describe('ExtensionBridge', () => {
     // as success:false + result on the wire; the bridge must attach that
     // payload to the rejection so the tool layer can surface it verbatim
     // instead of collapsing it to a bare message string.
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -238,7 +237,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('waitForConnection resolves when already connected', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
     await connectClient(port);
@@ -247,7 +246,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('waitForConnection times out when no connection', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -255,7 +254,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('throws when calling tool without connection', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { maxRetries: 0 });
     await bridge.start();
 
@@ -267,7 +266,7 @@ describe('ExtensionBridge', () => {
 
   // A call in flight when its browser goes away reads NOT_CONNECTED, not INTERNAL_ERROR.
   it('a call in flight when the extension disconnects reads NOT_CONNECTED', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -281,7 +280,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('does not accept a token from a URL query as extension authentication', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { token: 'server-token' });
     await bridge.start();
 
@@ -299,7 +298,7 @@ describe('ExtensionBridge', () => {
 
   // --- Credentials are excluded from the WebSocket upgrade ---------------
   it('rejects a subprotocol-bearing upgrade without echoing its offered credential', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -313,7 +312,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('does not authenticate from a subprotocol even when its token text matches', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { token: 'server-token' });
     await bridge.start();
 
@@ -327,7 +326,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('keeps the replacement extension connected when the old socket closes', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -343,7 +342,7 @@ describe('ExtensionBridge', () => {
   // Regression (security review P2): a call is settled only by the browser it was sent to.
   // A second connected socket that replies with the same id must not resolve or reject it.
   it('ignores a reply to a call from a browser the call was not sent to', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -372,7 +371,7 @@ describe('ExtensionBridge', () => {
   // The bridge must reject the pending promise so a non-idempotent action
   // (click/type) doesn't keep running after the originating agent is gone.
   it('aborts an in-flight call when the AbortSignal fires (audit C2)', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -395,7 +394,7 @@ describe('ExtensionBridge', () => {
   // matching in-flight handler so it releases the tab mutex immediately. Without
   // this, a slow navigate (55s) keeps the tab pinned after the caller is gone.
   it('forwards a cancel control message to the extension on abort', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -420,7 +419,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('forwards a cancel control message on timeout', async () => {
-    const port = nextPort();
+    const port = await freePort();
     // Non-idempotent tool with a tiny timeout so it fires deterministically.
     const bridge = new ExtensionBridge({ port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 60 });
     bridges.push(bridge);
@@ -442,7 +441,7 @@ describe('ExtensionBridge', () => {
   }, 15_000);
 
   it('a timed-out call detaches its abort listener from a long-lived signal (F3-5)', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = new ExtensionBridge({ port, ...testBridgeCredentials(), maxRetries: 0, pingIntervalMs: 60_000, defaultTimeoutMs: 60 });
     bridges.push(bridge);
     await bridge.start();
@@ -469,7 +468,7 @@ describe('ExtensionBridge', () => {
 
   // F3-3: a socket the browser is not reading must fail the call fast, not queue frames without bound.
   it('refuses a tool call fast with BROWSER_BUSY when the socket buffer is over the limit (F3-3)', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
     const client = await connectClient(port);
@@ -493,7 +492,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('rejects immediately if the signal is already aborted before send', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
     await connectClient(port);
@@ -506,7 +505,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('a normally-completing call detaches the abort listener (no late reject)', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     await bridge.start();
 
@@ -586,7 +585,7 @@ describe('ExtensionBridge', () => {
   }
 
   it('HTTP endpoints reject a web-page Origin (no token leak to sites)', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { token: 'sekret' });
     bridge.registerHttpHandler(() => ({ token: 'sekret' })); // mimic /pair
     await bridge.start();
@@ -600,7 +599,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('HTTP endpoints accept the extension-popup Origin', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { token: 'sekret', enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => ({ token: 'sekret' }));
     await bridge.start();
@@ -613,7 +612,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('HTTP endpoints accept a no-Origin local client (curl/scripts/tests)', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => ({ ok: true }));
     await bridge.start();
@@ -623,7 +622,8 @@ describe('ExtensionBridge', () => {
   });
 
   it('HTTP fails closed when no enrollment secret is configured', async () => {
-    expect(() => new ExtensionBridge({ port: nextPort(), token: 'sekret', enrollmentSecret: '' })).toThrow(/enrollment secret/i);
+    const port = await freePort();
+    expect(() => new ExtensionBridge({ port, token: 'sekret', enrollmentSecret: '' })).toThrow(/enrollment secret/i);
   });
 
   it('an unhandled path answers 404 instead of hanging (handler returns undefined)', async () => {
@@ -631,7 +631,7 @@ describe('ExtensionBridge', () => {
     // for unknown routes and the bridge treated that as "handler already wrote
     // the response" — so no res.end() ever fired and the client hung until its
     // own timeout. Undefined must map to a real 404.
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => undefined); // what Daemon.handleHttp does for unknown paths
     await bridge.start();
@@ -649,7 +649,7 @@ describe('ExtensionBridge', () => {
   // from a DIFFERENT extension ID must be rejected — even though it also starts
   // with `chrome-extension://`. This is the case a `startsWith` gate misses.
   it('rejects a second, different extension ID after the first is pinned', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { token: 'sekret', enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => ({ ok: true }));
     await bridge.start();
@@ -666,7 +666,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('does not pin an extension origin until enrollment succeeds', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, {
       token: 'sekret',
       enrollmentSecret: TEST_ENROLLMENT_SECRET,
@@ -683,7 +683,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('keeps serving the pinned extension ID on subsequent requests', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port, { token: 'sekret', enrollmentSecret: TEST_ENROLLMENT_SECRET });
     bridge.registerHttpHandler(() => ({ ok: true }));
     await bridge.start();
@@ -698,7 +698,7 @@ describe('ExtensionBridge', () => {
   });
 
   it('rejects a CORS preflight from an extension id after another id was pinned', async () => {
-    const port = nextPort();
+    const port = await freePort();
     const bridge = createBridge(port);
     bridge.registerHttpHandler(() => ({ ok: true }));
     await bridge.start();

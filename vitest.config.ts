@@ -35,48 +35,52 @@ export default defineConfig({
       ],
       // Every value below is the floor of the coverage this tree actually
       // reaches today, measured with `npx vitest run --coverage` over the
-      // scope above (159 files). They are a ratchet on reality, not a target:
-      // the audit's aspirational 70% global / 85% on vault+memory is an owner
-      // decision (audit Q-4) that has not been made yet. Vitest checks the
-      // global thresholds against every measured file and each glob against
-      // the aggregate of the files it matches.
+      // scope above (167 files). They are a ratchet on reality, not a target:
+      // the audit's aspirational 70% global / 85% on vault+memory (audit Q-4)
+      // is now met with a wide margin — 81.8% global, 94.89% on the memory
+      // sources and 87.65% on the vault — so the owner's answer to Q-4 can
+      // only lower these floors, never raise them above what the tree
+      // reaches. Vitest checks the global thresholds against every measured
+      // file and each glob against the aggregate of the files it matches.
       thresholds: {
-        // Measured 78.27% lines / 78.21% functions / 72.92% branches /
-        // 74.95% statements across all 159 measured production files.
-        lines: 78,
-        functions: 78,
-        branches: 72,
-        statements: 74,
+        // Measured 81.80% lines / 81.79% functions / 75.70% branches /
+        // 78.32% statements across all 167 measured production files.
+        lines: 81,
+        functions: 81,
+        branches: 75,
+        statements: 78,
 
-        // Measured 79.42% / 80.22% / 73.45% / 75.92% over the 101 server
+        // Measured 86.08% / 86.77% / 79.19% / 82.45% over the 109 server
         // sources: the daemon, bridge, vault, memory and tool layers.
         'mcp-server/src/**/*.ts': {
-          lines: 79,
-          functions: 80,
-          branches: 73,
-          statements: 75,
+          lines: 86,
+          functions: 86,
+          branches: 79,
+          statements: 82,
         },
 
-        // Measured 94.71% / 95.48% / 85.11% / 90.46% over the 33 memory
+        // Measured 94.89% / 96.36% / 85.16% / 90.54% over the 32 memory
         // sources: the capture, policy and queue paths are well exercised.
         'mcp-server/src/memory/**/*.ts': {
           lines: 94,
-          functions: 95,
+          functions: 96,
           branches: 85,
           statements: 90,
         },
 
-        // Measured 58.49% / 59.67% / 52.38% / 53.33% over the 18 vault
-        // sources: the weakest area, held at today's real level on purpose so
-        // the secret-handling code cannot silently regress further.
+        // Measured 87.65% / 86.77% / 74.94% / 81.36% over the 18 vault
+        // sources. The vault's own rule used to compare POSIX mode bits on
+        // win32, which that platform does not have, so every vault test
+        // failed there and the secret-handling code was measured at 58%.
+        // The rule now applies only where the bits exist, and the tests run.
         'mcp-server/src/vault/**/*.ts': {
-          lines: 58,
-          functions: 59,
-          branches: 52,
-          statements: 53,
+          lines: 87,
+          functions: 86,
+          branches: 74,
+          statements: 81,
         },
 
-        // Measured 89.80% / 89.41% / 78.53% / 86.51% over the 31 tool
+        // Measured 89.79% / 89.41% / 78.53% / 86.50% over the 31 tool
         // schemas and handlers.
         'mcp-server/src/tools/**/*.ts': {
           lines: 89,
@@ -85,7 +89,7 @@ export default defineConfig({
           statements: 86,
         },
 
-        // Measured 77.01% / 75.95% / 72.42% / 73.91% over the 58 extension
+        // Measured 77.01% / 75.95% / 72.43% / 73.92% over the 58 extension
         // sources: the service worker, handlers, popup and injected scripts.
         'extension/**/*.js': {
           lines: 77,
