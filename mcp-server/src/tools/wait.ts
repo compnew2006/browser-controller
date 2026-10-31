@@ -20,6 +20,9 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
   const timeout = typeof params.timeout === 'number' ? params.timeout : STABLE_WAIT_DEFAULT_MS;
   const outcome = await waitUntilStable(host, tabId, timeout);
   if (outcome.settled) return textResult(`page settled after ${outcome.waitedMs} ms`);
+  if (outcome.reason === 'unreadable') {
+    return failureResult(`TIMEOUT: the page could not be read after ${outcome.waitedMs} ms; it never settled within ${timeout} ms.`);
+  }
   return failureResult(`TIMEOUT: the page was still changing after ${outcome.waitedMs} ms; it never settled within ${timeout} ms.`);
 };
 (handler as { toolName?: string }).toolName = 'browser_wait';
@@ -27,7 +30,7 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
 export const waitTool: ToolDefinition = {
   name: 'browser_wait',
   summary: 'Wait for an element, a URL, a delay, or the page to settle',
-  description: 'Wait for exactly one of: target visible (gone:true = hidden), url (substring or glob), ms (delay), until:"stable" (the page stops changing). Times out with TIMEOUT.',
+  description: 'Wait for one of: target visible (gone:true = hidden), url (substring or glob), ms (delay), until:"stable" (page stops changing). Fails TIMEOUT.',
   inputSchema: z.object({
     tabId: tabIdParam,
     target: targetParam.optional(),

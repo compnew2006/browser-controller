@@ -12,6 +12,7 @@
  * Both need the tab cache, which lives here rather than in the service, so that the service keeps its size.
  */
 import { ALLOWLIST, type CommitMode } from './allowlist.js';
+import { isRecord } from './guards.js';
 import { readPolicy } from './policy.js';
 import { decideScope } from './scope.js';
 import { TabStateCache } from './tab-state.js';
@@ -39,9 +40,6 @@ export interface ObserverDeps {
   connection(sessionId: string): ObserverConnection;
   vault: { memoryEligibility(browserId: string, tabId?: number): 'clear' | 'protected' | 'unknown' };
 }
-
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** The code of a failed call: the text before the first colon, as the tools report it (`ELEMENT_HIDDEN: …`). */
 export function failureCode(error: string | undefined): string | null {

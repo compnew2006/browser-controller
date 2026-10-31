@@ -9,6 +9,7 @@ import { atomicWriteFile } from './atomic-file.js';
 import { MAP_LIMITS } from './map-allowlist.js';
 import { canonicalPrefix, pathUnderPrefix, samePath } from './map-text.js';
 import { MemoryPolicyError, canonicalOrigin, type MemoryPolicy } from './policy.js';
+import { isRecord } from './guards.js';
 
 export const MAP_POLICY_SCHEMA_VERSION = 1;
 export const MAX_MAP_PROFILES = 16;
@@ -47,7 +48,6 @@ export function defaultMapPolicy(): MapPolicy {
 
 type Mode = 'read' | 'write';
 const invalid = (mode: Mode, message: string): MemoryPolicyError => new MemoryPolicyError(mode === 'read' ? 'MEMORY_CORRUPT' : 'INVALID_ARGUMENT', message);
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isTime = (value: unknown): value is string => typeof value === 'string' && ISO_UTC.test(value) && Number.isFinite(Date.parse(value));
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const validProfile = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 200 && !UNSAFE_KEYS.has(value);

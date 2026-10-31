@@ -40,7 +40,7 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
 export const tabsTool: ToolDefinition = {
   name: 'browser_tabs',
   summary: 'List tabs, close or focus one, pick a browser, set the session policy',
-  description: 'list (default): this session\'s tabs and the user\'s focused tab. close / focus need tabId. browser picks this session\'s Chrome profile ("auto" = default). session reads or sets the session policy: isolation (trusted|isolated) and access (full|read-only).',
+  description: 'list (default): this session\'s tabs and the user\'s focused tab. close / focus need tabId. browser picks this session\'s Chrome profile ("auto" = default). session reads or sets the policy: isolation and access.',
   inputSchema: z.object({
     action: z.enum(['list', 'close', 'focus', 'session']).optional().describe('Default list'),
     tabId: tabIdParam.optional(),

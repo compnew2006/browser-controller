@@ -38,10 +38,12 @@ export const targetParam = z.union([
     role: z.string().min(1).max(80),
     name: z.string().min(1).max(500),
     // Integer checked by refine, not .int(), for the same reason as tabId above.
-    nth: z.number().refine(Number.isInteger, "nth must be an integer").min(0).optional()
-      .describe("Zero-based index when several exact matches exist"),
+    // No .describe() here either: the union's own text says nth is zero-based, and
+    // this locator is published ten times in tools/list, so a 50-char repeat costs
+    // 500 characters of the 20 000 the v3-server test allows.
+    nth: z.number().refine(Number.isInteger, "nth must be an integer").min(0).optional(),
   }).strict(),
-]).describe("Locator string or exact accessible role/name object; name matching is case-insensitive and nth is zero-based.");
+]).describe("Locator string or exact {role,name,nth}; name is case-insensitive, nth zero-based.");
 
 export interface ToolDefinition {
   name: string;

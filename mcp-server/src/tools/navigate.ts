@@ -26,7 +26,7 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
 export const navigateTool: ToolDefinition = {
   name: 'browser_navigate',
   summary: 'Go to a URL, or back, forward or reload a tab',
-  description: 'Load a URL (scheme optional), or back / forward / reload. No tabId: opens a new background tab (incognito: true = in a private window). A network failure fails NAVIGATION_FAILED. The call returns once the page has drawn, so the read after it sees the page.',
+  description: 'Load a URL (scheme optional), or back / forward / reload. No tabId: opens a new background tab (incognito: true = private). A network failure fails NAVIGATION_FAILED. Returns once the page has drawn, so the next read sees it.',
   inputSchema: z.object({
     url: z.string().describe('URL, or back / forward / reload'),
     tabId: tabIdParam.optional(),

@@ -261,7 +261,7 @@ function continuedBatchResult(
 export const batchTool: ToolDefinition = {
   name: 'browser_batch',
   summary: 'Run up to 50 browser actions in one call',
-  description: 'Up to 50 calls in order, each {tool, params}; stops at the first failure (onError:"continue" runs the rest and reports every failure). tabId fills steps that omit it (not browser_tabs). Every step\'s result comes back, each under its own step label, with one structured entry per step. Reading several fields of one page in a single browser_evaluate costs less than a read step each.',
+  description: 'Up to 50 calls in order, each {tool, params}; stops at the first failure (onError:"continue" runs the rest and reports every failure). tabId fills steps that omit it (not browser_tabs). Every step\'s result comes back under its own step label, with one structured entry per step. One browser_evaluate reading several fields beats a read step each.',
   inputSchema: z.object({
     tabId: tabIdParam.optional(),
     maxChars: z.number().int().min(1_000).max(500_000).optional().describe('Cap on the batch\'s whole text; later steps are cut past it (default 120000)'),

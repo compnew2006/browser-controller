@@ -23,8 +23,9 @@ import { MemoryQueue, type CaptureOp, type DropReason } from './queue.js';
 import { decideScope, type ScopeDecision, type ScopeSiteContext } from './scope.js';
 import { JsonMemoryStore, MemoryStoreError, type MemoryStore, type SiteRecord } from './store.js';
 import { snapshotRoles } from './tab-state.js';
-import { OutcomeObserver, isRecord } from './outcome-observer.js';
+import { OutcomeObserver } from './outcome-observer.js';
 import type { MemoryToolContext, MemoryToolPurpose } from './tool-route.js';
+import { isRecord } from './guards.js';
 
 export { extractSnapshotFacts };
 export type { MemoryToolContext };
@@ -94,7 +95,8 @@ interface ParsedSiteContext extends ScopeSiteContext {
   formShape?: unknown;
 }
 
-function parseSiteContext(raw: unknown): ParsedSiteContext | null {  if (!isRecord(raw) || typeof raw.url !== 'string') return null;
+function parseSiteContext(raw: unknown): ParsedSiteContext | null {
+  if (!isRecord(raw) || typeof raw.url !== 'string') return null;
   if (typeof raw.incognito !== 'boolean' || typeof raw.topLevel !== 'boolean' || typeof raw.stable !== 'boolean') return null;
   const anonymous = raw.anonymous === true ? true : raw.anonymous === false ? false : null;
   return {

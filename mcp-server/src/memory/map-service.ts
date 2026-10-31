@@ -24,6 +24,7 @@ import { maskPath, normalizeForMatch } from './map-text.js';
 import { MemoryPolicyError, canonicalOrigin, readPolicy, type MemoryPolicy } from './policy.js';
 import type { ScopeDecision } from './scope.js';
 import { MemoryStoreError } from './site-record.js';
+import { isRecord } from './guards.js';
 
 /**
  * Calls that leave the page as it is, or that capture already handles (navigate, snapshot, click). Any other call on
@@ -75,7 +76,6 @@ export interface MapCallInput {
 
 export type MapLookupResult = MapLookup | { success: false; error: string };
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** Errors thrown by the map policy read in `readPolicies`, so a failure is reported against the file that failed. */
 const MAP_POLICY_FAILURES = new WeakSet<Error>();

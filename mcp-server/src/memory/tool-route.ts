@@ -1,11 +1,12 @@
 import type { RoutedCallResult } from '../vault/daemon-routing.js';
 import { canonicalOrigin } from './policy.js';
+import { isRecord } from './guards.js';
 
 /** The tab-context action the daemon sends to the extension; see DAEMON_ONLY_WIRE_TOOLS in wire-tools.ts. */
 export const CONTEXT_ACTION = 'browser_memory_internal_context';
 const KINDS = new Set(['all', 'facts', 'visits']);
 
-export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+export { isRecord };
 
 export interface MemoryToolBridge {
   callTool(tool: string, params: Record<string, unknown>, sessionId: string, signal: AbortSignal, agentName: string): Promise<unknown>;

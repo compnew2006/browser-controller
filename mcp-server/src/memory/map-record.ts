@@ -7,6 +7,7 @@ import { MAP_LIMITS, type MapArea, type MapRole } from './map-allowlist.js';
 import { looksUnmasked } from './map-text.js';
 import { canonicalOrigin } from './policy.js';
 import { MemoryStoreError } from './site-record.js';
+import { isRecord } from './guards.js';
 
 export const MAP_SCHEMA_VERSION = 1;
 export const MAX_MAP_PAGES = MAP_LIMITS.pagesPerOrigin;
@@ -134,7 +135,6 @@ const OPEN_KINDS: readonly string[] = ['same', 'elsewhere', 'other_origin', 'sig
 const REASONS: readonly string[] = ['root', 'destination', 'hub', 'landing', 'read'];
 
 const bad = (mode: Mode, message: string): MemoryStoreError => new MemoryStoreError(mode === 'read' ? 'MEMORY_CORRUPT' : 'INVALID_ARGUMENT', message);
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const isTime = (value: unknown): value is string => typeof value === 'string' && ISO_UTC.test(value) && Number.isFinite(Date.parse(value));
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 

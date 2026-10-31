@@ -15,14 +15,17 @@ Verdict vocabulary:
 
 ## A. Mechanical duplicates (production)
 
-### A1. `isRecord` — identical, 20 tokens — **MERGE**
+### A1. `isRecord` — identical, 20 tokens — **MERGE** — **Done 2026-10-31**
 
-- `mcp-server/src/vault/daemon-routing.ts:30`
-- `mcp-server/src/vault/service-common.ts:123` (already exported)
+- `mcp-server/src/vault/daemon-routing.ts:30` — **merged**: it now imports from `./service-common.js`
+- `mcp-server/src/vault/service-common.ts:123` (already exported) — unchanged, still the vault's one copy
+- `mcp-server/src/memory/guards.ts` — **new**: the memory subsystem's one copy, used by `admin.ts`, `map-policy.ts`, `map-record.ts`, `map-service.ts`, `map-store.ts`, `policy.ts`, `service.ts`, `site-record.ts` and `tool-route.ts` (which re-exports it)
 
 Both are `value !== null && typeof value === 'object' && !Array.isArray(value)`. Same folder, same meaning, one already exported.
 Action: delete the private copy in `daemon-routing.ts`, import from `./service-common.js`. No cycle: `service-common` does not import `daemon-routing`.
 Blast radius: 1 file plus its importer. Risk: none. Effort: minutes.
+
+**Widened 2026-10-31:** the register listed two copies and both were in `vault/`. The `memory/` subsystem carried **eight** more — seven as a local `const` and one as a local `function` — that the fingerprint pass had not reported (they sit in files the pass did not fingerprint, and the two spellings differ in operand order). All nine answered the same question, so a change to one could have left another accepting a shape the rest reject. They now share `memory/guards.ts`, which imports nothing and so cannot create a cycle. The vault keeps its own copy: `memory/` already depends on `vault/`, so the direction cannot be reversed.
 
 ### A2. Timeout racers — `withTimeout`, `bounded`, `settleWithin` — **MERGE into one timing module**
 
