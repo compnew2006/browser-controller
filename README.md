@@ -51,6 +51,7 @@ Version 3.0 is a breaking release: 19 tools, one `target` locator, and text resu
 - **Several browsers.** Every connected Chrome profile is its own connection. `browser_tabs { browser }` picks one per session.
 - **Authenticated local connection.** Token + enrollment secret, so no other local process can silently drive your browser — and after a one-time `npm run setup:pairing` the extension pairs itself. Everything stays on localhost — no cloud, no telemetry.
 - **Versioned compatibility handshake.** The daemon and extension advertise a protocol version and capabilities before tool traffic is accepted. A peer from before 3.0 is refused with an actionable error instead of producing unexplained timeouts.
+- **Consoles and appliances.** A hypervisor web client is an ordinary page to the agent, and the guest behind it is reachable through the same tools — the guest is a canvas, so it needs its own rules for reading, clicking and typing. The field guide is [`docs/esxi-vm-console-automation.md`](docs/esxi-vm-console-automation.md).
 
 ---
 
@@ -477,6 +478,10 @@ The local key is stored separately with owner-only file permissions. The app's l
 The tool definitions are kept compact; Version 2.x sent about 7,100 tokens for 35 tools.
 
 ---
+
+### Consoles, guests and appliances
+
+A hypervisor or appliance web client is an ordinary page to the agent, but the guest behind it is not: it is a canvas, so reading it, clicking it and typing into it each need different rules from an ordinary DOM page. The field guide — [`docs/esxi-vm-console-automation.md`](docs/esxi-vm-console-automation.md) — covers opening an ESXi guest console (and why *open in new window* silently fails where *open in new tab* works), the canvas coordinate space, the keys that actually reach the guest, administering the host, and creating a VM with a Windows or Linux guest.
 
 ## Tool reference
 

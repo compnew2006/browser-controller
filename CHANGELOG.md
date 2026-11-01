@@ -28,6 +28,8 @@ Run `npm run build`, reload the extension at `chrome://extensions` and restart t
 - New extension capability `vault-site-approval`.
 - `npm run arch:check`: the architectural fitness functions as a command. It reads the real import graph of the server and fails when a layer boundary is crossed — `core/` stays neutral, the vault does not depend on the memory layer, the wire contract does not know the tools layer — so a wrong dependency fails the build instead of waiting for a review to notice it. CI runs it as a step.
 
+- A field guide for driving a guest through a hypervisor console: `docs/esxi-vm-console-automation.md` covers opening an ESXi guest console, the canvas coordinate space, the keys that reach the guest, and administering the host or creating a VM.
+
 ### Changed
 - Dependabot updates no longer enable auto-merge: a lockfile-only change can affect runtime dependencies, so updates require a manual merge. `CODEOWNERS` identifies the owner of sensitive paths; branch settings still determine whether reviews are enforced.
 - The website memory keeps two new kinds of data (spec 007): a form's shape, and a per-profile count of the actions that failed on a control the agent could not reach. A daemon from an earlier version quarantines a record that holds them as `MEMORY_CORRUPT` — the whole record, not only the new fields — so run `npm run memory -- delete --all` before downgrading.

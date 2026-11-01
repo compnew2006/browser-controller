@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "real-browser": {
+      "command": "node",
+      "args": [
+        "C:\\Users\\Administrator\\.zcode\\workspace\\default\\browser-controller\\mcp-server\\dist\\index.js"
+      ]
+    }
+  }
+}
