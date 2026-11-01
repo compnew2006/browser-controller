@@ -843,7 +843,7 @@ The server is layered, and the boundaries are checked instead of agreed:
 
 `npm run arch:check` proves those boundaries from the real import graph, and `npm run lint` enforces the same ones as `no-restricted-imports` rules, so a wrong dependency fails the build instead of waiting for a review to notice it.
 
-The architecture decisions are indexed in [`docs/adr/README.md`](docs/adr/README.md), and the remediation that produced this layout is written up in [`docs/audit/14-remediation-report.md`](docs/audit/14-remediation-report.md). Both are written in Arabic.
+The architecture decisions are indexed in [`docs/adr/README.md`](docs/adr/README.md), and the remediation that produced this layout is written up in [`docs/audit/14-remediation-report.md`](docs/audit/14-remediation-report.md). Both are written in Arabic. The [emergency exception runbook](docs/emergency-bypass.md) describes the owner-controlled process for an exception to `main` protection.
 
 ### Life of a tool call
 
@@ -894,6 +894,7 @@ npm audit --omit=dev
 | `npm run test:coverage` | Run the suite with coverage over the whole production surface (`mcp-server/src/**/*.ts` and `extension/**/*.js`), with the thresholds pinned at the coverage the tree actually reaches — a ratchet on reality, not a target |
 | `npm run lint` | Lint the TypeScript server, extension, and tests with zero warnings allowed; the layering boundaries are enforced here too |
 | `npm run arch:check` | Run the architectural fitness functions: the layering boundaries are proved from the real import graph, so a wrong dependency fails the build |
+| `npm run release:check -- vX.Y.Z` | Read an annotated local tag and check its versions, version-setting commit, and tagged changelog notes without publishing |
 | `npm run typecheck` | Type check without emitting |
 | `npm run smoke:real-chrome` | Against your own Chrome (extension enrolled, after `npm run build`): restarts the daemon, then checks snapshot, click, type, logs, upload and the five drags of [`scripts/pages/drag-and-drop.html`](scripts/pages/drag-and-drop.html). HTML5 drag and drop depends on the operating system, so run it on Windows, macOS and Linux. You can also open that page and drag by hand: it judges each drag itself. |
 | `npm audit --omit=dev` | Check the installed production dependency graph for known vulnerabilities |

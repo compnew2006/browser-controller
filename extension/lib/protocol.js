@@ -1,4 +1,4 @@
-/** Keep in sync with EXTENSION_PROTOCOL_VERSION in mcp-server/src/protocol.ts. */
+/** Keep in sync with EXTENSION_PROTOCOL_VERSION in mcp-server/src/protocol/capabilities.ts. */
 export const EXTENSION_PROTOCOL_VERSION = 2;
 
 export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([

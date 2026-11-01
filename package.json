@@ -30,6 +30,7 @@
     "lint": "eslint mcp-server/src tests extension vitest.config.ts eslint.config.js",
     "arch:check": "vitest run tests/architecture.test.ts",
     "security:audit": "npm audit --omit=dev --audit-level=high",
+    "release:check": "node scripts/check-release.mjs",
     "typecheck": "tsc -p mcp-server/tsconfig.json --noEmit",
     "setup:cursor": "node agent-config/setup.mjs cursor",
     "setup:claude": "node agent-config/setup.mjs claude",

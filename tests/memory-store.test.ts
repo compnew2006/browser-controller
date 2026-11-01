@@ -276,6 +276,19 @@ describe('quarantine and schema versions', () => {
     expect(fs.readdirSync(sitesDir)[0]).toMatch(/\.json\.corrupt-\d+$/u);
   });
 
+  it('preserves future-version bytes for recovery and can read a restored compatible backup', async () => {
+    fs.mkdirSync(sitesDir, { recursive: true, mode: 0o700 });
+    const compatibleBackup = JSON.stringify(record());
+    const futureData = JSON.stringify({ ...record(), schemaVersion: 99, futureField: 'synthetic future data' });
+    fs.writeFileSync(siteFile(ORIGIN), futureData, { mode: 0o600 });
+    const oldReader = store({ now: () => 42 });
+    expect(await code(oldReader.getSite(ORIGIN))).toBe('MEMORY_CORRUPT');
+    expect(fs.readFileSync(`${siteFile(ORIGIN)}.corrupt-42`, 'utf8')).toBe(futureData);
+    fs.writeFileSync(siteFile(ORIGIN), compatibleBackup, { mode: 0o600 });
+    expect(await store().getSite(ORIGIN)).toEqual(record());
+    expect(fs.readFileSync(`${siteFile(ORIGIN)}.corrupt-42`, 'utf8')).toBe(futureData);
+  });
+
   it('quarantines invalid JSON, a wrong shape and an oversized file', async () => {
     fs.mkdirSync(sitesDir, { recursive: true, mode: 0o700 });
     const cases: Array<[string, string]> = [

@@ -178,14 +178,82 @@ describe('Reconnector.waitFor: a call made during a reconnect', () => {
 });
 
 describe('openDaemonLog: daemon.log cannot grow without bound', () => {
+  it('protects existing logs and their rotated copy without changing their contents', () => {
+    if (process.platform === 'win32') return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-log-'));
+    const file = path.join(dir, 'daemon.log');
+    try {
+      fs.writeFileSync(file, 'current', { mode: 0o644 });
+      fs.writeFileSync(`${file}.1`, 'previous', { mode: 0o644 });
+      fs.chmodSync(file, 0o644);
+      fs.chmodSync(`${file}.1`, 0o644);
+      fs.closeSync(openDaemonLog(file, 100));
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(`${file}.1`).mode & 0o777).toBe(0o600);
+      expect(fs.readFileSync(file, 'utf8')).toBe('current');
+      expect(fs.readFileSync(`${file}.1`, 'utf8')).toBe('previous');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a symlinked log instead of writing to its target', () => {
+    if (process.platform === 'win32') return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-log-'));
+    const file = path.join(dir, 'daemon.log');
+    const target = path.join(dir, 'target');
+    try {
+      fs.writeFileSync(target, 'keep');
+      fs.symlinkSync(target, file);
+      expect(() => openDaemonLog(file, 100)).toThrow();
+      expect(fs.readFileSync(target, 'utf8')).toBe('keep');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a hard-linked log without changing the other link', () => {
+    if (process.platform === 'win32') return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-log-'));
+    const file = path.join(dir, 'daemon.log');
+    const target = path.join(dir, 'target');
+    try {
+      fs.writeFileSync(target, 'keep');
+      fs.chmodSync(target, 0o644);
+      fs.linkSync(target, file);
+      expect(() => openDaemonLog(file, 100)).toThrow();
+      expect(fs.statSync(target).mode & 0o777).toBe(0o644);
+      expect(fs.readFileSync(target, 'utf8')).toBe('keep');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a symlinked previous log without touching its target', () => {
+    if (process.platform === 'win32') return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-log-'));
+    const file = path.join(dir, 'daemon.log');
+    const target = path.join(dir, 'target');
+    try {
+      fs.writeFileSync(target, 'keep');
+      fs.symlinkSync(target, `${file}.1`);
+      expect(() => openDaemonLog(file, 100)).toThrow();
+      expect(fs.readFileSync(target, 'utf8')).toBe('keep');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('rotates a log past the cap to <file>.1 and keeps one old copy', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-log-'));
     const file = path.join(dir, 'daemon.log');
     try {
       fs.writeFileSync(file, 'a'.repeat(200));
+      if (process.platform !== 'win32') fs.chmodSync(file, 0o644);
       fs.closeSync(openDaemonLog(file, 100));
       expect(fs.readFileSync(`${file}.1`, 'utf8')).toBe('a'.repeat(200));
       expect(fs.statSync(file).size).toBe(0);
+      if (process.platform !== 'win32') expect(fs.statSync(`${file}.1`).mode & 0o777).toBe(0o600);
 
       // Under the cap: appended to, not rotated.
       const fd = openDaemonLog(file, 100);

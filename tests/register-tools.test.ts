@@ -11,6 +11,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import { parseToolParams, registerTools } from '../mcp-server/src/register-tools.js';
 import { ERROR_CODES, formatError } from '../mcp-server/src/core/error-codes.js';
 import { allTools } from '../mcp-server/src/tools/index.js';
+import * as sessionMode from '../mcp-server/src/tools/session-mode.js';
 import type { ToolDefinition, ToolHost } from '../mcp-server/src/tools/types.js';
 import { withoutStabilityProbe } from './helpers/stability-probe.js';
 
@@ -174,6 +175,42 @@ describe('registerTools', () => {
       expect(textOf(result)).toContain('REF_GONE: private page detail');
       expect(logs.mock.calls.flat().join(' ')).toContain('tool browser_batch failed: REF_GONE');
       expect(logs.mock.calls.flat().join(' ')).not.toContain('private page detail');
+    } finally {
+      logs.mockRestore();
+    }
+  });
+
+  it.each([
+    { name: 'unregistered code', content: [{ type: 'text' as const, text: 'TAB_OWNED: private detail' }] },
+    { name: 'no text content', content: [{ type: 'image' as const, data: 'aGVsbG8=', mimeType: 'image/png' }] },
+  ])('logs INTERNAL_ERROR when a failed session gate has $name', async ({ content }) => {
+    const gate = vi.spyOn(sessionMode, 'sessionGate').mockResolvedValueOnce({ content, isError: true });
+    const logs = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { client } = await setup();
+      const result = await client.callTool({ name: 'browser_text', arguments: { tabId: 3 } });
+      expect(result.isError).toBe(true);
+      expect(gate).toHaveBeenCalledOnce();
+      expect(result.content).toEqual(content);
+      expect(logs.mock.calls.flat().join(' ')).toContain('tool browser_text failed: INTERNAL_ERROR');
+      expect(logs.mock.calls.flat().join(' ')).not.toContain('private detail');
+    } finally {
+      gate.mockRestore();
+      logs.mockRestore();
+    }
+  });
+
+  it('logs the normalized INTERNAL_ERROR when the host names an unregistered code', async () => {
+    // The handler normalizes this message before logFailure sees it; the session
+    // gate cases above exercise logFailure's own fallback separately.
+    const typo: ToolHost = { async callTool() { return { success: false, error: 'TAB_OWNED: wrong code' }; } };
+    const { client } = await setup(typo);
+    const logs = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await client.callTool({ name: 'browser_text', arguments: { tabId: 3 } });
+      expect(logs.mock.calls.flat().join(' ')).toContain('tool browser_text failed: INTERNAL_ERROR');
+      expect(logs.mock.calls.flat().join(' ')).not.toContain('FAILED');
+      expect(logs.mock.calls.flat().join(' ')).not.toContain('wrong code');
     } finally {
       logs.mockRestore();
     }

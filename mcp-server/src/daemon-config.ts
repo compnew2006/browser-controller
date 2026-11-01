@@ -186,6 +186,23 @@ export const DAEMON_LOG_FILE = path.join(STATE_DIR, 'daemon.log');
 /** Past this size daemon.log is moved to daemon.log.1 before a daemon starts; one old copy is kept. */
 export const DAEMON_LOG_MAX_BYTES = 5_000_000;
 
+/** Open a private regular log without following symlinks or accepting hard links on POSIX. */
+function openPrivateLog(file: string, flags: number): number {
+  const safeFlags = process.platform === 'win32' ? flags : flags | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+  const fd = fs.openSync(file, safeFlags, 0o600);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || (process.platform !== 'win32' && (stat.nlink !== 1 || (process.getuid && stat.uid !== process.getuid())))) {
+      throw new Error('daemon log is not a private regular file');
+    }
+    if (process.platform !== 'win32' && (stat.mode & 0o7777) !== 0o600) fs.fchmodSync(fd, 0o600);
+    return fd;
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+}
+
 /**
  * Open daemon.log for appending, as the stdout/stderr of a daemon about to
  * start. A log past maxBytes is first rotated to `<file>.1`, so restarts and
@@ -193,10 +210,38 @@ export const DAEMON_LOG_MAX_BYTES = 5_000_000;
  */
 export function openDaemonLog(file = DAEMON_LOG_FILE, maxBytes = DAEMON_LOG_MAX_BYTES): number {
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  if (process.platform !== 'win32') {
+    try {
+      fs.closeSync(openPrivateLog(`${file}.1`, fs.constants.O_RDONLY));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  const flags = fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT;
+  let fd = openPrivateLog(file, flags);
   try {
-    if (fs.statSync(file).size > maxBytes) fs.renameSync(file, `${file}.1`);
-  } catch { /* no log yet, or another client rotated it first */ }
-  return fs.openSync(file, 'a', 0o600);
+    if (fs.fstatSync(fd).size <= maxBytes) return fd;
+    const opened = fs.fstatSync(fd);
+    let current: fs.Stats;
+    try {
+      current = fs.lstatSync(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return fd;
+      throw error;
+    }
+    if (opened.dev !== current.dev || opened.ino !== current.ino) return fd;
+    try {
+      fs.renameSync(file, `${file}.1`);
+    } catch {
+      return fd; // Another client may already have rotated the log.
+    }
+    fs.closeSync(fd);
+    fd = -1;
+    return openPrivateLog(file, flags);
+  } catch (error) {
+    if (fd !== -1) fs.closeSync(fd);
+    throw error;
+  }
 }
 
 /** Auth token file (3.1): both IPC clients and the extension must present it. */

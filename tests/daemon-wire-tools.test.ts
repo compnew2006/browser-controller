@@ -62,12 +62,12 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
   });
 
   /** Hello, then send each call and return the results by id. */
-  function callAll(tools: string[], cid?: string): Promise<Record<string, { success: boolean; error?: string; cid?: string }>> {
+  function callAll(tools: string[], cid?: string): Promise<Record<string, { kind: string; id: string; success: boolean; error?: string; cid?: string }>> {
     const token = JSON.parse(fs.readFileSync(path.join(stateDir, 'token.json'), 'utf8')).token;
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(sock);
       socket.setEncoding('utf8');
-      const out: Record<string, { success: boolean; error?: string; cid?: string }> = {};
+      const out: Record<string, { kind: string; id: string; success: boolean; error?: string; cid?: string }> = {};
       const timer = setTimeout(() => { socket.destroy(); reject(new Error('timeout')); }, 8_000);
       let buf = '';
       socket.on('connect', () => socket.write(JSON.stringify(buildIpcHello(token, 'WireToolsTest')) + '\n'));
@@ -105,5 +105,12 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
   it('echoes a valid correlation id and replaces malformed ids', async () => {
     expect((await callAll(['browser_nope'], 'abc12345')).browser_nope.cid).toBe('abc12345');
     expect((await callAll(['browser_nope'], 'invalid\nvalue')).browser_nope.cid).toMatch(/^[a-z0-9]{8}$/u);
+  });
+
+  it('returns a correlated result frame to an older client that sends no cid', async () => {
+    const result = (await callAll(['browser_nope'])).browser_nope;
+    expect(result).toMatchObject({ kind: 'result', id: 'c0', success: false });
+    expect(result.cid).toMatch(/^[a-z0-9]{8}$/u);
+    expect(result.error).toMatch(/^UNKNOWN_TOOL:/u);
   });
 });

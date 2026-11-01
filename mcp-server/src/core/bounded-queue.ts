@@ -416,8 +416,9 @@ export class BoundedQueue<Op, SideOp = never, G extends QueueGroup<Op> = QueueGr
     const outcomes: Array<QueueDropReason | null> = entries.map(() => 'timeout');
     const results: Array<Result | null> = entries.map(() => null);
     const timedOut = await this.withTimeout((signal) => this.options.commitGroup(group, signal, outcomes, results));
-    // After a timeout the write may still be filling `outcomes`; take the values as they stand now.
-    const settled = timedOut ? [...outcomes] : outcomes;
+    // A timed-out profile may still be running; a provisional success is not a confirmed commit.
+    // Preserve explicit drop reasons already determined by the profile.
+    const settled = timedOut ? outcomes.map((outcome) => outcome === null ? 'timeout' : outcome) : outcomes;
     entries.forEach((entry, index) => {
       const outcome = settled[index];
       if (outcome !== null) {

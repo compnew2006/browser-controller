@@ -18,6 +18,30 @@ function makeQueue(commitGroup: BoundedQueueOptions<Op, Op, Group, unknown>['com
 }
 
 describe('bounded queue failure handling', () => {
+  it('does not count a provisional success as committed when the group times out', async () => {
+    const { queue } = makeQueue(async (_group, _signal, outcomes) => {
+      outcomes[0] = null;
+      await new Promise<void>(() => {});
+    });
+    queue.enqueue({ id: 'one', key: 'one' });
+    await queue.drain();
+    expect(queue.stats()).toMatchObject({ committed: 0, dropped: { timeout: 1 }, pending: 0 });
+    expect(queue.enqueue({ id: 'one', key: 'one' }).accepted).toBe(true);
+    await queue.drain();
+  });
+
+  it('preserves a definite drop reason when another operation in the group times out', async () => {
+    const { queue } = makeQueue(async (_group, _signal, outcomes) => {
+      outcomes[0] = 'disabled';
+      outcomes[1] = null;
+      await new Promise<void>(() => {});
+    });
+    queue.enqueue({ id: 'one', key: 'same' });
+    queue.enqueue({ id: 'two', key: 'same' });
+    await queue.drain();
+    expect(queue.stats()).toMatchObject({ committed: 0, dropped: { disabled: 1, timeout: 1 } });
+  });
+
   it('continues and counts each operation once if a members hook throws after a failed or successful commit', async () => {
     const { queue } = makeQueue(async (group, _signal, outcomes) => {
       if (group.key === 'one') throw new Error('commit failed');

@@ -2,6 +2,7 @@
 
 Audit only: no source file was created, modified or deleted. This bundle is the only addition, and it lands in a docs-only commit limited to `docs/audit/**`.
 Baseline: branch `codex/001-credential-vault`, commit `c2b37f6` (`refactor(vault): settle private requests through one helper`).
+This is a historical snapshot, not the status of today's code. Later reviews and fixes are recorded in [`16-findings-refresh.md`](16-findings-refresh.md) and the source and tests take precedence. The proposed constitution is not adopted policy; see `AGENTS.md`.
 Pre-existing uncommitted changes at the time of the audit, deliberately untouched: `.codebase-memory/artifact.json`, `.codebase-memory/graph.db.zst`.
 
 ---

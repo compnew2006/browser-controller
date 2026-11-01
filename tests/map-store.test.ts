@@ -98,6 +98,19 @@ describe('JsonMapStore (T009)', () => {
     await rejectsWith(new JsonMapStore(dir.memoryDir, { now: () => 43 }).getMap('browser-a', A), 'MEMORY_CORRUPT');
   });
 
+  it('preserves an unsupported map version and reads a restored compatible backup', async () => {
+    await new JsonMapStore(dir.memoryDir).putMap(withPage('browser-a', A));
+    const file = path.join(dir.memoryDir, 'maps', mapFileName('browser-a', A));
+    const compatibleBackup = fs.readFileSync(file, 'utf8');
+    const futureData = JSON.stringify({ ...JSON.parse(compatibleBackup), schemaVersion: 99, futureField: 'synthetic' });
+    fs.writeFileSync(file, futureData, { mode: 0o600 });
+    await rejectsWith(new JsonMapStore(dir.memoryDir, { now: () => 42 }).getMap('browser-a', A), 'MEMORY_CORRUPT');
+    expect(fs.readFileSync(`${file}.corrupt-42`, 'utf8')).toBe(futureData);
+    fs.writeFileSync(file, compatibleBackup, { mode: 0o600 });
+    expect((await new JsonMapStore(dir.memoryDir).getMap('browser-a', A))?.pages[0].path).toBe('/');
+    expect(fs.readFileSync(`${file}.corrupt-42`, 'utf8')).toBe(futureData);
+  });
+
   it('refuses a maps directory other users can read', async () => {
     if (process.platform === 'win32') return;
     fs.mkdirSync(path.join(dir.memoryDir, 'maps'), { mode: 0o755 });
