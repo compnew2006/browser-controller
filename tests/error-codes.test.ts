@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { parseSync } from '@babel/core';
 import { ERROR_CODES, formatError, isCodedMessage, isKnownErrorCode, type ErrorCode } from '../mcp-server/src/core/error-codes.js';
+import { ERROR_CODES as BROWSER_ERROR_CODES } from '../extension/lib/generated-contract.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER_SRC = path.join(ROOT, 'mcp-server', 'src');
@@ -68,6 +70,37 @@ function stringLiterals(source: string): string[] {
   return literals;
 }
 
+/** Read literal error-code properties and assignments from executable JS, not comments. */
+function assignedCodes(source: string): string[] {
+  const ast = parseSync(source, { sourceType: 'unambiguous', babelrc: false, configFile: false });
+  const codes: string[] = [];
+  function visit(value: unknown): void {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== 'object') return;
+    const node = value as Record<string, unknown>;
+    const name = (key: unknown, computed: unknown): boolean => {
+      if (!key || typeof key !== 'object') return false;
+      const property = key as Record<string, unknown>;
+      return (!computed && property.name === 'code') || property.value === 'code';
+    };
+    let candidate: unknown;
+    if (node.type === 'ObjectProperty' && name(node.key, node.computed)) candidate = node.value;
+    if (node.type === 'AssignmentExpression' && node.operator === '=' && node.left && typeof node.left === 'object') {
+      const left = node.left as Record<string, unknown>;
+      if (left.type === 'MemberExpression' && name(left.property, left.computed)) candidate = node.right;
+    }
+    if (candidate && typeof candidate === 'object') {
+      const literal = candidate as Record<string, unknown>;
+      if (literal.type === 'StringLiteral' && typeof literal.value === 'string' && /^[A-Z][A-Z0-9_]+$/u.test(literal.value)) codes.push(literal.value);
+    }
+    for (const [key, child] of Object.entries(node)) {
+      if (key !== 'loc' && key !== 'comments' && key !== 'tokens') visit(child);
+    }
+  }
+  visit(ast?.program);
+  return codes;
+}
+
 describe('the error-code registry', () => {
   it('registers each code under its own name', () => {
     for (const [key, value] of Object.entries(ERROR_CODES)) {
@@ -119,7 +152,9 @@ describe('the coded messages in mcp-server/src', () => {
     // The server produces its own codes; the Chrome extension produces the rest,
     // and the server forwards those to the agent unchanged.
     const serverText = files.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
-    const extensionText = sourceFiles(EXTENSION_SRC, ['.js', '.ts']).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+    const extensionText = sourceFiles(EXTENSION_SRC, ['.js', '.ts'])
+      .filter((file) => !file.endsWith(path.join('lib', 'generated-contract.js')))
+      .map((file) => fs.readFileSync(file, 'utf8')).join('\n');
     const unused = Object.keys(ERROR_CODES).filter((code) => {
       if (serverText.includes(`ERROR_CODES.${code}`)) return false;
       return !new RegExp(`['"\`]${code}[:'"\`]`).test(extensionText);
@@ -129,6 +164,26 @@ describe('the coded messages in mcp-server/src', () => {
 });
 
 describe('extension error codes', () => {
+  it('generates the browser registry from the server registry', () => {
+    expect(BROWSER_ERROR_CODES).toEqual(ERROR_CODES);
+    expect(Object.isFrozen(BROWSER_ERROR_CODES)).toBe(true);
+  });
+
+  it('detects code assignments and object properties without treating comments as code', () => {
+    expect(assignedCodes("// err.code = 'COMMENT'\nerr.code = 'TAB_OWNED'; err['code'] = 'TIMEOUT'; err[code] = 'NOT_A_PROPERTY'; ({ code: 'TAB_NOT_OWNED' });"))
+      .toEqual(['TAB_OWNED', 'TIMEOUT', 'TAB_NOT_OWNED']);
+  });
+
+  it('registers literal codes assigned to error objects', () => {
+    const unknown: string[] = [];
+    for (const file of sourceFiles(EXTENSION_SRC, ['.js'])) {
+      for (const code of assignedCodes(fs.readFileSync(file, 'utf8'))) {
+        if (!isKnownErrorCode(code)) unknown.push(`${path.relative(ROOT, file)}: ${code}`);
+      }
+    }
+    expect(unknown).toEqual([]);
+  });
+
   it('registers every coded string literal produced by the extension', () => {
     const unknown: string[] = [];
     for (const file of sourceFiles(EXTENSION_SRC, ['.js', '.ts'])) {

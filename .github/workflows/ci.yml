@@ -29,6 +29,11 @@ jobs:
 
       - run: npm ci
       - run: npm run security:audit
+      # Report advisories in the development tree without making them the
+      # production dependency gate; security:audit above remains blocking.
+      - name: report full dependency audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
       - run: npm run context:lint
       # Token-budget check. The command is wired in, but the CAP is still an open owner
       # decision, so no threshold is enforced yet: this step only fails if the measurement
@@ -47,3 +52,18 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:coverage
+
+  chromium-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      # Isolated daemon, extension copy, profile and synthetic site; does not
+      # use the native messaging pairing host or a real browser profile.
+      - run: npm run smoke:ci

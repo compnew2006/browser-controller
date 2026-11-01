@@ -7,6 +7,7 @@ import { highestRefIn } from './ref-errors.js';
 import { PAGE_DOM_INSTALL, PAGE_DOM_VERSION } from './page-dom.js';
 import { tabLockedMessage } from './tab-concurrency.js';
 import { getOpenDialog, dialogOpenError } from './cdp-session.js';
+import { ERROR_CODES } from './generated-contract.js';
 
 /**
  * Resolve a tab by id, throwing a clear, actionable error if it's gone.
@@ -28,7 +29,7 @@ function tabGoneError(tabId) {
   const err = next === undefined
     ? new Error(`TAB_NOT_FOUND: tab ${tabId} is closed or was never opened. Call browser_tabs list first.`)
     : new Error(`TAB_REPLACED: tab ${tabId} was replaced by tab ${next}. Use tabId ${next}; browser_tabs list shows the open tabs.`);
-  err.code = next === undefined ? 'TAB_NOT_FOUND' : 'TAB_REPLACED';
+  err.code = next === undefined ? ERROR_CODES.TAB_NOT_FOUND : ERROR_CODES.TAB_REPLACED;
   return err;
 }
 

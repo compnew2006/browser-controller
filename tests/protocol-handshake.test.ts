@@ -37,6 +37,7 @@ import {
   validateDaemonHello,
 } from '../extension/lib/protocol.js';
 import { freePort } from './helpers/free-port.js';
+import { createWebSocketClientProof } from '../extension/lib/daemon-auth.js';
 
 /** The capability list a 2.x extension advertised: no tools-v3. */
 const V2_EXTENSION_CAPABILITIES = ['tool-dispatch', 'ping-pong', 'cancellation', 'observe-act-v2', 'tab-locks', 'webmcp'];
@@ -201,6 +202,19 @@ describe('protocol handshake contract', () => {
       ...auth,
     });
     expect(buildBrowserHelloAck('3.0.0')).not.toHaveProperty('clientNonce');
+  });
+
+  it('builds matching authenticated acknowledgement frames on both runtimes', async () => {
+    const clientNonce = newAuthNonce();
+    const serverNonce = newAuthNonce();
+    const instanceId = 'abcd1234';
+    const hello = buildExtensionHello('3.0.0', instanceId, { clientNonce, serverNonce, enrollmentSecret: TEST_ENROLLMENT_SECRET });
+    for (const identity of [{}, { browserId: 'browser-1', browserLabel: 'Test browser' }]) {
+      const browser = buildBrowserHelloAck('3.0.0', identity, { clientNonce, instanceId });
+      const authProof = await createWebSocketClientProof(TEST_ENROLLMENT_SECRET, hello, identity);
+      const server = buildExtensionHelloAck('3.0.0', { token: TEST_ENROLLMENT_SECRET, clientNonce, serverNonce, instanceId, ...identity });
+      expect({ ...browser, authProof }).toEqual(server);
+    }
   });
 
   it('advertises the 3.0 tool contract and no 2.x capability', () => {

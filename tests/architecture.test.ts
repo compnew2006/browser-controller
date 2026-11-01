@@ -38,7 +38,7 @@ function sourceFiles(relativeDir: string, extension: string): string[] {
 /** Every import specifier of a file: static imports, re-exports and dynamic imports. */
 function importSpecifiers(relativePath: string): string[] {
   const source = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
-  return [...source.matchAll(/(?:from|import\s*\(|require\s*\()\s*['"]([^'"]+)['"]/gu)].map((match) => match[1]);
+  return [...source.matchAll(/(?:from\s*|import\s*(?:\(\s*)?|require\s*\(\s*)['"]([^'"]+)['"]/gu)].map((match) => match[1]);
 }
 
 /**
@@ -74,6 +74,28 @@ function describeCrossings(crossingList: Crossing[]): string[] {
 }
 
 describe('architectural layering', () => {
+  it('keeps extension libraries and handlers below dispatch and background', async () => {
+    const eslint = new ESLint({ cwd: ROOT });
+    for (const [layer, forbidden] of [
+      ['lib', ['../handlers/navigation.js', '../dispatch/router.js', '../background.js', '../events.js']],
+      ['handlers', ['../dispatch/router.js', '../background.js', '../events.js']],
+    ] as const) {
+      const files = sourceFiles(`extension/${layer}`, '.js');
+      expect(files.length).toBeGreaterThan(0);
+      const forbiddenRoots = forbidden.map((value) => path.resolve(ROOT, `extension/${layer}`, value));
+      for (const file of files) {
+        for (const specifier of importSpecifiers(file)) {
+          const target = path.resolve(ROOT, path.dirname(file), specifier);
+          const blocked = forbiddenRoots.some((root) => target === root || (root.includes(`${path.sep}handlers${path.sep}`) && target.startsWith(path.dirname(root) + path.sep)) || (root.includes(`${path.sep}dispatch${path.sep}`) && target.startsWith(path.dirname(root) + path.sep)));
+          expect(blocked, `${file}: ${specifier}`).toBe(false);
+        }
+      }
+      for (const specifier of forbidden) {
+        const [result] = await eslint.lintText(`import '${specifier}';`, { filePath: path.join(ROOT, `extension/${layer}/boundary-check.js`) });
+        expect(result.messages.some((message) => message.ruleId === 'no-restricted-imports'), specifier).toBe(true);
+      }
+    }
+  });
   it('enforces the core allowlist in ESLint for new layers and external packages', async () => {
     const eslint = new ESLint({ cwd: ROOT });
     const filePath = path.join(ROOT, 'mcp-server/src/core/boundary-check.ts');

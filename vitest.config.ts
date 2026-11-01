@@ -18,10 +18,10 @@ export default defineConfig({
       // thresholds claimed 80%, so the gate could never fail. Chrome lifecycle
       // entry points, popup rendering, and native debugger plumbing still
       // require a real extension runtime, so no unit test reaches them. The
-      // only checks that exercise them are the local smoke scripts
-      // (`npm run smoke:real-chrome`, `smoke:vault-isolated`, `smoke:vault-card`),
-      // and CI does not run those — a green pipeline therefore does NOT prove
-      // them. Do not read the coverage number as coverage of the extension.
+      // CI runs a short isolated browser handshake and tool roundtrip, but does
+      // not exercise the native pairing host, popup or all debugger paths.
+      // Local smoke scripts cover additional paths. Do not read the coverage
+      // number as proof of every extension runtime behavior.
       include: [
         'mcp-server/src/**/*.ts',
         'extension/**/*.js',

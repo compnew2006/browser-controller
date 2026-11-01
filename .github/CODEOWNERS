@@ -1,0 +1,12 @@
+# The owner is requested for sensitive changes. Enforcing an approval requires
+# branch protection; GitHub does not allow authors to approve their own PRs.
+/.github/CODEOWNERS @compnew2006
+/.github/workflows/ @compnew2006
+/extension/ @compnew2006
+/mcp-server/src/vault/ @compnew2006
+/mcp-server/src/protocol/ @compnew2006
+/mcp-server/src/bridge* @compnew2006
+/mcp-server/src/daemon* @compnew2006
+/scripts/pairing.mjs @compnew2006
+/package.json @compnew2006
+/package-lock.json @compnew2006

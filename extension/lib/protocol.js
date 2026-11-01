@@ -1,21 +1,8 @@
-/** Keep in sync with EXTENSION_PROTOCOL_VERSION in mcp-server/src/protocol/capabilities.ts. */
-export const EXTENSION_PROTOCOL_VERSION = 2;
-
-export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
-  'tool-dispatch',
-  'ping-pong',
-  'cancellation',
-  'tab-locks',
-  'tools-v3',
-  'credential-vault-v1',
-  'site-context',
-  'site-map',
-  'vault-site-approval',
-]);
+import { EXTENSION_PROTOCOL_VERSION, EXTENSION_PROTOCOL_CAPABILITIES, REQUIRED_DAEMON_CAPABILITIES } from './generated-contract.js';
+export { EXTENSION_PROTOCOL_VERSION, EXTENSION_PROTOCOL_CAPABILITIES, REQUIRED_DAEMON_CAPABILITIES };
 
 /** The 3.0 tool contract. A daemon without it is a 2.x build. */
 const TOOLS_V3_CAPABILITY = 'tools-v3';
-export const REQUIRED_DAEMON_CAPABILITIES = Object.freeze(['tool-dispatch', 'ping-pong', TOOLS_V3_CAPABILITY]);
 
 export const OLDER_DAEMON_REASON =
   'The Browser Controller daemon is older than 3.0: restart your MCP client so it starts the 3.0 daemon.';

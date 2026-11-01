@@ -160,4 +160,22 @@ export default [
       'no-empty': ['error', { allowEmptyCatch: true }],
     },
   },
+  {
+    files: ['extension/lib/**/*.js'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [{
+        regex: '^(?:\\.\\./)+(?:handlers/|dispatch/|background(?:\\.|/)|events(?:\\.|/))',
+        message: 'Extension lib modules must not depend on handlers, dispatch or background entry points.',
+      }] }],
+    },
+  },
+  {
+    files: ['extension/handlers/**/*.js'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [{
+        regex: '^(?:\\.\\./)+(?:dispatch/|background(?:\\.|/)|events(?:\\.|/))',
+        message: 'Extension handlers must not depend on dispatch or background entry points.',
+      }] }],
+    },
+  },
 ];

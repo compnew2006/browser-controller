@@ -896,6 +896,7 @@ npm audit --omit=dev
 | `npm run arch:check` | Run the architectural fitness functions: the layering boundaries are proved from the real import graph, so a wrong dependency fails the build |
 | `npm run release:check -- vX.Y.Z` | Read an annotated local tag and check its versions, version-setting commit, and tagged changelog notes without publishing |
 | `npm run typecheck` | Type check without emitting |
+| `npm run smoke:ci` | Test an authenticated WebSocket handshake and browser tool roundtrip with a disposable daemon, Chromium profile, extension copy, and synthetic page; the native pairing host is not exercised |
 | `npm run smoke:real-chrome` | Against your own Chrome (extension enrolled, after `npm run build`): restarts the daemon, then checks snapshot, click, type, logs, upload and the five drags of [`scripts/pages/drag-and-drop.html`](scripts/pages/drag-and-drop.html). HTML5 drag and drop depends on the operating system, so run it on Windows, macOS and Linux. You can also open that page and drag by hand: it judges each drag itself. |
 | `npm audit --omit=dev` | Check the installed production dependency graph for known vulnerabilities |
 | `npm run setup:cursor` | Install Cursor rule + command |

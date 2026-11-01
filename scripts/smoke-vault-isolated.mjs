@@ -275,6 +275,17 @@ async function main() {
     let fixturePage = context.pages().find((page) => page.url().startsWith(fixture.url));
     ensure(fixturePage, 'MCP-created login fixture tab was not found');
 
+    // CI's short path still crosses the authenticated extension/daemon socket
+    // and performs a browser tool call. Enrollment is injected into the copied
+    // extension above: this is not a test of the native messaging pairing host.
+    if (process.argv.includes('--roundtrip-only')) {
+      privateDiagnostics.stage = 'tool-roundtrip';
+      const text = await call('browser_text', { tabId });
+      ensure(!text?.isError && resultText(text).includes('Username'), 'browser_text did not return fixture content');
+      console.log(JSON.stringify({ authenticatedHandshake: true, browserRoundtrip: true, nativePairingTested: false }));
+      return;
+    }
+
     privateDiagnostics.stage = 'private-save-ui';
     const saveRequest = parseSuccess(await call('browser_vault', { action: 'save_login', tabId, label: 'Synthetic login' }), 'browser_vault save_login');
     ensure(saveRequest.status === 'user_action_required' && typeof saveRequest.requestId === 'string', 'save did not create a private request');
