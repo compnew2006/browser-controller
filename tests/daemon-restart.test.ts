@@ -173,6 +173,22 @@ afterEach(async () => {
 });
 
 describe('daemon start race', { timeout: 30_000 }, () => {
+  it('concurrent first-time clients share the credentials and join one daemon', async () => {
+    const state = await makeState();
+    fs.unlinkSync(path.join(state.dir, 'token.json'));
+    fs.unlinkSync(path.join(state.dir, 'enrollment.json'));
+    const names = ['FirstA', 'FirstB', 'FirstC'];
+    const clients = names.map((name) => startClient(state, name));
+    clients.forEach(output);
+    await waitUntil('first-time clients to join', async () => {
+      try {
+        state.enrollment = JSON.parse(fs.readFileSync(path.join(state.dir, 'enrollment.json'), 'utf8')).secret;
+        return await agentsPresent(state, names);
+      } catch { return false; }
+    }, 20_000);
+    expect(await agentsPresent(state, names)).toBe(true);
+  });
+
   it('a daemon that finds the lock held exits at once: one line, exit code 0, no stack', async () => {
     const state = await makeState();
     const first = await startDaemon(state);

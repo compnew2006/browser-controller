@@ -442,36 +442,82 @@ export interface StoredToken {
   createdAt: number;
 }
 
-/**
- * Reads the existing `{ [field]: secret, createdAt }` file, or creates the state
- * dir and the file on first run. A missing or unreadable file behaves as absent,
- * so a corrupt file is regenerated rather than blocking the daemon.
- *
- * Shared by the auth token and the enrollment secret: both are 24 random bytes
- * rendered as hex, written 0600 inside a 0700 dir, and read back by one field.
- */
-function loadOrCreateSecret<T extends { createdAt: number }>(file: string, field: keyof T & string): T {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
-    const value = parsed[field];
-    if (value && typeof value === 'string') return parsed as unknown as T;
-  } catch {
-    // missing or invalid — fall through to create
+/** Secure the existing state directory before opening any credential. */
+function prepareSecretDirectory(create: boolean): void {
+  if (create) fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  // Windows cannot open a directory as a file descriptor for fchmod.
+  if (process.platform === 'win32') {
+    if (!fs.lstatSync(STATE_DIR).isDirectory()) throw new Error('credential state directory is not a directory');
+    return;
   }
-  const created = { [field]: crypto.randomBytes(24).toString('hex'), createdAt: Date.now() };
-  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, JSON.stringify(created, null, 2), { mode: 0o600 });
-  return created as unknown as T;
+  const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_DIRECTORY;
+  const fd = fs.openSync(STATE_DIR, flags);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isDirectory() || (process.getuid && stat.uid !== process.getuid())) {
+      throw new Error('credential state directory is not a directory owned by the current user');
+    }
+    if ((stat.mode & 0o7777) !== 0o700) fs.fchmodSync(fd, 0o700);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
-/** Reads one field of that file without creating it (null when absent). */
-function readSecret(file: string, field: string): string | null {
+/** Read and secure an existing credential, refusing unsafe or corrupt files. */
+function readSecretRecord<T>(file: string, field: string): T | null {
+  let fd: number;
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
-    return (parsed[field] as string | undefined) ?? null;
-  } catch {
-    return null;
+    prepareSecretDirectory(false);
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (process.platform === 'win32' ? 0 : fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || (process.platform !== 'win32' && process.getuid && stat.uid !== process.getuid())) {
+      throw new Error('credential is not a regular file owned by the current user');
+    }
+    if (process.platform !== 'win32' && stat.nlink > 1 && (stat.mode & 0o7777) !== 0o600) {
+      throw new Error('credential with unsafe permissions has multiple hard links');
+    }
+    if (process.platform !== 'win32' && (stat.mode & 0o7777) !== 0o600) fs.fchmodSync(fd, 0o600);
+    const parsed: unknown = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || typeof (parsed as Record<string, unknown>)[field] !== 'string' || !(parsed as Record<string, unknown>)[field]) {
+      throw new Error('credential file is invalid');
+    }
+    return parsed as T;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Publish a complete credential exclusively so concurrent starters share one value. */
+function loadOrCreateSecret<T extends { createdAt: number }>(file: string, field: keyof T & string): T {
+  prepareSecretDirectory(true);
+  const existing = readSecretRecord<T>(file, field);
+  if (existing) return existing;
+  const created = { [field]: crypto.randomBytes(24).toString('hex'), createdAt: Date.now() };
+  const temporary = path.join(STATE_DIR, `.secret-${crypto.randomBytes(16).toString('hex')}.tmp`);
+  fs.writeFileSync(temporary, JSON.stringify(created, null, 2), { mode: 0o600, flag: 'wx' });
+  try {
+    try {
+      fs.linkSync(temporary, file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  } finally {
+    fs.unlinkSync(temporary);
+  }
+  const published = readSecretRecord<T>(file, field);
+  if (!published) throw new Error('credential disappeared during initialization');
+  return published;
+}
+
+/** Reads one field without creating a credential (null when absent). */
+function readSecret(file: string, field: string): string | null {
+  const record = readSecretRecord<Record<string, string>>(file, field);
+  return record?.[field] ?? null;
 }
 
 /** Reads the existing token, or creates the state dir + token on first run. */
