@@ -18,6 +18,7 @@
     "daemon:stop": "node scripts/daemon.mjs stop",
     "daemon:restart": "node scripts/daemon.mjs restart",
     "daemon:status": "node scripts/daemon.mjs status",
+    "daemon:health": "node scripts/daemon.mjs health",
     "memory": "node scripts/memory.mjs",
     "pretest": "node scripts/check-build.mjs",
     "test": "vitest run",

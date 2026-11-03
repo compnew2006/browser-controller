@@ -31,7 +31,7 @@ function impostorState() {
   return { stateDir, helper };
 }
 
-async function authenticatedProbeFixture(secret: string, signedSecret = secret, reportedPid?: number) {
+async function authenticatedProbeFixture(secret: string, signedSecret = secret, reportedPid?: number, connected = false) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-lifecycle-auth-'));
   const helper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1e9)'], { stdio: 'ignore' });
   helpers.push(helper);
@@ -60,7 +60,7 @@ async function authenticatedProbeFixture(secret: string, signedSecret = secret, 
       clientProof: req.headers['x-bc-client-proof'],
     });
     if (!accepted) { res.writeHead(403).end('Forbidden'); return; }
-    const body = JSON.stringify({ pid: statusPid, agents: [] });
+    const body = JSON.stringify({ pid: statusPid, agents: [{ name: 'private-agent-name' }], extension: { connected }, uptimeMs: 1000 });
     const proof = auth.createResponseProof({ clientNonce, serverNonce, status: 200, body });
     res.writeHead(200, { 'Content-Type': 'application/json', 'X-BC-Response-Proof': proof }).end(body);
   });
@@ -137,5 +137,28 @@ describe('scripts/daemon.mjs verifies daemon identity before trusting a pid', ()
     ]);
     expect(seen.every((entry) => !entry.hasEnrollmentHeader)).toBe(true);
     expect(seen[1].hasProofHeader).toBe(true);
+  });
+
+  it('health fails closed for a disconnected browser and exposes no agent names or secrets', async () => {
+    const { stateDir } = await authenticatedProbeFixture('synthetic-lifecycle-secret');
+    const res = await runAsync('health', stateDir);
+    expect(res.status).toBe(1);
+    expect(JSON.parse(res.stdout)).toMatchObject({ daemon: 'up', extension: 'disconnected', healthy: false });
+    expect(res.stdout).not.toContain('private-agent-name');
+    expect(res.stdout).not.toContain('synthetic-lifecycle-secret');
+  });
+
+  it('health succeeds only for an authenticated daemon with a connected extension', async () => {
+    const { stateDir } = await authenticatedProbeFixture('synthetic-lifecycle-secret', 'synthetic-lifecycle-secret', undefined, true);
+    const res = await runAsync('health', stateDir);
+    expect(res.status).toBe(0);
+    expect(JSON.parse(res.stdout)).toMatchObject({ daemon: 'up', extension: 'connected', healthy: true, agents: 1 });
+  });
+
+  it('health rejects an unauthenticated daemon even when its pid is alive', async () => {
+    const { stateDir } = await authenticatedProbeFixture('synthetic-lifecycle-secret', 'wrong-secret');
+    const res = await runAsync('health', stateDir);
+    expect(res.status).toBe(1);
+    expect(JSON.parse(res.stdout)).toMatchObject({ daemon: 'unverified', healthy: false });
   });
 });

@@ -192,7 +192,7 @@ Only the enrollment secret is needed — the extension fetches the auth token fr
 
 </details>
 
-> These secrets prevent any other local process from opening a WebSocket and driving your authenticated browser sessions. To rotate them, stop your MCP clients, delete the folder, and the next run recreates both secrets. See [SECURITY.md](SECURITY.md) for the full threat model, including why the pairing helper does not weaken it.
+> These secrets protect the local control channel. To rotate them without deleting vault and memory data, use `npm run pairing:rotate` and then restart the daemon as described in [SECURITY.md](SECURITY.md). Processes running as the same OS user can read the secrets; pairing is not a same-user sandbox.
 
 ### Runtime lifecycle (authoritative daemon)
 
@@ -206,6 +206,7 @@ port `7225`.
 npm run build
 npm run daemon:start      # start, or report the already-running PID
 npm run daemon:status     # JSON health/runtime information
+npm run daemon:health     # authenticated daemon + extension check; exit 1 if unhealthy
 npm run daemon:stop       # graceful SIGTERM; removes runtime metadata
 npm run daemon:restart    # stop, then start; preserves token/enrollment
 ```
@@ -215,6 +216,9 @@ pairing remain in `~/.browser-controller/` (override with `BC_STATE_DIR`), and
 the extension reconnects to the same endpoint. The lifecycle wrapper reads the
 `daemon.json` PID and is safe to run repeatedly; a stale lock is removed only
 when its recorded PID is not alive.
+
+For service monitoring, backup boundaries and recovery drills, see the
+[operations and recovery runbook](docs/operations-recovery.md).
 
 MCP clients reconnect after every drop of their daemon connection (a restart,
 a crash). Each try connects to the daemon that answers, or waits for one that

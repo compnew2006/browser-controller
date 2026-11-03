@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { PassThrough } from 'node:stream';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   NATIVE_HOST_NAME, decodeMessage, encodeMessage, handleRequest, runHost,
 } from '../mcp-server/src/native-host.js';
@@ -53,5 +58,24 @@ describe('pairing native host', () => {
     huge.writeUInt32LE(10 * 1024 * 1024, 0);
     expect(await exchange([huge])).toMatchObject({ ok: false, error: expect.stringMatching(/too large/) });
     expect(await exchange([])).toEqual({ ok: false, error: 'No request received.' });
+  });
+
+  it('the built host reads an isolated enrollment file over real stdio', () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-native-host-'));
+    try {
+      fs.writeFileSync(path.join(stateDir, 'enrollment.json'), JSON.stringify({ secret: 'synthetic-native-fixture', createdAt: 1 }), { mode: 0o600 });
+      fs.writeFileSync(path.join(stateDir, 'daemon.json'), JSON.stringify({ port: 9444 }), { mode: 0o600 });
+      const host = fileURLToPath(new URL('../mcp-server/dist/native-host.js', import.meta.url));
+      const result = spawnSync(process.execPath, [host], {
+        env: { ...process.env, BC_STATE_DIR: stateDir },
+        input: encodeMessage({ type: 'pairing' }),
+        timeout: 5000,
+      });
+      expect(result.status).toBe(0);
+      expect(decodeMessage(result.stdout)).toEqual({ ok: true, enrollmentSecret: 'synthetic-native-fixture', port: 9444 });
+      expect(result.stderr.toString()).not.toContain('synthetic-native-fixture');
+    } finally {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 });

@@ -137,6 +137,20 @@ async function main() {
   if (command === 'start') await start();
   else if (command === 'stop') await stop();
   else if (command === 'restart') { await stop(); await start(); }
+  else if (command === 'health') {
+    const info = readInfo();
+    const status = fs.existsSync(bridgeAuthModule) && pidAlive(info?.pid) ? await daemonStatus(info) : null;
+    const verified = status && typeof status.pid === 'number' && status.pid === info.pid;
+    const connected = verified && status.extension?.connected === true;
+    const result = {
+      healthy: Boolean(connected),
+      daemon: verified ? 'up' : 'unverified',
+      extension: verified ? (connected ? 'connected' : 'disconnected') : 'unknown',
+      ...(verified ? { agents: Array.isArray(status.agents) ? status.agents.length : null, uptimeMs: status.uptimeMs ?? null } : {}),
+    };
+    console.log(JSON.stringify(result));
+    if (!connected) process.exitCode = 1;
+  }
   else if (command === 'status') {
     if (!fs.existsSync(bridgeAuthModule)) {
       console.log(`${buildMissingMessage} (the daemon's identity cannot be checked without it)`);
