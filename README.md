@@ -12,7 +12,7 @@
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
   <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.1.1-blue?style=flat-square" alt="v3.1.1" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
-  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node >= 20" />
+  <img src="https://img.shields.io/badge/node-22.18%2B%20%7C%2024.11%2B%20%7C%2026%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node 22.18+, 24.11+, or 26+" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
 </p>
 
@@ -100,7 +100,7 @@ flowchart LR
 
 The project is not on the Chrome Web Store or npm — you install it from this repository. Two parts: the **MCP server** (runs on your machine, talks to your AI agent) and the **Chrome extension** (sits in your browser, executes commands).
 
-**Prerequisites:** [Node.js](https://nodejs.org/) 22.18+, 24.11+, or 26+ and Chrome/Chromium/Edge.
+**Prerequisites:** [Node.js](https://nodejs.org/) 22.18+ within the 22.x line, 24.11+ within the 24.x line, or 26+; and Chrome/Chromium/Edge. CI tests the minimum and latest releases of the 22, 24, and 26 lines. Later Node.js major versions are allowed by `engines` but are not covered by the current CI matrix.
 
 ### 1. Clone & build
 

@@ -552,8 +552,8 @@ export class ExtensionBridge {
       try {
         // sessionId + agentName travel as top-level WS fields (audit M1), not
         // injected into params — the daemon stays a pure {tool, params} multiplexer.
-        // agentName is the STABLE identity for tab locks (survives reconnects);
-        // sessionId is transient (s3→s4) and used only for logging/UI.
+        // The extension uses sessionId for tab ownership; agentName is a display
+        // label and can be shared by multiple concurrent sessions.
         conn.ws.send(JSON.stringify({ id, tool, params, sessionId, agentName }));
       } catch (err) {
         clearTimeout(timeout);

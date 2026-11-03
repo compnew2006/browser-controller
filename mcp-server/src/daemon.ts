@@ -53,10 +53,12 @@ import {
 import { ExtensionBridge } from './bridge.js';
 import { isKnownWireTool } from './protocol/wire-tools.js';
 import { armIpcHelloTimer } from './ipc-hello-timer.js';
+import { isIpcClientMessage } from './ipc-frame-validation.js';
 import { VaultService, type VaultTransport } from './vault/service.js';
 import { routeVaultAwareCall } from './vault/daemon-routing.js';
 import { MemoryService } from './memory/service.js';
 import { isMemoryTool, routeMemoryToolCall } from './memory/policy-tool-route.js';
+import { observeAfterReply, withSafeReminder } from './daemon-memory.js';
 
 const SERVER_NAME = 'browser-controller-daemon';
 const log = createLogger(SERVER_NAME);
@@ -253,12 +255,16 @@ class Daemon {
           socket.destroy();
           return;
         }
-        let msg: IpcClientMessage;
+        let msg: unknown;
         try {
           msg = JSON.parse(line);
         } catch {
           safeSend({ kind: 'denied', ok: false, reason: 'malformed json line' });
           continue;
+        }
+        if (!isIpcClientMessage(msg) || (msg.kind === 'call' && client?.pending.has(msg.id))) {
+          socket.destroy();
+          return;
         }
 
         if (!authed) {
@@ -283,18 +289,8 @@ class Daemon {
           disarmHelloTimer();
           const name = msg.agentName || 'agent';
           const sessionId = buildSessionId(DAEMON_INSTANCE_ID, ++this.sessionIdCounter);
-          // Liveness-based dedup by agentName. When an IDE respawns the MCP
-          // client (Cursor does this on every reload), the old socket may not
-          // have delivered `close` yet and is typically a half-open (dead)
-          // connection that has missed several heartbeats. We only destroy an
-          // existing same-name connection if it looks dead (missedPongs at/over
-          // the eviction threshold). A LIVE sibling (missedPongs below the
-          // threshold — i.e. it is actively replying to pings) is left alone so
-          // multiple genuine MCP processes with the same agent name can
-          // co-exist (each gets its own unique sessionId). The popup lists each
-          // by sessionId; the close handler releases tab locks only when no
-          // same-name connection survives. This preserves the IDE-respawn fix
-          // while ending the destructive sibling race.
+          // Replace stale same-name sessions, but keep live siblings; each
+          // retains its own session ID and tab ownership.
           for (const [existingSocket, existing] of this.clients) {
             if (existing.agentName !== name) continue;
             const stale = existing.missedPongs >= HEARTBEAT_MAX_MISSED;
@@ -319,7 +315,7 @@ class Daemon {
           this.clients.set(socket, client);
           safeSend(buildIpcWelcome(client.sessionId, { memoryAdmin: true }));
           log.info(`client connected: ${client.sessionId} (${client.agentName})`);
-          return;
+          continue;
         }
 
         // Heartbeat reply — reset the miss counter. No further action.
@@ -336,8 +332,8 @@ class Daemon {
         if (msg.kind === 'call' && client) {
           const cid = typeof msg.cid === 'string' && /^[a-z0-9]{8}$/u.test(msg.cid) ? msg.cid : newCorrelationId();
           const caller = client;
-          runWithCorrelationId(cid, () => this.routeCall(caller, { ...msg, cid })).catch((err) => {
-            safeSend({ kind: 'result', id: msg.id, cid, success: false, error: String(err) });
+          runWithCorrelationId(cid, () => this.routeCall(caller, { ...msg, cid })).catch(() => {
+            safeSend({ kind: 'result', id: msg.id, cid, success: false, error: formatError(ERROR_CODES.INTERNAL_ERROR, 'the result could not be safely returned; the action may have run, so check the page before retrying') });
           });
         }
       }
@@ -449,12 +445,10 @@ class Daemon {
     client.pending.set(msg.id, { tool: msg.tool, daemonCallId, controller });
     this.pendingCalls.set(daemonCallId, { client, clientId: msg.id });
 
-    // sessionId is passed as a first-class argument to the bridge (audit M1),
-    // which forwards it as a top-level field on the WS message — NOT injected
-    // into params. The daemon stays a pure {tool, params} multiplexer; the
-    // extension's tab-lock layer reads msg.sessionId, never params.__sessionId.
-    const memoryCall = this.memory.beginCall(client.sessionId, msg.tool);
+    // The bridge forwards sessionId as a top-level WS field, never in params;
+    // the extension's tab-lock layer uses that field for ownership (audit M1).
     try {
+      const memoryCall = this.memory.beginCall(client.sessionId, msg.tool);
       const outcome = isMemoryTool(msg.tool)
         ? await routeMemoryToolCall(msg.tool, this.memory, this.bridge, client.sessionId, client.agentName, msg.params, controller.signal, (value) => this.vaultService.sanitizeForSession(client.sessionId, value, msg.tool))
         : await routeVaultAwareCall({
@@ -469,14 +463,14 @@ class Daemon {
         });
       const { observation, ...agentOutcome } = outcome;
       const memoryOutcome = { sessionId: client.sessionId, tool: msg.tool, params: msg.params, daemonCallId, result: agentOutcome.result, observation, ...(agentOutcome.success ? {} : { error: agentOutcome.error }) };
-      if (agentOutcome.success) agentOutcome.result = await this.memory.withReminder(memoryCall, memoryOutcome);
+      if (agentOutcome.success) agentOutcome.result = await withSafeReminder(this.memory, memoryCall, memoryOutcome);
       this.sendToClient(client, { kind: 'result', id: msg.id, cid: msg.cid, ...agentOutcome });
-      this.memory.afterCall(memoryCall, memoryOutcome);
-    } catch (err) {
+      observeAfterReply(this.memory, memoryCall, memoryOutcome);
+    } catch {
       this.sendToClient(client, {
         kind: 'result', id: msg.id, cid: msg.cid,
         success: false,
-        error: formatError(ERROR_CODES.VAULT_PERMISSION_DENIED, 'the result could not be safely returned'),
+        error: formatError(ERROR_CODES.INTERNAL_ERROR, 'the result could not be safely returned; the action may have run, so check the page before retrying'),
       });
     } finally {
       client.pending.delete(msg.id);
