@@ -443,7 +443,7 @@ export interface StoredToken {
 }
 
 /** Secure the existing state directory before opening any credential. */
-function prepareSecretDirectory(create: boolean): void {
+export function prepareSecretDirectory(create: boolean): void {
   if (create) fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   // Windows cannot open a directory as a file descriptor for fchmod.
   if (process.platform === 'win32') {

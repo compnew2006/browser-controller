@@ -914,7 +914,7 @@ npm audit --omit=dev
 | `npm run pairing:status` | Show which browsers the helper is registered with and the extension ID it allows |
 | `npm run pairing:uninstall` | Remove the helper registration |
 
-The suite covers the WebSocket bridge (including token-auth rejection and the unified error channel), the tool registry, daemon lifecycle (heartbeat eviction, rate limiting, IPC auth), per-tab concurrency (same-tab serialization + cross-tab parallelism), and extension behavior via a mocked `chrome` API (router dispatch, shield semantics, evaluate round-trip, iframe piercing, dialog rescue). CI runs the suite on Node 22, 24 and 26, plus the architecture check, CodeQL and Scorecard scans.
+The suite covers the WebSocket bridge (including token-auth rejection and the unified error channel), the tool registry, daemon lifecycle (heartbeat eviction, rate limiting, IPC auth), per-tab concurrency (same-tab serialization + cross-tab parallelism), and extension behavior via a mocked `chrome` API (router dispatch, shield semantics, evaluate round-trip, iframe piercing, dialog rescue). CI runs the suite on the declared minimum and latest Node 22, 24 and 26 releases, plus the architecture check, CodeQL and Scorecard scans.
 
 ### Updating an existing install
 

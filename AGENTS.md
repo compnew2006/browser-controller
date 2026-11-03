@@ -15,7 +15,7 @@ MCP clients connect to a local daemon that validates calls and routes them over 
 
 - `npm ci` installs locked dependencies (Node.js 22.18+, 24.11+, or 26+); `npm run dev` watches TypeScript; `npm run build` compiles to `mcp-server/dist/`.
 - `npm test` runs Vitest; focus one with `npm test -- tests/v3-mock.test.ts`.
-- CI runs `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:coverage`, `npm run security:audit`, `npm run context:lint`, `npm run context:measure`, and `npm run arch:check` on Node 22, 24, and 26. Run the same set before calling a change done.
+- CI runs `npm run lint`, `npm run typecheck`, `npm run build`, `npm run test:coverage`, `npm run security:audit`, `npm run context:lint`, `npm run context:measure`, and `npm run arch:check` on the declared minimum and latest Node 22, 24, and 26 releases. Run the same set before calling a change done.
 - `npm run smoke:real-chrome` requires a built server and enrolled extension; it restarts the daemon and uses the normal Chrome profile.
 - Code-graph indexes are machine-local output: `.codebase-memory/` and `graphify-out/` stay uncommitted, and a clone that still tracks the former clears it once with `rm -rf .codebase-memory` before pulling past `8777e78`. The tool rebuilds the index on the next run.
 - A release is an annotated tag `vX.Y.Z` on the commit that sets that version, with notes read from the tagged tree's `CHANGELOG.md` section, never from the working tree.

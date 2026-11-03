@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { BridgeHttpAuthenticator } from '../mcp-server/src/bridge-auth.js';
+import { decodeMessage, encodeMessage } from '../mcp-server/src/native-host.js';
 import { PAIRING_TIMEOUT_MS } from '../extension/lib/connection-transport.js';
+// @ts-expect-error -- plain ESM script without type declarations
+import { install } from '../scripts/pairing.mjs';
 
 /**
  * Zero-touch pairing obtains the enrollment secret through Chrome native
@@ -104,6 +112,41 @@ const load = () => import('../extension/lib/connection.js');
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe('zero-touch pairing (native messaging)', () => {
+  it.skipIf(process.platform === 'win32')('pairs through the installed launcher and built host using isolated state', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bc-pairing-chain-'));
+    try {
+      const stateDir = path.join(root, 'state');
+      const repoRoot = path.join(root, 'repo');
+      const home = path.join(root, 'home');
+      const chromeDir = path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
+      fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(path.join(repoRoot, 'mcp-server'), { recursive: true });
+      fs.mkdirSync(chromeDir, { recursive: true });
+      fs.symlinkSync(fileURLToPath(new URL('../mcp-server/dist', import.meta.url)), path.join(repoRoot, 'mcp-server', 'dist'), 'dir');
+      fs.writeFileSync(path.join(stateDir, 'enrollment.json'), JSON.stringify({ secret: 'synthetic-chain-secret', createdAt: 1 }), { mode: 0o600 });
+      const installed = install({ platform: 'darwin', home, repoRoot, nodePath: process.execPath, stateDir, extensionIds: ['abcdefghijklmnopabcdefghijklmnop'] });
+      const manifest = JSON.parse(fs.readFileSync(path.join(chromeDir, 'NativeMessagingHosts', 'com.browser_controller.pairing.json'), 'utf8'));
+      expect(manifest.path).toBe(installed.wrapperPath);
+      (globalThis as any).chrome.runtime.sendNativeMessage = async (host: string, request: unknown) => {
+        expect(host).toBe(manifest.name);
+        const result = spawnSync(manifest.path, { input: encodeMessage(request), timeout: 5000 });
+        expect(result.status).toBe(0);
+        expect(result.stderr.toString()).not.toContain('synthetic-chain-secret');
+        return decodeMessage(result.stdout);
+      };
+      daemonEnrollmentSecret = 'synthetic-chain-secret';
+      authenticator = new BridgeHttpAuthenticator(daemonEnrollmentSecret, 'pairing-test-daemon');
+      daemon = () => ({ status: 200, body: { token: 'synthetic-token' } });
+      await (await load()).initConnection();
+      await flush();
+      expect(store).toMatchObject({ enrollmentSecret: 'synthetic-chain-secret', wsToken: 'synthetic-token' });
+      expect(httpCalls.some((call) => call.url.endsWith('/pair'))).toBe(true);
+      expect(httpCalls.every((call) => !call.enrollmentHeader && !call.url.includes('synthetic-chain-secret'))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('pairs itself when no secret is stored: native host → authenticated /pair → token', async () => {
     daemon = () => ({ status: 200, body: { token: 'tok' } });
     daemonEnrollmentSecret = 'from-host';

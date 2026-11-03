@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-
 /**
  * Daemon (plan task 1.0) — single long-running process.
  *
@@ -40,6 +39,7 @@ import {
   envInt,
   loadOrCreateEnrollment,
   loadOrCreateToken,
+  prepareSecretDirectory,
   type IpcClientMessage,
   type IpcDaemonMessage,
 } from './daemon-config.js';
@@ -103,9 +103,9 @@ const RECONNECT_WAIT_MS = envInt('BC_RECONNECT_WAIT_MS', 15_000, 0);
 export const MAX_IPC_LINE_BYTES = envInt('BC_MAX_IPC_LINE_BYTES', 1_000_000, 1024);
 
 class Daemon {
-  private bridge: ExtensionBridge;
-  private vaultService: VaultService;
-  private memory: MemoryService;
+  private bridge!: ExtensionBridge;
+  private vaultService!: VaultService;
+  private memory!: MemoryService;
   private ipcServer: net.Server | null = null;
   private clients = new Map<net.Socket, IpcClient>();
   /** daemon-global call id counter -> { client, clientId } to route the reply. */
@@ -118,13 +118,13 @@ class Daemon {
    * result.
    */
   private callSeq = 0;
-  private token: string;
-  private enrollmentSecret: string;
+  private token!: string;
+  private enrollmentSecret!: string;
   private startedAt = Date.now();
   /** Heartbeat timer — evicts half-open IPC sockets (see startHeartbeat). */
   private heartbeatTimer: NodeJS.Timeout | null = null;
 
-  constructor() {
+  private initialize(): void {
     this.token = loadOrCreateToken().token;
     // Enrollment secret gates the HTTP endpoints (especially /pair, which hands
     // out the auth token). See SECURITY.md "First-contact TOFU window".
@@ -160,10 +160,11 @@ class Daemon {
   }
 
   async start(): Promise<void> {
-    fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+    prepareSecretDirectory(true);
     await acquireDaemonLock();
 
     try {
+      this.initialize();
       // 1) extension-facing WS server (task 1.0).
       await this.bridge.start();
       this.bridge.registerHttpHandler((req, url) => this.handleHttp(req, url));
@@ -560,8 +561,8 @@ class Daemon {
   }
 
   stop(): void {
-    this.vaultService.lockAll();
-    this.bridge.stop();
+    this.vaultService?.lockAll();
+    this.bridge?.stop();
     this.ipcServer?.close();
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);

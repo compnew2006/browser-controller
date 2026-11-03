@@ -11,7 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [22, 24, 26]
+        # Exercise each declared minimum as well as the latest release in each line.
+        node-version: ['22.18.0', '22', '24.11.0', '24', '26.0.0', '26']
 
     steps:
       - uses: actions/checkout@v7

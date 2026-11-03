@@ -173,6 +173,28 @@ afterEach(async () => {
 });
 
 describe('daemon start race', { timeout: 30_000 }, () => {
+  it('a daemon that loses the lifecycle lock does not initialize credentials', async () => {
+    const state = await makeState();
+    fs.unlinkSync(path.join(state.dir, 'token.json'));
+    fs.unlinkSync(path.join(state.dir, 'enrollment.json'));
+    fs.writeFileSync(path.join(state.dir, 'daemon.lock'), JSON.stringify({ pid: process.pid, startedAt: Date.now() }), { mode: 0o600 });
+    const child = track(spawn(process.execPath, [DIST_DAEMON], { env: env(state), stdio: ['ignore', 'pipe', 'pipe'] }));
+    output(child);
+    expect(await exited(child, 5_000)).toBe(0);
+    expect(fs.existsSync(path.join(state.dir, 'token.json'))).toBe(false);
+    expect(fs.existsSync(path.join(state.dir, 'enrollment.json'))).toBe(false);
+  });
+
+  it('releases the lifecycle lock if credential initialization fails', async () => {
+    const state = await makeState();
+    fs.writeFileSync(path.join(state.dir, 'token.json'), '{invalid');
+    const child = track(spawn(process.execPath, [DIST_DAEMON], { env: env(state), stdio: ['ignore', 'pipe', 'pipe'] }));
+    output(child);
+    expect(await exited(child, 5_000)).toBe(1);
+    expect(fs.existsSync(path.join(state.dir, 'daemon.lock'))).toBe(false);
+    expect(fs.readFileSync(path.join(state.dir, 'token.json'), 'utf8')).toBe('{invalid');
+  });
+
   it('concurrent first-time clients share the credentials and join one daemon', async () => {
     const state = await makeState();
     fs.unlinkSync(path.join(state.dir, 'token.json'));
