@@ -86,7 +86,7 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
 
 const { handleMessage, dispatch, dispatchedTools } = await import('../extension/dispatch/router.js');
 const { loadSessionState } = await import('../extension/lib/state.js');
-const { tabLocks, claimTabSetting, tabSettingOwner, sessionAgentNames } = await import('../extension/lib/state.js');
+const { tabLocks, tabControl, claimTabSetting, tabSettingOwner, sessionAgentNames } = await import('../extension/lib/state.js');
 
 const flush = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
@@ -114,6 +114,14 @@ describe('sessionRoster releases the locks of absent sessions (F4-2)', () => {
     expect(tabSettingOwner(2, 'emulation')).toBe('live');
     expect(sessionAgentNames.has('gone')).toBe(false);
     expect(sent).toEqual([]); // a control frame: no response
+  });
+
+  it('clears the cursor for an unlocked tab when its controlling session disconnects', async () => {
+    const call = tabControl.begin(7, 'gone', 'Gone Agent');
+    tabControl.end(call);
+    await handleMessage({ type: 'releaseSession', sessionId: 'gone' });
+    expect(tabControl.controller(7)).toBeUndefined();
+    expect(injections.some((item) => item.target === 7 && item.func.includes('__bc-agent-cursor'))).toBe(true);
   });
 
   it('an empty roster releases everyone', async () => {

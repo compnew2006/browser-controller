@@ -1,10 +1,9 @@
 /**
  * Page overlays (extracted from background.js). The lock shield is a
  * translucent full-viewport input-capture layer with a blue inner frame. The
- * router shows it only while one agent tool call runs on a tab (the agent's
- * name is shown inside the frame — it replaced the old corner badge, per user
- * request) and removes it when that call ends, on locked and unlocked tabs
- * alike. A tab lock draws no frame of its own.
+ * router blocks user input only while an agent tool call runs on a tab. When
+ * the cursor is enabled, the frame remains as a visual cue during the control
+ * linger, without its input-blocking listeners. A tab lock draws no frame alone.
  * The agent cursor (drawn by the shared page runtime, lib/page-dom.js) is opt-in
  * (popup setting, see agentCursorEnabled) and only needs hiding from screenshots.
  */
@@ -13,8 +12,8 @@
 export const AGENT_CURSOR_KEY = 'agentCursor';
 
 /**
- * The agent cursor is opt-in (popup → Settings): its glide holds every mouse
- * action ~200–350 ms on a visible tab. Read per action, so the switch applies
+ * The agent cursor is opt-in (popup → Settings): its glide holds mouse
+ * actions up to 650 ms on a visible tab. Read per action, so the switch applies
  * at once; off when the setting can't be read.
  */
 export async function agentCursorEnabled() {
@@ -25,8 +24,7 @@ export async function agentCursorEnabled() {
   }
 }
 
-// Lock-shield: a full-viewport translucent frame with a blue inner glow, shown
-// only while an agent tool call runs on a tab. The frame is
+// Lock-shield: a full-viewport translucent frame with a blue inner glow. The frame is
 // visual only: pointer-events:none keeps it out of hit-testing, so the page
 // keeps its own hover state (JS menus stay open while the agent works) and the
 // agent's trusted CDP input lands on the page elements directly.
@@ -40,26 +38,40 @@ export async function agentCursorEnabled() {
 // the agent's name). Returns whether the injection succeeded — on protected pages
 // (chrome:// …) it silently never appears, and callers must be able to say so
 // instead of reporting a protected lock (audit HIGH #4).
-export async function showLockShield(tabId, label) {
+export async function showLockShield(tabId, label, keepCursor = false) {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      func: (lbl) => {
+      func: (lbl, cursorActive) => {
         let el = document.getElementById('__bc-lock-shield');
+        // An idle visual frame has no input listeners; replace it with a fresh
+        // active shield so the next call gets its own blocking lifetime.
+        if (el && !el.__bcShieldDocListeners) {
+          clearTimeout(el.__bcVisualTimer);
+          el.remove();
+          el = null;
+        }
+        if (cursorActive) {
+          const cursor = document.getElementById('__bc-agent-cursor');
+          if (cursor) {
+            clearTimeout(cursor.__bcIdle);
+            cursor.style.opacity = '1';
+          }
+        }
         if (!el) {
           el = document.createElement('div');
           el.id = '__bc-lock-shield';
           // Blue spectrum fading from the viewport edges toward the center
-          // (user-tuned: half-width bands — sides 8%, top/bottom 10% — plus a
-          // soft inset glow; was judged too wide at 16%/20%).
+          // Narrow edge bands keep the control cue visible without covering
+          // much of the page; the inset glow follows the same scale.
           el.style.cssText =
             'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
             'background:' +
-              'linear-gradient(to right,  rgba(37,99,235,.48) 0%, transparent 8%),' +
-              'linear-gradient(to left,   rgba(37,99,235,.48) 0%, transparent 8%),' +
-              'linear-gradient(to bottom,rgba(37,99,235,.48) 0%, transparent 10%),' +
-              'linear-gradient(to top,    rgba(37,99,235,.48) 0%, transparent 10%);' +
-            'box-shadow:inset 0 0 70px 15px rgba(37,99,235,.25);';
+              'linear-gradient(to right,  rgba(37,99,235,.48) 0%, transparent 4%),' +
+              'linear-gradient(to left,   rgba(37,99,235,.48) 0%, transparent 4%),' +
+              'linear-gradient(to bottom,rgba(37,99,235,.48) 0%, transparent 5%),' +
+              'linear-gradient(to top,    rgba(37,99,235,.48) 0%, transparent 5%);' +
+            'box-shadow:inset 0 0 35px 7.5px rgba(37,99,235,.25);';
           const block = (e) => {
             // Synthetic events (isTrusted===false, dispatched by a page script such
             // as browser_evaluate) MUST pass through — otherwise the capture-phase
@@ -120,7 +132,7 @@ export async function showLockShield(tabId, label) {
           badge.remove();
         }
       },
-      args: [label ?? null],
+      args: keepCursor ? [label ?? null, true] : [label ?? null],
     });
     return Array.isArray(results);
   } catch {
@@ -128,13 +140,14 @@ export async function showLockShield(tabId, label) {
   }
 }
 
-export async function hideLockShield(tabId) {
+export async function hideLockShield(tabId, lingerMs = 0) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => {
+      func: (linger) => {
         const el = document.getElementById('__bc-lock-shield');
         if (!el) return; // no-op if absent
+        clearTimeout(el.__bcVisualTimer);
         // Detach the input-blocking listeners (all of them sit on `document`,
         // and removing `el` does not remove those, so detach them explicitly
         // to avoid leaking pointer/keyboard/wheel blocks after unlock).
@@ -148,7 +161,49 @@ export async function hideLockShield(tabId) {
           }
           el.__bcShieldDocListeners = null;
         }
-        el.remove();
+        if (linger) {
+          // Keep only the visual cue while the agent is thinking. The capture
+          // listeners have already been detached, so the owner can use the page.
+          if (linger > 0) el.__bcVisualTimer = setTimeout(() => el.remove(), linger);
+          const cursor = document.getElementById('__bc-agent-cursor');
+          if (cursor) {
+            clearTimeout(cursor.__bcIdle);
+            if (linger > 0) cursor.__bcIdle = setTimeout(() => { cursor.style.opacity = '0'; }, linger);
+          }
+        } else {
+          el.remove();
+        }
+      },
+      ...(lingerMs !== 0 ? { args: [lingerMs] } : {}),
+    });
+  } catch {}
+}
+
+/** Temporarily hide the visual frame during screenshots without changing input protection. */
+export async function setLockShieldHidden(tabId, hidden) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (hide) => {
+        const frame = document.getElementById('__bc-lock-shield');
+        if (frame) frame.style.display = hide ? 'none' : '';
+      },
+      args: [hidden],
+    });
+  } catch {}
+}
+
+/** Remove the pointer when its controlling session or tab lock is released. */
+export async function clearAgentCursor(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const cursor = document.getElementById('__bc-agent-cursor');
+        if (cursor) {
+          clearTimeout(cursor.__bcIdle);
+          cursor.remove();
+        }
       },
     });
   } catch {}

@@ -65,7 +65,8 @@ describe('daemon instance adoption (stale locks after a daemon restart)', () => 
     expect(tabLocks.owner(1)).toBeUndefined();
     expect(tabLocks.owner(2)).toBeUndefined();
     expect(tabControl.controller(3)).toBeUndefined();
-    expect(shieldTabs.sort()).toEqual([1, 2]);
+    // Both frame and cursor are cleared, including the unlocked controlled tab.
+    expect(shieldTabs.sort()).toEqual([1, 1, 2, 2, 3, 3]);
   });
 
   it('after the restart a new session can lock a tab the dead one held', () => {

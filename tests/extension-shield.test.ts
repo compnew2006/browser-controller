@@ -11,6 +11,7 @@ import { vi, describe, it, expect, beforeAll, beforeEach } from 'vitest';
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const injections = vi.hoisted(() => [] as Array<{ target: number; func: string; args: unknown[] }>);
 const faults = vi.hoisted(() => ({ activeBadgeThrows: false }));
+const cursorSetting = vi.hoisted(() => ({ enabled: false }));
 const listeners = vi.hoisted(() => ({
   message: [] as Array<(...args: unknown[]) => unknown>,
   updated: [] as Array<(...args: unknown[]) => unknown>,
@@ -62,7 +63,7 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
   action: { setBadgeBackgroundColor: () => {}, setBadgeText: () => {} },
   storage: {
     session: { get: async () => ({}), set: async () => {} },
-    local: { get: async () => ({}), set: async () => {} },
+    local: { get: async () => ({ agentCursor: cursorSetting.enabled }), set: async () => {} },
   },
   runtime: {
     sendMessage: async () => {},
@@ -98,6 +99,7 @@ const flush = (ms = 60) => new Promise((r) => setTimeout(r, ms));
 
 describe('agent-control shield (blue frame instead of corner badge)', () => {
   beforeEach(() => {
+    cursorSetting.enabled = false;
     sent.length = 0;
     injections.length = 0;
     tabStore.clear();
@@ -121,6 +123,21 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     await handleMessage({ id: 'a4', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
     await flush();
     expect(shieldInjections()[0]!.args).toContain('agent controlling the tab');
+  });
+
+  it('keeps the visual frame between calls when the agent cursor is enabled', async () => {
+    cursorSetting.enabled = true;
+    await handleMessage({ id: 'linger', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+    expect(shieldInjections().at(-1)!.args).toEqual([30_000]);
+  });
+
+  it('keeps the visual frame for an owned tab until the session releases it', async () => {
+    cursorSetting.enabled = true;
+    tabLocks.lock(3, 's1');
+    await handleMessage({ id: 'owned', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+    expect(shieldInjections().at(-1)!.args).toEqual([-1]);
   });
 
   it('removes the frame when the action ends on an UNLOCKED tab', async () => {
@@ -149,9 +166,9 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     // Previously rejected with ReferenceError: showLockShield is not defined
     // (the dedup edit dropped its import from handlers/tabs.js).
     await expect(handleScreenshot({ tabId: 3 }, 's1')).resolves.toMatchObject({ success: true });
-    // It takes the frame out for the capture and shows none again (the router removes it when the call ends).
-    expect(shieldInjections().length).toBeGreaterThanOrEqual(1);
-    expect(shieldInjections().every((i) => i.args.length === 0)).toBe(true);
+    // The frame is hidden during capture and restored afterward; the router
+    // decides whether to retain its visual cue after the call ends.
+    expect(shieldInjections().map((i) => i.args)).toEqual([[true], [false]]);
   });
 });
 

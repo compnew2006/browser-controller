@@ -292,6 +292,7 @@ export class TabControlMap {
    * unless another session still has a call running on that tab.
    */
   releaseByOwner(sessionId) {
+    const released = [];
     for (const [tabId, e] of this.entries) {
       for (const call of e.calls) if (call.sessionId === sessionId) e.calls.delete(call);
       if (e.sessionId !== sessionId) continue;
@@ -301,8 +302,10 @@ export class TabControlMap {
         e.agentName = last.agentName;
       } else {
         this.entries.delete(tabId);
+        released.push(tabId);
       }
     }
+    return released;
   }
 
   /** Drop entries idle past the linger (also tab ids that never existed). */

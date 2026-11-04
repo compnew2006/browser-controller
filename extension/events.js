@@ -14,7 +14,7 @@ import {
   dropDocumentState,
   followReplacedTab,
 } from "./lib/state.js";
-import { hideLockShield } from "./lib/overlay.js";
+import { hideLockShield, clearAgentCursor } from "./lib/overlay.js";
 import { createNetworkCapture, pushNetworkEntry } from "./lib/network-capture.js";
 import { lockTabUi, releaseTabUi } from "./lib/lock-ops.js";
 import {
@@ -139,6 +139,7 @@ export function registerEventListeners() {
       for (const { tabId } of prev) {
         tabControl.settle(tabId); // handed back: free now, not "controlled" for the linger
         hideLockShield(tabId);
+        clearAgentCursor(tabId);
       }
       broadcastStatus("All tab locks cleared");
       respond({ success: true });

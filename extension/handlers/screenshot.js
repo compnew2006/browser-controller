@@ -12,7 +12,7 @@
 import { resolveTab, safeExec, execDom, getFallback, assertResponsive, wedgedError, PAGE_EXEC_TIMEOUT_MS } from '../lib/page-exec.js';
 import { refErrorMessage } from '../lib/ref-errors.js';
 import { wedgedTabs, windowCaptureMutex } from '../lib/state.js';
-import { hideLockShield, setAgentCursorHidden, agentCursorEnabled } from '../lib/overlay.js';
+import { setLockShieldHidden, setAgentCursorHidden, agentCursorEnabled } from '../lib/overlay.js';
 import { withCdp, ensureViewport } from '../lib/cdp-session.js';
 import { raceReject } from '../lib/timing.js';
 import { locateTarget, releaseShield } from '../lib/trusted-input.js';
@@ -357,6 +357,7 @@ export async function handleScreenshot(params) {
   try {
     return await captureScreenshot(params);
   } finally {
+    if (!wedgedTabs.has(params.tabId)) await shieldStep(params.tabId, () => setLockShieldHidden(params.tabId, false));
     if (cursor) await setAgentCursorHidden(params.tabId, false);
   }
 }
@@ -367,11 +368,11 @@ async function captureScreenshot(params) {
   const tab = await resolveTab(tabId);
   const protectedPage = /^(chrome|chrome-extension|devtools|edge|about):/i.test(tab.url || '');
   // The router shows the shield for this call: take it out of the picture for the
-  // capture. The router removes it when the call ends.
+  // capture. Restore it afterward so the router can finish the control cue.
   if (!protectedPage) {
     // A frozen page answers no script: fail fast here, before any step waits on it.
     await assertResponsive(tabId);
-    await shieldStep(tabId, () => hideLockShield(tabId));
+    await shieldStep(tabId, () => setLockShieldHidden(tabId, true));
   }
   try {
     const crop = target != null ? await elementBox(tabId, target, parsed) : region;

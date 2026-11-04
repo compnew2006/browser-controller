@@ -14,7 +14,7 @@
  * shadow roots + same-origin iframes); anything ambiguous is reported, never guessed.
  */
 
-export const PAGE_DOM_VERSION = 18;
+export const PAGE_DOM_VERSION = 19;
 
 /**
  * `refBase`: the highest ref number the tab's earlier documents showed (lib/state.js
@@ -824,7 +824,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
    * Agent cursor (user request): a visible pointer that glides to wherever the
    * agent's real (CDP) mouse input lands and ripples on clicks, so a person
    * watching the tab can follow the agent. Cosmetic only: pointer-events:none
-   * (invisible to hit-testing), never throws, fades out after a few idle
+   * (invisible to hit-testing), never throws, fades out after an idle
    * seconds. Returns the glide's duration in ms so the caller can hold the
    * real input until the cursor arrives — 0 when there is nothing to wait for
    * (hidden tab, reduced motion, first appearance, no distance).
@@ -832,7 +832,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
    *   release) | 'track' (snap to a re-measured point, no glide, no effect)
    */
   const CURSOR_ID = '__bc-agent-cursor';
-  const CURSOR_IDLE_MS = 4000;
+  const CURSOR_IDLE_MS = 30_000;
   const CURSOR_COLOR = '37,99,235'; // the agent-control frame's blue (lib/overlay.js)
 
   function makeCursor() {
@@ -864,6 +864,8 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
   function cursorEffect(el, effect, count) {
     try {
       const arrow = el.lastChild;
+      let reduced = false;
+      try { reduced = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch {}
       if (effect === 'down') { arrow.style.transform = 'scale(.8)'; return; }
       if (effect === 'up') { arrow.style.transform = ''; return; }
       // click: one ring per click (double/triple-click), and the arrow presses in.
@@ -875,12 +877,12 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
           + 'pointer-events:none;opacity:0;';
         el.insertBefore(ring, arrow); // under the arrow
         const a = ring.animate(
-          [{ transform: 'scale(.3)', opacity: 1 }, { transform: 'scale(1.5)', opacity: 0 }],
+          reduced ? [{ opacity: 1 }, { opacity: 0 }] : [{ transform: 'scale(.3)', opacity: 1 }, { transform: 'scale(1.5)', opacity: 0 }],
           { duration: 550, delay: i * 130, easing: 'ease-out' },
         );
         a.onfinish = () => ring.remove();
       }
-      arrow.animate([{ transform: 'scale(1)' }, { transform: 'scale(.8)' }, { transform: 'scale(1)' }], { duration: 220 });
+      if (!reduced) arrow.animate([{ transform: 'scale(1)' }, { transform: 'scale(.8)' }, { transform: 'scale(1)' }], { duration: 220 });
     } catch { /* cosmetic */ }
   }
 
@@ -902,6 +904,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
       el.__bcPos = { x, y };
       let still = document.visibilityState === 'hidden';
       try { still = still || matchMedia('(prefers-reduced-motion: reduce)').matches; } catch {}
+      if (still && el.getAnimations) for (const animation of el.getAnimations()) animation.cancel();
       let ms = 0;
       if (effect === 'track') {
         // Re-measured after the glide: if the target moved, jump there now.
@@ -909,7 +912,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
         if (moved && el.getAnimations) for (const a of el.getAnimations()) a.cancel();
       } else if (from && !still) {
         const dist = Math.hypot(x - from.x, y - from.y);
-        if (dist > 2) ms = Math.round(Math.min(350, 120 + dist * 0.25));
+        if (dist > 2) ms = Math.round(Math.min(650, 260 + dist * 0.4));
         if (ms) {
           // A drag ('up') glides linearly, in step with its evenly spaced real moves.
           el.animate([{ transform: `translate(${from.x}px,${from.y}px)` }, { transform: to }],
@@ -920,7 +923,11 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
       }
       if (effect !== 'move' && effect !== 'track') setTimeout(() => cursorEffect(el, effect, count), ms);
       clearTimeout(el.__bcIdle);
-      el.__bcIdle = setTimeout(() => { el.style.opacity = '0'; }, ms + CURSOR_IDLE_MS);
+      el.__bcIdle = setTimeout(() => {
+        // Long-running calls can outlive the idle window; the router will arm
+        // a fresh idle timeout when it releases the active shield.
+        if (!document.getElementById('__bc-lock-shield')?.__bcShieldDocListeners) el.style.opacity = '0';
+      }, ms + CURSOR_IDLE_MS);
       return ms;
     } catch {
       return 0; // cosmetic: never break the action it decorates

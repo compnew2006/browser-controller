@@ -4,13 +4,13 @@
  * controllers. The handler registry is a module-level constant — the old
  * dispatch() rebuilt the tool map on every call.
  */
-import { runOnTab as runOnTabLib, tabLockedMessage } from '../lib/tab-concurrency.js';
+import { runOnTab as runOnTabLib, tabLockedMessage, CONTROL_LINGER_MS } from '../lib/tab-concurrency.js';
 import {
   tabLocks, tabMutex, tabControl, persistSessionState, wedgedTabs, sessionAgentNames,
   releaseSessionSettings, claimTabSetting, releaseBodyCapture, sessionSettingOwners, isSessionStateUnavailable,
 } from '../lib/state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from '../lib/connection.js';
-import { showLockShield, hideLockShield } from '../lib/overlay.js';
+import { showLockShield, hideLockShield, agentCursorEnabled, clearAgentCursor } from '../lib/overlay.js';
 import { getOpenDialog, dialogLabel, takeFileChooser } from '../lib/cdp-session.js';
 import { handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType } from '../handlers/interaction.js';
@@ -290,7 +290,7 @@ function releaseSessionOwner(owner) {
   // releaseByOwner is synchronous and returns the released tabIds before
   // any shield calls below run — no async race (review NOTE 7a).
   const released = tabLocks.releaseByOwner(owner);
-  tabControl.releaseByOwner(owner); // a gone agent no longer "controls" anything
+  const controlled = tabControl.releaseByOwner(owner); // a gone agent no longer "controls" anything
   // Tab settings it set (mock rules, emulation overrides, body capture) go with it (L1).
   for (const { tabId, kind } of releaseSessionSettings(owner)) clearTabSetting(tabId, kind);
   sessionAgentNames.delete(owner);
@@ -298,7 +298,12 @@ function releaseSessionOwner(owner) {
   // would restore the just-released lock from session storage and
   // resurrect stale exclusivity (spec-review finding).
   persistSessionState();
-  for (const tabId of released) hideLockShield(tabId);
+  for (const tabId of new Set([...released, ...controlled])) {
+    // Another live controller must keep its own indicator.
+    if (tabControl.controller(tabId)) continue;
+    hideLockShield(tabId);
+    clearAgentCursor(tabId);
+  }
   if (released.length) {
     broadcastStatus(
       `Released ${released.length} lock(s) from disconnected agent ${owner}`,
@@ -463,7 +468,8 @@ export async function handleMessage(msg) {
         // to a generic label for anonymous direct-WS callers.
         // Best effort and bounded: the shield is cosmetic, a frozen page must not block the tool.
         if (canDrawShield(tabId)) {
-          await overlayStep(showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab'));
+          const showCursor = !!(await overlayStep(agentCursorEnabled()));
+          await overlayStep(showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab', showCursor));
         }
         try {
           // The shield step above can take a while: check again before the handler sends anything.
@@ -476,14 +482,20 @@ export async function handleMessage(msg) {
         } finally {
           setCurrentActivity(null);
           updateBadge(isWsConnected() ? 'connected' : 'disconnected');
-          // The frame lasts for this call only, locked or not. A wedged page cannot run the
+          // The input block ends with the call. With the visible cursor enabled,
+          // retain the frame as a non-interactive cue during the control linger.
+          // A wedged page cannot run the
           // removal; its next document drops the frame. A JavaScript dialog open now may be one
           // this call opened: it blocks the removal until it is answered, so the removal goes out
           // without an await. The call answers and frees the tab, and chrome.scripting runs the
           // removal once the dialog closes. Otherwise the removal is awaited within the overlay budget.
           if (!wedgedTabs.has(tabId)) {
-            if (getOpenDialog(tabId)) hideLockShield(tabId).catch(() => {});
-            else await overlayStep(hideLockShield(tabId));
+            const visible = tabControl.controller(tabId) && await overlayStep(agentCursorEnabled());
+            // Owned tabs remain controlled until release; shared tabs use the normal activity linger.
+            const linger = visible ? (sessionId && tabLocks.owner(tabId) === sessionId ? -1 : CONTROL_LINGER_MS) : 0;
+            const removeShield = () => linger ? hideLockShield(tabId, linger) : hideLockShield(tabId);
+            if (getOpenDialog(tabId)) removeShield().catch(() => {});
+            else await overlayStep(removeShield());
           }
         }
       } finally {

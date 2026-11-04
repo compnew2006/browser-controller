@@ -13,7 +13,7 @@ import {
   getAdoptedDaemonInstance,
   setAdoptedDaemonInstance,
 } from './state.js';
-import { hideLockShield } from './overlay.js';
+import { hideLockShield, clearAgentCursor } from './overlay.js';
 import { buildExtensionHelloAck, OLDER_DAEMON_REASON, validateDaemonHello } from './protocol.js';
 import { daemonWebSocketUrl, defaultBrowserLabel, isDaemonListening, withTimeout } from './connection-transport.js';
 import {
@@ -233,12 +233,10 @@ export async function initConnection() {
   await ensurePairing();
   connect();
 
-  // Best-effort sweep of shields a service-worker death mid-call left behind.
-  // The frame exists only during a tool call, so every tab gets a removal,
-  // locked or not. hideLockShield swallows per-tab errors (protected / closed tabs).
+  // Clear transient cues a service-worker death left behind.
   try {
     const all = await chrome.tabs.query({});
-    for (const t of all) await hideLockShield(t.id);
+    for (const t of all) { await hideLockShield(t.id); await clearAgentCursor(t.id); }
   } catch {}
 }
 
@@ -246,10 +244,9 @@ export async function initConnection() {
  * Locks, control entries and shields belong to the daemon instance that granted
  * them. A hello from a DIFFERENT instance means the daemon restarted, so every
  * agent session of the old one is gone and its locks are stale: release them,
- * forget the control entries and take the shields down. The adopted instance
- * is persisted with the locks, so the check also holds across a service-worker
- * recycle. A hello with no instance id (a daemon from before instance ids)
- * changes nothing. Returns how many locks were released.
+ * forget the control entries and take the shields down. The adopted instance is
+ * persisted with the locks. A hello with no instance id changes nothing.
+ * Returns how many locks were released.
  * @param {string|undefined} instanceId
  * @returns {number}
  */
@@ -258,11 +255,14 @@ export function adoptDaemonInstance(instanceId) {
   if (getAdoptedDaemonInstance() === instanceId) return 0;
   setAdoptedDaemonInstance(instanceId);
   const stale = tabLocks.snapshot();
+  const controlled = [...tabControl.entries.keys()];
   tabLocks.unlockAll();
   tabControl.clear();
   persistSessionState();
-  // hideLockShield never throws (it is bounded and swallows per-tab errors).
-  for (const { tabId } of stale) hideLockShield(tabId);
+  for (const tabId of new Set([...stale.map((entry) => entry.tabId), ...controlled])) {
+    hideLockShield(tabId);
+    clearAgentCursor(tabId);
+  }
   if (stale.length) broadcastStatus(`Released ${stale.length} tab lock(s) left by a previous daemon`);
   return stale.length;
 }

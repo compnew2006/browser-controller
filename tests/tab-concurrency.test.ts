@@ -318,10 +318,10 @@ describe('TabControlMap (popup "controlled" indicator)', () => {
   it('releaseByOwner keeps a tab another session is still running a call on', () => {
     control.begin(7, 's1', 'Claude'); // still running
     control.begin(7, 's2', 'Cursor'); // labels the tab
-    control.releaseByOwner('s2');
+    expect(control.releaseByOwner('s2')).toEqual([]);
     // s1's call is still in flight: the tab stays controlled, now by s1.
     expect(control.controller(7)).toEqual({ sessionId: 's1', agentName: 'Claude', active: true });
-    control.releaseByOwner('s1');
+    expect(control.releaseByOwner('s1')).toEqual([7]);
     expect(control.controller(7)).toBeUndefined();
   });
 

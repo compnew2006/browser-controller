@@ -10,7 +10,7 @@
  * release).
  */
 import { tabLocks, tabControl, persistSessionState } from './state.js';
-import { hideLockShield } from './overlay.js';
+import { hideLockShield, clearAgentCursor } from './overlay.js';
 import { broadcastStatus } from './connection.js';
 
 /**
@@ -35,6 +35,7 @@ export function releaseTabUi(tabId, message) {
   tabControl.settle(tabId);
   persistSessionState();
   hideLockShield(tabId);
+  clearAgentCursor(tabId);
   if (message) broadcastStatus(message);
   return was;
 }
