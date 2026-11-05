@@ -42,6 +42,7 @@ Baseline facts used by the decisions:
 - **Module limits.**
   - `tests/architecture-maintenance.test.ts:39-49` caps every production module at 600 lines. `daemon.ts` is at 595, `inspection.js` 588, `queue.ts` 512, `navigation.js` 503 and `router.js` 496.
   - The R-16 locality test (`:57-75`) lets `mcp-server/src/memory/**` import only `node:fs`, `node:fs/promises`, `node:path` and `node:crypto`, `./` paths, and four named `../` siblings. The walk is recursive, so a subdirectory module that imports `../store.js` would fail.
+  - **Superseded 2026-11-05 (3.2.0):** the R-16 allowlist now also permits the `zod` package, which the site-knowledge record schemas validate with. The line above is kept as the record of what the test allowed when 004 shipped. The law is about I/O and not about npm: the `banned` specifier test and the no-`fetch`/`new WebSocket` check still run against every import, `zod` included, so nothing here widened what may leave the machine.
 - **Tool routing.** `isMemoryTool` (`memory/policy-tool-route.ts:163`) decides daemon routing at `daemon.ts:452` and `:332`. A new daemon-owned tool can be added there without editing `daemon.ts`. `allTools` has 21 tools (`tools/registry.ts:32-54`; name list in `tests/tools/registry.test.ts:17`).
 - **Graphify blast radius** (`graphify affected`, depth 2):
   - `buildSiteContext` is called by `withSiteContext` and by `handleMemoryContext` (`extension/handlers/memory-context.js:12`, the `browser_memory_internal_context` action). Seven extension test files import it dynamically.

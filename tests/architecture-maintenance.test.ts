@@ -58,6 +58,13 @@ describe('maintenance quality gates', () => {
     const files = sourceFiles('mcp-server/src/memory', '.ts');
     expect(files.length).toBeGreaterThan(8);
     const allowedBuiltins = new Set(['node:fs', 'node:fs/promises', 'node:path', 'node:crypto']);
+    // `zod` is the one third-party package the memory layer may import. The law is
+    // about I/O, not about npm: zod only builds and checks the record schemas in
+    // pure JS — it opens no socket and reads no disk — so a memory module that
+    // validates with it still cannot send a fact anywhere. The `banned` test below
+    // is the part that enforces the law, and it runs on every specifier, this one
+    // included.
+    const allowedPackages = new Set(['zod']);
     const allowedSiblings = new Set(['../protocol.js', '../daemon-config.js', '../bridge-frames.js', '../vault/daemon-routing.js']);
     // `core/` is the neutral layer: it holds what the memory and vault subsystems
     // share (the type guard, the error-code registry, the JSON store engine), so
@@ -74,7 +81,7 @@ describe('maintenance quality gates', () => {
       for (const specifier of specifiers) {
         if (specifier.startsWith('./')) continue;
         if (specifier.startsWith('../')) expect(allowedSiblings.has(specifier) || allowedCore.test(specifier) || allowedProtocol.test(specifier), `${file} imports ${specifier}`).toBe(true);
-        else expect(allowedBuiltins.has(specifier), `${file} imports ${specifier}`).toBe(true);
+        else expect(allowedBuiltins.has(specifier) || allowedPackages.has(specifier), `${file} imports ${specifier}`).toBe(true);
         expect(banned.test(specifier.replace(/^node:/u, '')), `${file} imports ${specifier}`).toBe(false);
       }
       expect(source, file).not.toMatch(/\bfetch\s*\(|new\s+WebSocket\b|XMLHttpRequest|\bglobalThis\.fetch\b/u);
