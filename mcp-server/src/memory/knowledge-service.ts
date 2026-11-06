@@ -1,5 +1,6 @@
 import { currentKnowledgeEpoch } from './knowledge-coordinator.js';
 import { draftBindingSchema, KnowledgeDrafts, type DraftBinding, type KnowledgeDraft } from './knowledge-draft.js';
+import { KnowledgeDeletionJournal } from './knowledge-deletion-journal.js';
 import { createKnowledgeProposal } from './knowledge-entry.js';
 import { JsonKnowledgePolicyStore } from './knowledge-policy-store.js';
 import { permitsKnowledge, type KnowledgePolicy } from './knowledge-policy.js';
@@ -16,7 +17,8 @@ export interface TrustedKnowledgeContext {
 }
 
 interface KnowledgeServiceDependencies {
-  currentContext: () => Promise<TrustedKnowledgeContext>;
+  /** During commit the resolver must read policy without re-entering the held coordinator lock. */
+  currentContext: (phase: 'normal' | 'commit') => Promise<TrustedKnowledgeContext>;
   currentMemoryPolicy: () => MemoryPolicy;
 }
 
@@ -36,16 +38,18 @@ function sameContext(a: TrustedKnowledgeContext, b: TrustedKnowledgeContext): bo
 export class KnowledgeService {
   private readonly policies: JsonKnowledgePolicyStore;
   private readonly store: JsonKnowledgeStore;
+  private readonly deletions: KnowledgeDeletionJournal;
   private readonly drafts = new KnowledgeDrafts();
 
   constructor(private readonly memoryDir: string, private readonly deps: KnowledgeServiceDependencies) {
     this.policies = new JsonKnowledgePolicyStore(memoryDir);
     this.store = new JsonKnowledgeStore(memoryDir);
+    this.deletions = new KnowledgeDeletionJournal(memoryDir);
   }
 
   private async snapshot(): Promise<Snapshot> {
     const epoch = currentKnowledgeEpoch(this.memoryDir);
-    const context = await this.deps.currentContext();
+    const context = await this.deps.currentContext('normal');
     if (!draftBindingSchema.safeParse({
       ...context, operation: 'add', revision: 0, policyGeneration: 0, deletionGeneration: 0,
     }).success) throw new Error('Site knowledge scope unavailable');
@@ -53,8 +57,9 @@ export class KnowledgeService {
     if (!permitsKnowledge(policy, this.deps.currentMemoryPolicy(), context.origin)) {
       throw new Error('Site knowledge unavailable');
     }
+    if (await this.deletions.isBlocked(context.origin)) throw new Error('Site knowledge unavailable');
     const record = await this.store.get(context.browserId, context.origin);
-    const current = await this.deps.currentContext();
+    const current = await this.deps.currentContext('normal');
     if (epoch !== currentKnowledgeEpoch(this.memoryDir) || !sameContext(context, current)
         || !permitsKnowledge(policy, this.deps.currentMemoryPolicy(), context.origin)) {
       throw new Error('Site knowledge scope changed');
@@ -70,7 +75,9 @@ export class KnowledgeService {
   }
 
   async read(): Promise<KnowledgeFile | null> {
-    return (await this.snapshot()).record;
+    const snapshot = await this.snapshot();
+    if (snapshot.epoch !== currentKnowledgeEpoch(this.memoryDir)) throw new Error('Site knowledge scope changed');
+    return snapshot.record;
   }
 
   async prepareAdd(inputs: unknown[]): Promise<KnowledgeDraft> {
@@ -99,6 +106,18 @@ export class KnowledgeService {
     }
     return this.drafts.prepare(this.binding(snapshot, 'delete'), [previous]);
   }
+
+  async preview(id: string, operation: 'add' | 'edit' | 'delete'): Promise<KnowledgeDraft> {
+    try {
+      const snapshot = await this.snapshot();
+      return this.drafts.preview(id, this.binding(snapshot, operation));
+    } catch (error) {
+      this.drafts.cancel(id);
+      throw error;
+    }
+  }
+
+  cancel(id: string): void { this.drafts.cancel(id); }
 
   /** The owner approval callback must come from a qualified trusted channel, never from the agent. */
   private async commit(id: string, operation: 'add' | 'edit' | 'delete', validateOwnerApproval: () => boolean, signal?: AbortSignal): Promise<KnowledgeFile> {
@@ -130,15 +149,24 @@ export class KnowledgeService {
       };
       await this.store.put(record, binding.revision, {
         signal,
-        validateCommit: async () => {
+        invalidateReaders: operation !== 'add',
+        validateCommit: async (commitEpoch) => {
           this.drafts.validateCommit(lease, binding);
           const policy = await this.policies.readForCommit(binding.browserId);
-          const context = await this.deps.currentContext();
+          if (await this.deletions.isBlockedForCommit(binding.origin)) return false;
+          const context = await this.deps.currentContext('commit');
           return sameContext(binding, context) && policy.generation === binding.policyGeneration
-            && currentKnowledgeEpoch(this.memoryDir) === binding.deletionGeneration
+            && (commitEpoch === binding.deletionGeneration
+              || (operation !== 'add' && commitEpoch === binding.deletionGeneration + 1))
+            && currentKnowledgeEpoch(this.memoryDir) === commitEpoch
             && permitsKnowledge(policy, this.deps.currentMemoryPolicy(), binding.origin);
         },
-        finalizeCommit: () => { this.drafts.finishCommit(lease, binding); },
+        finalizeCommit: () => {
+          this.drafts.finishCommit(lease, binding);
+          if (!permitsKnowledge(snapshot.policy, this.deps.currentMemoryPolicy(), binding.origin)) {
+            throw new Error('Site knowledge unavailable');
+          }
+        },
       });
       return structuredClone(record);
     } finally {

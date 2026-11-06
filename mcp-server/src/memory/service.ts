@@ -1,9 +1,11 @@
 import path from 'node:path';
-import type { MemoryAdminRequest, MemoryAdminResult, MemoryAdminStatus } from '../daemon-config.js';
+import { parseMemoryAdminRequest, type MemoryAdminRequest, type MemoryAdminResult, type MemoryAdminStatus } from '../daemon-config.js';
 import { OBSERVABLE_TOOLS } from '../bridge-frames.js';
 import type { MemoryObservation } from '../vault/daemon-routing.js';
 import { SITE_CONTEXT_CAPABILITY } from '../protocol/capabilities.js';
-import { adminFromWire, errorCode, runAdminCommand, type AdminContext } from './admin.js';
+import { adminFromWire, errorCode, type AdminContext } from './admin.js';
+import { runKnowledgeAwareAdmin } from './knowledge-legacy-deletion.js';
+import { coordinateLegacyPolicy, drainKnowledge } from './knowledge-coordinator.js';
 import { ALLOWLIST, DEFAULT_SHAPE_GATE, shapePath, type CommitMode, type ShapeGate } from './allowlist.js';
 import { collectFacts, extractSnapshotFacts, MAX_CANDIDATES } from './facts.js';
 import { MapService, type MapLookupResult } from './map-service.js';
@@ -212,7 +214,9 @@ export class MemoryService {
       iso: () => this.iso(),
       store: this.store,
       queue: this.queue,
-      mutatePolicy: (change, options) => this.mutatePolicy(change, false, options?.resetCorrupt === true),
+      mutatePolicy: (change, options) => coordinateLegacyPolicy(
+        this.memoryDir, () => this.mutatePolicy(change, false, options?.resetCorrupt === true),
+      ),
       status: () => this.status(),
       map: this.map,
     };
@@ -582,16 +586,18 @@ export class MemoryService {
 
   /** Validates an untrusted `memory-admin` line, then runs it. Always answers; never throws. */
   adminFromWire(raw: unknown): Promise<MemoryAdminResult> {
-    return adminFromWire(this.adminContext, raw);
+    const parsed = parseMemoryAdminRequest(raw);
+    return parsed.ok ? this.admin(parsed.request) : adminFromWire(this.adminContext, raw);
   }
 
   admin(request: MemoryAdminRequest): Promise<MemoryAdminResult> {
-    return runAdminCommand(this.adminContext, request);
+    return runKnowledgeAwareAdmin(this.memoryDir, this.adminContext, request);
   }
 
   /** Resolves when no capture is queued or being written. Used by tests and shutdown. */
   async flush(): Promise<void> {
     await this.queue.drain();
+    await drainKnowledge(this.memoryDir);
     await this.policyTail;
     await this.map.flush();
   }

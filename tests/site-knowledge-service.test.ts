@@ -5,6 +5,7 @@ import path from 'node:path';
 import { KnowledgeService, type TrustedKnowledgeContext } from '../mcp-server/src/memory/knowledge-service.js';
 import { JsonKnowledgePolicyStore } from '../mcp-server/src/memory/knowledge-policy-store.js';
 import { JsonKnowledgeStore } from '../mcp-server/src/memory/knowledge-store.js';
+import { KnowledgeDeletionJournal } from '../mcp-server/src/memory/knowledge-deletion-journal.js';
 import { transitionKnowledgePolicy } from '../mcp-server/src/memory/knowledge-policy.js';
 import { defaultPolicy, enablePolicy } from '../mcp-server/src/memory/policy.js';
 
@@ -46,6 +47,22 @@ describe('site knowledge service in isolation', () => {
     expect(await new JsonKnowledgeStore(dir).get('profile-a', 'https://example.invalid')).toBeNull();
     await expect(service.commitAdd(draft.id, () => false)).rejects.toThrow();
     expect(await new JsonKnowledgeStore(dir).get('profile-a', 'https://example.invalid')).toBeNull();
+  });
+
+  it('previews only the current scope and cancellation prevents a later commit', async () => {
+    await enablePolicyForTest();
+    let context = initialContext();
+    const service = new KnowledgeService(dir, { currentContext: async () => context, currentMemoryPolicy: memory });
+    const draft = await service.prepareAdd([input()]);
+    expect((await service.preview(draft.id, 'add')).entries[0].body).toBe(input().body);
+    context = { ...context, connectionId: 'other-connection' };
+    await expect(service.preview(draft.id, 'add')).rejects.toThrow();
+    context = initialContext();
+    await expect(service.commitAdd(draft.id, () => true)).rejects.toThrow();
+    const next = await service.prepareAdd([input()]);
+    service.cancel(next.id);
+    await expect(service.commitAdd(next.id, () => true)).rejects.toThrow();
+    expect(await service.read()).toBeNull();
   });
 
   it('writes only the selected proposed entries after an approved commit', async () => {
@@ -121,6 +138,21 @@ describe('site knowledge service in isolation', () => {
     expect(await new JsonKnowledgeStore(dir).get('profile-a', 'https://example.invalid')).toBeNull();
   });
 
+  it('does not persist if the existing memory policy is disabled during final approval', async () => {
+    await enablePolicyForTest();
+    let currentMemory = memory();
+    const service = new KnowledgeService(dir, {
+      currentContext: async () => initialContext(), currentMemoryPolicy: () => currentMemory,
+    });
+    const draft = await service.prepareAdd([input()]);
+    let checks = 0;
+    await expect(service.commitAdd(draft.id, () => {
+      if (++checks === 4) currentMemory = defaultPolicy();
+      return true;
+    })).rejects.toThrow();
+    expect(await new JsonKnowledgeStore(dir).get('profile-a', 'https://example.invalid')).toBeNull();
+  });
+
   it('does not persist if the trusted tab moves during commit', async () => {
     await enablePolicyForTest();
     let checks = 0;
@@ -170,5 +202,42 @@ describe('site knowledge service in isolation', () => {
     const results = await Promise.allSettled([service.commitAdd(first.id, () => true), service.commitAdd(second.id, () => true)]);
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect((await service.read())?.entries).toHaveLength(1);
+  });
+
+  it('does not return an entry deleted while a read is in progress', async () => {
+    await enablePolicyForTest();
+    const writer = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
+    const add = await writer.prepareAdd([input()]);
+    const original = (await writer.commitAdd(add.id, () => true)).entries[0]!;
+    let release!: () => void;
+    let notify!: () => void;
+    const waiting = new Promise<void>((resolve) => { notify = resolve; });
+    let calls = 0;
+    const reader = new KnowledgeService(dir, {
+      currentMemoryPolicy: memory,
+      currentContext: async () => {
+        if (++calls === 2) await new Promise<void>((resolve) => { release = resolve; notify(); });
+        return initialContext();
+      },
+    });
+    const pendingRead = reader.read();
+    await waiting;
+    const deletion = await writer.prepareDelete(original.id);
+    await writer.commitDelete(deletion.id, () => true);
+    release();
+    await expect(pendingRead).rejects.toThrow();
+    expect((await writer.read())?.entries).toHaveLength(0);
+  });
+
+  it('blocks reading and old draft commits while durable deletion recovery is pending', async () => {
+    await enablePolicyForTest();
+    const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
+    const add = await service.prepareAdd([input()]);
+    await service.commitAdd(add.id, () => true);
+    const pending = await service.prepareAdd([{ ...input(), subject: 'معلقة' }]);
+    await new KnowledgeDeletionJournal(dir).begin('https://example.invalid', () => true);
+    await expect(service.read()).rejects.toThrow();
+    await expect(service.commitAdd(pending.id, () => true)).rejects.toThrow();
+    await expect(new JsonKnowledgeStore(dir).get('profile-a', 'https://example.invalid')).rejects.toThrow();
   });
 });
