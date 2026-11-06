@@ -41,6 +41,17 @@ describe('in-memory site knowledge drafts', () => {
     expect(drafts.preview(second.id, otherBinding).id).toBe(second.id);
   });
 
+  it('discards every draft at once when the store is cleared', () => {
+    const drafts = new KnowledgeDrafts();
+    const first = drafts.prepare(binding, [entry()]);
+    const otherBinding = { ...binding, sessionId: 'session-b' };
+    const second = drafts.prepare(otherBinding, [entry()]);
+    drafts.clear();
+    expect(() => drafts.preview(first.id, binding)).toThrow();
+    expect(() => drafts.preview(second.id, otherBinding)).toThrow();
+    expect(drafts.prepare(binding, [entry()]).entries).toHaveLength(1);
+  });
+
   it('expires after five minutes and discards the draft', () => {
     let time = 0;
     const drafts = new KnowledgeDrafts(() => time, () => time);

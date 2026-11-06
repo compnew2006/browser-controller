@@ -5,6 +5,10 @@ import path from 'node:path';
 import { KnowledgeDeletionCoordinator } from '../mcp-server/src/memory/knowledge-deletion-coordinator.js';
 import { KnowledgeDeletionJournal } from '../mcp-server/src/memory/knowledge-deletion-journal.js';
 import { JsonKnowledgeStore } from '../mcp-server/src/memory/knowledge-store.js';
+import { JsonMapStore } from '../mcp-server/src/memory/map-store.js';
+import { emptyMapRecord } from '../mcp-server/src/memory/map-record.js';
+import { JsonMemoryStore } from '../mcp-server/src/memory/store.js';
+import type { SiteRecord } from '../mcp-server/src/memory/store.js';
 import type { KnowledgeFile } from '../mcp-server/src/memory/knowledge-record.js';
 import { MemoryService } from '../mcp-server/src/memory/service.js';
 import { defaultPolicy, enablePolicy, writePolicy } from '../mcp-server/src/memory/policy.js';
@@ -122,6 +126,35 @@ describe('coordinated deletion recovery', () => {
     expect((await restarted.run(origin, () => true)).success).toBe(true);
     expect(await normal.get('profile-a', origin)).toBeNull();
     expect(await normal.get('profile-b', origin)).toBeNull();
+  });
+
+  it('verifies the deleted origin only, while other origins keep their records and maps', async () => {
+    await writePolicy(dir, enablePolicy(defaultPolicy(), '2026-11-05T00:00:00.000Z'));
+    const store = new JsonKnowledgeStore(dir);
+    await store.put(record, 0, approved);
+    const other = 'https://other.invalid';
+    const site: SiteRecord = {
+      schemaVersion: 1, origin: other,
+      facts: [{ factId: 'site.language', kind: 'site.language', value: { lang: 'ar', dir: 'rtl' }, firstObserved: '2026-11-05T00:00:00.000Z', lastObserved: '2026-11-05T00:00:00.000Z', status: 'current' }],
+      profiles: { 'profile-a': { visit: { firstAt: '2026-11-05T00:00:00.000Z', lastAt: '2026-11-05T00:00:00.000Z', count: 1 } } },
+      commitSeq: 1, updatedAt: '2026-11-05T00:00:00.000Z',
+    };
+    await new JsonMemoryStore(dir).putSite(site);
+    const page = { path: '/', title: 'Home', lang: 'en', dir: 'ltr', addressable: true, reason: 'root', via: null, lastOpen: null, useCount: 0, lastUse: null, readChars: 5, contexts: {}, firstSeenAt: '2026-11-05T00:00:00.000Z', lastSeenAt: '2026-11-05T00:00:00.000Z', controls: [] };
+    await new JsonMapStore(dir).putMap({
+      ...emptyMapRecord('profile-a', other, '2026-11-05T00:00:00.000Z'), pages: [page],
+      entrances: [{ origin: 'https://third.invalid', path: '/', addressable: true, at: '2026-11-05T00:00:00.000Z' }],
+    });
+    const legacy = new MemoryService({
+      memoryDir: dir, vault: { memoryEligibility: () => 'clear' },
+      connection: () => ({ browserId: 'profile-a', connectionId: 'connection-a', ambiguous: false, supportsSiteContext: true }),
+    });
+    expect((await legacy.admin({ kind: 'memory-admin', id: 'fixture', command: 'delete', origin })).success).toBe(true);
+    expect(await store.get('profile-a', origin)).toBeNull();
+    expect(await new KnowledgeDeletionJournal(dir).isBlocked(origin)).toBe(false);
+    expect(await new JsonMemoryStore(dir).getSite(other)).not.toBeNull();
+    expect((await new JsonMapStore(dir).listMaps()).map((map) => map.origin)).toEqual([other]);
+    await legacy.flush();
   });
 
   it('refuses an overlapping deletion until the active workflow has finished', async () => {

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Run `npm run build`, reload the extension at `chrome://extensions` and restart the daemon after updating.
+
+### Added
+- Site knowledge deletion, and the state that makes it survive a crash. An owner-authorized delete of a site now runs through a coordinator that journals the operation to disk (`knowledge-delete-journal.json`, schema version 1, at most 5,000 origins and 512 KiB), so a daemon that dies mid-delete comes back knowing the site is still blocked rather than serving knowledge that was supposed to be gone. While a journaled deletion is pending for a site, reads and writes for that site are blocked; a second deletion asked for while one is running answers `BROWSER_BUSY` instead of starting a second one, and an operation that ended without verifying answers `recoveryRequired` rather than pretending success. A delete is only reported done when the legacy memory path, the site maps and the knowledge store all say the site is clean. The coordinator takes an authorization predicate and refuses anything that does not return exactly `true` with `ACTION_NOT_CONFIRMED`, re-checking it once the deletion is journaled so an expired approval cannot complete — but the admin path built so far passes `() => true`, because the module says plainly that it expects an already-authorized owner action from its caller. No caller exists yet, so that upstream check is the work still outstanding here, not something this release provides.
+- A read path for site knowledge with a signed cursor. The cursor is opaque to the agent: an HMAC over the offset, the record revision and the scope, with a per-process key, compared in constant time, so a cursor from another site, another session or an older revision is refused rather than silently reading someone else's page. A page is capped at 8 KiB. Like the rest of the layer, this route is imported by nothing outside its own tests — no tool, wire frame or daemon route reaches it yet.
+- A knowledge context that notices when the ground moves under it. The context an agent is given is checked against the memory epoch and a fingerprint of the stored knowledge; if either changed while the context was being assembled, the context is discarded instead of served, so a deletion or a policy flip cannot be answered with a snapshot taken before it.
+
+### Changed
+- The admin path's site-knowledge wiring left `MemoryService` and now sits in one module, `mcp-server/src/memory/knowledge-admin.ts`: the policy-change gate, the validated-request entry and the untrusted wire-line entry. `MemoryService` builds the admin context and hands it over; behavior, the gate's ordering and every error code are unchanged. The move is the 600-line module law, not a redesign — `memory/service.ts` had reached 604 lines, and it now sits at exactly the boundary, so the next module that grows it has to split something real.
+
 ## 3.2.0
 
 Run `npm run build`, reload the extension at `chrome://extensions` and restart the daemon after updating.

@@ -62,8 +62,13 @@ export default defineConfig({
           statements: 82,
         },
 
-        // Measured 94.89% / 96.36% / 85.16% / 90.54% over the 32 memory
+        // Measured 95.48% / 96.16% / 85.74% / 90.91% over the 47 memory
         // sources: the capture, policy and queue paths are well exercised.
+        // 32 of 833 memory functions are still unreached, 10 of them in the
+        // knowledge-* modules, which no tool is wired to yet, so nothing
+        // outside their own tests calls their store adapters. That leaves only
+        // 0.16pp between reality and the 96 floor: the next memory module that
+        // lands untested trips this gate.
         'mcp-server/src/memory/**/*.ts': {
           lines: 94,
           functions: 96,

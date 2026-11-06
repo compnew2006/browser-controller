@@ -1,11 +1,11 @@
 import path from 'node:path';
-import { parseMemoryAdminRequest, type MemoryAdminRequest, type MemoryAdminResult, type MemoryAdminStatus } from '../daemon-config.js';
+import { type MemoryAdminRequest, type MemoryAdminResult, type MemoryAdminStatus } from '../daemon-config.js';
 import { OBSERVABLE_TOOLS } from '../bridge-frames.js';
 import type { MemoryObservation } from '../vault/daemon-routing.js';
 import { SITE_CONTEXT_CAPABILITY } from '../protocol/capabilities.js';
-import { adminFromWire, errorCode, type AdminContext } from './admin.js';
-import { runKnowledgeAwareAdmin } from './knowledge-legacy-deletion.js';
-import { coordinateLegacyPolicy, drainKnowledge } from './knowledge-coordinator.js';
+import { errorCode, type AdminContext } from './admin.js';
+import { knowledgeAdminContext, runKnowledgeAdminLine, runKnowledgeAdminRequest } from './knowledge-admin.js';
+import { drainKnowledge } from './knowledge-coordinator.js';
 import { ALLOWLIST, DEFAULT_SHAPE_GATE, shapePath, type CommitMode, type ShapeGate } from './allowlist.js';
 import { collectFacts, extractSnapshotFacts, MAX_CANDIDATES } from './facts.js';
 import { MapService, type MapLookupResult } from './map-service.js';
@@ -210,16 +210,14 @@ export class MemoryService {
       ...(deps.mapStore ? { store: deps.mapStore } : {}),
       ...(deps.reminderTimeoutMs !== undefined ? { reminderTimeoutMs: deps.reminderTimeoutMs } : {}),
     });
-    this.adminContext = {
+    this.adminContext = knowledgeAdminContext(this.memoryDir, {
       iso: () => this.iso(),
       store: this.store,
       queue: this.queue,
-      mutatePolicy: (change, options) => coordinateLegacyPolicy(
-        this.memoryDir, () => this.mutatePolicy(change, false, options?.resetCorrupt === true),
-      ),
+      mutatePolicy: (change, options) => this.mutatePolicy(change, false, options?.resetCorrupt === true),
       status: () => this.status(),
       map: this.map,
-    };
+    });
   }
 
   private iso(): string {
@@ -584,14 +582,12 @@ export class MemoryService {
     };
   }
 
-  /** Validates an untrusted `memory-admin` line, then runs it. Always answers; never throws. */
   adminFromWire(raw: unknown): Promise<MemoryAdminResult> {
-    const parsed = parseMemoryAdminRequest(raw);
-    return parsed.ok ? this.admin(parsed.request) : adminFromWire(this.adminContext, raw);
+    return runKnowledgeAdminLine(this.memoryDir, this.adminContext, raw);
   }
 
   admin(request: MemoryAdminRequest): Promise<MemoryAdminResult> {
-    return runKnowledgeAwareAdmin(this.memoryDir, this.adminContext, request);
+    return runKnowledgeAdminRequest(this.memoryDir, this.adminContext, request);
   }
 
   /** Resolves when no capture is queued or being written. Used by tests and shutdown. */

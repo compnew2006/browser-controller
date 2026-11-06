@@ -65,6 +65,18 @@ describe('site knowledge service in isolation', () => {
     expect(await service.read()).toBeNull();
   });
 
+  it('drops the drafts of a disconnected session and leaves other sessions alone', async () => {
+    await enablePolicyForTest();
+    const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
+    const draft = await service.prepareAdd([input()]);
+    service.cancelSession('session-zzz');
+    expect((await service.preview(draft.id, 'add')).entries[0].body).toBe(input().body);
+    service.cancelSession(initialContext().sessionId);
+    await expect(service.preview(draft.id, 'add')).rejects.toThrow();
+    await expect(service.commitAdd(draft.id, () => true)).rejects.toThrow();
+    expect(await new JsonKnowledgeStore(dir).get('profile-a', 'https://example.invalid')).toBeNull();
+  });
+
   it('writes only the selected proposed entries after an approved commit', async () => {
     await enablePolicyForTest();
     const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
