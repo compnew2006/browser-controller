@@ -46,6 +46,22 @@ describe('a debugger session that went away without its event', () => {
     expect(dbg.attachCount).toBe(2);
     await expect(again('Runtime.evaluate', { expression: '1' })).resolves.toEqual({});
   });
+
+  it('reports actual new, pending, and ready registry states only when requested', async () => {
+    const cold: Record<string, number> = {};
+    const pending: Record<string, number> = {};
+    const first = ensureCdp(7, cold);
+    const second = ensureCdp(7, pending);
+    await Promise.all([first, second]);
+    const warm: Record<string, number> = {};
+    await ensureCdp(7, warm);
+    expect(dbg.attachCount).toBe(1);
+    expect([cold.connection_state, pending.connection_state, warm.connection_state]).toEqual([0, 1, 2]);
+    for (const trace of [cold, pending, warm]) {
+      expect(trace.connection_ms).toBeGreaterThanOrEqual(0);
+      expect(Object.keys(trace).sort()).toEqual(['connection_ms', 'connection_state']);
+    }
+  });
 });
 
 describe('a vault approval card on the tab (specs/006 D5)', () => {

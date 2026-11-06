@@ -1,3 +1,4 @@
+import { invalidateDeltaSnapshot } from './delta-attribution.js';
 import path from 'node:path';
 import { type MemoryAdminRequest, type MemoryAdminResult, type MemoryAdminStatus } from '../daemon-config.js';
 import { OBSERVABLE_TOOLS } from '../bridge-frames.js';
@@ -32,7 +33,6 @@ import { ERROR_CODES, formatError, type ErrorCode } from '../core/error-codes.js
 
 export { extractSnapshotFacts };
 export type { MemoryToolContext };
-
 const MAX_PATH = 120;
 const REMINDER_TIMEOUT_MS = 50;
 const TOOL_KINDS: readonly string[] = ['all', 'facts', 'visits'];
@@ -66,7 +66,6 @@ export interface MemoryServiceDeps {
    */
   shapeGate?: ShapeGate;
 }
-
 
 export type MemoryToolResult = ({ success: true } & MemoryView) | MapLookupResult | { success: false; error: string };
 
@@ -251,6 +250,7 @@ export class MemoryService {
    * first and shares the one scope decision; it also sees a failed click, which has no observation (004 R-08).
    */
   afterCall(call: MemoryCall, outcome: MemoryCallOutcome): void {
+    if (invalidateDeltaSnapshot(outcome, this.deps.connection, this.map.cache, this.observer.tabs)) return;
     this.map.noteCall(outcome.sessionId, outcome.tool, outcome.params, outcome.result);
     // The counter and the commit candidate are read from the outcome alone. A failed call carries no
     // observation and no siteContext, so both run before the observe check (007, C7, C8).

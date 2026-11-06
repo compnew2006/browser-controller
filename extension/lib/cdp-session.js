@@ -255,10 +255,16 @@ export async function ensureViewport(tabId) {
 }
 
 /** Attach (or reuse) the tab's session and return a `send(method, params)` helper. */
-export async function ensureCdp(tabId) {
+export async function ensureCdp(tabId, timings) {
+  const start = timings ? performance.now() : 0;
   let s = sessions.get(tabId);
+  // 0: a new attachment, 1: sharing an attachment in progress, 2: a ready
+  // session from the registry. A dropped Chrome attachment may still fail on
+  // its next command; this is a registry observation, not a live probe.
+  if (timings) timings.connection_state = !s ? 0 : s.readyResolved ? 2 : 1;
   if (!s) {
-    s = { ready: attach(tabId), timer: null, busy: 0 };
+    s = { ready: null, readyResolved: false, timer: null, busy: 0 };
+    s.ready = attach(tabId).then(() => { s.readyResolved = true; });
     sessions.set(tabId, s);
     try {
       await s.ready;
@@ -269,6 +275,7 @@ export async function ensureCdp(tabId) {
   } else {
     await s.ready;
   }
+  if (timings) timings.connection_ms = performance.now() - start;
   armIdle(tabId);
   return async (method, params = {}) => {
     // While a vault approval card shows on the tab, the agent's input never reaches it (specs/006 D5).

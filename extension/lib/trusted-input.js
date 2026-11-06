@@ -410,9 +410,9 @@ export async function locatePointer(tabId, target, effect, count = 1) {
  * The tab's CDP session. Browser input never falls back to synthetic events:
  * when the debugger cannot attach this throws DEBUGGER_UNAVAILABLE.
  */
-export async function requireSender(tabId) {
+export async function requireSender(tabId, timings) {
   try {
-    return await ensureCdp(tabId);
+    return await ensureCdp(tabId, timings);
   } catch (err) {
     throw new Error(`DEBUGGER_UNAVAILABLE: could not attach the debugger to tab ${tabId} (${String(err?.message || err)}). Browser input needs it.`, { cause: err });
   }

@@ -125,6 +125,13 @@ export class TabStateCache {
     return held.mode;
   }
 
+  /** Drop one tab's attribution without touching other tabs or pending commit modes. */
+  forgetTab(connectionId: string, tabId: number): void {
+    const tabs = this.tabs.get(connectionId);
+    tabs?.delete(tabId);
+    if (tabs?.size === 0) this.tabs.delete(connectionId);
+  }
+
   /** Forgets one connection, for example when its browser profile changes. */
   forgetConnection(connectionId: string): void {
     this.tabs.delete(connectionId);

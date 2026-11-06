@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { performance } from 'node:perf_hooks';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
 import { tabIdParam, textResult, failureResult, rawResultOf, codedMessageOf } from './types.js';
 import { prepareToolParams } from './params.js';
@@ -259,14 +260,23 @@ function continuedBatchResult(
  * Every step's result comes back, each under its own step label: a batch never
  * drops what an earlier step read.
  */
+const freezePreflightSchema = z.object({
+  kind: z.literal('freeze_columns'),
+  frozenColumns: z.number().int().min(0).max(18_278),
+  mergedColumns: z.array(z.object({ first: z.number().int().min(1).max(18_278), last: z.number().int().min(1).max(18_278) }).strict()).max(1_000),
+  evidence: z.enum(['complete', 'partial', 'unavailable']),
+}).strict();
+
 export const batchTool: ToolDefinition = {
   name: 'browser_batch',
   summary: 'Run up to 50 browser actions in one call',
-  description: 'Up to 50 calls in order, each {tool, params}; stops at the first failure (onError:"continue" runs the rest and reports every failure). tabId fills steps that omit it (not browser_tabs). Every step\'s result comes back under its own step label, with one structured entry per step. One browser_evaluate reading several fields beats a read step each.',
+  description: 'Run up to 50 {tool,params} calls in order; stops on failure unless onError is continue. tabId fills missing step tab IDs except browser_tabs. Each step returns its result.',
   inputSchema: z.object({
     tabId: tabIdParam.optional(),
     maxChars: z.number().int().min(1_000).max(500_000).optional().describe('Cap on the batch\'s whole text; later steps are cut past it (default 120000)'),
     onError: z.enum(['stop', 'continue']).optional().describe('What a failing step does: stop the batch (default) or run the rest and report every failure'),
+    timings: z.boolean().optional().describe('Include step and batch timings'),
+    preflight: z.record(z.string(), z.unknown()).optional().describe('Caller evidence: kind, frozenColumns, mergedColumns, evidence; not a live check.'),
     actions: z
       .array(z.object({
         tool: z.string(),
@@ -282,6 +292,48 @@ export const batchTool: ToolDefinition = {
     const topTabId = params.tabId as number | undefined;
     const maxChars = typeof params.maxChars === 'number' ? params.maxChars : BATCH_MAX_OUTPUT_CHARS;
     const keepGoing = params.onError === 'continue';
+    const checkedPreflight = params.preflight === undefined ? undefined : freezePreflightSchema.safeParse(params.preflight);
+    if (checkedPreflight && !checkedPreflight.success) return failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, 'Invalid freeze preflight evidence.'));
+    const preflight = checkedPreflight?.data;
+    let preflightResult: Record<string, unknown> | undefined;
+    if (preflight) {
+      const invalid = topTabId === undefined
+        || actions.some((step) => step.params?.tabId !== undefined && step.params.tabId !== topTabId)
+        || preflight.mergedColumns.some((r) => r.first > r.last)
+        || (preflight.evidence === 'unavailable' && preflight.mergedColumns.length > 0);
+      if (invalid) return failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, 'preflight needs one tabId and valid caller-supplied column spans.'));
+      const conflict = preflight.mergedColumns.some((r) => r.first <= preflight.frozenColumns && r.last > preflight.frozenColumns);
+      const status = conflict ? 'conflict' : (preflight.frozenColumns === 0 || preflight.evidence === 'complete') ? 'no_known_conflict' : 'unknown';
+      preflightResult = { kind: preflight.kind, status, source: 'caller_supplied', liveSheetVerified: false };
+      if (status !== 'no_known_conflict') {
+        const code = conflict ? ERROR_CODES.PREFLIGHT_CONFLICT : ERROR_CODES.PREFLIGHT_UNKNOWN;
+        return { ...failureResult(formatError(code, conflict
+          ? 'a supplied merged range crosses the freeze boundary; no steps were dispatched.'
+          : 'supplied merge evidence is incomplete; no steps were dispatched.')),
+        structuredContent: { success: false, steps: [], preflight: preflightResult } };
+      }
+    }
+    const measure = params.timings === true;
+    const batchStarted = measure ? performance.now() : 0;
+    const durations: Array<{ tool: string; elapsedMs: number }> = [];
+    const finish = (result: ToolResult): ToolResult => {
+      if (!measure && !preflightResult) return result;
+      const structured = result.structuredContent as Record<string, unknown>;
+      if (!measure) return { ...result, structuredContent: { ...structured, preflight: preflightResult } };
+      const summarize = (values: number[]) => {
+        const sorted = values.sort((a, b) => a - b);
+        const percentile = (p: number) => sorted.length ? sorted[Math.ceil(p * sorted.length) - 1] : null;
+        return { sampleCount: sorted.length, p50Ms: percentile(0.50), p95Ms: percentile(0.95) };
+      };
+      const byTool = [...new Set(durations.map((entry) => entry.tool))].map((tool) => ({
+        tool, ...summarize(durations.filter((entry) => entry.tool === tool).map((entry) => entry.elapsedMs)),
+      }));
+      return { ...result, structuredContent: { ...structured, ...(preflightResult ? { preflight: preflightResult } : {}), timings: {
+        totalMs: performance.now() - batchStarted,
+        ...summarize(durations.map((entry) => entry.elapsedMs)),
+        byTool,
+      } } };
+    };
     // The default tab: the batch's tabId, or the tab a step without tabId opened.
     let tabId = topTabId;
     const deadline = Date.now() + BATCH_BUDGET_MS;
@@ -289,12 +341,13 @@ export const batchTool: ToolDefinition = {
     const entries: Array<Record<string, unknown>> = [];
     const failures: Array<{ label: string; message: string }> = [];
     for (const [i, step] of actions.entries()) {
+      const stepStarted = measure ? performance.now() : 0;
       const label = `step ${i + 1}/${actions.length} ${step.tool}`;
       if (Date.now() >= deadline) {
         const timedOut = { label, message: formatError(ERROR_CODES.TIMEOUT, `batch budget used; ${actions.length - i} skipped`) };
-        return keepGoing
+        return finish(keepGoing
           ? continuedBatchResult(steps, entries, maxChars, [...failures, timedOut])
-          : batchResult(steps, entries, maxChars, timedOut);
+          : batchResult(steps, entries, maxChars, timedOut));
       }
       const def = resolveTool(step.tool);
       let result: ToolResult;
@@ -325,9 +378,9 @@ export const batchTool: ToolDefinition = {
               // A cut write step may have completed in the page: say so, as VAULT_OUTCOME_UNKNOWN does.
               const unknown = def.idempotent === true ? '' : '; outcome unknown, the step may have completed: check the page before retrying';
               const timedOut = { label, message: formatError(ERROR_CODES.TIMEOUT, `batch budget used${unknown}; ${actions.length - i - 1} skipped`) };
-              return keepGoing
+              return finish(keepGoing
                 ? continuedBatchResult(steps, entries, maxChars, [...failures, timedOut])
-                : batchResult(steps, entries, maxChars, timedOut);
+                : batchResult(steps, entries, maxChars, timedOut));
             }
             result = outcome;
           }
@@ -351,15 +404,17 @@ export const batchTool: ToolDefinition = {
         .filter((line) => !parts.text.includes(line))
         .map((line) => `${label}: memory: ${line}`);
       const output: StepOutput = { label, tool: step.tool, text: parts.text, images: parts.images, receipt: receiptOf(result), notes: [...notes, ...memoryNotes] };
+      const elapsedMs = measure ? performance.now() - stepStarted : undefined;
+      if (elapsedMs !== undefined) durations.push({ tool: step.tool, elapsedMs });
       if (result.isError) {
         const failure = failureOf(result);
-        entries.push(entryOf(output, i, 'failed'));
+        entries.push({ ...entryOf(output, i, 'failed'), ...(elapsedMs === undefined ? {} : { elapsedMs }) });
         if (!keepGoing) {
           // The failing step's own lines (a hint on how to go on) and its notes
           // travel as context under its label.
           const extra = [...failure.rest, ...notes];
           const context = extra.length ? [...steps, { ...output, text: extra.join('\n'), images: [] }] : steps;
-          return batchResult(context, entries, maxChars, { label, message: `${failure.message}; ${actions.length - i - 1} skipped` });
+          return finish(batchResult(context, entries, maxChars, { label, message: `${failure.message}; ${actions.length - i - 1} skipped` }));
         }
         // onError:"continue": the failure is recorded, the failing step's own output
         // travels with the other steps, and the batch runs on.
@@ -368,10 +423,10 @@ export const batchTool: ToolDefinition = {
         continue;
       }
       steps.push(output);
-      entries.push(entryOf(output, i, 'completed'));
+      entries.push({ ...entryOf(output, i, 'completed'), ...(elapsedMs === undefined ? {} : { elapsedMs }) });
     }
-    return failures.length > 0
+    return finish(failures.length > 0
       ? continuedBatchResult(steps, entries, maxChars, failures)
-      : batchResult(steps, entries, maxChars, null);
+      : batchResult(steps, entries, maxChars, null));
   },
 };

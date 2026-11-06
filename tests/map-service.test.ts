@@ -101,6 +101,22 @@ afterEach(async () => {
 });
 
 describe('MapService through MemoryService — US1 (T021)', () => {
+  it('does not create or replace a map from an incremental snapshot envelope', async () => {
+    await enableAll();
+    const delta = () => snapshotOutcome({ url: `${ORIGIN}/`, text: '{"kind":"unchanged"}', params: { delta: true } });
+    await run(delta());
+    expect(await map()).toBeNull();
+    await run(snapshotOutcome({ url: `${ORIGIN}/`, text: homeText() }));
+    await run(snapshotOutcome({ url: `${ORIGIN}/`, text: homeText(), tabId: 8 }));
+    const before = await map();
+    expect(page(before, '/')?.controls.length).toBeGreaterThan(0);
+    expect(service.map.cache.get('conn-1', 7)).toBeDefined();
+    expect(service.map.cache.get('conn-1', 8)).toBeDefined();
+    await run(delta());
+    expect(await map()).toEqual(before);
+    expect(service.map.cache.get('conn-1', 7)).toBeUndefined();
+    expect(service.map.cache.get('conn-1', 8)).toBeDefined();
+  });
   it('records the root, a click destination and its landing with path, title, lang, context and last seen (AC-01)', async () => {
     await enableAll();
     await learnHome();

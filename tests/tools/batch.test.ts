@@ -28,6 +28,115 @@ const textOf = (res: { content: Array<{ type: string; text?: string }> }) =>
   res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
 
 describe('browser_batch', () => {
+  describe('explicit freeze preflight', () => {
+    const action = [{ tool: 'browser_click', params: { target: '#freeze' } }];
+
+    it('refuses a declared crossing merge before sending any action', async () => {
+      const { host, calls } = fakeHost();
+      const res = await run(host, { tabId: 9, actions: action, preflight: {
+        kind: 'freeze_columns', frozenColumns: 2, mergedColumns: [{ first: 1, last: 5 }], evidence: 'partial',
+      } });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toContain('PREFLIGHT_CONFLICT:');
+      expect(calls).toEqual([]);
+      expect(res.structuredContent).toMatchObject({ success: false, steps: [], preflight: { status: 'conflict', source: 'caller_supplied', liveSheetVerified: false } });
+    });
+
+    it('refuses incomplete evidence instead of claiming the live sheet is safe', async () => {
+      const { host, calls } = fakeHost();
+      const res = await run(host, { tabId: 9, actions: action, preflight: {
+        kind: 'freeze_columns', frozenColumns: 2, mergedColumns: [], evidence: 'unavailable',
+      } });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toContain('PREFLIGHT_UNKNOWN:');
+      expect(calls).toEqual([]);
+    });
+
+    it('labels a completed caller-supplied check without claiming live verification', async () => {
+      const { host, calls } = fakeHost();
+      const res = await run(host, { tabId: 9, actions: action, preflight: {
+        kind: 'freeze_columns', frozenColumns: 5, mergedColumns: [{ first: 1, last: 5 }], evidence: 'complete',
+      } });
+      expect(res.isError).toBeUndefined();
+      expect(actionCalls(calls).map((call) => call.tool)).toEqual(['browser_click']);
+      expect(res.structuredContent).toMatchObject({ preflight: { status: 'no_known_conflict', source: 'caller_supplied', liveSheetVerified: false } });
+    });
+
+    it('rejects malformed preflight evidence before dispatch', async () => {
+      const { host, calls } = fakeHost();
+      const res = await run(host, { tabId: 9, actions: action, preflight: {
+        kind: 'freeze_columns', frozenColumns: 2, mergedColumns: [{ first: '1', last: 5 }], evidence: 'complete',
+      } });
+      expect(textOf(res)).toContain('INVALID_ARGUMENT:');
+      expect(calls).toEqual([]);
+    });
+
+    it('rejects inverted spans without dispatching any action', async () => {
+      const { host, calls } = fakeHost();
+      const res = await run(host, { tabId: 9, actions: action, preflight: {
+        kind: 'freeze_columns', frozenColumns: 2, mergedColumns: [{ first: 5, last: 1 }], evidence: 'complete',
+      } });
+      expect(textOf(res)).toContain('INVALID_ARGUMENT:');
+      expect(calls).toEqual([]);
+    });
+
+    it('rejects a step targeting a different tab before dispatch', async () => {
+      const { host, calls } = fakeHost();
+      const res = await run(host, { tabId: 9, actions: [{ tool: 'browser_click', params: { tabId: 10, target: '#freeze' } }], preflight: {
+        kind: 'freeze_columns', frozenColumns: 2, mergedColumns: [], evidence: 'complete',
+      } });
+      expect(textOf(res)).toContain('INVALID_ARGUMENT:');
+      expect(calls).toEqual([]);
+    });
+  });
+
+  it('reports opt-in step timings and nearest-rank percentiles without changing default results', async () => {
+    const { host } = fakeHost();
+    const actions = [{ tool: 'browser_text', params: {} }, { tool: 'browser_snapshot', params: {} }];
+    const normal = await run(host, { tabId: 9, actions });
+    const timed = await run(host, { tabId: 9, actions, timings: true });
+    const baseline = normal.structuredContent as { steps: Array<Record<string, unknown>>; timings?: unknown };
+    const measured = timed.structuredContent as {
+      steps: Array<{ elapsedMs: number }>;
+      timings: { totalMs: number; sampleCount: number; p50Ms: number; p95Ms: number; byTool: Array<{ tool: string; sampleCount: number; p50Ms: number; p95Ms: number }> };
+    };
+    expect(baseline.timings).toBeUndefined();
+    expect(baseline.steps.every((step) => !('elapsedMs' in step))).toBe(true);
+    const durations = measured.steps.map((step) => step.elapsedMs).sort((a, b) => a - b);
+    expect(durations).toHaveLength(2);
+    expect(durations.every((ms) => Number.isFinite(ms) && ms >= 0)).toBe(true);
+    expect(measured.timings).toMatchObject({ sampleCount: 2, p50Ms: durations[0], p95Ms: durations[1] });
+    expect(measured.timings.byTool.map(({ tool, sampleCount }) => ({ tool, sampleCount }))).toEqual([
+      { tool: 'browser_text', sampleCount: 1 }, { tool: 'browser_snapshot', sampleCount: 1 },
+    ]);
+    expect(measured.timings.totalMs).toBeGreaterThanOrEqual(durations[1]);
+    expect(timed.content).toEqual(normal.content);
+  });
+
+  it('reports timing for a failed step without running skipped writes', async () => {
+    const { host, calls } = fakeHost('browser_snapshot');
+    const res = await run(host, { tabId: 9, timings: true, actions: [
+      { tool: 'browser_snapshot', params: {} },
+      { tool: 'browser_click', params: { target: '#do-not-click' } },
+    ] });
+    const structured = res.structuredContent as { steps: Array<{ status: string; elapsedMs: number }>; timings: { sampleCount: number } };
+    expect(res.isError).toBe(true);
+    expect(structured.steps).toHaveLength(1);
+    expect(structured.steps[0].status).toBe('failed');
+    expect(structured.steps[0].elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(structured.timings.sampleCount).toBe(1);
+    expect(calls.map((c) => c.tool)).not.toContain('browser_click');
+  });
+
+  it('never includes action parameters in its timing metadata', async () => {
+    const { host } = fakeHost();
+    const res = await run(host, { tabId: 9, timings: true, actions: [
+      { tool: 'browser_type', params: { text: 'private-fixture-text' } },
+    ] });
+    const timings = (res.structuredContent as { timings: unknown }).timings;
+    expect(JSON.stringify(timings)).not.toContain('private-fixture-text');
+  });
+
   it('its registry timeoutMs is the batch budget, the one bound the handler enforces', () => {
     expect(batch.timeoutMs).toBe(BATCH_BUDGET_MS);
     expect('timeoutMs' in batch.inputSchema.shape).toBe(false);

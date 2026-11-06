@@ -44,7 +44,7 @@ export const targetParam = z.union([
     // 500 characters of the 20 000 the v3-server test allows.
     nth: z.number().refine(Number.isInteger, "nth must be an integer").min(0).optional(),
   }).strict(),
-]).describe("Locator string or exact {role,name,nth}; name is case-insensitive, nth zero-based.");
+]).describe("Locator or role/name.");
 
 export interface ToolDefinition {
   name: string;

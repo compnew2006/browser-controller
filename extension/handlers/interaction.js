@@ -257,6 +257,13 @@ async function dragBetween(tabId, input, from, to) {
  */
 export async function handleClick(params, _sessionId, _agentName, signal) {
   const { tabId, target, button = 'left', count, modifiers = [], hover = false, dragTo } = params;
+  const timings = params.timings === true ? {} : null;
+  const measure = async (name, fn) => {
+    if (!timings) return fn();
+    const start = performance.now();
+    try { return await fn(); } finally { timings[name] = performance.now() - start; }
+  };
+  const withTimings = (result) => timings ? { ...result, timings } : result;
   parseTarget(target);
   // Hover and drag are not probed by the safety check: their list is empty or absent.
   const expect = hover || dragTo != null ? null : expectedFingerprint(params.expectFingerprints);
@@ -265,47 +272,50 @@ export async function handleClick(params, _sessionId, _agentName, signal) {
   const clickCount = countOf(count);
   const mods = modifiersOf(modifiers);
   if (hover && dragTo != null) throw new Error('INVALID_ARGUMENT: hover and dragTo cannot be combined');
-  await resolveTab(tabId);
+  await measure('tab_lookup_ms', () => resolveTab(tabId));
   assertInputReady(tabId, signal);
-  const input = inputSession(tabId, await requireSender(tabId), signal);
+  const input = inputSession(tabId, await requireSender(tabId, timings), signal);
   try {
-    if (hover) return await hoverTo(tabId, input, target);
-    if (dragTo != null) return await dragBetween(tabId, input, target, dragTo);
+    if (hover) return withTimings(await measure('interaction_ms', () => hoverTo(tabId, input, target)));
+    if (dragTo != null) return withTimings(await measure('interaction_ms', () => dragBetween(tabId, input, target, dragTo)));
 
     const urlBefore = await tabUrl(tabId);
-    const loc = await locatePointer(tabId, { target, expect }, 'click', clickCount);
-    if (!loc.success) return refused(tabId, loc);
+    const loc = await measure('target_resolution_ms', () => locatePointer(tabId, { target, expect }, 'click', clickCount));
+    if (!loc.success) return withTimings(await refused(tabId, loc));
     let after = {};
     // A link whose response is a file is a download, not a navigation: the response says which.
     const main = watchMainFrame(tabId, () => {});
     let settled;
     try {
       try {
-        await cdpClickAt(input.send, loc.x, loc.y, { button, clickCount, modifiers: mods });
+        await measure('input_dispatch_ms', () => cdpClickAt(input.send, loc.x, loc.y, { button, clickCount, modifiers: mods }));
       } finally {
         if (!input.blocked) after = await releaseShield(tabId);
       }
-      settled = await settle(tabId, urlBefore);
-      if (!settled.navigated && !settled.dialog && main.facts.started) {
-        await untilResponse(main.facts);
-        // A navigation slower than the settle window has its response by now; the tab may show its URL.
-        const now = main.facts.download ? null : await tabUrl(tabId);
-        if (now && now !== urlBefore) settled = { ...settled, navigated: now };
-      }
+      settled = await measure('settle_ms', async () => {
+        let state = await settle(tabId, urlBefore);
+        if (!state.navigated && !state.dialog && main.facts.started) {
+          await untilResponse(main.facts);
+          // A navigation slower than the settle window has its response by now; the tab may show its URL.
+          const now = main.facts.download ? null : await tabUrl(tabId);
+          if (now && now !== urlBefore) state = { ...state, navigated: now };
+        }
+        return state;
+      });
     } finally {
       main.stop();
     }
     const downloaded = main.facts.download ? [downloadLine(main.facts)] : [];
     // The target moved between its measurement and the press: the click went to something else.
-    if (after.missed) return { success: false, error: missedError(target, loc, after.missed, settled), at: pointOf(loc) };
+    if (after.missed) return withTimings({ success: false, error: missedError(target, loc, after.missed, settled), at: pointOf(loc) });
     // The page got no part of the click: something outside it took the input.
     if (after.pressSeen === false && !settled.navigated) {
       const { x, y } = pointOf(loc);
-      return { success: false, error: inputBlockedError(`the click at ${x},${y} on ${targetLabel(target)}`), at: { x, y } };
+      return withTimings({ success: false, error: inputBlockedError(`the click at ${x},${y} on ${targetLabel(target)}`), at: { x, y } });
     }
-    return inputResult([`clicked ${targetLabel(target)}${loc.onLabel ? ' via label' : ''}`, ...outsideLines(loc), ...downloaded], settled, {
+    return withTimings(inputResult([`clicked ${targetLabel(target)}${loc.onLabel ? ' via label' : ''}`, ...outsideLines(loc), ...downloaded], settled, {
       input: 'cdp', at: pointOf(loc), ...(main.facts.download ? { download: { url: main.facts.url, filename: main.facts.filename } } : {}),
-    }, reboundNotes(loc, [target]));
+    }, reboundNotes(loc, [target])));
   } finally {
     input.close();
   }

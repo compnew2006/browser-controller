@@ -11,6 +11,8 @@ export const clickTool: ToolDefinition = {
     tabId: tabIdParam,
     target: targetParam,
     ...actionOptionsShape,
+    timings: z.boolean().optional().describe('Return phase timings.'),
+    rejectTarget: z.string().min(1).max(500).optional().describe('Locator for a new visible rejection.'),
     button: z.enum(['left', 'right', 'middle']).optional(),
     count: z.number().int().min(1).max(3).optional(),
     modifiers: z.array(z.enum(['Alt', 'Control', 'Meta', 'Shift'])).optional(),

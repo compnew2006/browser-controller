@@ -26,6 +26,19 @@ describe('snapshotRoles', () => {
 });
 
 describe('the tab cache', () => {
+  it('forgets only the specified tab and keeps pending commit modes', () => {
+    const cache = new TabStateCache();
+    const entry = { url: 'https://example.com/', origin: 'https://example.com', path: '/', anonymous: true };
+    cache.remember('conn-1', 7, entry, NOW);
+    cache.remember('conn-1', 8, entry, NOW);
+    cache.remember('conn-2', 7, entry, NOW);
+    cache.setCommitMode('conn-1', entry.origin, entry.path, 'enter', NOW);
+    cache.forgetTab('conn-1', 7);
+    expect(cache.lookup('conn-1', 7, NOW)).toBeNull();
+    expect(cache.lookup('conn-1', 8, NOW)).not.toBeNull();
+    expect(cache.lookup('conn-2', 7, NOW)).not.toBeNull();
+    expect(cache.takeCommitMode('conn-1', entry.origin, entry.path, NOW)).toBe('enter');
+  });
   it('returns the last observed read of a tab', () => {
     const cache = new TabStateCache();
     cache.remember('conn-1', 7, { url: 'https://example.com/login', origin: 'https://example.com', path: '/login', anonymous: true }, NOW);

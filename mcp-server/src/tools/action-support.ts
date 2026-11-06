@@ -309,6 +309,19 @@ export function withReceipt(result: ToolResult, tool: string, receipt: Record<st
   };
 }
 
+/** Observe only whether a caller-specified element is visible; never return its content. */
+async function rejectionVisibility(host: ToolHost, tabId: number, target: unknown): Promise<'absent' | 'visible' | 'unknown'> {
+  const wait = async (gone: boolean): Promise<boolean> => {
+    try {
+      const result = await host.callTool('browser_wait', { tabId, target, gone, timeout: 250 });
+      return !!result && typeof result === 'object' && (result as Record<string, unknown>).success === true;
+    } catch { return false; }
+  };
+  if (await wait(true)) return 'absent';
+  if (await wait(false)) return 'visible';
+  return 'unknown';
+}
+
 /** Preserve the legacy text content while adding a safe, machine-readable action receipt. */
 export function actionHandler(
   tool: string,
@@ -316,7 +329,7 @@ export function actionHandler(
   options: { safety?: boolean } = {},
 ) {
   const wrapped = async (host: ToolHost, params: Record<string, unknown>): Promise<ToolResult> => {
-    const { expect, observe, ...actionParams } = params;
+    const { expect, observe, rejectTarget, ...actionParams } = params;
     const tabId = actionParams.tabId as number;
     const wantsObservation = observe === 'diff';
     const wanted = expect as { urlIncludes?: string; textIncludes?: string } | undefined;
@@ -344,6 +357,10 @@ export function actionHandler(
       return withReceipt(blocked, tool, { status: 'not_dispatched', summary: summaryOf(blocked) }, false);
     }
     const dispatchParams = withExpectedFingerprints(actionParams, gate);
+    // This optional observation happens only after the safety gate. A target
+    // already present is never attributed to the upcoming click.
+    const rejectionBefore = tool === 'browser_click' && rejectTarget !== undefined
+      ? await rejectionVisibility(host, tabId, rejectTarget) : undefined;
 
     // A dispatch error keeps its upstream coding (INTERNAL_ERROR for a message with no CODE:)
     // and stays a throw, so browser_batch can resend a rate-limited step. A failed result
@@ -358,6 +375,12 @@ export function actionHandler(
     // action produced, not the state before it.
     if (!result.isError) await waitForPageToSettle(host, tabId);
     const raw = rawResultOf(result) ?? {};
+    const rejectionAfter = rejectionBefore !== undefined && !result.isError
+      ? await rejectionVisibility(host, tabId, rejectTarget) : undefined;
+    const rejectionStatus = rejectionBefore === undefined ? undefined
+      : rejectionBefore === 'unknown' || rejectionAfter === undefined || rejectionAfter === 'unknown' ? 'unavailable'
+        : rejectionBefore === 'visible' ? 'preexisting'
+          : rejectionAfter === 'visible' ? 'observed' : 'not_observed';
     let after: Snapshot | undefined;
     if (wantsObservation || wanted) {
       try {
@@ -401,6 +424,16 @@ export function actionHandler(
           : part),
       };
     }
+    if (rejectionStatus === 'observed' && !result.isError) {
+      const message = 'the specified application rejection indicator became visible after the action; the action was dispatched, so check the page before retrying.';
+      output = {
+        ...output,
+        isError: true,
+        content: output.content.map((part) => part.type === 'text'
+          ? { ...part, text: `${ERROR_CODES.APPLICATION_REJECTED}: ${message}\n${part.text}` }
+          : part),
+      };
+    }
     // A hidden element is a refusal, not a dead end: the hint says how to go on.
     output = withHint(
       output,
@@ -412,12 +445,24 @@ export function actionHandler(
       ? (before && after ? { kind: 'diff', ...diff(before, after) } : { kind: 'diff', status: 'unavailable' })
       : undefined;
     const receipt: Record<string, unknown> = {
-      status: output.isError ? (expectUnavailable ? 'expectation_unavailable' : expectFailed ? 'expectation_failed' : 'error') : 'completed',
+      status: rejectionStatus === 'observed' && !result.isError ? 'application_rejected' : output.isError ? (expectUnavailable ? 'expectation_unavailable' : expectFailed ? 'expectation_failed' : 'error') : 'completed',
       summary: summaryOf(result),
       ...(typeof raw.url === 'string' ? { urlChanged: before ? before.url !== raw.url : undefined } : {}),
       ...(wanted ? { expect: { passed: !!after && expectPassed, checks, ...(waitedMs ? { waitedMs } : {}), ...(expectUnavailable ? { status: 'observation_unavailable' } : {}) } } : {}),
       ...(observation ? { observation } : {}),
+      ...(rejectionStatus ? { applicationRejection: { status: rejectionStatus } } : {}),
     };
+    if (tool === 'browser_click' && params.timings === true && raw.timings && typeof raw.timings === 'object') {
+      const source = raw.timings as Record<string, unknown>;
+      const allowed = ['tab_lookup_ms', 'connection_ms', 'connection_state', 'target_resolution_ms', 'input_dispatch_ms', 'settle_ms', 'interaction_ms'];
+      const timings = Object.fromEntries(allowed.flatMap((key) => {
+        const value = source[key];
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return [];
+        if (key === 'connection_state' && ![0, 1, 2].includes(value)) return [];
+        return [[key, value]];
+      }));
+      if (Object.keys(timings).length) receipt.timings = timings;
+    }
     return withReceipt(output, tool, receipt, !output.isError);
   };
   (wrapped as typeof wrapped & { toolName?: string }).toolName = tool;

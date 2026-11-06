@@ -131,6 +131,35 @@ describe('trusted input (CDP)', () => {
     expect(inputs()[1].params).toMatchObject({ x: 100, y: 40, button: 'left', clickCount: 1 });
   });
 
+  it('returns numeric-only opt-in click phase timing and distinguishes cold from reused sessions', async () => {
+    pageResults.push({ success: true, x: 100, y: 40, visible: true });
+    const cold = await handleClick({ tabId: 5, target: '#go', timings: true });
+    expect(cold.timings).toMatchObject({ connection_state: 0 });
+    expect(Object.keys(cold.timings).sort()).toEqual(['connection_ms', 'connection_state', 'input_dispatch_ms', 'settle_ms', 'tab_lookup_ms', 'target_resolution_ms']);
+    for (const value of Object.values(cold.timings)) expect(value).toEqual(expect.any(Number));
+    pageResults.push({ success: true, x: 100, y: 40, visible: true });
+    const warm = await handleClick({ tabId: 5, target: '#go', timings: true });
+    expect(warm.timings).toMatchObject({ connection_state: 2 });
+    expect(attachCount).toBe(1);
+    expect(JSON.stringify(warm.timings)).not.toContain('#go');
+  });
+
+  it('keeps the default click result unchanged without opt-in timings', async () => {
+    pageResults.push({ success: true, x: 100, y: 40, visible: true });
+    const result = await handleClick({ tabId: 5, target: '#go' });
+    expect(result).not.toHaveProperty('timings');
+  });
+
+  it('reports only measured phases when target resolution refuses input', async () => {
+    pageResults.push({ success: false, error: 'ELEMENT_HIDDEN' });
+    const result = await handleClick({ tabId: 5, target: '#go', timings: true });
+    expect(result.success).toBe(false);
+    expect(result.timings).toMatchObject({ connection_state: 0 });
+    expect(result.timings).toHaveProperty('target_resolution_ms');
+    expect(result.timings).not.toHaveProperty('input_dispatch_ms');
+    expect(inputs()).toHaveLength(0);
+  });
+
   it('click reports the point it clicked', async () => {
     pageResults.push({ success: true, x: 100, y: 40, visible: true });
     expect(await handleClick({ tabId: 5, target: '#go' })).toMatchObject({ at: { x: 100, y: 40 } });

@@ -155,6 +155,22 @@ describe('beginCall', () => {
 });
 
 describe('afterCall capture', () => {
+  it('does not create or alter site knowledge from incremental snapshot envelopes', async () => {
+    await enable();
+    const incremental = { tool: 'browser_snapshot', params: { tabId: 7, delta: true }, result: { success: true, text: '{"kind":"unchanged"}' } };
+    run(service.beginCall('s1', 'browser_snapshot'), incremental);
+    await service.flush();
+    expect(record()).toBeNull();
+
+    run(service.beginCall('s1', 'browser_snapshot'), { tool: 'browser_snapshot', params: { tabId: 7 }, result: { success: true, text: SNAPSHOT } });
+    await service.flush();
+    const before = record();
+    expect(before?.facts.length).toBeGreaterThan(0);
+    clock += 1000;
+    run(service.beginCall('s1', 'browser_snapshot'), incremental);
+    await service.flush();
+    expect(record()).toEqual(before);
+  });
   it('records a visit and only allowlisted facts for an anonymous snapshot read', async () => {
     await enable();
     const call = service.beginCall('s1', 'browser_navigate');

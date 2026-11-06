@@ -433,6 +433,8 @@ function captureClickError(cache: TabReadCache, input: CaptureInput): QueuedMapO
 
 /** The ops one finished call yields. Never throws for malformed results: they yield nothing. */
 export function captureMapOps(cache: TabReadCache, input: CaptureInput): QueuedMapOp[] {
+  // Delta envelopes are not complete snapshots and must not clear mapped controls.
+  if (input.tool === 'browser_snapshot' && input.params.delta === true) return [];
   if (input.tool === 'browser_click') {
     if (input.error !== undefined) return captureClickError(cache, input);
     return input.context ? captureClick(cache, input, input.context) : [];
