@@ -73,7 +73,7 @@ describe('bounds (R-12)', () => {
   it('skips names that are empty, too long or held data', () => {
     expect(boundName('  Help  ')).toBe('Help');
     expect(boundName('x'.repeat(81))).toBeNull();
-    // The snapshot cuts names at 80 characters, so one that long may be cut and its locator would never match (RV-13).
+    // The site map keeps stored names below the snapshot bound instead of persisting clipped previews (RV-13).
     expect(boundName('x'.repeat(80))).toBeNull();
     expect(boundName('x'.repeat(79))).toBe('x'.repeat(79));
     expect(boundName('Order 12345678')).toBeNull();

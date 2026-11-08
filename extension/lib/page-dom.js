@@ -369,6 +369,33 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     return clean(out, max);
   }
 
+  const SNAPSHOT_LANDMARKS = new Set(['navigation', 'main', 'banner', 'contentinfo', 'form', 'search', 'complementary', 'region', 'dialog', 'article']);
+  function isSnapshotLandmark(role) {
+    return SNAPSHOT_LANDMARKS.has(role);
+  }
+
+  /** The bounded name printed in a snapshot line; clipped previews end with an ellipsis. */
+  function snapshotNameOf(el, role = roleOf(el)) {
+    let name;
+    if (el.isContentEditable && isSensitiveField(el)) {
+      const label = clean(attr(el, 'aria-label') || attr(el, 'title') || attr(el, 'placeholder'), 500);
+      name = label || 'sensitive field';
+    } else if (isSnapshotLandmark(role) && role !== 'dialog') {
+      name = clean(attr(el, 'aria-label') || attr(el, 'title'), 500);
+    } else if (role === 'generic') {
+      name = clean(attr(el, 'aria-label') || attr(el, 'title') || ownText(el, 500), 500);
+    } else {
+      name = nameOf(el);
+    }
+    if (name.length <= 80) return name;
+    let preview = '';
+    for (const character of name) {
+      if (preview.length + character.length > 79) break;
+      preview += character;
+    }
+    return `${preview}…`;
+  }
+
   const INTERACTIVE_ROLES = new Set(['button', 'link', 'textbox', 'searchbox', 'combobox', 'listbox', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'slider', 'spinbutton', 'treeitem']);
   function isInteractive(el) {
     const tag = el.tagName;
@@ -485,7 +512,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     return cands.filter((c) => !holdsOne.has(c));
   }
 
-  /** Exact accessible role and name match, optionally selecting a zero-based occurrence. */
+  /** Match an accessible role/name or the bounded name preview printed in a snapshot. */
   function byRole(target) {
     const role = clean(target.role, 80).toLowerCase();
     const name = clean(target.name, 500).toLowerCase();
@@ -495,7 +522,10 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
       try { els = root.querySelectorAll('*'); } catch {}
       for (const el of els) {
         if (TEXT_SKIP.has(el.tagName) || isExtensionNode(el) || isAccessibilityHidden(el) || !isVisible(el)) continue;
-        if (clean(roleOf(el), 80).toLowerCase() === role && clean(nameOf(el), 500).toLowerCase() === name) hits.push(el);
+        const candidateRole = roleOf(el);
+        if (clean(candidateRole, 80).toLowerCase() !== role) continue;
+        const snapshotName = clean(snapshotNameOf(el, candidateRole), 500).toLowerCase();
+        if (snapshotName === name || clean(nameOf(el), 500).toLowerCase() === name) hits.push(el);
       }
     }
     return hits;
@@ -532,7 +562,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
       const hits = byRole(t);
       const label = `role=${t.role} name=${JSON.stringify(t.name)}`;
       if (t.nth !== undefined) {
-        if (!hits[t.nth]) return { error: `NOT_FOUND: ${label} nth=${t.nth} has ${hits.length} exact match(es)` };
+        if (!hits[t.nth]) return { error: `NOT_FOUND: ${label} nth=${t.nth} has ${hits.length} matching element(s)` };
         return { el: hits[t.nth], via: 'role' };
       }
       if (hits.length === 0) return { error: `NOT_FOUND: no visible ${label} element` };
@@ -991,7 +1021,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
   globalThis.__bcDom = Object.freeze({
     v: version,
     clean, attr, shadowOf, frameDoc, deepActiveElement, fileInputFor, allRoots, queryAll, isVisible, flatChildren,
-    roleOf, nameOf, composedText, isInteractive, preciseMatch, centerOf, elementAt,
+    roleOf, nameOf, snapshotNameOf, isSnapshotLandmark, composedText, isInteractive, preciseMatch, centerOf, elementAt,
     composedContains, rowContextOf, describe, registry, flatText, styleOf, connected, cursor,
     isExtensionNode, clickBlocker, clickTarget, labelsOf, byText, resolveTarget,
     peekRef, refFor, safetyFingerprint, refIssued, refIsEarlier, pruneRegistry, ownText,

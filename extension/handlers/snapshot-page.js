@@ -5,7 +5,7 @@
  */
 export function snapshotPage(_target, _fb, _query, _max, _delta) {
   const D = globalThis.__bcDom;
-  if (!D || !D.labelsOf || !D.refFor || !D.peekRef || !D.resolveTarget || !D.pruneRegistry || !D.ownText) return { __needDom: true };
+  if (!D || !D.labelsOf || !D.refFor || !D.peekRef || !D.resolveTarget || !D.pruneRegistry || !D.snapshotNameOf || !D.isSnapshotLandmark) return { __needDom: true };
   const genFallback = (globalThis.__browserControllerFallbackRuntime || {}).generateFallback || null;
   const url = location.href;
   const title = document.title || '';
@@ -46,21 +46,14 @@ export function snapshotPage(_target, _fb, _query, _max, _delta) {
 
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'PATH', 'BR', 'HR', 'WBR', 'META', 'LINK', 'HEAD']);
   // Structural containers: an explicit label only, and their children keep their own text lines. `article`
-  // is listed so a post prints as an unnamed line that marks where its content starts.
-  const LANDMARKS = new Set(['navigation', 'main', 'banner', 'contentinfo', 'form', 'search', 'complementary', 'region', 'dialog', 'article']);
+  // is included by the shared page-DOM snapshot-name helper so it prints as an unnamed line by default.
   const BUTTON_TYPES = ['button', 'submit', 'reset', 'image'];
   const isCheckable = (el) => el.tagName === 'INPUT' && ['checkbox', 'radio'].includes(String(el.type || '').toLowerCase());
   const kidsOf = (el) => D.flatChildren(el).filter((c) => c.nodeType === 1);
 
-  /** Name for the line: landmarks and generic wrappers take an explicit label or their own text only. */
+  /** Name for the line, shared with role/name target matching. */
   function nameOf(el, r) {
-    if (el.isContentEditable && D.isSensitiveField?.(el)) {
-      const label = D.clean(D.attr(el, 'aria-label') || D.attr(el, 'title') || D.attr(el, 'placeholder'), 80);
-      return label || 'sensitive field';
-    }
-    if (LANDMARKS.has(r) && r !== 'dialog') return D.clean(D.attr(el, 'aria-label') || D.attr(el, 'title'), 80);
-    if (r === 'generic') return D.clean(D.attr(el, 'aria-label') || D.attr(el, 'title') || D.ownText(el), 80);
-    return D.nameOf(el).slice(0, 80);
+    return D.snapshotNameOf(el, r);
   }
 
   /** A native checkbox/radio drawn over by its visible label is the control a person clicks. */
@@ -148,7 +141,7 @@ export function snapshotPage(_target, _fb, _query, _max, _delta) {
       items.push({ el, role: r, name, depth, parent, ia, xo: false });
       childDepth = depth + 1;
       childParent = items.length - 1;
-      childText = inText || (r !== 'generic' && !LANDMARKS.has(r));
+      childText = inText || (r !== 'generic' && !D.isSnapshotLandmark(r));
     }
     for (const c of kidsOf(el)) visit(c, childDepth, childParent, childText, false);
   };

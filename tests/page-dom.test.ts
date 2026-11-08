@@ -270,6 +270,78 @@ describe('snapshot + text', () => {
     for (const r of res.refs) expect(r.ref).toMatch(/^e\d+$/);
   });
 
+  it('a long role name copied from the snapshot resolves as a target', async () => {
+    const fullName = `${'x'.repeat(79)} first control`;
+    const button = doc.el('button', { 'aria-label': fullName });
+    doc.body.append(button);
+
+    const snapshot = await handleSnapshot({ tabId: 1 });
+    const line = snapshot.text.split('\n').find((candidate) => candidate.startsWith('button "'));
+    expect(line).toBeDefined();
+    const match = line!.match(/^button ("(?:[^"\\]|\\.)*") \[e\d+\]/);
+    expect(match).not.toBeNull();
+    const displayedName = JSON.parse(match![1]) as string;
+    expect(displayedName).toHaveLength(80);
+    expect(displayedName.endsWith('…')).toBe(true);
+
+    expect(D().resolveTarget(parseTarget({ role: 'button', name: displayedName }))).toMatchObject({ el: button, via: 'role' });
+    expect(D().resolveTarget(parseTarget({ role: 'button', name: fullName }))).toMatchObject({ el: button, via: 'role' });
+  });
+
+  it('a clipped role-name collision is ambiguous and nth selects explicitly', async () => {
+    const prefix = 'x'.repeat(79);
+    const first = doc.el('button', { 'aria-label': `${prefix} first` });
+    const second = doc.el('button', { 'aria-label': `${prefix} second` });
+    doc.body.append(first, second);
+
+    const snapshot = await handleSnapshot({ tabId: 1 });
+    const line = snapshot.text.split('\n').find((candidate) => candidate.startsWith('button "'));
+    expect(line).toBeDefined();
+    const match = line!.match(/^button ("(?:[^"\\]|\\.)*") \[e\d+\]/);
+    expect(match).not.toBeNull();
+    const displayedName = JSON.parse(match![1]) as string;
+    expect(displayedName.endsWith('…')).toBe(true);
+    const target = { role: 'button', name: displayedName };
+
+    expect(D().resolveTarget(parseTarget(target)).error).toMatch(/^AMBIGUOUS:/);
+    expect(D().resolveTarget(parseTarget({ ...target, nth: 1 }))).toMatchObject({ el: second, via: 'role' });
+  });
+
+  it('clips names without splitting a supplementary Unicode character', async () => {
+    const fullName = `${'x'.repeat(77)}😀 trailing text`;
+    doc.body.append(doc.el('button', { 'aria-label': fullName }));
+
+    const snapshot = await handleSnapshot({ tabId: 1 });
+    const line = snapshot.text.split('\n').find((candidate) => candidate.startsWith('button "'));
+    expect(line).toBeDefined();
+    const match = line!.match(/^button ("(?:[^"\\]|\\.)*") \[e\d+\]/);
+    expect(match).not.toBeNull();
+    const displayedName = JSON.parse(match![1]) as string;
+
+    expect(displayedName).toBe(`${'x'.repeat(77)}😀…`);
+    expect(displayedName.length).toBe(80);
+  });
+
+  it('keeps sensitive input values redacted in snapshot output', async () => {
+    const password = doc.el('input', { type: 'password', 'aria-label': 'Password' });
+    password.value = 'fixture-sensitive-value';
+    doc.body.append(password);
+
+    const snapshot = await handleSnapshot({ tabId: 1 });
+    expect(snapshot.text).not.toContain('fixture-sensitive-value');
+    expect(snapshot.text).toContain('value="••••"');
+  });
+
+  it('uses a generic snapshot name for a sensitive contenteditable field', async () => {
+    const field = doc.el('div', { contenteditable: 'true', name: 'credit-card-number' }, 'fixture-sensitive-content');
+    field.isContentEditable = true;
+    doc.body.append(field);
+
+    const snapshot = await handleSnapshot({ tabId: 1 });
+    expect(snapshot.text).not.toContain('fixture-sensitive-content');
+    expect(snapshot.text).toContain('textbox "sensitive field"');
+  });
+
   it('snapshot maxChars caps output and says so', async () => {
     for (let i = 0; i < 200; i++) doc.body.append(doc.el('button', {}, `Button number ${i}`));
     const res = await handleSnapshot({ tabId: 1, maxChars: 1000 });
