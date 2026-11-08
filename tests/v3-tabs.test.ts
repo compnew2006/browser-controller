@@ -348,6 +348,7 @@ describe('browser_tabs', () => {
     expect(lines[5]).toBe('+1 tab used by other agents'); // their title and address stay private (L4)
     expect(lines).toHaveLength(6);
     expect(String(res.text)).not.toContain('Other agent tab');
+    expect(res.openTabCount).toBe(6);
   });
 
   it('clips titles to 60 characters and host + path to 80', async () => {

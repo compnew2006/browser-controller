@@ -25,6 +25,13 @@ export function defaultBrowserLabel(id) {
   return `${brand}${platform ? ` on ${platform}` : ''} (${id.slice(0, 4)})`;
 }
 
+/** Normalize an owner-chosen profile label and cap it before it reaches the handshake. */
+export function normalizeBrowserLabel(value) {
+  if (typeof value !== 'string') return null;
+  const label = value.replace(/\p{Cc}/gu, ' ').replace(/\s+/gu, ' ').trim();
+  return [...label].length <= 64 ? label : null;
+}
+
 /** Longest a pairing request (/pair, the native pairing host) may stay unanswered. */
 export const PAIRING_TIMEOUT_MS = 5_000;
 

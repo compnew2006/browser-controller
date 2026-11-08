@@ -12,6 +12,7 @@ const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const injections = vi.hoisted(() => [] as Array<{ target: number; func: string; args: unknown[] }>);
 const faults = vi.hoisted(() => ({ activeBadgeThrows: false }));
 const cursorSetting = vi.hoisted(() => ({ enabled: false }));
+const profileLabel = vi.hoisted(() => ({ apply: vi.fn(async (label: unknown) => ({ success: true, browserLabel: String(label) })) }));
 const listeners = vi.hoisted(() => ({
   message: [] as Array<(...args: unknown[]) => unknown>,
   updated: [] as Array<(...args: unknown[]) => unknown>,
@@ -29,6 +30,7 @@ vi.mock('../extension/lib/connection.js', () => ({
   buildStatusPayload: () => ({}),
   applyPort: () => ({}),
   applyToken: () => ({}),
+  applyBrowserLabel: (label: unknown) => profileLabel.apply(label),
   applyEnrollment: async () => {},
 }));
 
@@ -66,6 +68,8 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
     local: { get: async () => ({ agentCursor: cursorSetting.enabled }), set: async () => {} },
   },
   runtime: {
+    id: 'extension-id',
+    getURL: (path: string) => `chrome-extension://extension-id/${path}`,
     sendMessage: async () => {},
     onMessage: { addListener: (fn: (...args: unknown[]) => unknown) => { listeners.message.push(fn); } },
   },
@@ -197,6 +201,29 @@ describe('pinning a tab draws no frame (the frame is shown only during a tool ca
     expect(replies).toEqual([{ success: true }]);
     expect(tabLocks.owner(3)).toBe('s1');
     expect(shieldInjections()).toEqual([]);
+  });
+
+  it('allows only the extension popup to rename the profile', async () => {
+    profileLabel.apply.mockClear();
+    const listener = listeners.message.at(-1)!;
+    const popupReply: Array<Record<string, unknown>> = [];
+    const popupHandled = listener(
+      { type: 'setBrowserLabel', label: 'Treelancer' },
+      { id: 'extension-id', url: 'chrome-extension://extension-id/popup/popup.html' },
+      (result: Record<string, unknown>) => popupReply.push(result),
+    );
+    await flush();
+    expect(popupHandled).toBe(true);
+    expect(profileLabel.apply).toHaveBeenCalledWith('Treelancer');
+    expect(popupReply).toEqual([{ success: true, browserLabel: 'Treelancer' }]);
+
+    const pageHandled = listener(
+      { type: 'setBrowserLabel', label: 'Attacker' },
+      { id: 'extension-id', url: 'https://example.com/' },
+      () => {},
+    );
+    expect(pageHandled).toBe(false);
+    expect(profileLabel.apply).toHaveBeenCalledTimes(1);
   });
 
   it('a refused pin (tab held by another session) replies with the refusal and injects no frame', async () => {

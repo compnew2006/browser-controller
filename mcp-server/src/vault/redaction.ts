@@ -79,7 +79,7 @@ export interface RedactionContext {
 const COMMON_TOOL_RESULT_FIELDS = ['success', 'text', 'error'] as const;
 export const TRUSTED_TOOL_RESULT_FIELDS: Readonly<Record<string, readonly string[]>> = {
   browser_navigate: ['tabId', 'url', 'title', 'status', 'download', 'noContent', 'filename', 'replacedTabId'],
-  browser_tabs: ['tabs', 'selected', 'browserId', 'label', 'pinnedAuto', 'browsers'],
+  browser_tabs: ['tabs', 'selected', 'browserId', 'label', 'pinnedAuto', 'browsers', 'defaultBrowserId', 'selectedBrowserId', 'hasOpenTabs'],
   browser_snapshot: ['url', 'title', 'truncated', 'refs', '__fallbacks', 'rebound'],
   browser_text: ['url', 'title', 'total', 'length', 'truncated', 'rebound'],
   browser_screenshot: ['image', 'width', 'height', 'via', 'scale', 'origin', 'viewport', 'cdpFallback'],

@@ -35,6 +35,7 @@
 
     html, body {
       width: 100%;
+      max-width: 100vw;
       height: 100%;
       min-width: 320px;
       min-height: 380px;
@@ -312,6 +313,9 @@
     .field input:hover { border-color: var(--border-2); }
     .field input:focus { border-color: var(--accent); background: var(--surface-2); box-shadow: 0 0 0 3px var(--accent-soft); }
     .hint { font-size: 10.5px; color: var(--ink-3); margin-top: calc(-1 * var(--space-xs)); }
+    #browserLabel::placeholder { color: var(--ink-2); opacity: 1; }
+    label[for="browserLabel"] { color: var(--ink-2); font-size: 11px; }
+    #browserLabelHint { color: var(--ink-2); font-size: 11px; line-height: 1.45; }
     /* Commands and paths stay whole so they read (and copy) as one unit. */
     .hint code { white-space: nowrap; }
 
@@ -495,6 +499,11 @@
           </span>
           <input type="checkbox" class="switch" id="agentCursor" role="switch">
         </label>
+        <div class="field">
+          <label for="browserLabel">Chrome profile name</label>
+          <input type="text" id="browserLabel" maxlength="64" placeholder="Use the automatic name" autocomplete="off" spellcheck="false" aria-describedby="browserLabelHint">
+          <div class="hint" id="browserLabelHint">This local name appears in <code>browser_tabs</code>. Leave it blank to use the automatic name. Current profile: <strong id="browserLabelCurrent">Loading…</strong> · ID <code id="browserId">…</code></div>
+        </div>
         <div class="field">
           <label for="port">WebSocket Port</label>
           <input type="number" id="port" value="7225" min="1" max="65535">

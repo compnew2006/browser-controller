@@ -5,6 +5,8 @@
 // / unlockAll + daemon /pair /status /kill).
 import { escapeHtml, agentLabelFor, controlBadgeParts, openTabsSignature, renderOpenTabRows } from './open-tabs-view.js';
 import { bindVaultOpenButton } from './popup-vault.js';
+import { bindProfileLabel, updateProfileLabel } from './profile-label.js';
+import { bindDebouncedInput } from './settings-input.js';
 import { authenticatedDaemonFetch, daemonFailureKind } from '../lib/daemon-auth.js';
 
 const dot = document.getElementById('dot');
@@ -307,6 +309,7 @@ function updateUI(state) {
   detailEl.textContent = detail;
 
   if (state.port) portInput.value = state.port;
+  updateProfileLabel(state);
 
   // Locks drive the Unlock-all button (per-row owners render inside the tabs
   // list — the standalone locks panel is gone; same data, no duplicate).
@@ -390,14 +393,6 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 // ── Settings inputs (shared debounced wiring — was 3 copy-pasted blocks) ───
 
-function bindDebouncedInput(el, ms, onChange) {
-  let timer = null;
-  el.addEventListener('input', () => {
-    clearTimeout(timer);
-    timer = setTimeout(onChange, ms);
-  });
-}
-
 bindDebouncedInput(portInput, 600, () => {
   chrome.runtime.sendMessage({ type: 'setPort', port: portInput.value }, (resp) => {
     if (resp?.success) {
@@ -406,6 +401,8 @@ bindDebouncedInput(portInput, 600, () => {
     }
   });
 });
+
+bindProfileLabel(addLog, refreshStatus);
 
 // Token: the daemon generates token.json; the extension must present the same
 // token on connect. Auto-paired normally; paste only to override.

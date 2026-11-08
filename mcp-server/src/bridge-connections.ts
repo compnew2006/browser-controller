@@ -31,7 +31,10 @@ export function newConnection(ws: WebSocket): ExtensionConnection {
 /** Normalised identity from an extension helloAck (absent = "default"). */
 export function identityOf(info?: { browserId?: unknown; browserLabel?: unknown }): { browserId: string; label: string } {
   const browserId = typeof info?.browserId === 'string' && info.browserId.trim() ? info.browserId.trim().slice(0, 64) : 'default';
-  const label = typeof info?.browserLabel === 'string' && info.browserLabel.trim() ? info.browserLabel.trim().slice(0, 120) : browserId;
+  const labelText = typeof info?.browserLabel === 'string'
+    ? info.browserLabel.replace(/\p{Cc}/gu, ' ').replace(/\s+/gu, ' ').trim()
+    : '';
+  const label = labelText ? labelText.slice(0, 120) : browserId;
   return { browserId, label };
 }
 
@@ -112,7 +115,7 @@ export class ExtensionConnections {
     if (want) {
       const chosen = this.live().find((c) => c.browserId === want);
       if (chosen) return chosen;
-      throw new Error(formatError(ERROR_CODES.NOT_CONNECTED, `Selected browser "${want}" is not connected. browser_tabs with browser "auto" selects the default one.`));
+      throw new Error(formatError(ERROR_CODES.NOT_CONNECTED, `Selected browser "${want}" is not connected. browser_tabs with browser "auto" selects the earliest-connected default.`));
     }
     const pinned = sessionId ? this.autoBrowser.get(sessionId) : undefined;
     if (pinned) {
@@ -139,18 +142,47 @@ export class ExtensionConnections {
   list(sessionId?: string): Record<string, unknown> {
     const primary = this.primary();
     const selected = sessionId ? (this.sessionBrowser.get(sessionId) ?? this.autoBrowser.get(sessionId)) : undefined;
+    const browsers = this.live().map((c) => ({
+      browserId: c.browserId,
+      label: c.label,
+      connectedAt: new Date(c.connectedAt).toISOString(),
+      default: c === primary,
+      selected: selected ? selected === c.browserId : c === primary,
+    }));
     return {
       success: true,
-      browsers: this.live().map((c) => ({
-        browserId: c.browserId,
-        label: c.label,
-        connectedAt: new Date(c.connectedAt).toISOString(),
-        ...(c === primary ? { default: true } : {}),
-        ...((selected ? selected === c.browserId : c === primary) ? { selected: true } : {}),
-      })),
-      ...(selected ? { selectedBrowserId: selected } : {}),
+      browsers,
+      defaultBrowserId: primary?.browserId ?? null,
+      selectedBrowserId: selected ?? primary?.browserId ?? null,
       ...(sessionId && !this.sessionBrowser.has(sessionId) && selected ? { pinnedAuto: true } : {}),
     };
+  }
+
+  /** Resolve a connected profile by stable ID without changing any session. */
+  connectedById(browserId: string): ExtensionConnection {
+    const matches = this.live().filter((conn) => conn.browserId === browserId);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      throw new Error(formatError(ERROR_CODES.INVALID_ARGUMENT, `Connected browsers share the same browserId "${browserId}"; reconnect the profiles with distinct identities.`));
+    }
+    throw new Error(formatError(ERROR_CODES.NOT_CONNECTED, `Browser "${browserId}" is no longer connected.`));
+  }
+
+  private resolveSelection(id: string): ExtensionConnection {
+    const live = this.live();
+    const ids = live.filter((conn) => conn.browserId === id);
+    if (ids.length === 1) return ids[0];
+    if (ids.length > 1) {
+      throw new Error(formatError(ERROR_CODES.INVALID_ARGUMENT, `Connected browsers share the same browserId "${id}"; reconnect the profiles with distinct identities.`));
+    }
+
+    const labels = live.filter((conn) => conn.label === id);
+    if (labels.length === 1) return labels[0];
+    if (labels.length > 1) {
+      const choices = labels.map((conn) => conn.browserId).join(', ');
+      throw new Error(formatError(ERROR_CODES.INVALID_ARGUMENT, `Browser label "${id}" matches multiple profiles. Select one by browserId: ${choices}.`));
+    }
+    throw new Error(formatError(ERROR_CODES.NOT_CONNECTED, `No connected browser "${id}". browser_tabs lists the connected ones.`));
   }
 
   /** browser_tabs {browser}: route this session's calls to one browser ("auto" = default). */
@@ -163,9 +195,8 @@ export class ExtensionConnections {
       this.sessionBrowser.delete(sessionId);
       return { success: true, selected: 'auto', browserId: this.primary()?.browserId ?? null };
     }
-    const conn = this.live().find((c) => c.browserId === id || c.label === id);
-    // A failed selection changes nothing: the session keeps its pin.
-    if (!conn) throw new Error(formatError(ERROR_CODES.NOT_CONNECTED, `No connected browser "${id}". browser_tabs lists the connected ones.`));
+    // Resolve and validate before changing the session's existing pin.
+    const conn = this.resolveSelection(id);
     this.autoBrowser.delete(sessionId);
     this.sessionBrowser.set(sessionId, conn.browserId);
     return { success: true, selected: conn.browserId, label: conn.label };

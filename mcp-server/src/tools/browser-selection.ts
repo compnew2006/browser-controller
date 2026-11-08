@@ -4,32 +4,44 @@ import { ERROR_CODES, formatError } from '../core/error-codes.js';
 interface BrowserInfo {
   id: string;
   label: string;
+  hasOpenTabs: boolean | null;
 }
 
-/** The browsers the daemon has connected, with their labels. */
-export async function connectedBrowsers(host: ToolHost): Promise<BrowserInfo[]> {
+/** Read connected browser identities and tab availability without selecting a profile. */
+export async function connectedBrowsers(host: ToolHost): Promise<BrowserInfo[] | null> {
+  try {
+    const raw = await host.callTool('browser_tabs', { action: 'profiles' }) as Record<string, unknown>;
+    if (Array.isArray(raw?.browsers)) {
+      return raw.browsers.flatMap((value): BrowserInfo[] => {
+        if (!value || typeof value !== 'object') return [];
+        const profile = value as Record<string, unknown>;
+        if (typeof profile.browserId !== 'string' || typeof profile.label !== 'string') return [];
+        return [{
+          id: profile.browserId,
+          label: profile.label,
+          hasOpenTabs: typeof profile.hasOpenTabs === 'boolean' ? profile.hasOpenTabs : null,
+        }];
+      });
+    }
+  } catch { /* Older daemons do not have the read-only profiles action. */ }
+
+  // Compatibility with older daemons: this list does not include per-profile
+  // tab availability, but importantly it does not probe or rebind other profiles.
   try {
     const raw = await host.callTool('browser_tabs', { action: 'list' }) as Record<string, unknown>;
     const text = typeof raw?.text === 'string' ? raw.text : '';
-    const browsers: BrowserInfo[] = [];
-    for (const line of text.split('\n')) {
-      const match = /^browser (\S+) "(.*)"(?:\s+\(selected\))?$/.exec(line.trim());
-      if (match) browsers.push({ id: match[1], label: match[2] });
-    }
-    return browsers;
+    return text.split('\n').flatMap((line): BrowserInfo[] => {
+      const match = /^browser (\S+) ("(?:[^"\\]|\\.)*")(?:\s+\((?:default|selected)(?:, (?:default|selected))*\))?$/.exec(line.trim());
+      if (!match) return [];
+      try {
+        const label = JSON.parse(match[2]);
+        return typeof label === 'string' ? [{ id: match[1], label, hasOpenTabs: null }] : [];
+      } catch {
+        return [];
+      }
+    });
   } catch {
-    return [];
-  }
-}
-
-/** The tabs a browser has: a browser with no open window has none. */
-async function tabCount(host: ToolHost, browserId: string): Promise<number> {
-  try {
-    const raw = await host.callTool('browser_tabs', { action: 'list', browser: browserId }) as Record<string, unknown>;
-    const text = typeof raw?.text === 'string' ? raw.text : '';
-    return text.split('\n').filter((line) => /^\d+\s+\[/.test(line.trim())).length;
-  } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -41,16 +53,23 @@ async function tabCount(host: ToolHost, browserId: string): Promise<number> {
  */
 export async function explainNoWindow(host: ToolHost, message: string): Promise<string> {
   const browsers = await connectedBrowsers(host);
-  const open: string[] = [];
-  for (const browser of browsers) {
-    if (await tabCount(host, browser.id) > 0) open.push(`${browser.id} "${browser.label}"`);
-  }
   const head = formatError(ERROR_CODES.NOT_CONNECTED, `the selected browser has no open window (Chrome said "${message}").`);
-  if (open.length > 0) {
-    return `${head} A browser with an open window: ${open.join(', ')}. Select it with browser_tabs {browser:"<id>"} and retry.`;
+  if (browsers === null) {
+    return `${head} Could not inspect the connected browser profiles. Run browser_tabs {action:"profiles"} to check them, then select the intended profile explicitly.`;
   }
-  const all = browsers.map((browser) => `${browser.id} "${browser.label}"`).join(', ');
-  return `${head} Connected browsers: ${all || '(none)'}. None of them has an open window: open one in Chrome, then retry.`;
+  const open = browsers.filter((browser) => browser.hasOpenTabs === true);
+  if (open.length > 0) {
+    const choices = open.map((browser) => `${browser.id} ${JSON.stringify(browser.label)}`).join(', ');
+    return `${head} Connected profiles with open tabs: ${choices}. Select the intended profile with browser_tabs {browser:"<browserId>"}, then list its tabs.`;
+  }
+  if (browsers.length > 0 && browsers.every((browser) => browser.hasOpenTabs === false)) {
+    return `${head} No connected profile currently has a readable open tab. Open a regular Chrome tab in the intended profile and retry.`;
+  }
+  if (browsers.length === 0) {
+    return `${head} Connected profile details are unavailable. Check the Browser Controller connection, then run browser_tabs {action:"profiles"}.`;
+  }
+  const all = browsers.map((browser) => `${browser.id} ${JSON.stringify(browser.label)}`).join(', ');
+  return `${head} Connected browser profiles: ${all}. Their open-tab status is unavailable; run browser_tabs {action:"profiles"} and select a listed browserId.`;
 }
 
 /** Whether a message is Chrome's "no current window". */

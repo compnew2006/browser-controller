@@ -48,7 +48,7 @@ Version 3.0 is a breaking release: 19 tools, one `target` locator, and text resu
 - **Console-style JavaScript.** `browser_evaluate` accepts code as you'd type it in DevTools: top-level `await`, several statements with `return`, DOM nodes come back as readable descriptions. Over CDP, page CSP does not block it.
 - **Console, network and mocks on demand.** `browser_logs` reads a tab's console (uncaught errors with stacks) and its network requests, with response bodies on request. `browser_mock` answers or blocks one tab's requests, so the page really receives the fake response.
 - **Frozen tabs don't freeze the agent.** `browser_navigate` replaces a tab that stopped answering, and its result says so with a `note:` line naming the new `tabId`.
-- **Several browsers.** Every connected Chrome profile is its own connection. `browser_tabs { browser }` picks one per session.
+- **Several browsers.** Every connected Chrome profile is its own connection. `browser_tabs { action: "profiles" }` lists stable IDs, local labels, the default, and whether each profile has open tabs without switching the session. Use the ID to select a profile; `auto` means the earliest-connected default. Set a recognizable local label in the extension's Settings.
 - **Authenticated local connection.** Token + enrollment secret, so no other local process can silently drive your browser — and after a one-time `npm run setup:pairing` the extension pairs itself. Everything stays on localhost — no cloud, no telemetry.
 - **Versioned compatibility handshake.** The daemon and extension advertise a protocol version and capabilities before tool traffic is accepted. A peer from before 3.0 is refused with an actionable error instead of producing unexplained timeouts.
 - **Consoles and appliances.** A hypervisor web client is an ordinary page to the agent, and the guest behind it is reachable through the same tools — the guest is a canvas, so it needs its own rules for reading, clicking and typing. The field guide is [`docs/esxi-vm-console-automation.md`](docs/esxi-vm-console-automation.md).
@@ -359,7 +359,7 @@ Failure codes:
 1. Agent A lists tabs, and `browser_navigate` opens a tab for it: that tab is A's until it closes.
 2. Agent B's calls on A's tab fail at once with `TAB_LOCKED` (naming the owner), not queued.
 3. Tabs listed as `[user, focused]` are the user's. Tabs of other sessions are not listed: `browser_tabs` only counts them, as `+N tabs used by other agents`. Pick a tab from the list, or open a new one with `browser_navigate`.
-4. Tab ids belong to a Chrome profile. With several profiles connected, `browser_tabs { browser: "<id>" }` selects one for the session.
+4. Tab ids belong to a Chrome profile. Use `browser_tabs { action: "profiles" }` to see IDs and labels. `browser_tabs { browser: "<id>" }` selects one for the session; `auto` returns to the earliest-connected default. A profile check does not change the selection.
 5. A session that opens `browser_tabs {action:"session", isolation:"isolated"}` is fenced in: it may only touch the tabs it opened itself (any other tab fails `TAB_NOT_OWNED`), and the tab list shows its own tabs only. It is the mode to use when the agent should not see the user's other pages at all.
 
 ### The popup is your control panel
@@ -368,7 +368,7 @@ A fixed-height tabbed shell (the body never scrolls, only the lists do):
 
 - **Tabs** — every open tab with its owner.
 - **Agents** — each connected agent with its name, session id, uptime, and a ✕ to disconnect it immediately (clears a zombie the heartbeat hasn't reaped yet). An agent that is still running connects again, as a new session.
-- **Settings** — WebSocket port, Auth Token, Enrollment Secret, and the optional agent cursor.
+- **Settings** — Chrome profile label and ID, WebSocket port, Auth Token, Enrollment Secret, and the optional agent cursor.
 - **Activity bar** — a collapsible strip at the bottom showing the latest tool activity; expand it for the rolling log.
 
 ### Things to know
@@ -447,7 +447,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 | Tool | What it does |
 |------|-------------|
 | [`browser_navigate`](#browser_navigate) | Go to a URL, or `back` / `forward` / `reload`; without `tabId` opens a background tab the session owns |
-| [`browser_tabs`](#browser_tabs) | List this session's tabs and the user's focused tab; close or focus a tab; pick a Chrome profile with `browser` |
+| [`browser_tabs`](#browser_tabs) | List tabs or connected profiles; close or focus a tab; pick a Chrome profile with `browser` |
 | [`browser_snapshot`](#browser_snapshot) | Accessibility tree with element refs (`e12`); `query` finds matches, `target` scopes, `maxChars` caps |
 | [`browser_text`](#browser_text) | Visible text of the page or of one element |
 | [`browser_screenshot`](#browser_screenshot) | JPEG of a tab, an element or a region; longest side at most 1568 px |

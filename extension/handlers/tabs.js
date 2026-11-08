@@ -48,10 +48,12 @@ async function listTabs(sessionId) {
   const focusedId = focused[0]?.id;
   const own = [];
   const user = [];
+  let openTabCount = 0;
   let otherAgents = 0;
   const rest = [];
   for (const tab of tabs) {
     if (isPrivateVaultTab(tab.id) || isPrivateVaultUrl(tab.url)) continue;
+    openTabCount += 1;
     const owner = tabLocks.owner(tab.id);
     // Another session driving an unowned tab right now (or within the last 30s) counts as its tab.
     const driver = tabControl.controller(tab.id)?.sessionId ?? null;
@@ -73,6 +75,7 @@ async function listTabs(sessionId) {
     text: lines.length ? lines.join('\n') : 'no tabs',
     tabs: [...own.map(roleOf('own')), ...user.map(roleOf('user'))],
     otherAgentTabs: otherAgents,
+    openTabCount,
   };
 }
 

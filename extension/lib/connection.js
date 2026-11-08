@@ -15,7 +15,8 @@ import {
 } from './state.js';
 import { hideLockShield, clearAgentCursor } from './overlay.js';
 import { buildExtensionHelloAck, OLDER_DAEMON_REASON, validateDaemonHello } from './protocol.js';
-import { daemonWebSocketUrl, defaultBrowserLabel, isDaemonListening, withTimeout } from './connection-transport.js';
+import { daemonWebSocketUrl, isDaemonListening, withTimeout } from './connection-transport.js';
+import { browserIdentity, restoreBrowserIdentity, saveBrowserLabel } from './browser-identity.js';
 import {
   authenticatedDaemonFetch,
   createWebSocketClientProof,
@@ -202,9 +203,6 @@ export async function ensurePairing() {
   return retried;
 }
 
-/** This browser profile's identity for multi-browser routing (persisted). */
-let browserIdentity = {};
-
 export async function initConnection() {
   await restoreVaultRuntimeState();
   try {
@@ -212,12 +210,7 @@ export async function initConnection() {
     if (stored.wsPort) { wsPort = stored.wsPort; portFromUser = true; }
     if (stored.wsToken) wsToken = stored.wsToken;
     if (stored.enrollmentSecret) enrollmentSecret = stored.enrollmentSecret;
-    let id = stored.bcBrowserId;
-    if (!id) {
-      id = (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)).replace(/-/g, '').slice(0, 12);
-      chrome.storage.local.set({ bcBrowserId: id });
-    }
-    browserIdentity = { browserId: id, browserLabel: stored.bcBrowserLabel || defaultBrowserLabel(id) };
+    restoreBrowserIdentity(stored);
   } catch {}
 
   // Restore lock ownership + fallbacks BEFORE connecting: lock routing must see
@@ -502,6 +495,8 @@ export function buildStatusPayload(message, tabs) {
     nextRetryMs,
     connectedSince,
     lastError,
+    browserId: browserIdentity.browserId || '',
+    browserLabel: browserIdentity.browserLabel || '',
     activity: currentActivity,
     tabLocks: tabLocks.snapshot(),
     // Open-tab snapshot so the popup can render a Pin dropdown per tab without
@@ -584,6 +579,11 @@ export function applyToken(token) {
   chrome.storage.local.set({ wsToken });
   resetAndReconnect();
   return { success: true };
+}
+
+/** Save a local profile nickname and reconnect so the daemon sees the new label. */
+export function applyBrowserLabel(value) {
+  return saveBrowserLabel(value, resetAndReconnect);
 }
 
 /**

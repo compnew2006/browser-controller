@@ -23,6 +23,7 @@ import {
   broadcastStatus,
   applyPort,
   applyToken,
+  applyBrowserLabel,
   applyEnrollment,
   requestVaultUi,
   sendVaultUiClosed,
@@ -106,6 +107,13 @@ export function registerEventListeners() {
     if (msg.type === "setToken") {
       respond(applyToken(msg.token));
       return false;
+    }
+    if (msg.type === "setBrowserLabel") {
+      if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL("popup/popup.html")) return false;
+      applyBrowserLabel(msg.label).then(respond).catch(() => {
+        respond({ success: false, error: "Could not save the profile name." });
+      });
+      return true;
     }
     if (msg.type === "setEnrollment") {
       // The popup owns the user-facing entry of the enrollment secret. Persist,

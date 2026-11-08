@@ -27,21 +27,15 @@ import {
   newConnection,
   type ExtensionConnection,
 } from './bridge-connections.js';
-import { MAX_WS_MESSAGE_BYTES, WS_HARD_MAX_PAYLOAD_BYTES, rejectOversizedFrame } from './bridge-frames.js';
+import { MAX_WS_BUFFERED_BYTES, MAX_WS_MESSAGE_BYTES, WS_HARD_MAX_PAYLOAD_BYTES, rejectOversizedFrame } from './bridge-frames.js';
 import { tabsAcrossBrowsers } from './bridge-tabs.js';
 import { VaultBridgeTransport } from './vault/bridge-transport.js';
 
 export { isDaemonResponsiveOnPort } from './bridge-security.js';
 export { MAX_WS_MESSAGE_BYTES } from './bridge-frames.js';
+export { MAX_WS_BUFFERED_BYTES };
 
 const log = createLogger('Bridge');
-
-/**
- * Outbound backpressure limit: a tool call is refused while more than this many
- * bytes wait unsent on the extension socket (the browser is not reading).
- * 4 MiB is several large tool frames, far above a healthy socket's few KiB.
- */
-export const MAX_WS_BUFFERED_BYTES = 4 * 1024 * 1024;
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -456,7 +450,11 @@ export class ExtensionBridge {
   }
 
   async callTool(tool: string, params: Record<string, unknown>, sessionId?: string, signal?: AbortSignal, agentName?: string, skipTabs = false): Promise<unknown> {
-    if (tool === 'browser_tabs' && !skipTabs) return tabsAcrossBrowsers(this.conns, params, sessionId, (p) => this.callTool(tool, p, sessionId, signal, agentName, true));
+    if (tool === 'browser_tabs' && !skipTabs) {
+      return tabsAcrossBrowsers(this.conns, params, sessionId,
+        (p) => this.callTool(tool, p, sessionId, signal, agentName, true),
+        (id, p) => this.sendToolCall(tool, p, 0, sessionId, signal, agentName, undefined, this.conns.connectedById(id)));
+    }
     if (!this.isConnected()) {
       try {
         const reconnecting = Date.now() - this.lastExtensionAt < this.reconnectWait.windowMs;
@@ -476,7 +474,7 @@ export class ExtensionBridge {
     return this.sendToolCall(tool, params, 0, sessionId, signal, agentName);
   }
 
-  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal, agentName?: string, correlationId: string = currentCorrelationId() ?? newCorrelationId()): Promise<unknown> {
+  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal, agentName?: string, correlationId: string = currentCorrelationId() ?? newCorrelationId(), targetConnection?: ExtensionConnection): Promise<unknown> {
     // If the caller already aborted (e.g. client evicted before we even sent),
     // reject immediately rather than firing the action into the void.
     if (signal?.aborted) {
@@ -484,7 +482,7 @@ export class ExtensionBridge {
     }
     let conn: ExtensionConnection;
     try {
-      conn = this.conns.forSession(sessionId);
+      conn = targetConnection ?? this.conns.forSession(sessionId);
     } catch (err) {
       return Promise.reject(err);
     }
@@ -518,7 +516,7 @@ export class ExtensionBridge {
         this.sendControl('cancel', { id });
         if (canRetry && retryCount < this.maxRetries) {
           callLog.warn(`Timeout on ${tool}, retry ${retryCount + 1}/${this.maxRetries}`);
-          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId).then(resolve, reject);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId, targetConnection).then(resolve, reject);
         } else if (!canRetry) {
           reject(new Error(formatError(ERROR_CODES.TIMEOUT, `${tool} did not answer in ${timeoutMs} ms; it may still have run — check the page (browser_snapshot) before repeating it`)));
         } else {
@@ -560,7 +558,7 @@ export class ExtensionBridge {
         if (signal) signal.removeEventListener('abort', onAbort);
         this.pendingRequests.delete(id);
         if (canRetry && retryCount < this.maxRetries && this.isConnected()) {
-          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId).then(resolve, reject);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId, targetConnection).then(resolve, reject);
         } else {
           reject(err instanceof Error ? err : new Error('Send failed'));
         }

@@ -16,6 +16,7 @@ const PROBE_TIMEOUT_MS = 2_000;
 let sockets: FakeWebSocket[] = [];
 let fetchMock: ReturnType<typeof vi.fn>;
 let httpAuth: BridgeHttpAuthenticator;
+let localStorage: Record<string, unknown>;
 const ENROLLMENT_SECRET = 'synthetic-enrollment-secret-for-tests';
 const AUTH_TOKEN = 'synthetic-extension-token-for-tests';
 const DAEMON_INSTANCE_ID = 'daemon-test';
@@ -50,6 +51,7 @@ class FakeWebSocket {
 beforeEach(() => {
   vi.resetModules();
   sockets = [];
+  localStorage = {};
   httpAuth = new BridgeHttpAuthenticator(ENROLLMENT_SECRET, DAEMON_INSTANCE_ID);
   fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -79,7 +81,13 @@ beforeEach(() => {
   (globalThis as any).fetch = fetchMock;
   (globalThis as any).chrome = {
     storage: {
-      local: { get: async () => ({}), set: async () => {} },
+      local: {
+        get: async (keys?: string | string[]) => {
+          const names = Array.isArray(keys) ? keys : typeof keys === 'string' ? [keys] : Object.keys(localStorage);
+          return Object.fromEntries(names.filter((key) => key in localStorage).map((key) => [key, localStorage[key]]));
+        },
+        set: async (values: Record<string, unknown>) => { Object.assign(localStorage, values); },
+      },
       session: { get: async () => ({}), set: async () => {} },
     },
     alarms: { create: () => {}, onAlarm: { addListener: () => {} } },
@@ -127,6 +135,31 @@ function authenticatedDaemonHello(socket: FakeWebSocket) {
 }
 
 describe('extension handshake (connection.js)', () => {
+  it('saves a bounded profile nickname and advertises it on the reconnected socket', async () => {
+    localStorage.enrollmentSecret = ENROLLMENT_SECRET;
+    const conn = await import('../extension/lib/connection.js');
+    await conn.initConnection();
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
+
+    const original = openSocket();
+    await original.onmessage?.({ data: JSON.stringify(authenticatedDaemonHello(original)) });
+    const originalAck = JSON.parse(original.sent[1]);
+
+    const applied = await conn.applyBrowserLabel('  Treelancer\n Work  ');
+    expect(applied).toEqual({ success: true, browserLabel: 'Treelancer Work' });
+    expect(localStorage.bcBrowserLabel).toBe('Treelancer Work');
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+
+    const renamed = openSocket();
+    await renamed.onmessage?.({ data: JSON.stringify(authenticatedDaemonHello(renamed)) });
+    const renamedAck = JSON.parse(renamed.sent[1]);
+    expect(renamedAck).toMatchObject({ browserId: originalAck.browserId, browserLabel: 'Treelancer Work' });
+
+    const rejected = await conn.applyBrowserLabel('x'.repeat(65));
+    expect(rejected).toMatchObject({ success: false });
+    expect(localStorage.bcBrowserLabel).toBe('Treelancer Work');
+  });
+
   it('keeps credentials out of the WebSocket URL and subprotocols', async () => {
     await load();
     const [socket] = sockets;

@@ -1,5 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { withTimeout } from '../extension/lib/connection-transport.js';
+import { normalizeBrowserLabel, withTimeout } from '../extension/lib/connection-transport.js';
+
+describe('normalizeBrowserLabel', () => {
+  it('compacts whitespace and removes control characters', () => {
+    expect(normalizeBrowserLabel('  Treelancer\n\t Work  ')).toBe('Treelancer Work');
+  });
+
+  it('allows clearing a label and rejects values over the limit or non-text input', () => {
+    expect(normalizeBrowserLabel('')).toBe('');
+    expect(normalizeBrowserLabel('x'.repeat(65))).toBeNull();
+    expect(normalizeBrowserLabel(12)).toBeNull();
+  });
+});
 
 describe('withTimeout', () => {
   afterEach(() => vi.useRealTimers());

@@ -36,10 +36,10 @@ async function answeredBy(bridge: ExtensionBridge, sessionId: string): Promise<s
   return res.text.split('\n').pop()!.replace(/^tabs of /, '');
 }
 
-/** The browser the session is routed to, as browser_tabs lists it: the one marked "(selected)". */
+/** The browser the session is routed to, from the structured browser_tabs metadata. */
 async function selectedBrowser(bridge: ExtensionBridge, sessionId: string): Promise<string | undefined> {
-  const res = await bridge.callTool('browser_tabs', { action: 'list' }, sessionId) as { text: string };
-  return res.text.match(/^browser (\S+) "[^"]*" \(selected\)$/m)?.[1];
+  const res = await bridge.callTool('browser_tabs', { action: 'list' }, sessionId) as { selectedBrowserId?: string };
+  return res.selectedBrowserId;
 }
 
 /** A fake extension: announces its browser identity and answers tool calls with its name. */

@@ -20,6 +20,9 @@ export const MAX_WS_MESSAGE_BYTES = Math.max(
 /** ws closes the socket above this; only a frame this large still tears the connection down. */
 export const WS_HARD_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
+/** Refuse calls when over 4 MiB is queued for the extension socket. */
+export const MAX_WS_BUFFERED_BYTES = 4 * 1024 * 1024;
+
 /** What the check needs of a pending call: the connection it was sent to. */
 export interface PendingCall {
   conn?: unknown;
