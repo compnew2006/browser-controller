@@ -10,6 +10,7 @@ import { fillTool } from './fill.js';
 import { scrollTool } from './scroll.js';
 import { waitTool } from './wait.js';
 import { evaluateTool } from './evaluate.js';
+import { fetchManyTool } from './fetch-many.js';
 import { dialogTool } from './dialog.js';
 import { batchTool, useToolRegistry } from './batch.js';
 import { emulateTool } from './emulate.js';
@@ -53,6 +54,7 @@ export const allTools: ToolDefinition[] = [
   memoryTool,
   memoryPolicyTool,
   siteMapTool,
+  fetchManyTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

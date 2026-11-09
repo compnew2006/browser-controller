@@ -15,6 +15,7 @@ export const TOOL_NAMES = Object.freeze([
   'browser_click',
   'browser_emulate',
   'browser_evaluate',
+  'browser_fetch_many',
   'browser_fill',
   'browser_handle_dialog',
   'browser_inspect_element',
