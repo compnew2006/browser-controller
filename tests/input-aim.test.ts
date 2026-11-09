@@ -219,7 +219,10 @@ describe('a click aims where the target is when it is pressed', () => {
     placed(menu, { top: 60 });
     viewport(() => [inner, menu]);
     pressLandsOn = inner;
-    expect(await handleClick({ tabId: 1, target: '#news' })).toMatchObject({ success: true, text: 'clicked #news' });
+    const targetIds: string[] = [];
+    const activityRecorder = { setTargetElementId: (id: string) => targetIds.push(id) };
+    expect(await handleClick({ tabId: 1, target: '#news' }, null, null, undefined, activityRecorder)).toMatchObject({ success: true, text: 'clicked #news' });
+    expect(targetIds).toEqual(['news']);
     expect(watching()).toEqual([]); // the watch is removed once the click is over
   });
 });

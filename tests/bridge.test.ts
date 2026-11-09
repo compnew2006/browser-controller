@@ -178,6 +178,67 @@ describe('ExtensionBridge', () => {
     expect(result).toEqual({ clicked: true });
   });
 
+  it('keeps activity metadata out of params and sends batch completion only to its participant', async () => {
+    const port = await freePort();
+    const bridge = createBridge(port);
+    await bridge.start();
+    const participant = await connectClient(port, '', 'activity-participant');
+    const other = await connectClient(port, '', 'unrelated-profile');
+    const participantFrames: Array<Record<string, any>> = [];
+    const otherFrames: Array<Record<string, any>> = [];
+    participant.on('message', (data) => {
+      const frame = JSON.parse(data.toString());
+      participantFrames.push(frame);
+      if (frame.tool) participant.send(JSON.stringify({ id: frame.id, success: true, result: { success: true } }));
+    });
+    other.on('message', (data) => otherFrames.push(JSON.parse(data.toString())));
+    const batchRunId = '00000000-0000-4000-8000-000000000002';
+    await bridge.callTool('browser_click', { tabId: 7 }, 'activity-session', undefined, 'test-agent', {
+      eventId: '00000000-0000-4000-8000-000000000001', batchRunId, batchStepIndex: 1,
+    });
+
+    const call = participantFrames.find((frame) => frame.tool === 'browser_click');
+    expect(call.activityContext).toEqual({
+      eventId: '00000000-0000-4000-8000-000000000001', batchRunId, batchStepIndex: 1,
+    });
+    expect(call.params).toEqual({ tabId: 7 });
+    expect(bridge.activityBatchParticipants.finish('activity-session', {
+      kind: 'batch-finished', schemaVersion: 1, batchRunId,
+      endedAt: '2026-11-09T10:00:00.000Z', executionStatus: 'completed',
+    })).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(participantFrames.some((frame) => frame.type === 'activityBatchFinished')).toBe(true);
+    expect(otherFrames.some((frame) => frame.type === 'activityBatchFinished')).toBe(false);
+  });
+
+  it('does not transfer a batch participant marker to a replacement socket', async () => {
+    const port = await freePort();
+    const bridge = createBridge(port);
+    await bridge.start();
+    const oldClient = await connectClient(port, '', 'reconnecting-profile');
+    oldClient.on('message', (data) => {
+      const frame = JSON.parse(data.toString());
+      if (frame.tool) oldClient.send(JSON.stringify({ id: frame.id, success: true, result: { success: true } }));
+    });
+    const batchRunId = '00000000-0000-4000-8000-000000000004';
+    await bridge.callTool('browser_click', { tabId: 7 }, 'reconnect-session', undefined, 'test-agent', {
+      eventId: '00000000-0000-4000-8000-000000000003', batchRunId, batchStepIndex: 1,
+    });
+    const disconnected = new Promise<void>((resolve) => oldClient.once('close', () => resolve()));
+    oldClient.close();
+    await disconnected;
+    const replacement = await connectClient(port, '', 'reconnecting-profile');
+    const replacementFrames: Array<Record<string, any>> = [];
+    replacement.on('message', (data) => replacementFrames.push(JSON.parse(data.toString())));
+
+    expect(bridge.activityBatchParticipants.finish('reconnect-session', {
+      kind: 'batch-finished', schemaVersion: 1, batchRunId,
+      endedAt: '2026-11-09T10:00:00.000Z', executionStatus: 'completed',
+    })).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(replacementFrames.some((frame) => frame.type === 'activityBatchFinished')).toBe(false);
+  });
+
   it('a frame above the hard ceiling still closes the socket (1009)', async () => {
     const port = await freePort();
     const bridge = createBridge(port);

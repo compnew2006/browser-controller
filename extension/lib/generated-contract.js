@@ -9,7 +9,8 @@ export const EXTENSION_PROTOCOL_CAPABILITIES = Object.freeze([
   "credential-vault-v1",
   "site-context",
   "site-map",
-  "vault-site-approval"
+  "vault-site-approval",
+  "chrome-action-activity-v1"
 ]);
 export const REQUIRED_DAEMON_CAPABILITIES = Object.freeze([
   "tool-dispatch",

@@ -1,6 +1,6 @@
 # Contracts (scaffold)
 
-Art 6 of the proposed Constitution v4.1.0 asks for `specs/contracts/<feature>.<ext>`: a machine-readable contract per feature (JSON Schema, OpenAPI, AsyncAPI, or another approved format), linked to behavioural tests. The Constitution is not adopted. No contract file exists here yet.
+Art 6 of the proposed Constitution v4.1.0 asks for `specs/contracts/<feature>.<ext>`: a machine-readable contract per feature (JSON Schema, OpenAPI, AsyncAPI, or another approved format), linked to behavioural tests. The Constitution is not adopted. F1–F9 have the gaps below; F10 has a draft internal event schema without behavior-test or Owner sign-off.
 
 ## Status per feature
 
@@ -15,12 +15,13 @@ Art 6 of the proposed Constitution v4.1.0 asks for `specs/contracts/<feature>.<e
 | F7 | [page-interaction](../features/page-interaction.md) | none (zod for click/type/fill in `tools/`) | None. Needs gate receipt and refusal-code contract. |
 | F8 | [inspection](../features/inspection.md) | none (zod for snapshot/text/screenshot/navigate/wait in `tools/`) | None. Needs ref format and lifetime rules. |
 | F9 | [devtools-surface](../features/devtools-surface.md) | none (zod for logs/mock/evaluate in `tools/`) | None. Needs redaction rule set and evaluate limits. |
+| F10 | [chrome-action-activity](../features/chrome-action-activity.md) | [JSON Schema](chrome-action-activity.schema.json) (draft) | Internal action-event and batch-finish records; fixture validation and focused local tests ran; Owner review and final contract fingerprint remain pending. |
 
 ## Open items
 
-- Contract fingerprint rules are not in place: sha256 of the staged blob, `.gitattributes` `eol=lf` for contract files, and a CI recompute on the final commit. No contract file exists to fingerprint yet.
+- Contract fingerprint rules are not in place: sha256 of the staged blob, `.gitattributes` `eol=lf` for contract files, and a CI recompute on the final commit. The F10 draft contract is not staged or fingerprinted.
 - Contract-to-test links (Art 6: each contract tied to behavioural tests) are not recorded.
 
 ## Next step
 
-Generate JSON Schema from the tool zod schemas in `mcp-server/src/tools/*.ts`. That needs a script and a build, so it is not done here. No contract is written by hand, because a hand copy could drift from the schemas.
+For tool contracts, generate JSON Schema from the Zod schemas in `mcp-server/src/tools/*.ts`; do not hand-copy those schemas. F10 is a separate internal event protocol, so its draft JSON Schema is maintained as that protocol contract and must be validated by behavior tests before acceptance.

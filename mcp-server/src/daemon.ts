@@ -51,6 +51,7 @@ import {
   validateIpcHandshake,
 } from './protocol/index.js';
 import { ExtensionBridge } from './bridge.js';
+import { isActivityContextFrame, isBatchFinishedFrame } from './protocol/frames.js';
 import { isKnownWireTool } from './protocol/wire-tools.js';
 import { armIpcHelloTimer } from './ipc-hello-timer.js';
 import { isIpcClientMessage } from './ipc-frame-validation.js';
@@ -408,6 +409,10 @@ class Daemon {
 
   private async routeCall(client: IpcClient, msg: IpcClientMessage & { kind: 'call' }): Promise<void> {
     if (msg.kind !== 'call') return;
+    if (msg.activityContext && isBatchFinishedFrame(msg.activityContext)) {
+      this.sendToClient(client, { kind: 'result', id: msg.id, cid: msg.cid, success: true, result: { notifiedConnections: this.bridge.activityBatchParticipants.finish(client.sessionId, msg.activityContext) } });
+      return;
+    }
     if (!isKnownWireTool(msg.tool)) {
       this.sendToClient(client, { kind: 'result', id: msg.id, cid: msg.cid, success: false, error: formatError(ERROR_CODES.UNKNOWN_TOOL, String(msg.tool).slice(0, 80)) });
       return;
@@ -460,6 +465,7 @@ class Daemon {
           params: msg.params,
           signal: controller.signal,
           observe: memoryCall.observe,
+          activityContext: msg.activityContext && isActivityContextFrame(msg.activityContext) ? msg.activityContext : undefined,
         });
       const { observation, ...agentOutcome } = outcome;
       const memoryOutcome = { sessionId: client.sessionId, tool: msg.tool, params: msg.params, daemonCallId, result: agentOutcome.result, observation, ...(agentOutcome.success ? {} : { error: agentOutcome.error }) };

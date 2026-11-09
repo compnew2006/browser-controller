@@ -171,6 +171,18 @@ describe('trusted input (CDP)', () => {
     expect(inputs().filter((c) => c.params.type === 'mousePressed').map((c) => c.params.clickCount)).toEqual([1, 2]);
   });
 
+  it('reports only acknowledged click presses to the activity recorder', async () => {
+    pageResults.push({ success: true, x: 1, y: 2, visible: true });
+    const observed: Array<{ method: string; params: Record<string, unknown>; status: string }> = [];
+    const recorder = { observe: (method: string, params: Record<string, unknown>, status: string) => observed.push({ method, params, status }) };
+    await handleClick({ tabId: 5, target: '#go', count: 2 }, null, null, undefined, recorder);
+    expect(observed.filter((item) => item.params.type === 'mousePressed')).toEqual([
+      { method: 'Input.dispatchMouseEvent', params: expect.objectContaining({ type: 'mousePressed', clickCount: 1 }), status: 'sent' },
+      { method: 'Input.dispatchMouseEvent', params: expect.objectContaining({ type: 'mousePressed', clickCount: 2 }), status: 'sent' },
+    ]);
+    expect(JSON.stringify(observed)).not.toContain('#go');
+  });
+
   it('click at a point: no element lookup check, real click at the point, triple click with Control', async () => {
     pageResults.push({ success: true, x: 30, y: 40, visible: true, via: 'point' });
     const res = await handleClick({ tabId: 5, target: '30,40', count: 3, modifiers: ['Control'] });

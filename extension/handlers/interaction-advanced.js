@@ -123,7 +123,7 @@ function pageSetPicker(t, fb, value) {
   const same = el.type === 'color' ? kept.toLowerCase() === value.toLowerCase()
     : el.type === 'range' ? Number(kept) === Number(value)
       : kept === value;
-  return { same, kept };
+  return { same, kept, dispatched: !el.disabled && !el.readOnly };
 }
 
 /** Page-side: the aria-checked state of a target now (ARIA checkbox, radio or switch). */
@@ -273,7 +273,24 @@ async function checkFieldFingerprints(tabId, fields, expectFingerprints) {
  * `input` is the call's input session: a dialog the field's input opens ends the field
  * (the caller reports it), and nothing after it is sent.
  */
-async function fillField(tabId, input, field, rebound, expect = null) {
+function noteFillDispatch(activityRecorder, status) {
+  activityRecorder?.noteDispatch?.(status);
+}
+
+async function dispatchFillInput(input, activityRecorder, dispatch) {
+  if (input.blocked) return false;
+  try {
+    const result = await dispatch();
+    if (input.blocked) noteFillDispatch(activityRecorder, 'unknown');
+    else if (result !== false) noteFillDispatch(activityRecorder, 'sent');
+    return result;
+  } catch (error) {
+    noteFillDispatch(activityRecorder, 'unknown');
+    throw error;
+  }
+}
+
+async function fillField(tabId, input, field, rebound, expect = null, activityRecorder) {
   const target = field.target;
   const label = targetLabel(target);
   const { parsed, fb } = targetAim(tabId, target);
@@ -290,8 +307,8 @@ async function fillField(tabId, input, field, rebound, expect = null) {
     if (!loc.success) return loc.error;
     if (input.blocked) return null;
     await selectFocused(tabId);
-    if (value === '') await cdpKeyPress(input.send, 'Backspace');
-    else await input.send('Input.insertText', { text: value });
+    if (value === '') await dispatchFillInput(input, activityRecorder, () => cdpKeyPress(input.send, 'Backspace'));
+    else await dispatchFillInput(input, activityRecorder, () => input.send('Input.insertText', { text: value }));
     if (input.blocked) return null;
     // Read back: a page that rejects input keeps its value, and is not "filled".
     // The value API reads CRLF back as LF, and the read back covers the first 100 characters.
@@ -306,8 +323,11 @@ async function fillField(tabId, input, field, rebound, expect = null) {
 
   if (info.kind === 'picker') {
     if (typeof value !== 'string') return `INVALID_ARGUMENT: ${label} takes a string`;
-    const res = await execDom(tabId, pageSetPicker, [parsed, fb, value]);
+    let res;
+    try { res = await execDom(tabId, pageSetPicker, [parsed, fb, value]); }
+    catch (error) { noteFillDispatch(activityRecorder, 'unknown'); throw error; }
     if (res?.error) return wordTargetRefMiss(tabId, parsed, res).error;
+    if (res?.dispatched) noteFillDispatch(activityRecorder, 'sent');
     return res?.same === true ? null : `VALUE_NOT_SET: kept "${res?.kept ?? ''}"`;
   }
 
@@ -315,8 +335,12 @@ async function fillField(tabId, input, field, rebound, expect = null) {
     const wanted = Array.isArray(value) ? value : [value];
     if (!wanted.every((v) => typeof v === 'string')) return `INVALID_ARGUMENT: ${label} takes a string or a string[]`;
     if (!info.multiple && wanted.length !== 1) return `INVALID_ARGUMENT: ${label} is a single-choice select: give one value`;
-    const res = await execDom(tabId, pageChooseOptions, [parsed, fb, wanted, info.multiple]);
-    return res?.error ? wordTargetRefMiss(tabId, parsed, res).error : null;
+    let res;
+    try { res = await execDom(tabId, pageChooseOptions, [parsed, fb, wanted, info.multiple]); }
+    catch (error) { noteFillDispatch(activityRecorder, 'unknown'); throw error; }
+    if (res?.error) return wordTargetRefMiss(tabId, parsed, res).error;
+    noteFillDispatch(activityRecorder, 'sent');
+    return null;
   }
 
   if (info.kind === 'checkbox' || info.kind === 'radio') {
@@ -328,7 +352,7 @@ async function fillField(tabId, input, field, rebound, expect = null) {
     if (!loc.success) return loc.error;
     if (input.blocked) return null;
     await sleep(await cursorTo(tabId, loc.x, loc.y, 'click'));
-    await cdpClickAt(input.send, loc.x, loc.y);
+    await dispatchFillInput(input, activityRecorder, () => cdpClickAt(input.send, loc.x, loc.y));
     if (!info.aria || input.blocked) return null;
     // An ARIA widget's state is its aria-checked: a click the page ignored leaves it unchanged.
     const now = wordTargetRefMiss(tabId, parsed, await execDom(tabId, pageAriaChecked, [parsed, fb]));
@@ -346,7 +370,14 @@ async function fillField(tabId, input, field, rebound, expect = null) {
   if (!paths.every(isAbsolutePath)) {
     return `INVALID_ARGUMENT: ${label} is a file input: give absolute file paths (got a relative path)`;
   }
-  return setFiles(tabId, input.raw, target, parsed, fb, paths);
+  try {
+    const error = await setFiles(tabId, input.raw, target, parsed, fb, paths);
+    if (!error) noteFillDispatch(activityRecorder, 'sent');
+    return error;
+  } catch (error) {
+    noteFillDispatch(activityRecorder, 'unknown');
+    throw error;
+  }
 }
 
 /**
@@ -354,7 +385,7 @@ async function fillField(tabId, input, field, rebound, expect = null) {
  * field that fails does not stop the others. Nothing is submitted. A dialog that a
  * field's input opens stops the fill: the field after it is not filled.
  */
-export async function handleFill(params, _sessionId, _agentName, signal) {
+export async function handleFill(params, _sessionId, _agentName, signal, activityRecorder) {
   const { tabId, fields } = params;
   if (!Array.isArray(fields) || fields.length < 1 || fields.length > 50) {
     throw new Error('INVALID_ARGUMENT: fields needs 1 to 50 entries');
@@ -367,6 +398,8 @@ export async function handleFill(params, _sessionId, _agentName, signal) {
   const failed = [];
   const rebound = new Set();
   let stopped = null;
+  let confirmed = 0;
+  let uncertain = 0;
   try {
     for (const [index, field] of fields.entries()) {
       const target = targetLabel(field?.target ?? '(no target)');
@@ -376,9 +409,15 @@ export async function handleFill(params, _sessionId, _agentName, signal) {
         failed.push(`${target}: ${stopped}`);
         continue;
       }
+      const fieldActivity = {
+        noteDispatch(status) {
+          if (status === 'sent') confirmed++;
+          else if (status === 'unknown') uncertain++;
+        },
+      };
       let error = null;
       try {
-        error = await fillField(tabId, input, field ?? {}, rebound, expected?.[index] ?? null);
+        error = await fillField(tabId, input, field ?? {}, rebound, expected?.[index] ?? null, fieldActivity);
       } catch (err) {
         error = String(err?.message || err);
         // A wedged tab or a cancelled call: the rest of the call is not attempted.
@@ -394,6 +433,15 @@ export async function handleFill(params, _sessionId, _agentName, signal) {
     if (!input.blocked) await releaseShield(tabId);
     input.close();
   }
+  const required = fields.length;
+  const dispatchStatus = uncertain > 0 ? 'unknown'
+    : confirmed === required ? 'sent'
+      : confirmed > 0 ? 'partially_sent'
+        : 'not_sent';
+  activityRecorder?.setSummary?.({
+    dispatchStatus,
+    inputCounts: { confirmed, uncertain, required },
+  });
   const notes = [...rebound].map((ref) => reboundNote(ref));
   if (failed.length) {
     return { success: false, error: [`FILL_FAILED: ${failed.length} of ${fields.length} fields failed`, ...failed, ...notes].join('\n') };

@@ -77,6 +77,7 @@ function pageLocate(fb, mode, cursor, check, target, expect) {
     }
   }
   if (!el && !viewPoint) return { success: false, error: 'REF_GONE', url: location.href };
+  const activityElementId = typeof el?.id === 'string' ? el.id.trim().slice(0, 160) : '';
   // The element the safety check classified (browser_classify_action): another one here is refused
   // before any scroll, focus or input. The caller words the error (SAFETY_TARGET_CHANGED).
   if (expect && el && D.safetyFingerprint(el) !== expect) return { success: false, error: 'SAFETY_TARGET_CHANGED' };
@@ -102,6 +103,7 @@ function pageLocate(fb, mode, cursor, check, target, expect) {
       focused: false,
       needsSelectAll: false,
       hasText: false,
+      ...(activityElementId ? { activityElementId } : {}),
       ...(cursorMs ? { cursorMs } : {}),
       via: 'point',
     };
@@ -179,6 +181,10 @@ function pageLocate(fb, mode, cursor, check, target, expect) {
     ...(cursorMs ? { cursorMs } : {}),
     ...(reportVia !== 'ref' ? { via: reportVia } : {}),
     ...(onLabel ? { onLabel: true } : {}),
+    // This label is derived from the resolved element, never copied from the caller's selector.
+    ...(D.nameOf(el).trim() ? { activityLabel: D.nameOf(el).trim().slice(0, 60) } : {}),
+    // Retain only the resolved page element's DOM id; never copy the caller's selector.
+    ...(activityElementId ? { activityElementId } : {}),
     // A fallback re-resolution says what it actually hit, so a wrong guess is visible.
     ...(via === 'fallback' ? { target: { role: D.roleOf(el), name: D.nameOf(el).slice(0, 60) } } : {}),
   };
@@ -463,7 +469,7 @@ export function assertInputReady(tabId, signal) {
  * the input opens is intercepted, not shown (holdFileChooser). close() ends the dialog watch
  * and the interception hold: call it when the input is over.
  */
-export function inputSession(tabId, send, signal) {
+export function inputSession(tabId, send, signal, activityRecorder) {
   assertInputReady(tabId, signal);
   let blocked = null;
   let wake;
@@ -482,14 +488,28 @@ export function inputSession(tabId, send, signal) {
       if (blocked) return false;
       if (signal?.aborted && !isRelease(method, params)) throw cancelledError();
       await chooser.ready;
-      const dispatch = send(method, params);
+      let dispatch;
+      try {
+        dispatch = send(method, params);
+      } catch (error) {
+        activityRecorder?.observe?.(method, params, 'unknown');
+        throw error;
+      }
       dispatch.catch(() => {}); // a late ack or rejection after the dialog or the budget is swallowed
       let timer;
-      const outcome = await Promise.race([
-        dispatch.then(() => 'acked'),
-        opened.then(() => 'dialog'),
-        new Promise((resolve) => { timer = setTimeout(() => resolve('stalled'), INPUT_BUDGET_MS); }),
-      ]).finally(() => clearTimeout(timer));
+      let outcome;
+      try {
+        outcome = await Promise.race([
+          dispatch.then(() => 'acked'),
+          opened.then(() => 'dialog'),
+          new Promise((resolve) => { timer = setTimeout(() => resolve('stalled'), INPUT_BUDGET_MS); }),
+        ]);
+      } catch (error) {
+        activityRecorder?.observe?.(method, params, 'unknown');
+        throw error;
+      } finally { clearTimeout(timer); }
+      if (outcome === 'acked') activityRecorder?.observe?.(method, params, 'sent');
+      else activityRecorder?.observe?.(method, params, 'unknown');
       if (outcome === 'stalled') {
         wedgedTabs.set(tabId, Date.now());
         throw wedgedError(tabId, INPUT_BUDGET_MS);

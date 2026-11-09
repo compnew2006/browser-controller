@@ -8,6 +8,7 @@ import { bindVaultOpenButton } from './popup-vault.js';
 import { bindProfileLabel, updateProfileLabel } from './profile-label.js';
 import { bindDebouncedInput } from './settings-input.js';
 import { authenticatedDaemonFetch, daemonFailureKind } from '../lib/daemon-auth.js';
+import { bindActionActivity } from './activity-view.js';
 
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -27,6 +28,7 @@ const openTabsEl = document.getElementById('openTabs');
 const tabsCountEl = document.getElementById('tabsCount');
 const agentsCountEl = document.getElementById('agentsCount');
 const settingsTabBtn = document.getElementById('settingsTab');
+const actionActivity = bindActionActivity();
 
 const manifest = chrome.runtime.getManifest();
 versionEl.textContent = `v${manifest.version}`;
@@ -51,6 +53,7 @@ function switchTab(name, persist = true) {
   }
   for (const [k, p] of Object.entries(panels)) p.hidden = k !== name;
   if (persist) chrome.storage.local.set({ popupTab: name });
+  if (name === 'activity') actionActivity.refresh();
 }
 tabButtons.forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
 // Roving-tabindex arrow-key navigation (tablist pattern).
@@ -325,6 +328,7 @@ function updateUI(state) {
 
 /** Fetch connection + tabs + locks state from the background worker. */
 function refreshStatus() {
+  actionActivity.refresh();
   chrome.runtime.sendMessage({ type: 'getStatus' }, (response) => {
     if (chrome.runtime.lastError || !response) return;
     updateUI(response);

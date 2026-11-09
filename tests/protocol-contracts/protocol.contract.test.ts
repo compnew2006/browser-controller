@@ -156,6 +156,7 @@ describe('the wire contract: versions and capabilities', () => {
       'site-context',
       'site-map',
       'vault-site-approval',
+      'chrome-action-activity-v1',
     ]);
   });
 });

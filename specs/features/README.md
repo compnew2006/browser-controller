@@ -1,6 +1,6 @@
 # Feature specs (scaffold)
 
-Constitution v4.1.0 is PROPOSED, not adopted. These files scaffold Art 2 (risk tiers) and Art 6 (spec, contract, evidence per feature) for the nine features in `docs/audit/09-feature-architecture-review.md` section 2. They make gaps explicit. They do not claim compliance.
+Constitution v4.1.0 is PROPOSED, not adopted. These files scaffold Art 2 (risk tiers) and Art 6 (spec, contract, evidence per feature) for the nine audited features and proposed F10. They make gaps explicit. They do not claim compliance.
 
 ## Owner tier decision (2026-10-27)
 
@@ -22,8 +22,9 @@ This follows the tiers proposed in 09 section 2. Per Art 2, a tier is not lowere
 | F7 | [page-interaction](page-interaction.md) | CRITICAL | EVOLVE | none | none | [manifest](../evidence/page-interaction/manifest.json) |
 | F8 | [inspection](inspection.md) | CONTROLLED; CRITICAL parts: ref issuance, page-data handling | EVOLVE | `specs/webmcp-support/` (superseded; feature removed) | none | [manifest](../evidence/inspection/manifest.json) |
 | F9 | [devtools-surface](devtools-surface.md) | CONTROLLED; CRITICAL parts: redaction, evaluate | EVOLVE | none | none | [manifest](../evidence/devtools-surface/manifest.json) |
+| F10 | [chrome-action-activity](chrome-action-activity.md) | CONTROLLED (implemented locally; formal review pending) | EVOLVE | `specs/009-chrome-action-activity/` | [JSON Schema](../contracts/chrome-action-activity.schema.json) (draft) | [manifest](../evidence/chrome-action-activity/manifest.json) |
 
-All features: version v0.1.0, status scaffold, approver Owner. No feature has an Owner sign-off yet.
+All entries use version v0.1.0 and Owner review; F1–F9 remain scaffolds. F10 has a local implementation and verification record, but no independent review or formal Owner sign-off yet.
 
 ## Layout
 
@@ -33,6 +34,6 @@ All features: version v0.1.0, status scaffold, approver Owner. No feature has an
 
 ## Not done
 
-- No machine-readable contract files exist for any feature. See `specs/contracts/README.md`.
-- Given/When/Then scenarios exist only in `specs/001-credential-vault/` and `specs/002-daemon-authentication/`. They are linked, not copied.
+- F10 has a draft machine-readable internal event contract and local behavior tests; its final contract review and Owner sign-off remain pending. F1–F9 contract gaps remain listed in `specs/contracts/README.md`.
+- Given/When/Then scenarios exist in `specs/001-credential-vault/`, `specs/002-daemon-authentication/`, and the draft F10 spec. They are linked, not copied into these feature scaffolds.
 - Stale specs are not yet recorded as `NON_CONFORMITY` (Art 5; 09 F4-1, F4-7, F8-4).

@@ -182,6 +182,74 @@
       letter-spacing: 0.06em;
     }
 
+    /* ── Agent activity ────────────────────────────────────────────── */
+    .activity-panel { text-align: start; }
+    .activity-panel .panel-title { font-size: 11px; }
+    .activity-toolbar { display: flex; align-items: center; gap: var(--space-sm); }
+    .activity-name-toggle { display: inline-flex; align-items: center; gap: var(--space-xs); color: var(--ink-2); font-size: 11px; white-space: nowrap; cursor: pointer; }
+    .activity-name-toggle .switch { width: 28px; height: 16px; }
+    .activity-name-toggle .switch::after {
+      left: auto; right: auto; inset-inline-start: 2px;
+      width: 12px; height: 12px;
+      transition: inset-inline-start 150ms ease, background 150ms ease;
+    }
+    .activity-name-toggle .switch:checked::after { inset-inline-start: 14px; transform: none; }
+    .activity-panel .activity-clear { min-height: 30px; padding-inline: 10px; font-size: 11px; white-space: nowrap; }
+    .activity-list { padding: var(--space-sm) var(--space-md); scrollbar-color: var(--border-2) var(--surface); scrollbar-width: thin; }
+    .activity-list::-webkit-scrollbar { width: 8px; }
+    .activity-list::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+    .activity-list::-webkit-scrollbar-track { background: var(--surface); }
+    .activity-list ol { list-style: none; margin: 0; padding: 0; }
+    .activity-visit + .activity-visit { border-top: 1px solid var(--border-2); margin-top: var(--space-md); padding-top: var(--space-md); }
+    .activity-visit-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-md); align-items: start; }
+    .activity-visit-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); color: var(--ink-2); font-size: 11px; margin-bottom: var(--space-xs); }
+    .activity-visit-head strong { color: var(--ink); font-size: 11px; font-weight: 600; }
+    .activity-visit-head span { color: var(--ink-2); white-space: nowrap; }
+    .activity-items { display: grid; gap: var(--space-xs); min-width: 0; }
+    .activity-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: var(--space-sm); padding: var(--space-xs) 0; min-width: 0; }
+    .activity-step-number { width: 22px; height: 22px; display: inline-grid; place-items: center; border: 1px solid var(--border-2); border-radius: 6px; background: var(--surface-2); color: var(--ink-2); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .activity-row-content { min-width: 0; }
+    .activity-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm); }
+    .activity-row-head strong { min-width: 0; color: var(--ink); font-size: 11.5px; font-weight: 500; overflow-wrap: anywhere; }
+    .activity-row-head code, .activity-context-tool { color: var(--ink); font: 600 10.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .activity-row-head time { color: var(--ink-2); flex: none; font-size: 11px; font-variant-numeric: tabular-nums; }
+    .activity-action-label { margin-top: 1px; color: var(--ink-2); font-size: 10.5px; line-height: 1.4; overflow-wrap: anywhere; }
+    .activity-detail { display: block; margin-top: 3px; color: var(--ink-2); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+    .activity-detail code { color: var(--ink); font-size: 10.5px; overflow-wrap: anywhere; }
+    .activity-status, .activity-effect, .activity-result { display: block; margin-top: 3px; color: var(--ink-2); font-size: 11px; line-height: 1.45; }
+    .activity-status[data-status="sent"] { color: var(--ok); }
+    .activity-status[data-status="partially_sent"], .activity-status[data-status="unknown"] { color: var(--warn); }
+    .activity-status[data-status="not_sent"], .activity-result { color: var(--err); }
+    .activity-effect { color: var(--accent); }
+    .activity-batch { margin: var(--space-xs) 0; padding: var(--space-xs) var(--space-sm); background: var(--surface-2); border-radius: var(--radius-sm); }
+    .activity-batch-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm); color: var(--ink-2); font-size: 11px; }
+    .activity-batch-head strong { color: var(--accent); font-size: 11px; }
+    .activity-batch-steps { display: grid; gap: var(--space-xs); margin-top: var(--space-xs) !important; }
+    .activity-page-context { display: none; gap: var(--space-xs); min-width: 0; padding: var(--space-sm); border: 1px solid var(--border-2); border-radius: var(--radius); background: var(--surface); }
+    .activity-context-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm); min-width: 0; }
+    .activity-context-head strong { min-width: 0; color: var(--ink); font-size: 11px; overflow-wrap: anywhere; }
+    .activity-context-head span, .activity-context-label, .activity-context-count { color: var(--ink-3); font-size: 10px; }
+    .activity-context-label { margin-top: var(--space-xs); }
+    .activity-context-outcome { color: var(--ink-2); font-size: 10.5px; line-height: 1.45; overflow-wrap: anywhere; }
+    .activity-context-outcome[data-status="sent"] { color: var(--ok); }
+    .activity-context-outcome[data-status="partially_sent"], .activity-context-outcome[data-status="unknown"] { color: var(--warn); }
+    .activity-context-outcome[data-status="not_sent"] { color: var(--err); }
+    @media (min-width: 500px) {
+      .activity-visit-layout { grid-template-columns: minmax(0, 1.1fr) minmax(150px, 0.9fr); }
+      .activity-visit-head { display: none; }
+      .activity-page-context { display: grid; }
+      .activity-page-context { position: sticky; top: 0; }
+    }
+    .activity-warning { padding: var(--space-sm); margin-bottom: var(--space-sm); color: var(--warn); background: rgba(251,191,36,0.08); border-radius: var(--radius-sm); font-size: 11.5px; }
+    .activity-empty { min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-xs); padding: var(--space-lg); text-align: center; }
+    .activity-empty strong { color: var(--ink-2); font-size: 12px; font-weight: 600; }
+    .activity-empty span, .activity-state { color: var(--ink-2); font-size: 11.5px; }
+    .activity-error { color: var(--err); padding: var(--space-md); font-size: 11.5px; }
+    .activity-state { display: grid; gap: var(--space-sm); padding: var(--space-md); }
+    .activity-skeleton { display: block; width: 88%; height: 10px; border-radius: var(--radius-sm); background: var(--surface-2); }
+    .activity-skeleton.short { width: 56%; }
+    .activity-loading { margin-top: var(--space-xs); }
+
     .list {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -470,6 +538,7 @@
     <nav class="tabbar" role="tablist" aria-label="Sections">
       <button type="button" role="tab" data-tab="tabs" aria-selected="true">Tabs<span class="count" id="tabsCount"></span></button>
       <button type="button" role="tab" data-tab="agents" aria-selected="false" tabindex="-1">Agents<span class="count" id="agentsCount"></span></button>
+      <button type="button" role="tab" data-tab="activity" aria-selected="false" tabindex="-1" id="activityTab" aria-controls="activityPanel">Activity<span class="count" id="activityCount"></span></button>
       <button type="button" role="tab" data-tab="settings" aria-selected="false" tabindex="-1" id="settingsTab">Settings</button>
     </nav>
 
@@ -485,6 +554,22 @@
       <section class="panel" role="tabpanel" data-panel="agents" aria-label="Connected agents" hidden>
         <div class="panel-bar"><span class="panel-title">Connected Agents</span></div>
         <div class="list grow" id="agents"><div class="empty">none</div></div>
+      </section>
+
+      <section class="panel activity-panel" id="activityPanel" role="tabpanel" data-panel="activity" aria-labelledby="activityTab" lang="en" dir="ltr" hidden>
+        <div class="panel-bar">
+          <span class="panel-title">Agent activity</span>
+          <div class="activity-toolbar">
+            <label class="activity-name-toggle" for="activityNames">
+              <span>Element details</span>
+              <input type="checkbox" class="switch" id="activityNames" role="switch" aria-label="Show element details">
+            </label>
+            <button type="button" class="btn-mini activity-clear" id="activityClear" disabled>Clear</button>
+          </div>
+        </div>
+        <div class="list grow activity-list" id="activityList" aria-label="Agent activity log" aria-busy="true">
+          <div class="activity-state" role="status" aria-live="polite"><span class="activity-skeleton"></span><span class="activity-skeleton short"></span><span class="activity-loading">Loading activity…</span></div>
+        </div>
       </section>
 
       <section class="panel" role="tabpanel" data-panel="settings" aria-label="Settings" hidden>

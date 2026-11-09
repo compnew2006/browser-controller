@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { OBSERVABLE_TOOLS, withObserve } from '../bridge-frames.js';
 import { ERROR_CODES, formatError } from '../core/error-codes.js';
 import { createLogger } from '../core/logger.js';
+import type { ActivityContextFrame } from '../protocol/frames.js';
 
 const log = createLogger('browser-controller-daemon');
 
@@ -15,7 +16,7 @@ const INTERNAL_VAULT_TOOL_NAMES = new Set([
 
 interface VaultAwareBridge {
   vaultTransport: { selectBrowser(sessionId: string, browser: unknown): unknown };
-  callTool(tool: string, params: Record<string, unknown>, sessionId: string, signal: AbortSignal, agentName: string): Promise<unknown>;
+  callTool(tool: string, params: Record<string, unknown>, sessionId: string, signal: AbortSignal, agentName: string, activityContext?: ActivityContextFrame): Promise<unknown>;
 }
 
 /**
@@ -47,6 +48,8 @@ interface RouteOptions {
   signal: AbortSignal;
   /** Ask the extension for `siteContext` (navigate, snapshot, and click while the site map is on). Set by the daemon, never by an agent. */
   observe?: boolean;
+  /** Per-action id and batch grouping metadata from the trusted MCP client. */
+  activityContext?: ActivityContextFrame;
 }
 
 function digestOf(value: unknown): string {
@@ -107,7 +110,7 @@ export async function routeVaultAwareCall(options: RouteOptions): Promise<Routed
     } else {
       if (tool === 'browser_fill' && Array.isArray(params.fields)) await assertVaultPathsNotUploaded(params.fields);
       await vaultService.assertToolAllowed(sessionId, tool, params);
-      result = await bridge.callTool(tool, withObserve(tool, params, options.observe === true), sessionId, signal, agentName);
+      result = await bridge.callTool(tool, withObserve(tool, params, options.observe === true), sessionId, signal, agentName, options.activityContext);
     }
     // siteContext leaves the result before sanitizing and before any agent sees it.
     const split = splitSiteContext(tool, result);

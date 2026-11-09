@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { ipcAnswers } from './ipc-probe.js';
 import { pidAlive, reclaimLock, type LockIdentity, type ReclaimHooks } from './lock-file.js';
 import { ERROR_CODES, formatError } from './core/error-codes.js';
+import type { ToolActivityFrame } from './protocol/frames.js';
 
 /**
  * App version, single-sourced from package.json (extension/manifest.json and
@@ -322,7 +323,7 @@ export interface MemoryAdminResult {
 
 export type IpcClientMessage =
   | { kind: 'hello'; token: string; agentName?: string; protocolVersion?: number; capabilities?: string[] }
-  | { kind: 'call'; id: string; tool: string; params: Record<string, unknown>; cid?: string }
+  | { kind: 'call'; id: string; tool: string; params: Record<string, unknown>; cid?: string; activityContext?: ToolActivityFrame }
   | MemoryAdminRequest
   | { kind: 'pong' }; // heartbeat reply — daemon evicts a silent client after 3 missed pings
 

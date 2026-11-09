@@ -70,7 +70,8 @@ const dialogListeners: Array<(source: { tabId: number }, method: string, params?
   },
 };
 
-const { handleMessage, dispatchedTools } = await import('../extension/dispatch/router.js');
+const { handleMessage, dispatch, dispatchedTools } = await import('../extension/dispatch/router.js');
+const { getActivityLog } = await import('../extension/lib/activity-log.js');
 const { tabLocks, tabMutex, tabControl, wedgedTabs } = await import('../extension/lib/state.js');
 const { allTools } = await import('../mcp-server/src/tools/index.js');
 const overlay = await import('../extension/lib/overlay.js');
@@ -86,12 +87,112 @@ async function flush(ms = 60): Promise<void> {
 }
 
 describe("extension router (handleMessage)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     sent.length = 0;
     tabStore.clear();
     tabLocks.unlockAll();
     (globalThis as any).chrome.scripting.executeScript = async () => [{ result: null }];
     tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
+    await getActivityLog().clear();
+  });
+
+  it('records a real public action dispatch with batch metadata and applies only a matching finish marker', async () => {
+    const eventId = '00000000-0000-4000-8000-000000000011';
+    const batchRunId = '00000000-0000-4000-8000-000000000012';
+    await expect(dispatch('browser_click', { tabId: 3 }, 's-router', null, new AbortController().signal, false, {
+      eventId, batchRunId, batchStepIndex: 1,
+    })).rejects.toThrow(/target/i);
+    let state = await getActivityLog().get();
+    await vi.waitFor(async () => {
+      state = await getActivityLog().get();
+      expect(state.events[0]?.executionStatus).toBe('failed');
+    });
+    expect(state.events).toHaveLength(1);
+    expect(state.events[0]).toMatchObject({
+      eventId, tabId: 3, host: 'example.com', tool: 'browser_click', operation: 'click',
+      batchRunId, batchStepIndex: 1, executionStatus: 'failed', dispatchStatus: 'not_sent',
+      inputCounts: { confirmed: 0, uncertain: 0, required: 1 },
+    });
+    expect(JSON.stringify(state)).not.toContain('params');
+
+    await handleMessage({
+      type: 'activityBatchFinished', schemaVersion: 1, batchRunId,
+      endedAt: '2026-11-09T10:00:00.000Z', executionStatus: 'failed',
+    });
+    await vi.waitFor(async () => {
+      state = await getActivityLog().get();
+      expect(state.events[0]?.batchEndedAt).toBe('2026-11-09T10:00:00.000Z');
+    });
+    expect(state.events[0]).toMatchObject({ batchEndedAt: '2026-11-09T10:00:00.000Z', batchExecutionStatus: 'failed' });
+    expect(state.incompleteBatchRunIds).not.toContain(batchRunId);
+  });
+
+  it('keeps a delayed session-store write off the action dispatch path', async () => {
+    const storage = (globalThis as any).chrome.storage.session;
+    const originalSet = storage.set;
+    let releaseWrite!: () => void;
+    storage.set = (items: Record<string, unknown>) => new Promise<void>((resolve, reject) => {
+      releaseWrite = () => { void originalSet(items).then(resolve, reject); };
+    });
+
+    try {
+      const action = dispatch('browser_click', { tabId: 3 }, 's-router', null,
+        new AbortController().signal, false, { eventId: '00000000-0000-4000-8000-000000000041' })
+        .then(() => 'resolved', (error) => `rejected: ${error.message}`);
+      await vi.waitFor(() => expect(releaseWrite).toBeTypeOf('function'));
+      const outcome = await Promise.race([
+        action,
+        new Promise<string>((resolve) => setTimeout(() => resolve('blocked on session storage'), 100)),
+      ]);
+      expect(outcome).not.toBe('blocked on session storage');
+      expect(outcome).toMatch(/rejected:.*target/i);
+    } finally {
+      releaseWrite?.();
+      storage.set = originalSet;
+    }
+    await getActivityLog().get();
+  });
+
+  it('records acknowledged multi-click counts without persisting locator metadata in activity', async () => {
+    const eventId = '00000000-0000-4000-8000-000000000021';
+    (globalThis as any).chrome.scripting.executeScript = async () => [{ result: {
+      success: true, x: 10, y: 20, visible: true, pressSeen: true, activityLabel: 'موافق', activityElementId: 'confirm',
+    } }];
+    const result = await dispatch('browser_click', { tabId: 3, target: '#confirm', count: 2 }, 's-router', null,
+      new AbortController().signal, false, { eventId });
+    expect(result).toMatchObject({ success: true });
+    expect(result.text).toContain('clicked #confirm');
+    expect(result).not.toHaveProperty('activityElementId');
+    const state = await getActivityLog().get();
+    expect(state.events).toHaveLength(1);
+    expect(state.events[0]).toMatchObject({
+      eventId, executionStatus: 'completed', dispatchStatus: 'sent',
+      inputCounts: { confirmed: 2, uncertain: 0, required: 2 },
+    });
+    expect(state.events[0].targetLabel).toBe('موافق');
+    expect(state.events[0].targetElementId).toBe('confirm');
+    expect(state.events[0].targetLabel).not.toContain('#confirm');
+    expect(state.events[0]).not.toHaveProperty('target');
+    expect(state.events[0]).not.toHaveProperty('params');
+  });
+
+  it('does not count a browser_fill checkbox that already has the requested state as dispatched input', async () => {
+    const eventId = '00000000-0000-4000-8000-000000000031';
+    (globalThis as any).chrome.scripting.executeScript = async (request: Record<string, any>) => {
+      if (request.func?.name === 'pageFieldKind') return [{ result: { kind: 'checkbox', checked: true } }];
+      if (request.func?.name === 'pageRelease') return [{ result: {} }];
+      return [{ result: null }];
+    };
+    await dispatch('browser_fill', {
+      tabId: 3, fields: [{ target: '#already-checked', value: true }],
+    }, 's-router', null, new AbortController().signal, false, { eventId });
+
+    const state = await getActivityLog().get();
+    expect(state.events).toHaveLength(1);
+    expect(state.events[0]).toMatchObject({
+      eventId, tool: 'browser_fill', operation: 'fill', executionStatus: 'completed',
+      dispatchStatus: 'not_sent', inputCounts: { confirmed: 0, uncertain: 0, required: 1 },
+    });
   });
 
   it("answers an unknown tool with a wire-level error", async () => {

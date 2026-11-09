@@ -42,6 +42,11 @@ import {
   removeProtectedTab,
 } from "./lib/vault-actions.js";
 import { dropCard, takeCardDecision } from "./lib/vault-card.js";
+import { getActivityLog } from "./lib/activity-log.js";
+
+function isPopupSender(sender) {
+  return sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL("popup/popup.html");
+}
 
 /** Tells the daemon an approval card went away with its document: its request is cancelled. */
 function cancelCardRequest(requestId) {
@@ -99,6 +104,27 @@ export function registerEventListeners() {
         respond(buildStatusPayload(undefined, tabs));
       });
       return true; // async response
+    }
+    if (msg.type === "getActionActivity") {
+      if (!isPopupSender(sender)) return false;
+      getActivityLog().getStatus().then(respond).catch(() => respond({ success: false, storageError: true }));
+      return true;
+    }
+    if (msg.type === "setActionActivityLabelsVisible") {
+      if (!isPopupSender(sender) || typeof msg.visible !== "boolean") return false;
+      getActivityLog().setElementNamesVisible(msg.visible)
+        .then(() => getActivityLog().getStatus())
+        .then(respond)
+        .catch(() => respond({ success: false, storageError: true }));
+      return true;
+    }
+    if (msg.type === "clearActionActivity") {
+      if (!isPopupSender(sender)) return false;
+      getActivityLog().clear()
+        .then(() => getActivityLog().getStatus())
+        .then(respond)
+        .catch(() => respond({ success: false, storageError: true }));
+      return true;
     }
     if (msg.type === "setPort") {
       respond(applyPort(msg.port));
@@ -198,6 +224,7 @@ export function registerEventListeners() {
   // NOTE: no hideLockShield here — the tab/page is already gone, so a shield
   // inject would just throw (swallowed) and there is nothing to remove.
   chrome.tabs.onRemoved.addListener(async (tabId) => {
+    void getActivityLog().closeVisit(tabId).catch(() => {});
     dropTabState(tabId);
     await releaseVaultTabState(tabId);
     persistSessionState();
@@ -207,6 +234,10 @@ export function registerEventListeners() {
   // the old one's lock and control, as a frozen tab replaced by browser_navigate does.
   chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
     followReplacedTab(removedTabId, addedTabId);
+    void getActivityLog().closeVisit(removedTabId).catch(() => {});
+    chrome.tabs.get(addedTabId).then((tab) => {
+      if (typeof tab.url === 'string') void getActivityLog().rotateVisit(addedTabId, tab.url).catch(() => {});
+    }).catch(() => {});
     releaseVaultTabState(removedTabId);
   });
 
@@ -223,8 +254,18 @@ export function registerEventListeners() {
     }
   });
 
-  chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, documentId }) => {
+  chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, documentId, url }) => {
     if (frameId !== 0 || typeof documentId !== "string") return;
+    const committedUrl = typeof url === 'string' ? url : null;
+    if (committedUrl && isPrivateVaultUrl(committedUrl)) {
+      void getActivityLog().closeVisit(tabId).catch(() => {});
+    } else if (committedUrl) {
+      void getActivityLog().rotateVisit(tabId, committedUrl).catch(() => {});
+    } else {
+      chrome.tabs.get(tabId).then((tab) => {
+        if (typeof tab.url === 'string') void getActivityLog().rotateVisit(tabId, tab.url).catch(() => {});
+      }).catch(() => {});
+    }
     // The card's document is gone: its request is cancelled, and the agent's input is free again.
     closeApprovalCard(tabId, { keepDocumentId: documentId, removeFromPage: false }).then(cancelCardRequest);
     markDocumentCurrent(tabId, documentId).then(async () => {

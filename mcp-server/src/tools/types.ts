@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { explainNoWindow, isNoWindow } from "./browser-selection.js";
 import { ERROR_CODES, formatError, isCodedMessage } from "../core/error-codes.js";
 
@@ -8,8 +9,60 @@ import { ERROR_CODES, formatError, isCodedMessage } from "../core/error-codes.js
  * client's DaemonClient satisfy this, so the same tool definitions work in
  * either context.
  */
+// Tool metadata stays in the tools/domain layer. The wire layer declares its
+// matching frame shapes separately so tools never depend on transport code.
+export interface ActivityContext {
+  eventId: string;
+  batchRunId?: string;
+  batchStepIndex?: number;
+}
+
+export interface BatchFinished {
+  kind: "batch-finished";
+  schemaVersion: 1;
+  batchRunId: string;
+  endedAt: string;
+  executionStatus: "completed" | "failed" | "aborted" | "unknown";
+}
+
+export type ToolActivity = ActivityContext | BatchFinished;
+
+// An enumerable symbol survives the tool-layer object spreads but can never be
+// supplied by JSON or leak to extension params: forwardHandler removes it.
+export const TOOL_ACTIVITY_CONTEXT = Symbol('browser-tool-activity-context');
+
+export function withActivityContext(params: Record<string, unknown>, activity: ActivityContext): Record<string, unknown> {
+  const annotated = { ...params } as Record<PropertyKey, unknown>;
+  Object.defineProperty(annotated, TOOL_ACTIVITY_CONTEXT, { value: activity, enumerable: true });
+  return annotated as Record<string, unknown>;
+}
+
 export interface ToolHost {
-  callTool(tool: string, params: Record<string, unknown>): Promise<unknown>;
+  callTool(tool: string, params: Record<string, unknown>, activity?: ToolActivity): Promise<unknown>;
+}
+
+const ACTIVITY_OPERATIONS: Readonly<Record<string, string>> = Object.freeze({
+  browser_click: 'click',
+  browser_type: 'type',
+  browser_fill: 'fill',
+  browser_navigate: 'navigate',
+  browser_snapshot: 'snapshot',
+  browser_scroll: 'scroll',
+  browser_handle_dialog: 'dialog',
+  browser_evaluate: 'other',
+});
+export const ACTIVITY_TOOL_NAMES = Object.freeze(Object.keys(ACTIVITY_OPERATIONS).sort());
+
+export function activityOperationFor(tool: string): string | undefined {
+  return ACTIVITY_OPERATIONS[tool];
+}
+
+export function createActivityContext(tool: string, batchRunId?: string, batchStepIndex?: number): ActivityContext | undefined {
+  if (!activityOperationFor(tool)) return undefined;
+  return {
+    eventId: randomUUID(),
+    ...(batchRunId && Number.isInteger(batchStepIndex) ? { batchRunId, batchStepIndex } : {}),
+  };
 }
 
 export interface ToolResult {
@@ -229,7 +282,9 @@ export function forwardHandler(name: string) {
     params: Record<string, unknown>,
   ): Promise<ToolResult> => {
     try {
-      return outcomeOf(await host.callTool(name, params));
+      const { [TOOL_ACTIVITY_CONTEXT]: activityContext, ...wireParams } = params as Record<PropertyKey, unknown>;
+      const activity = (activityContext as ActivityContext | undefined) ?? createActivityContext(name);
+      return outcomeOf(await host.callTool(name, wireParams as Record<string, unknown>, activity));
     } catch (err) {
       const payload = payloadOf(err);
       if (payload !== undefined) {

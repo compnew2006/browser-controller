@@ -255,7 +255,7 @@ async function dragBetween(tabId, input, from, to) {
  * disabled or covered: nothing is clicked, the error says why); a point target is
  * clicked as it is. `hover` moves only; `dragTo` drags to a second target.
  */
-export async function handleClick(params, _sessionId, _agentName, signal) {
+export async function handleClick(params, _sessionId, _agentName, signal, activityRecorder) {
   const { tabId, target, button = 'left', count, modifiers = [], hover = false, dragTo } = params;
   const timings = params.timings === true ? {} : null;
   const measure = async (name, fn) => {
@@ -274,7 +274,7 @@ export async function handleClick(params, _sessionId, _agentName, signal) {
   if (hover && dragTo != null) throw new Error('INVALID_ARGUMENT: hover and dragTo cannot be combined');
   await measure('tab_lookup_ms', () => resolveTab(tabId));
   assertInputReady(tabId, signal);
-  const input = inputSession(tabId, await requireSender(tabId, timings), signal);
+  const input = inputSession(tabId, await requireSender(tabId, timings), signal, activityRecorder);
   try {
     if (hover) return withTimings(await measure('interaction_ms', () => hoverTo(tabId, input, target)));
     if (dragTo != null) return withTimings(await measure('interaction_ms', () => dragBetween(tabId, input, target, dragTo)));
@@ -282,6 +282,8 @@ export async function handleClick(params, _sessionId, _agentName, signal) {
     const urlBefore = await tabUrl(tabId);
     const loc = await measure('target_resolution_ms', () => locatePointer(tabId, { target, expect }, 'click', clickCount));
     if (!loc.success) return withTimings(await refused(tabId, loc));
+    if (typeof loc.activityLabel === 'string') activityRecorder?.setTargetLabel?.(loc.activityLabel);
+    if (typeof loc.activityElementId === 'string') activityRecorder?.setTargetElementId?.(loc.activityElementId);
     let after = {};
     // A link whose response is a file is a download, not a navigation: the response says which.
     const main = watchMainFrame(tabId, () => {});
@@ -328,7 +330,7 @@ export async function handleClick(params, _sessionId, _agentName, signal) {
  * several in order (keyCombosOf), `submit` presses Enter last. A step the page never reached
  * (a dialog opened first) is not reported as done.
  */
-export async function handleType(params, _sessionId, _agentName, signal) {
+export async function handleType(params, _sessionId, _agentName, signal, activityRecorder) {
   const { tabId, target, text, key, clear = false, submit = false } = params;
   if (target !== undefined) parseTarget(target);
   if (!text && key == null && !clear && !submit) throw new Error('INVALID_ARGUMENT: browser_type needs text, key, clear or submit');
@@ -336,7 +338,7 @@ export async function handleType(params, _sessionId, _agentName, signal) {
   const expect = expectedFingerprint(params.expectFingerprints);
   await resolveTab(tabId);
   assertInputReady(tabId, signal);
-  const input = inputSession(tabId, await requireSender(tabId), signal);
+  const input = inputSession(tabId, await requireSender(tabId), signal, activityRecorder);
   try {
     const urlBefore = await tabUrl(tabId);
     let loc;
@@ -348,6 +350,7 @@ export async function handleType(params, _sessionId, _agentName, signal) {
       if (loc.error === 'NO_FOCUS') loc = { success: false, error: 'NO_FOCUS: no field has focus: pass target, or click the field first.' };
     }
     if (!loc.success) return refused(tabId, loc);
+    if (typeof loc.activityLabel === 'string') activityRecorder?.setTargetLabel?.(loc.activityLabel);
 
     const where = target === undefined ? 'focused element' : targetLabel(target);
     const chars = text ? [...String(text)].length : 0;

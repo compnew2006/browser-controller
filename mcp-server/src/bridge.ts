@@ -2,11 +2,13 @@ import http from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isIdempotent, toolTimeoutMs } from './tools/index.js';
 import { APP_VERSION } from './daemon-config.js';
+import { ActivityBatchParticipants } from './activity-batch-participants.js';
 import {
   DAEMON_INSTANCE_ID,
   buildExtensionHello,
   HANDSHAKE_TIMEOUT_REASON,
   validateExtensionHelloAck,
+  type ActivityContextFrame,
 } from './protocol/index.js';
 import {
   isDaemonResponsiveOnPort,
@@ -73,11 +75,11 @@ interface BridgeOptions {
   reconnectWait?: { ms: number; windowMs?: number };
 }
 
-
 export class ExtensionBridge {
   private httpServer: http.Server | null = null;
   private wss: WebSocketServer | null = null;
   private conns = new ExtensionConnections();
+  readonly activityBatchParticipants = new ActivityBatchParticipants(this.conns);
   readonly vaultTransport = new VaultBridgeTransport(this.conns);
   private pendingRequests = new Map<string, PendingRequest>();
   private requestId = 0;
@@ -449,10 +451,10 @@ export class ExtensionBridge {
     });
   }
 
-  async callTool(tool: string, params: Record<string, unknown>, sessionId?: string, signal?: AbortSignal, agentName?: string, skipTabs = false): Promise<unknown> {
+  async callTool(tool: string, params: Record<string, unknown>, sessionId?: string, signal?: AbortSignal, agentName?: string, activityContext?: ActivityContextFrame, skipTabs = false): Promise<unknown> {
     if (tool === 'browser_tabs' && !skipTabs) {
       return tabsAcrossBrowsers(this.conns, params, sessionId,
-        (p) => this.callTool(tool, p, sessionId, signal, agentName, true),
+        (p) => this.callTool(tool, p, sessionId, signal, agentName, undefined, true),
         (id, p) => this.sendToolCall(tool, p, 0, sessionId, signal, agentName, undefined, this.conns.connectedById(id)));
     }
     if (!this.isConnected()) {
@@ -471,10 +473,10 @@ export class ExtensionBridge {
       }
     }
 
-    return this.sendToolCall(tool, params, 0, sessionId, signal, agentName);
+    return this.sendToolCall(tool, params, 0, sessionId, signal, agentName, undefined, undefined, activityContext);
   }
 
-  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal, agentName?: string, correlationId: string = currentCorrelationId() ?? newCorrelationId(), targetConnection?: ExtensionConnection): Promise<unknown> {
+  private sendToolCall(tool: string, params: Record<string, unknown>, retryCount: number, sessionId?: string, signal?: AbortSignal, agentName?: string, correlationId: string = currentCorrelationId() ?? newCorrelationId(), targetConnection?: ExtensionConnection, activityContext?: ActivityContextFrame): Promise<unknown> {
     // If the caller already aborted (e.g. client evicted before we even sent),
     // reject immediately rather than firing the action into the void.
     if (signal?.aborted) {
@@ -516,7 +518,7 @@ export class ExtensionBridge {
         this.sendControl('cancel', { id });
         if (canRetry && retryCount < this.maxRetries) {
           callLog.warn(`Timeout on ${tool}, retry ${retryCount + 1}/${this.maxRetries}`);
-          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId, targetConnection).then(resolve, reject);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId, targetConnection, activityContext).then(resolve, reject);
         } else if (!canRetry) {
           reject(new Error(formatError(ERROR_CODES.TIMEOUT, `${tool} did not answer in ${timeoutMs} ms; it may still have run — check the page (browser_snapshot) before repeating it`)));
         } else {
@@ -552,13 +554,13 @@ export class ExtensionBridge {
         // injected into params — the daemon stays a pure {tool, params} multiplexer.
         // The extension uses sessionId for tab ownership; agentName is a display
         // label and can be shared by multiple concurrent sessions.
-        conn.ws.send(JSON.stringify({ id, tool, params, sessionId, agentName }));
+        this.activityBatchParticipants.sendToolCall(conn, id, tool, params, sessionId, agentName, activityContext);
       } catch (err) {
         clearTimeout(timeout);
         if (signal) signal.removeEventListener('abort', onAbort);
         this.pendingRequests.delete(id);
         if (canRetry && retryCount < this.maxRetries && this.isConnected()) {
-          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId, targetConnection).then(resolve, reject);
+          this.sendToolCall(tool, params, retryCount + 1, sessionId, signal, agentName, correlationId, targetConnection, activityContext).then(resolve, reject);
         } else {
           reject(err instanceof Error ? err : new Error('Send failed'));
         }
@@ -589,6 +591,7 @@ export class ExtensionBridge {
       try { conn.ws.close(); } catch { /* already closed */ }
     }
     this.conns.clear();
+    this.activityBatchParticipants.clear();
     this.wss?.close();
     this.wss = null;
     this.httpServer?.close();

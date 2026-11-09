@@ -140,7 +140,7 @@ function edgeOf(dx, dy) {
  * centre; the wheel scrolls whatever scroll container is under that point. Nothing moving is
  * NOT_SCROLLABLE. The wheel needs the debugger: DEBUGGER_UNAVAILABLE, never a synthetic scroll.
  */
-export async function handleScroll(params) {
+export async function handleScroll(params, _sessionId, _agentName, _signal, activityRecorder) {
   const { tabId, target } = params;
   const wheel = Number.isFinite(params.dx) || Number.isFinite(params.dy);
   if (!wheel && target == null) throw new Error('INVALID_ARGUMENT: give target (to bring it into view) or dx/dy (to scroll)');
@@ -168,7 +168,13 @@ export async function handleScroll(params) {
   try {
     // A background tab holds the wheel until it draws a frame: keep frames coming until the scroll settles.
     after = await withFrames(tabId, send, async () => {
-      await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: aim.x, y: aim.y, deltaX: dx, deltaY: dy });
+      try {
+        await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: aim.x, y: aim.y, deltaX: dx, deltaY: dy });
+        activityRecorder?.observe?.('Input.dispatchMouseEvent', { type: 'mouseWheel' }, 'sent');
+      } catch (error) {
+        activityRecorder?.observe?.('Input.dispatchMouseEvent', { type: 'mouseWheel' }, 'unknown');
+        throw error;
+      }
       return settleScroll(tabId, dx, dy, aim.room ? before : null);
     });
   } finally {

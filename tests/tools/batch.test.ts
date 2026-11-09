@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { toolMap } from '../../mcp-server/src/tools/index.js';
 import { BATCH_BUDGET_MS } from '../../mcp-server/src/tools/batch-limits.js';
-import type { ToolHost } from '../../mcp-server/src/tools/types.js';
+import type { ActivityContext, BatchFinished, ToolHost } from '../../mcp-server/src/tools/types.js';
 import { withoutStabilityProbe, isStabilityProbe } from '../helpers/stability-probe.js';
 
 const batch = toolMap.get('browser_batch')!;
@@ -9,14 +9,19 @@ const batch = toolMap.get('browser_batch')!;
 /** Answers every call with success; `failOn` replies with a CODE: message failure (as the bridge rejects it). */
 function fakeHost(failOn?: string, failText = 'ELEMENT_HIDDEN: #a is hidden') {
   const calls: Array<{ tool: string; params: Record<string, unknown> }> = [];
+  const activityFrames: Array<{ tool: string; activity: ActivityContext | BatchFinished }> = [];
   const host: ToolHost = {
-    async callTool(tool, params) {
+    async callTool(tool, params, activity) {
+      if (activity) {
+        activityFrames.push({ tool, activity });
+        if ('kind' in activity && activity.kind === 'batch-finished') return { success: true };
+      }
       calls.push({ tool, params });
       if (tool === failOn) throw Object.assign(new Error(failText), { result: { success: false, error: failText } });
       return { success: true, text: `${tool} done` };
     },
   };
-  return { host, calls };
+  return { host, calls, activityFrames };
 }
 
 /** The calls a batch made, without the page-stability probe that follows an action. */
@@ -28,6 +33,26 @@ const textOf = (res: { content: Array<{ type: string; text?: string }> }) =>
   res.content.map((c) => (c.type === 'text' ? c.text : '')).join('\n');
 
 describe('browser_batch', () => {
+  it('attaches stable IDs only to actual page-action children and finishes each run', async () => {
+    const { host, activityFrames } = fakeHost();
+    await run(host, { tabId: 9, actions: [
+      { tool: 'browser_click', params: { target: '#first' } },
+      { tool: 'browser_text', params: { target: '#read-only' } },
+      { tool: 'browser_click', params: { target: '#second' } },
+    ] });
+    await run(host, { tabId: 9, actions: [{ tool: 'browser_click', params: { target: '#third' } }] });
+
+    const children = activityFrames.filter((item) => 'eventId' in item.activity);
+    const markers = activityFrames.filter((item) => 'kind' in item.activity && item.activity.kind === 'batch-finished');
+    expect(children).toHaveLength(3);
+    expect(children.map(({ activity }) => 'batchStepIndex' in activity ? activity.batchStepIndex : null)).toEqual([1, 3, 1]);
+    expect(new Set(children.map(({ activity }) => 'batchRunId' in activity ? activity.batchRunId : '')).size).toBe(2);
+    expect(new Set(children.map(({ activity }) => 'eventId' in activity ? activity.eventId : '')).size).toBe(3);
+    expect(markers).toHaveLength(2);
+    expect(markers.every(({ tool }) => tool === 'browser_batch')).toBe(true);
+    expect(activityFrames.every(({ activity }) => Object.keys(activity).every((key) => ['kind', 'schemaVersion', 'eventId', 'batchRunId', 'batchStepIndex', 'endedAt', 'executionStatus'].includes(key)))).toBe(true);
+  });
+
   describe('explicit freeze preflight', () => {
     const action = [{ tool: 'browser_click', params: { target: '#freeze' } }];
 
@@ -482,7 +507,8 @@ describe('browser_batch', () => {
     const calls: Array<{ tool: string; params: Record<string, unknown> }> = [];
     let limited = 1;
     const host: ToolHost = {
-      async callTool(tool, params) {
+      async callTool(tool, params, activity) {
+        if (activity && 'kind' in activity && activity.kind === 'batch-finished') return { success: true };
         calls.push({ tool, params });
         if (tool === 'browser_click' && limited-- > 0) throw new Error('Rate limit exceeded (120 calls/min). Retry in ~0s.');
         return { success: true, text: 'ok' };
@@ -504,7 +530,8 @@ describe('browser_batch', () => {
     try {
       const calls: Array<{ tool: string; params: Record<string, unknown> }> = [];
       const host: ToolHost = {
-        async callTool(tool, params) {
+        async callTool(tool, params, activity) {
+          if (activity && 'kind' in activity && activity.kind === 'batch-finished') return { success: true };
           calls.push({ tool, params });
           // The stability probe answers at once: the step, not the wait that follows it, is slow here.
           if (isStabilityProbe({ tool, params })) return { success: true, text: 'ok' };
@@ -541,7 +568,8 @@ describe('browser_batch', () => {
     vi.useFakeTimers();
     try {
       const host: ToolHost = {
-        async callTool() {
+        async callTool(_tool, _params, activity) {
+          if (activity && 'kind' in activity && activity.kind === 'batch-finished') return { success: true };
           await new Promise((resolve) => setTimeout(resolve, 60_000));
           return { success: true, text: 'done' };
         },
@@ -597,7 +625,8 @@ describe('browser_batch', () => {
   it('does not sleep out a rate limit that would pass the batch budget', async () => {
     const calls: string[] = [];
     const host: ToolHost = {
-      async callTool(tool) {
+      async callTool(tool, _params, activity) {
+        if (activity && 'kind' in activity && activity.kind === 'batch-finished') return { success: true };
         calls.push(tool);
         throw new Error('Rate limit exceeded (120 calls/min). Retry in ~60s.');
       },

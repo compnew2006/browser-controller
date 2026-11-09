@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import net from 'node:net';
 import { buildIpcHello } from '../mcp-server/src/protocol/index.js';
+import { isIpcClientMessage } from '../mcp-server/src/ipc-frame-validation.js';
 import {
   connectFakeExtension, connectIpcClient, mkIsolatedStateDir, rmStateDir,
   startIsolatedDaemon, stopIsolatedDaemon,
@@ -34,6 +35,25 @@ function closed(socket: IpcClient['socket']): Promise<void> {
 }
 
 describe('daemon validates IPC request lifecycle', () => {
+  it('accepts bounded activity metadata and rejects malformed or extra fields', () => {
+    const actionContext = {
+      eventId: '00000000-0000-4000-8000-000000000001',
+      batchRunId: '00000000-0000-4000-8000-000000000002',
+      batchStepIndex: 1,
+    };
+    const finished = {
+      kind: 'batch-finished', schemaVersion: 1,
+      batchRunId: actionContext.batchRunId,
+      endedAt: '2026-11-09T10:00:00.000Z', executionStatus: 'completed',
+    };
+    const base = { kind: 'call', id: 'activity', tool: 'browser_click', params: { tabId: 1 } };
+
+    expect(isIpcClientMessage({ ...base, activityContext: actionContext })).toBe(true);
+    expect(isIpcClientMessage({ ...base, tool: 'browser_batch', params: {}, activityContext: finished })).toBe(true);
+    expect(isIpcClientMessage({ ...base, activityContext: { ...actionContext, rawParams: { text: 'secret' } } })).toBe(false);
+    expect(isIpcClientMessage({ ...base, activityContext: { eventId: actionContext.eventId, batchStepIndex: 1 } })).toBe(false);
+  });
+
   it('processes a call sent in the same packet as the authenticated hello', async () => {
     extension = await connectFakeExtension(daemon, 'pipeline-fixture');
     const socket = net.createConnection(daemon.sockPath);

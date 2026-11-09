@@ -1,0 +1,101 @@
+{
+  "feature": "F10 chrome-action-activity",
+  "generated": "2026-11-09",
+  "base_revision": "7b8c7d3e8816229d90b9fff46c867523e002cd0e",
+  "working_tree": "Local implementation and checks complete; changes are uncommitted and formal acceptance is pending.",
+  "authorization_ref": "approvals/009-chrome-action-activity.md",
+  "mode": "EVOLVE",
+  "risk_tier": "CONTROLLED",
+  "ac_status": {
+    "AC-1": "MET LOCALLY: unit tests cover source-visit creation, rotation, closure, and SPA-preserving state. A real MCP client navigated the enrolled browser to the public Selenium clicks page; live popup capture remains unverified.",
+    "AC-2": "MET LOCALLY: batch and bridge tests cover action metadata, grouping, deduplication, and participant-scoped completion. The real MCP client ran three batches requesting four clicks; the loaded popup did not get visually inspected.",
+    "AC-3": "MET LOCALLY: tests cover confirmed, partial, unknown, and not-sent input status/counts and the honest dispatch copy; real extension dispatch was not exercised.",
+    "AC-4": "MET LOCALLY: storage and renderer tests plus the popup fixture verify that hiding element details erases labels and ids, protects queued writes, and retains click counts.",
+    "AC-5": "MET LOCALLY: capped history, clear, and session-store behavior have unit coverage; real Chrome worker restart, tab-close, and browser-session boundaries remain unverified.",
+    "AC-6": "MET LOCALLY: bridge tests verify matching-session/run participant delivery and reconnect isolation; full daemon/profile-switch flow remains unverified.",
+    "AC-7": "MET LOCALLY: English LTR, keyboard toggle, loading/empty/error states were covered by renderer tests and the earlier mocked-browser check. The latest CSS/renderer was visually checked at 320px, 380px, and 760px: stacked layout at narrow widths and timeline beside the page card at wide width. The loaded Chrome popup remains unverified.",
+    "AC-8": "MET LOCALLY: click rows show the resolved DOM id or 'not available' and confirmed/requested count; hiding details erases ids and labels while retaining counts. The real page run requested 4 clicks on #bubblesTo, but its popup rows were not inspected."
+  },
+  "index": {
+    "codebase_memory": {
+      "root": "/Users/noiemany/.zcode/workspace/default/real-browser-mcp",
+      "status": "ready",
+      "indexed_at": "2026-11-09T07:54:23Z",
+      "nodes": 10383,
+      "edges": 38637,
+      "freshness": "Fast re-index completed and index_status reports generation 2026-11-09T07:54:23Z with 10,383 nodes and 38,637 edges. Exact-path coverage returned no recorded issue for the inspected source/spec/test paths; this remains a best-effort signal only. tests/extension-router.test.ts retains a parse-partial warning at line 24 and was read directly."
+    },
+    "graphify": {
+      "status": "Local AST graph refreshed with --no-cluster at 2026-11-09 10:02:04 local time: 6,770 nodes and 16,511 edges. graphify-out/GRAPH_REPORT.md is older than the checkout because document semantics were not refreshed; no external semantic refresh was authorized."
+    }
+  },
+  "checks": [
+    {
+      "command": "./node_modules/.bin/vitest run tests/input-aim.test.ts tests/extension-router.test.ts tests/extension-activity-log.test.ts tests/popup-activity.test.ts tests/trusted-input.test.ts tests/architecture-maintenance.test.ts",
+      "result": "passed: 6 files, 92 tests; trusted-input.js is 600 lines."
+    },
+    {
+      "command": "npm run test:coverage",
+      "result": "initial attempt failed one architecture-maintenance assertion because trusted-input.js was 601 lines; after consolidating the resolved-id value without changing behavior, the rerun passed all 194 files and 2,892 tests. Coverage: 79.57% statements, 76.46% branches, 82.75% functions, 83.2% lines."
+    },
+    {
+      "command": "npm run lint",
+      "result": "passed."
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "passed."
+    },
+    {
+      "command": "npm run build",
+      "result": "passed."
+    },
+    {
+      "command": "npm run context:lint",
+      "result": "passed; score 100/100."
+    },
+    {
+      "command": "npm run context:measure",
+      "result": "passed; 2,554 tokens."
+    },
+    {
+      "command": "npm run arch:check",
+      "result": "passed; 9 tests."
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed after final documentation/evidence updates."
+    },
+    {
+      "command": "npm run security:audit",
+      "result": "not run: it invokes external npm audit, which has not been authorized."
+    }
+  ],
+  "playwright": {
+    "url": "http://127.0.0.1:4287/extension/popup/activity-preview.html",
+    "context": "Playwright MCP, temporary local preview using the actual activity renderer and popup CSS with mocked event data; preview file and server removed after inspection.",
+    "result": "At 320px, document and body widths both matched the viewport; the page host appeared once and the list stacked without horizontal overflow. At 380px it remained stacked; at 760px numbered tool rows appeared beside the host/latest-outcome card. The sample showed browser_navigate, browser_snapshot, and three batch groups with the same DOM id and counts 2, 1, and 1. Console reported zero errors after a data favicon was supplied. Earlier mocked-browser checks verified the privacy switch, keyboard Space, loading/empty/error states, and local erasure of hidden labels and ids. No loaded Chrome popup was inspected."
+  },
+  "real_mcp": {
+    "client": "Project browser-controller MCP stdio server connected to the already-running local daemon and enrolled Chrome extension; client session used isolated access.",
+    "page": "https://www.selenium.dev/selenium/web/clicks.html",
+    "sequence": [
+      "browser_navigate opened the public Selenium clicks page in a new tab.",
+      "browser_wait confirmed the target URL.",
+      "browser_snapshot found #bubblesTo (label: I bubble).",
+      "Three browser_batch calls clicked #bubblesTo with requested counts 2, 1, and 1; each call returned success.",
+      "A follow-up browser_snapshot found the target still present."
+    ],
+    "result": "Four click requests were sent in three real MCP batches. This verifies the live tool path on a public page, not that the extension Activity popup persisted or displayed the rows.",
+    "runtime_limitation": "The connected extension returned INVALID_ARGUMENT for the profiles action, which current source supports; do not restart the shared daemon or reload the extension without authorization. The Mac screen was reported locked, so the popup could not be inspected."
+  },
+  "open_gates": [
+    "Inspect the loaded extension popup after the Mac is unlocked and a compatible extension runtime is available",
+    "Real Chrome verification of worker restart, tab closure, and session boundaries",
+    "Independent CONTROLLED review",
+    "CI and final Owner formal acceptance",
+    "npm security:audit was not run because it contacts an external service without authorization",
+    "GRAPH_REPORT.md remains stale for document-only changes; Codebase Memory has a known parse-partial warning in tests/extension-router.test.ts"
+  ],
+  "token_usage": "UNAVAILABLE"
+}

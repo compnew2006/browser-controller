@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://real-browser-mcp.invalid/contracts/chrome-action-activity.schema.json",
+  "title": "Chrome action activity internal event contract",
+  "description": "Session-only extension activity records. This is an internal contract, not a public MCP tool schema.",
+  "oneOf": [
+    { "$ref": "#/$defs/ActionEvent" },
+    { "$ref": "#/$defs/BatchFinished" }
+  ],
+  "$defs": {
+    "ActivityContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventId"],
+      "properties": {
+        "eventId": { "type": "string", "format": "uuid" },
+        "batchRunId": { "type": "string", "format": "uuid" },
+        "batchStepIndex": { "type": "integer", "minimum": 1, "maximum": 50 }
+      },
+      "allOf": [
+        { "if": { "required": ["batchStepIndex"] }, "then": { "required": ["batchRunId"] } },
+        { "if": { "required": ["batchRunId"] }, "then": { "required": ["batchStepIndex"] } }
+      ]
+    },
+    "ActionEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schemaVersion", "eventId", "tabId", "pageVisitId", "host", "tool", "operation", "startedAt", "executionStatus"],
+      "properties": {
+        "kind": { "const": "action" },
+        "schemaVersion": { "const": 1 },
+        "eventId": { "type": "string", "format": "uuid" },
+        "tabId": { "type": "integer", "minimum": 0 },
+        "pageVisitId": { "type": "string", "format": "uuid" },
+        "host": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^/?#@]+$" },
+        "tool": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^browser_[a-z0-9_]+$" },
+        "operation": { "enum": ["click", "type", "fill", "drag", "navigate", "snapshot", "scroll", "dialog", "other"] },
+        "startedAt": { "type": "string", "format": "date-time", "maxLength": 40 },
+        "endedAt": { "type": "string", "format": "date-time", "maxLength": 40 },
+        "executionStatus": { "enum": ["running", "completed", "failed", "unknown"] },
+        "dispatchStatus": { "enum": ["not_sent", "partially_sent", "sent", "unknown"] },
+        "inputCounts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["confirmed", "uncertain", "required"],
+          "properties": {
+            "confirmed": { "type": "integer", "minimum": 0, "maximum": 50 },
+            "uncertain": { "type": "integer", "minimum": 0, "maximum": 50 },
+            "required": { "type": "integer", "minimum": 1, "maximum": 50 }
+          }
+        },
+        "targetLabel": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "targetElementId": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "siteEffect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "observedAt"],
+          "properties": {
+            "kind": { "enum": ["navigation", "dialog_open", "download_started"] },
+            "observedAt": { "type": "string", "format": "date-time", "maxLength": 40 }
+          }
+        },
+        "batchRunId": { "type": "string", "format": "uuid" },
+        "batchStepIndex": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "batchEndedAt": { "type": "string", "format": "date-time", "maxLength": 40 },
+        "batchExecutionStatus": { "enum": ["completed", "failed", "aborted", "unknown"] }
+      },
+      "allOf": [
+        { "if": { "required": ["dispatchStatus"] }, "then": { "required": ["inputCounts"] } },
+        { "if": { "required": ["batchStepIndex"] }, "then": { "required": ["batchRunId"] } },
+        { "if": { "required": ["batchRunId"] }, "then": { "required": ["batchStepIndex"] } },
+        { "if": { "required": ["batchEndedAt"] }, "then": { "required": ["batchExecutionStatus", "batchRunId"] } },
+        { "if": { "required": ["batchExecutionStatus"] }, "then": { "required": ["batchEndedAt", "batchRunId"] } }
+      ]
+    },
+    "BatchFinished": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schemaVersion", "batchRunId", "endedAt", "executionStatus"],
+      "properties": {
+        "kind": { "const": "batch-finished" },
+        "schemaVersion": { "const": 1 },
+        "batchRunId": { "type": "string", "format": "uuid" },
+        "endedAt": { "type": "string", "format": "date-time", "maxLength": 40 },
+        "executionStatus": { "enum": ["completed", "failed", "aborted", "unknown"] }
+      }
+    },
+    "SessionEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "events", "currentVisits", "historyTruncated", "incompleteBatchRunIds", "includeElementNames"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "events": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/ActionEvent" } },
+        "currentVisits": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tabId", "pageVisitId", "host"],
+            "properties": {
+              "tabId": { "type": "integer", "minimum": 0 },
+              "pageVisitId": { "type": "string", "format": "uuid" },
+              "host": { "type": "string", "minLength": 1, "maxLength": 255, "pattern": "^[^/?#@]+$" }
+            }
+          }
+        },
+        "historyTruncated": { "type": "boolean" },
+        "incompleteBatchRunIds": { "type": "array", "maxItems": 500, "uniqueItems": true, "items": { "type": "string", "format": "uuid" } },
+        "includeElementNames": { "type": "boolean" }
+      }
+    }
+  }
+}

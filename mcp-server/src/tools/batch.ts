@@ -1,7 +1,8 @@
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
-import { tabIdParam, textResult, failureResult, rawResultOf, codedMessageOf } from './types.js';
+import type { ActivityContext, BatchFinished, ToolDefinition, ToolHost, ToolResult } from './types.js';
+import { createActivityContext, tabIdParam, textResult, failureResult, rawResultOf, codedMessageOf, withActivityContext } from './types.js';
 import { prepareToolParams } from './params.js';
 import { BATCH_BUDGET_MS, BATCH_MAX_DELAY_MS, BATCH_MAX_STEPS, BATCH_MAX_OUTPUT_CHARS, NOT_BATCHABLE, NO_DEFAULT_TAB, TAB_OR_ORIGIN } from './batch-limits.js';
 import { noteOwnedTab, sessionGate } from './session-mode.js';
@@ -48,7 +49,7 @@ async function untilDeadline<T>(work: Promise<T>, deadline: number): Promise<T |
  * rejected for its per-session rate limit never ran, so it is safe to wait out
  * the window and resend it, unless the wait would pass the batch deadline.
  */
-async function runStep(def: ToolDefinition, host: ToolHost, params: Record<string, unknown>, deadline: number): Promise<ToolResult> {
+async function runStep(def: ToolDefinition, host: ToolHost, params: Record<string, unknown>, deadline: number, activityContext?: ActivityContext): Promise<ToolResult> {
   if (def.name === 'browser_wait' && typeof params.ms === 'number' && params.target === undefined && params.url === undefined) {
     const requested = params.ms;
     const waited = Math.min(requested, BATCH_MAX_DELAY_MS);
@@ -56,9 +57,10 @@ async function runStep(def: ToolDefinition, host: ToolHost, params: Record<strin
     const note = waited < requested ? ` (delay clamped to ${BATCH_MAX_DELAY_MS} ms, requested ${requested} ms)` : '';
     return textResult(`waited ${waited} ms${note}`);
   }
+  const stepParams = activityContext ? withActivityContext(params, activityContext) : params;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await def.handler(host, params);
+      return await def.handler(host, stepParams);
     } catch (err) {
       const m = RATE_LIMITED.exec(err instanceof Error ? err.message : String(err));
       if (!m || attempt >= MAX_RATE_RETRIES) throw err;
@@ -288,12 +290,29 @@ export const batchTool: ToolDefinition = {
   // The batch's time budget (BATCH_BUDGET_MS). No step runs past it, whatever its own timeout.
   timeoutMs: BATCH_BUDGET_MS,
   async handler(host, params) {
+    const batchRunId = randomUUID();
+    let hasActivity = false;
+    const sendBatchFinished = (executionStatus: BatchFinished['executionStatus']) => {
+      if (!hasActivity) return;
+      const marker: BatchFinished = {
+        kind: 'batch-finished',
+        schemaVersion: 1,
+        batchRunId,
+        endedAt: new Date().toISOString(),
+        executionStatus,
+      };
+      try { void host.callTool('browser_batch', {}, marker).catch(() => {}); } catch { /* activity is best effort */ }
+    };
+    const failEarly = (result: ToolResult) => {
+      sendBatchFinished('failed');
+      return result;
+    };
     const actions = params.actions as Array<{ tool: string; params?: Record<string, unknown> }>;
     const topTabId = params.tabId as number | undefined;
     const maxChars = typeof params.maxChars === 'number' ? params.maxChars : BATCH_MAX_OUTPUT_CHARS;
     const keepGoing = params.onError === 'continue';
     const checkedPreflight = params.preflight === undefined ? undefined : freezePreflightSchema.safeParse(params.preflight);
-    if (checkedPreflight && !checkedPreflight.success) return failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, 'Invalid freeze preflight evidence.'));
+    if (checkedPreflight && !checkedPreflight.success) return failEarly(failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, 'Invalid freeze preflight evidence.')));
     const preflight = checkedPreflight?.data;
     let preflightResult: Record<string, unknown> | undefined;
     if (preflight) {
@@ -301,25 +320,29 @@ export const batchTool: ToolDefinition = {
         || actions.some((step) => step.params?.tabId !== undefined && step.params.tabId !== topTabId)
         || preflight.mergedColumns.some((r) => r.first > r.last)
         || (preflight.evidence === 'unavailable' && preflight.mergedColumns.length > 0);
-      if (invalid) return failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, 'preflight needs one tabId and valid caller-supplied column spans.'));
+      if (invalid) return failEarly(failureResult(formatError(ERROR_CODES.INVALID_ARGUMENT, 'preflight needs one tabId and valid caller-supplied column spans.')));
       const conflict = preflight.mergedColumns.some((r) => r.first <= preflight.frozenColumns && r.last > preflight.frozenColumns);
       const status = conflict ? 'conflict' : (preflight.frozenColumns === 0 || preflight.evidence === 'complete') ? 'no_known_conflict' : 'unknown';
       preflightResult = { kind: preflight.kind, status, source: 'caller_supplied', liveSheetVerified: false };
       if (status !== 'no_known_conflict') {
         const code = conflict ? ERROR_CODES.PREFLIGHT_CONFLICT : ERROR_CODES.PREFLIGHT_UNKNOWN;
-        return { ...failureResult(formatError(code, conflict
+        return failEarly({ ...failureResult(formatError(code, conflict
           ? 'a supplied merged range crosses the freeze boundary; no steps were dispatched.'
           : 'supplied merge evidence is incomplete; no steps were dispatched.')),
-        structuredContent: { success: false, steps: [], preflight: preflightResult } };
+        structuredContent: { success: false, steps: [], preflight: preflightResult } });
       }
     }
     const measure = params.timings === true;
     const batchStarted = measure ? performance.now() : 0;
     const durations: Array<{ tool: string; elapsedMs: number }> = [];
     const finish = (result: ToolResult): ToolResult => {
-      if (!measure && !preflightResult) return result;
-      const structured = result.structuredContent as Record<string, unknown>;
-      if (!measure) return { ...result, structuredContent: { ...structured, preflight: preflightResult } };
+      let finished = result;
+      if (!measure && preflightResult) {
+        const structured = result.structuredContent as Record<string, unknown>;
+        finished = { ...result, structuredContent: { ...structured, preflight: preflightResult } };
+      }
+      if (measure) {
+        const structured = result.structuredContent as Record<string, unknown>;
       const summarize = (values: number[]) => {
         const sorted = values.sort((a, b) => a - b);
         const percentile = (p: number) => sorted.length ? sorted[Math.ceil(p * sorted.length) - 1] : null;
@@ -328,11 +351,14 @@ export const batchTool: ToolDefinition = {
       const byTool = [...new Set(durations.map((entry) => entry.tool))].map((tool) => ({
         tool, ...summarize(durations.filter((entry) => entry.tool === tool).map((entry) => entry.elapsedMs)),
       }));
-      return { ...result, structuredContent: { ...structured, ...(preflightResult ? { preflight: preflightResult } : {}), timings: {
+        finished = { ...finished, structuredContent: { ...structured, ...(preflightResult ? { preflight: preflightResult } : {}), timings: {
         totalMs: performance.now() - batchStarted,
         ...summarize(durations.map((entry) => entry.elapsedMs)),
         byTool,
       } } };
+      }
+      sendBatchFinished(finished.isError ? 'failed' : 'completed');
+      return finished;
     };
     // The default tab: the batch's tabId, or the tab a step without tabId opened.
     let tabId = topTabId;
@@ -373,7 +399,9 @@ export const batchTool: ToolDefinition = {
           if (gate) {
             result = gate;
           } else {
-            const outcome = await untilDeadline(runStep(def, host, parsed, deadline), deadline);
+            const activityContext = createActivityContext(def.name, batchRunId, i + 1);
+            hasActivity ||= activityContext !== undefined;
+            const outcome = await untilDeadline(runStep(def, host, parsed, deadline, activityContext), deadline);
             if (outcome === BUDGET_USED) {
               // A cut write step may have completed in the page: say so, as VAULT_OUTCOME_UNKNOWN does.
               const unknown = def.idempotent === true ? '' : '; outcome unknown, the step may have completed: check the page before retrying';

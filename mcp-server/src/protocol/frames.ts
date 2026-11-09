@@ -11,6 +11,30 @@ import {
   PROTOCOL_VERSION,
 } from './capabilities.js';
 
+export interface ActivityContextFrame {
+  eventId: string;
+  batchRunId?: string;
+  batchStepIndex?: number;
+}
+
+export interface BatchFinishedFrame {
+  kind: 'batch-finished';
+  schemaVersion: 1;
+  batchRunId: string;
+  endedAt: string;
+  executionStatus: 'completed' | 'failed' | 'aborted' | 'unknown';
+}
+
+export type ToolActivityFrame = ActivityContextFrame | BatchFinishedFrame;
+
+export function isBatchFinishedFrame(value: ToolActivityFrame): value is BatchFinishedFrame {
+  return 'kind' in value && value.kind === 'batch-finished';
+}
+
+export function isActivityContextFrame(value: ToolActivityFrame): value is ActivityContextFrame {
+  return !('kind' in value);
+}
+
 /**
  * The frames of the wire: the exact objects the daemon, the thin client and
  * the extension exchange. Every field name, every field order and every
@@ -110,4 +134,14 @@ export function buildExtensionHelloAck(
       capabilities: EXTENSION_PROTOCOL_CAPABILITIES,
     }) }
     : acknowledgement;
+}
+
+export function buildExtensionActivityBatchFinishedFrame(frame: BatchFinishedFrame) {
+  return {
+    type: 'activityBatchFinished' as const,
+    schemaVersion: frame.schemaVersion,
+    batchRunId: frame.batchRunId,
+    endedAt: frame.endedAt,
+    executionStatus: frame.executionStatus,
+  };
 }

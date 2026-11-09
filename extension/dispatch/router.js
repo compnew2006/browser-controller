@@ -27,6 +27,7 @@ import { handleClassifyAction } from '../handlers/action-safety.js';
 import { handleVaultAction, isPrivateVaultTab } from '../lib/vault-actions.js';
 import { buildSiteContext, captureTabUrlBounded } from '../lib/site-context.js';
 import { handleMemoryContext } from '../handlers/memory-context.js';
+import { beginActivity, createInputActivity, finishActivity, finishActivityBatch } from '../lib/activity-log.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -82,12 +83,21 @@ const INTERNAL_ONLY = new Set(['browser_classify_action', 'browser_memory_intern
  */
 export const dispatchedTools = Object.freeze(Object.keys(HANDLERS).filter((name) => !INTERNAL_ONLY.has(name)));
 
-export async function dispatch(tool, params, sessionId, agentName, signal, observe = false) {
+export async function dispatch(tool, params, sessionId, agentName, signal, observe = false, activityContext) {
   const handler = HANDLERS[tool];
   if (!handler) throw new Error(`Unknown tool: ${tool}`);
   const watching = observe === true && OBSERVED_TOOLS.has(tool);
   const urlBefore = watching && typeof params?.tabId === 'number' ? await captureTabUrlBounded(params.tabId) : null;
-  const result = await handler(params, sessionId, agentName, signal);
+  const activity = await beginActivity(tool, params, activityContext);
+  const inputActivity = createInputActivity(tool, params);
+  let result;
+  try {
+    result = await handler(params, sessionId, agentName, signal, inputActivity);
+  } catch (error) {
+    await finishActivity(activity, null, error, inputActivity);
+    throw error;
+  }
+  result = await finishActivity(activity, result, null, inputActivity);
   const observed = watching ? await withSiteContext(tool, params, urlBefore, result) : result;
   return withDialogLine(params?.tabId, withFileChooserLine(params?.tabId, observed));
 }
@@ -316,6 +326,10 @@ export async function handleMessage(msg) {
     await handleVaultMessage(msg);
     return;
   }
+  if (msg.type === 'activityBatchFinished') {
+    finishActivityBatch(msg);
+    return;
+  }
   // Control messages (non-tool) from the daemon. These carry a `type` and no
   // `tool`; handle them here before the tool-dispatch path assumes a tool call.
   if (msg.type === "releaseSession") {
@@ -432,6 +446,7 @@ export async function handleMessage(msg) {
         agentName,
         controller.signal,
         p?.observe === true,
+        msg.activityContext,
       );
       sendToolResponse(id, result);
     } catch (err) {
@@ -474,7 +489,7 @@ export async function handleMessage(msg) {
         try {
           // The shield step above can take a while: check again before the handler sends anything.
           if (controller.signal.aborted) throw cancelledError();
-          const result = await dispatch(tool, p, sessionId, agentName, controller.signal, p?.observe === true);
+          const result = await dispatch(tool, p, sessionId, agentName, controller.signal, p?.observe === true, msg.activityContext);
           sendToolResponse(id, result);
           noteTabSetting(tool, p, sessionId, result);
         } catch (err) {
