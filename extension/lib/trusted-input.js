@@ -167,6 +167,7 @@ function pageLocate(fb, mode, cursor, check, target, expect) {
   const focused = isFocused();
   // Agent cursor (lib/page-dom.js): glide to the point the real input will hit.
   const cursorMs = cursor && box.width > 0 && box.height > 0 && D.cursor ? D.cursor(point.x, point.y, cursor.effect, cursor.count) : 0;
+  const activityLabel = D.activityLabelOf?.(el) || '';
   return {
     success: true,
     x: point.x, y: point.y,
@@ -181,8 +182,7 @@ function pageLocate(fb, mode, cursor, check, target, expect) {
     ...(cursorMs ? { cursorMs } : {}),
     ...(reportVia !== 'ref' ? { via: reportVia } : {}),
     ...(onLabel ? { onLabel: true } : {}),
-    // This label is derived from the resolved element, never copied from the caller's selector.
-    ...(D.nameOf(el).trim() ? { activityLabel: D.nameOf(el).trim().slice(0, 60) } : {}),
+    ...(activityLabel ? { activityLabel } : {}),
     // Retain only the resolved page element's DOM id; never copy the caller's selector.
     ...(activityElementId ? { activityElementId } : {}),
     // A fallback re-resolution says what it actually hit, so a wrong guess is visible.

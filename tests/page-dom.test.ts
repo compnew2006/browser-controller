@@ -307,6 +307,93 @@ describe('snapshot + text', () => {
     expect(D().resolveTarget(parseTarget({ ...target, nth: 1 }))).toMatchObject({ el: second, via: 'role' });
   });
 
+  it('prefers an exact accessible name over another element’s clipped snapshot preview', async () => {
+    const prefix = 'x'.repeat(79);
+    const longName = doc.el('button', { 'aria-label': `${prefix} first` });
+    const exactName = doc.el('button', { 'aria-label': `${prefix}…` });
+    doc.body.append(longName, exactName);
+    await handleSnapshot({ tabId: 1 });
+
+    expect(D().resolveTarget(parseTarget({ role: 'button', name: `${prefix}…`, nth: 0 })))
+      .toMatchObject({ el: exactName, via: 'role' });
+  });
+
+  it('provides control labels without reading contenteditable or generic page text', async () => {
+    const button = doc.el('button', {}, 'موافق');
+    const editable = doc.el('div', { contenteditable: 'true' }, 'private prefilled text');
+    const prose = doc.el('div', {}, 'generic page content');
+    doc.body.append(button, editable, prose);
+    await handleSnapshot({ tabId: 1 });
+
+    expect(D().activityLabelOf(button)).toBe('موافق');
+    expect(D().activityLabelOf(editable)).toBe('');
+    expect(D().activityLabelOf(prose)).toBe('');
+  });
+
+  it('omits editable and hidden text reached through control labels or descendants', async () => {
+    const editor = doc.el('div', { id: 'editor', contenteditable: 'true' }, 'SYNTHETIC_EDITOR_VALUE');
+    editor.isContentEditable = true;
+    const labelledButton = doc.el('button', { 'aria-labelledby': 'editor' });
+    const nestedEditor = doc.el('div', { contenteditable: 'true' }, 'SYNTHETIC_NESTED_VALUE');
+    nestedEditor.isContentEditable = true;
+    const customButton = doc.el('div', { role: 'button' }, 'Submit ', nestedEditor);
+    const hiddenText = doc.el('span', { hidden: 'true' }, 'SYNTHETIC_HIDDEN_VALUE');
+    const visibleButton = doc.el('button', {}, 'Save ', hiddenText);
+    const input = doc.el('input', { type: 'text' });
+    input.value = 'SYNTHETIC_FORM_VALUE';
+    const copiedValueButton = doc.el('button', { 'aria-label': 'SYNTHETIC_FORM_VALUE' });
+    const opacityLabel = doc.el('span', { id: 'opacity-label', style: 'opacity:0' }, 'SYNTHETIC_OPACITY_REFERENCE');
+    const opacityLabelButton = doc.el('button', { 'aria-labelledby': 'opacity-label' }, 'Continue');
+    const opacityText = doc.el('span', { style: 'opacity:0' }, 'SYNTHETIC_OPACITY_DESCENDANT');
+    const opacityButton = doc.el('button', {}, 'Send ', opacityText);
+    const combobox = doc.el('button', { role: 'combobox', 'aria-label': 'Account' }, 'SYNTHETIC_CURRENT_SELECTION');
+    const dynamicCombobox = doc.el('button', { role: 'combobox', 'aria-label': 'Account: SYNTHETIC_CURRENT_SELECTION' }, 'SYNTHETIC_CURRENT_SELECTION');
+    const copiedSelectionButton = doc.el('button', { 'aria-label': 'SYNTHETIC_CURRENT_SELECTION' });
+    const slider = doc.el('button', { role: 'slider', 'aria-label': 'Volume 50', 'aria-valuetext': '50 percent', 'aria-valuenow': '50' });
+    const listbox = doc.el('div', { role: 'listbox' }, 'SYNTHETIC_LISTBOX_VALUE');
+    const listboxButton = doc.el('button', {}, 'Open ', listbox);
+    const nativeSelect = doc.el('select');
+    const selectedOption = doc.el('option', { label: 'SYNTHETIC_OPTION_LABEL_ATTRIBUTE' }, 'SYNTHETIC_NATIVE_SELECTED_LABEL');
+    nativeSelect.append(selectedOption);
+    nativeSelect.value = 'internal-account-id';
+    (nativeSelect as any).selectedOptions = [selectedOption];
+    const copiedSelectedLabel = doc.el('button', { 'aria-label': 'Confirm SYNTHETIC_NATIVE_SELECTED_LABEL' });
+    const copiedOptionLabel = doc.el('button', { 'aria-label': 'Confirm SYNTHETIC_OPTION_LABEL_ATTRIBUTE' });
+    doc.body.append(editor, labelledButton, customButton, visibleButton, input, copiedValueButton,
+      opacityLabel, opacityLabelButton, opacityButton, combobox, dynamicCombobox, copiedSelectionButton, slider,
+      listboxButton, nativeSelect, copiedSelectedLabel, copiedOptionLabel);
+    await handleSnapshot({ tabId: 1 });
+
+    expect(D().activityLabelOf(labelledButton)).toBe('');
+    expect(D().activityLabelOf(customButton)).toBe('Submit');
+    expect(D().activityLabelOf(visibleButton)).toBe('Save');
+    expect(D().activityLabelOf(copiedValueButton)).toBe('');
+    expect(D().activityLabelOf(opacityLabelButton)).toBe('Continue');
+    expect(D().activityLabelOf(opacityButton)).toBe('Send');
+    expect(D().activityLabelOf(combobox)).toBe('Account');
+    expect(D().activityLabelOf(dynamicCombobox)).toBe('');
+    expect(D().activityLabelOf(copiedSelectionButton)).toBe('');
+    expect(D().activityLabelOf(slider)).toBe('');
+    expect(D().activityLabelOf(listboxButton)).toBe('Open');
+    expect(D().activityLabelOf(copiedSelectedLabel)).toBe('');
+    expect(D().activityLabelOf(copiedOptionLabel)).toBe('');
+    for (const label of [labelledButton, customButton, visibleButton, copiedValueButton,
+      opacityLabelButton, opacityButton, combobox, dynamicCombobox, copiedSelectionButton, slider, listboxButton,
+      copiedSelectedLabel, copiedOptionLabel]
+      .map((el) => D().activityLabelOf(el))) {
+      expect(label).not.toContain('SYNTHETIC_EDITOR_VALUE');
+      expect(label).not.toContain('SYNTHETIC_NESTED_VALUE');
+      expect(label).not.toContain('SYNTHETIC_HIDDEN_VALUE');
+      expect(label).not.toContain('SYNTHETIC_FORM_VALUE');
+      expect(label).not.toContain('SYNTHETIC_OPACITY_REFERENCE');
+      expect(label).not.toContain('SYNTHETIC_OPACITY_DESCENDANT');
+      expect(label).not.toContain('SYNTHETIC_CURRENT_SELECTION');
+      expect(label).not.toContain('SYNTHETIC_LISTBOX_VALUE');
+      expect(label).not.toContain('SYNTHETIC_NATIVE_SELECTED_LABEL');
+      expect(label).not.toContain('SYNTHETIC_OPTION_LABEL_ATTRIBUTE');
+    }
+  });
+
   it('clips names without splitting a supplementary Unicode character', async () => {
     const fullName = `${'x'.repeat(77)}😀 trailing text`;
     doc.body.append(doc.el('button', { 'aria-label': fullName }));

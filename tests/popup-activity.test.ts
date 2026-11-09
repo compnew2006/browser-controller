@@ -63,7 +63,7 @@ describe('popup activity renderer', () => {
     });
     expect(rendered).toContain('Batch 1');
     expect(rendered).toContain('Tab open');
-    expect(rendered).toContain('Clicked button: OK');
+    expect(rendered).toContain('Clicked: OK');
     expect(rendered).toContain('Element ID: <code>confirm</code>');
     expect(rendered).toContain('Clicks: 2 of 2 confirmed');
     expect(rendered).toContain('Click sent; the site did not confirm acceptance');
@@ -89,7 +89,7 @@ describe('popup activity renderer', () => {
     expect(rendered).toContain('older actions were removed');
   });
 
-  it('hides element IDs with names while retaining the per-call click count', () => {
+  it('hides element IDs while retaining the per-call click count', () => {
     const rendered = renderActionActivity({ data: {
       events: [{ ...baseEvent, eventId: 'event-private', targetLabel: 'OK', targetElementId: 'private-confirm', dispatchStatus: 'sent', inputCounts: { confirmed: 3, uncertain: 0, required: 3 } }],
       currentVisits: [], historyTruncated: false, incompleteBatchRunIds: [], includeElementNames: false,
@@ -97,10 +97,19 @@ describe('popup activity renderer', () => {
     expect(rendered).toContain('Element details hidden');
     expect(rendered).toContain('Clicks: 3 of 3 confirmed');
     expect(rendered).not.toContain('private-confirm');
-    expect(rendered).not.toContain('Clicked button: OK');
+    expect(rendered).not.toContain('Clicked: OK');
   });
 
-  it('has loading, empty, storage-error, and escaped-label output', () => {
+  it('explains when a completed batch has missing steps due to history truncation', () => {
+    const rendered = renderActionActivity({ data: {
+      events: [{ ...baseEvent, eventId: 'event-truncated', operation: 'click', batchRunId: 'batch-truncated', batchStepIndex: 2, batchEndedAt: '2026-11-09T10:00:02.000Z', batchExecutionStatus: 'completed' }],
+      currentVisits: [], historyTruncated: true, incompleteBatchRunIds: ['batch-truncated'],
+      truncatedBatchRunIds: ['batch-truncated'], includeElementNames: true,
+    } });
+    expect(rendered).toContain('Batch activity is incomplete; earlier steps were removed');
+  });
+
+  it('has loading, empty, storage-error, and escaped label/id output', () => {
     expect(renderActionActivity(null, { loading: true })).toContain('Loading activity');
     expect(renderActionActivity({ data: { events: [] } })).toContain('No activity yet');
     expect(renderActionActivity({ data: { events: [], currentVisits: [] }, storageError: true })).toContain('Session storage is unavailable');

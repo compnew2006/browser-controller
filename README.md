@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.2.0-blue?style=flat-square" alt="v3.2.0" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.3.0-blue?style=flat-square" alt="v3.3.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-22.18%2B%20%7C%2024.11%2B%20%7C%2026%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node 22.18+, 24.11+, or 26+" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />

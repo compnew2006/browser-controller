@@ -12,15 +12,16 @@ function validActivityContext(value: unknown, tool: string, params: Record<strin
   if (value.kind === 'batch-finished') {
     return tool === 'browser_batch' && Object.keys(params).length === 0
       && Object.keys(value).every((key) => ['kind', 'schemaVersion', 'batchRunId', 'endedAt', 'executionStatus'].includes(key))
-      && value.schemaVersion === 1 && UUID_RE.test(String(value.batchRunId))
+      && value.schemaVersion === 1 && typeof value.batchRunId === 'string' && UUID_RE.test(value.batchRunId)
       && typeof value.endedAt === 'string' && value.endedAt.length <= 40
       && Number.isFinite(Date.parse(value.endedAt))
-      && ['completed', 'failed', 'aborted', 'unknown'].includes(String(value.executionStatus));
+      && typeof value.executionStatus === 'string'
+      && ['completed', 'failed', 'aborted', 'unknown'].includes(value.executionStatus);
   }
   const keys = Object.keys(value);
   return ACTION_TOOLS.has(tool)
     && keys.every((key) => ['eventId', 'batchRunId', 'batchStepIndex'].includes(key))
-    && UUID_RE.test(String(value.eventId))
+    && typeof value.eventId === 'string' && UUID_RE.test(value.eventId)
     && ((value.batchRunId === undefined && value.batchStepIndex === undefined)
       || (typeof value.batchRunId === 'string' && UUID_RE.test(value.batchRunId)
         && typeof value.batchStepIndex === 'number' && Number.isInteger(value.batchStepIndex)

@@ -127,7 +127,7 @@ describe("extension router (handleMessage)", () => {
     expect(state.incompleteBatchRunIds).not.toContain(batchRunId);
   });
 
-  it('keeps a delayed session-store write off the action dispatch path', async () => {
+  it('keeps delayed storage off a batched response and preserves its finish marker', async () => {
     const storage = (globalThis as any).chrome.storage.session;
     const originalSet = storage.set;
     let releaseWrite!: () => void;
@@ -136,8 +136,11 @@ describe("extension router (handleMessage)", () => {
     });
 
     try {
+      const batchRunId = '00000000-0000-4000-8000-000000000042';
       const action = dispatch('browser_click', { tabId: 3 }, 's-router', null,
-        new AbortController().signal, false, { eventId: '00000000-0000-4000-8000-000000000041' })
+        new AbortController().signal, false, {
+          eventId: '00000000-0000-4000-8000-000000000041', batchRunId, batchStepIndex: 1,
+        })
         .then(() => 'resolved', (error) => `rejected: ${error.message}`);
       await vi.waitFor(() => expect(releaseWrite).toBeTypeOf('function'));
       const outcome = await Promise.race([
@@ -146,11 +149,20 @@ describe("extension router (handleMessage)", () => {
       ]);
       expect(outcome).not.toBe('blocked on session storage');
       expect(outcome).toMatch(/rejected:.*target/i);
+      await handleMessage({
+        type: 'activityBatchFinished', schemaVersion: 1, batchRunId,
+        endedAt: '2026-11-09T10:00:02.000Z', executionStatus: 'failed',
+      });
     } finally {
       releaseWrite?.();
       storage.set = originalSet;
     }
-    await getActivityLog().get();
+    await vi.waitFor(async () => {
+      const state = await getActivityLog().get();
+      expect(state.events[0]).toMatchObject({
+        batchEndedAt: '2026-11-09T10:00:02.000Z', batchExecutionStatus: 'failed',
+      });
+    });
   });
 
   it('records acknowledged multi-click counts without persisting locator metadata in activity', async () => {
@@ -169,9 +181,8 @@ describe("extension router (handleMessage)", () => {
       eventId, executionStatus: 'completed', dispatchStatus: 'sent',
       inputCounts: { confirmed: 2, uncertain: 0, required: 2 },
     });
-    expect(state.events[0].targetLabel).toBe('موافق');
     expect(state.events[0].targetElementId).toBe('confirm');
-    expect(state.events[0].targetLabel).not.toContain('#confirm');
+    expect(state.events[0].targetLabel).toBe('موافق');
     expect(state.events[0]).not.toHaveProperty('target');
     expect(state.events[0]).not.toHaveProperty('params');
   });

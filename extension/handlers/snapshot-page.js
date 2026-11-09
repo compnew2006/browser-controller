@@ -224,4 +224,3 @@ export function snapshotPage(_target, _fb, _query, _max, _delta) {
   if (epochState) epoch = [...epochState.id, ...documentIds];
   return { success: true, url, title, text: safeOutput, truncated, refs, __fallbacks: fallbacks, rebound, __snapshotEpoch: epoch };
 }
-

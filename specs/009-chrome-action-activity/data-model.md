@@ -18,7 +18,7 @@ An event represents one public action call that reached extension dispatch. A st
 | executionStatus | enum | running, completed, failed, or unknown. A missing terminal response is unknown. |
 | dispatchStatus | optional enum | not_sent, partially_sent, sent, or unknown for input actions. |
 | inputCounts | optional object | confirmed, uncertain, and required user-visible input units; counts must satisfy confirmed + uncertain <= required. |
-| targetLabel | optional bounded string | Resolved control name only when labels are enabled. No raw selector or typed value. |
+| targetLabel | optional bounded string | Resolved control name only when element details are enabled. No generic page text or field value; capped at 160 characters and rendered as text. |
 | targetElementId | optional bounded string | The resolved page element's HTML `id` for a click, only when element details are enabled. No caller selector; capped at 160 characters and rendered as text. |
 | siteEffect | optional object | Explicit extension observation such as navigation, dialog, or download; never inferred from dispatch alone. |
 | batchRunId | optional UUID string | Present only for an actual browser_batch child call. |
@@ -49,9 +49,11 @@ One versioned key in chrome.storage.session stores:
 - a bounded current-visit map for open tabs, containing only tabId, pageVisitId, and hostname;
 - a global historyTruncated flag;
 - bounded batchRunIds for still-visible groups whose earlier events were evicted;
-- the session-scoped includeElementNames preference, which controls both targetLabel and targetElementId.
+- bounded truncatedBatchRunIds so a later completion marker cannot claim a complete history;
+- the session-scoped includeElementNames preference, which controls whether targetLabel and targetElementId are retained;
+- an elementLabelPolicyVersion, used to remove labels written by the earlier unsafe fallback policy.
 
-Each mutation is serialized. Clear empties events and truncation metadata. Hiding element details removes targetLabel and targetElementId from every saved event and increments a write generation so queued writes cannot restore them. A new browser session starts with an empty store and element details enabled.
+Each mutation is serialized. Clear empties events and truncation metadata. Labels are derived only from resolved controls; generic page text and field values are never stored. Hiding element details removes labels and ids from every saved event and increments a write generation so actions that began before the privacy change cannot restore details. A new browser session starts with an empty store and element details enabled.
 
 ## State transitions
 

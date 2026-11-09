@@ -302,6 +302,8 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
   const SEPARATED_TAGS = new Set(['TD', 'TH', 'TR', 'LI', 'DIV', 'P', 'BR', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'DT', 'DD',
     'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'CAPTION', 'UL', 'OL', 'DL', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'NAV',
     'ASIDE', 'MAIN', 'FIGCAPTION', 'BLOCKQUOTE', 'PRE', 'OPTION', 'FIELDSET', 'LEGEND', 'FORM']);
+  const ACTIVITY_VALUE_ROLES = new Set(['textbox', 'searchbox', 'combobox', 'listbox', 'option', 'spinbutton', 'slider']);
+  const ACTIVITY_VALUE_ROLE_SELECTOR = '[role="textbox"],[role="searchbox"],[role="combobox"],[role="listbox"],[role="option"],[role="spinbutton"],[role="slider"]';
 
   /**
    * Composed text (includes shadow content) — innerText misses shadow roots. `shownOnly` leaves
@@ -360,6 +362,150 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
     // uppercase), includes shadow content, and never materialises a huge
     // container's whole textContent.
     return composedText(el, 200, shownOnly);
+  }
+
+  function activityTextOf(el, max = 200) {
+    if (!el || el.nodeType !== 1 || isActivityTextUnavailable(el)) return '';
+    let out = '';
+    let budget = max * 4;
+    const walk = (node, unseen) => {
+      if (budget <= 0) return;
+      if (node.nodeType === 3) {
+        if (!unseen) {
+          const text = String(node.nodeValue || '').slice(0, budget);
+          out += text;
+          budget -= text.length;
+        }
+        return;
+      }
+      if (node.nodeType !== 1 && node.nodeType !== 11) return;
+      if (node.nodeType === 1) {
+        if (node.tagName === 'SCRIPT' || node.tagName === 'STYLE' || attr(node, 'aria-hidden') === 'true') return;
+        const style = styleOf(node);
+        const hiddenAttribute = typeof node.hasAttribute === 'function'
+          ? node.hasAttribute('hidden') : Boolean(attr(node, 'hidden'));
+        if (node.hidden || hiddenAttribute || (style && style.display === 'none')) return;
+        if (isActivityValueElement(node)) return;
+        let hidden = unseen;
+        if (style && (style.visibility && style.visibility !== 'visible' || activityOpacityIsZero(style))) hidden = true;
+        if (node.childNodes === undefined && !shadowOf(node)) {
+          const text = unseen ? '' : String(node.textContent ?? node.innerText ?? '').slice(0, budget);
+          out += text;
+          budget -= text.length;
+          return;
+        }
+        const separator = SEPARATED_TAGS.has(node.tagName) ? ' ' : '';
+        out += separator;
+        for (const child of flatChildren(node)) walk(child, hidden);
+        out += separator;
+        return;
+      }
+      for (const child of flatChildren(node)) walk(child, unseen);
+    };
+    walk(el, false);
+    return clean(out, max);
+  }
+
+  function isActivityValueElement(el) {
+    const tag = String(el?.tagName || '').toUpperCase();
+    const editableAttribute = typeof el?.hasAttribute === 'function'
+      ? el.hasAttribute('contenteditable') : Boolean(attr(el, 'contenteditable'));
+    return ['INPUT', 'TEXTAREA', 'SELECT', 'OPTION'].includes(tag) || Boolean(el?.isContentEditable) ||
+      editableAttribute || ACTIVITY_VALUE_ROLES.has(roleOf(el));
+  }
+
+  function activityOpacityIsZero(style) {
+    return !!style && style.opacity !== undefined && style.opacity !== '' && Number(style.opacity) === 0;
+  }
+
+  function isActivityTextUnavailable(el) {
+    for (let node = el, depth = 0; node && node.nodeType === 1 && depth < 512; depth++) {
+      if (isActivityValueElement(node) || attr(node, 'aria-hidden') === 'true') return true;
+      const hiddenAttribute = typeof node.hasAttribute === 'function'
+        ? node.hasAttribute('hidden') : Boolean(attr(node, 'hidden'));
+      const style = styleOf(node);
+      if (node.hidden || hiddenAttribute || (style && (style.display === 'none' ||
+        (style.visibility && style.visibility !== 'visible') || activityOpacityIsZero(style)))) return true;
+      node = node.parentElement || (node.parentNode && node.parentNode.host) || null;
+    }
+    return false;
+  }
+
+  function activityLabelContainsFieldValue(label) {
+    const candidate = String(label || '').toLocaleLowerCase();
+    if (!candidate) return false;
+    const fields = queryAll(`input,textarea,select,[contenteditable],${ACTIVITY_VALUE_ROLE_SELECTOR}`, true) || [];
+    return fields.some((field) => {
+      const editableAttribute = typeof field?.hasAttribute === 'function'
+        ? field.hasAttribute('contenteditable') : Boolean(attr(field, 'contenteditable'));
+      const role = roleOf(field);
+      const editable = field.isContentEditable || editableAttribute || role === 'textbox';
+      const raw = typeof field.value === 'string' ? field.value : editable ? String(field.textContent || '') : '';
+      const values = [raw];
+      if (ACTIVITY_VALUE_ROLES.has(role)) values.push(attr(field, 'aria-valuetext'), attr(field, 'aria-valuenow'), composedText(field, 200, true));
+      if (String(field.tagName || '').toUpperCase() === 'SELECT') {
+        const options = field.selectedOptions
+          ? Array.from(field.selectedOptions)
+          : Array.from(field.options || []).filter((option) => option.selected);
+        values.push(...options.flatMap((option) => [attr(option, 'label'), option.label, composedText(option, 200, true)]));
+      }
+      return values.some((part) => activityTextContainsValue(candidate, clean(part, 200).toLocaleLowerCase()));
+    });
+  }
+
+  function activityTextContainsValue(candidate, value) {
+    if (!value) return false;
+    if (candidate === value || (value.length >= 3 && candidate.includes(value))) return true;
+    let from = 0;
+    while (true) {
+      const index = candidate.indexOf(value, from);
+      if (index < 0) return false;
+      const before = index > 0 ? candidate[index - 1] : '';
+      const afterIndex = index + value.length;
+      const after = afterIndex < candidate.length ? candidate[afterIndex] : '';
+      if ((!before || !/[\p{L}\p{N}]/u.test(before)) && (!after || !/[\p{L}\p{N}]/u.test(after))) return true;
+      from = afterIndex;
+    }
+  }
+
+  /** A bounded Activity label from safe control naming sources only. */
+  function activityLabelOf(el) {
+    if (!el || el.isContentEditable || isSensitiveField(el)) return '';
+    const tag = String(el.tagName || '').toUpperCase();
+    const role = roleOf(el);
+    const nativeField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag);
+    const nativeControl = ['BUTTON', 'SUMMARY', 'A'].includes(tag);
+    const customControl = ['button', 'link', 'checkbox', 'radio', 'switch'].includes(role);
+    if (!nativeField && !nativeControl && !customControl) return '';
+    if (tag === 'INPUT' && INPUT_BUTTONS.includes(String(el.type || '').toLowerCase())) return '';
+    const safe = (value) => {
+      const text = clean(value, 200);
+      return text && !activityLabelContainsFieldValue(text) ? text : '';
+    };
+    const labelledBy = attr(el, 'aria-labelledby');
+    if (labelledBy) {
+      let root = null;
+      try { root = el.getRootNode(); } catch {}
+      const text = labelledBy.split(/\s+/).map((id) => {
+        const label = (root && root.getElementById && root.getElementById(id)) || el.ownerDocument?.getElementById?.(id);
+        return label ? activityTextOf(label) : '';
+      }).filter(Boolean).join(' ');
+      const label = safe(text);
+      if (label) return label.slice(0, 60);
+    }
+    const aria = safe(attr(el, 'aria-label'));
+    if (aria) return aria.slice(0, 60);
+    try {
+      const labels = Array.from(el.labels || []).map((label) => activityTextOf(label)).filter(Boolean);
+      const label = safe(labels.join(' '));
+      if (label) return label.slice(0, 60);
+    } catch {}
+    for (const attribute of ['title', 'placeholder']) {
+      const label = safe(attr(el, attribute));
+      if (label) return label.slice(0, 60);
+    }
+    if (nativeField) return '';
+    return safe(activityTextOf(el)).slice(0, 60);
   }
 
   /** Text the element holds itself: its direct text nodes, cleaned (descendants excluded). */
@@ -516,7 +662,8 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
   function byRole(target) {
     const role = clean(target.role, 80).toLowerCase();
     const name = clean(target.name, 500).toLowerCase();
-    const hits = [];
+    const exactHits = [];
+    const previewHits = [];
     for (const root of allRoots(true)) {
       let els = [];
       try { els = root.querySelectorAll('*'); } catch {}
@@ -525,10 +672,11 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
         const candidateRole = roleOf(el);
         if (clean(candidateRole, 80).toLowerCase() !== role) continue;
         const snapshotName = clean(snapshotNameOf(el, candidateRole), 500).toLowerCase();
-        if (snapshotName === name || clean(nameOf(el), 500).toLowerCase() === name) hits.push(el);
+        if (clean(nameOf(el), 500).toLowerCase() === name) exactHits.push(el);
+        else if (snapshotName === name) previewHits.push(el);
       }
     }
-    return hits;
+    return exactHits.length ? exactHits : previewHits;
   }
 
   /**
@@ -1021,7 +1169,7 @@ export function PAGE_DOM_INSTALL(version, refBase = 0) {
   globalThis.__bcDom = Object.freeze({
     v: version,
     clean, attr, shadowOf, frameDoc, deepActiveElement, fileInputFor, allRoots, queryAll, isVisible, flatChildren,
-    roleOf, nameOf, snapshotNameOf, isSnapshotLandmark, composedText, isInteractive, preciseMatch, centerOf, elementAt,
+    roleOf, nameOf, activityLabelOf, snapshotNameOf, isSnapshotLandmark, composedText, isInteractive, preciseMatch, centerOf, elementAt,
     composedContains, rowContextOf, describe, registry, flatText, styleOf, connected, cursor,
     isExtensionNode, clickBlocker, clickTarget, labelsOf, byText, resolveTarget,
     peekRef, refFor, safetyFingerprint, refIssued, refIsEarlier, pruneRegistry, ownText,

@@ -2,6 +2,7 @@
 export const ACTIVITY_STORAGE_KEY = 'bcChromeActionActivity';
 export const ACTIVITY_EVENT_CAP = 500;
 export const ACTIVITY_VISIT_CAP = 1_000;
+const ELEMENT_LABEL_POLICY_VERSION = 2;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOOL_RE = /^browser_[a-z0-9_]{1,57}$/;
@@ -59,16 +60,29 @@ export function createInputActivity(tool, params) {
   let targetLabel;
   let targetElementId;
   let explicitSummary;
+  const pendingPresses = [];
   return {
     observe(method, inputParams, status) {
       const mousePress = method === 'Input.dispatchMouseEvent' && inputParams?.type === 'mousePressed';
+      const mouseRelease = method === 'Input.dispatchMouseEvent' && inputParams?.type === 'mouseReleased';
       const text = method === 'Input.insertText';
       const key = method === 'Input.dispatchKeyEvent'
         && ['keyDown', 'rawKeyDown'].includes(inputParams?.type)
         && !['Shift', 'Control', 'Alt', 'Meta'].includes(inputParams?.key)
         && !inputParams?.commands?.includes?.('selectAll');
       const wheel = method === 'Input.dispatchMouseEvent' && inputParams?.type === 'mouseWheel';
-      const relevant = isClick ? mousePress : isType ? text || key : isScroll && wheel;
+      if (isClick && mousePress && attempted < required) {
+        attempted++;
+        pendingPresses.push(status === 'sent');
+        return;
+      }
+      if (isClick && mouseRelease && pendingPresses.length > 0) {
+        const pressConfirmed = pendingPresses.shift();
+        if (pressConfirmed && status === 'sent') confirmed++;
+        else uncertain++;
+        return;
+      }
+      const relevant = !isClick && (isType ? text || key : isScroll && wheel);
       if (!relevant || attempted >= required) return;
       attempted++;
       if (status === 'sent') confirmed++;
@@ -78,12 +92,13 @@ export function createInputActivity(tool, params) {
     setTargetElementId(value) { if (typeof value === 'string') targetElementId = value; },
     setSummary(summary) { explicitSummary = summary; },
     summary() {
+      const unresolvedPresses = pendingPresses.length;
       const inputCounts = explicitSummary?.inputCounts ?? {
         confirmed: Math.min(confirmed, required),
-        uncertain: Math.min(uncertain, Math.max(0, required - confirmed)),
+        uncertain: Math.min(uncertain + unresolvedPresses, Math.max(0, required - confirmed)),
         required,
       };
-      const dispatchStatus = explicitSummary?.dispatchStatus ?? (uncertain > 0 ? 'unknown'
+      const dispatchStatus = explicitSummary?.dispatchStatus ?? (uncertain + unresolvedPresses > 0 ? 'unknown'
         : confirmed >= required ? 'sent'
           : confirmed > 0 ? 'partially_sent'
             : attempted === 0 ? 'not_sent' : 'unknown');
@@ -98,13 +113,20 @@ export function createInputActivity(tool, params) {
 
 export async function beginActivity(tool, params, activityContext) {
   if (!validActivityContext(tool, activityContext)) return null;
+  const log = getActivityLog();
+  const elementDetailsToken = log.getElementDetailsToken();
+  const releaseBatchActivity = activityContext.batchRunId
+    ? log.beginBatchActivity(activityContext.batchRunId)
+    : null;
   const tabId = Number.isInteger(params?.tabId) ? params.tabId : null;
   const startedAt = new Date().toISOString();
-  if (tabId == null) return { tool, params, activityContext, startedAt, deferred: true };
+  if (tabId == null) return { log, tool, params, activityContext, startedAt, deferred: true, elementDetailsToken, releaseBatchActivity };
   const tab = await chrome.tabs.get(tabId).catch(() => null);
-  if (!tab || typeof tab.url !== 'string') return null;
-  const log = getActivityLog();
-  const activity = { log, event: null, tool, params, activityContext, startedAt, deferred: false, eventPromise: null };
+  if (!tab || typeof tab.url !== 'string') {
+    releaseBatchActivity?.();
+    return null;
+  }
+  const activity = { log, event: null, tool, params, activityContext, startedAt, deferred: false, eventPromise: null, elementDetailsToken, releaseBatchActivity };
   activity.eventPromise = log.ensureVisit(tabId, tab.url).then((visit) => {
     if (!visit) return null;
     const event = {
@@ -121,7 +143,7 @@ export async function beginActivity(tool, params, activityContext) {
   return activity;
 }
 
-function activityPatch(result, error, inputActivity) {
+function activityPatch(result, error, inputActivity, includeElementDetails) {
   const endedAt = new Date().toISOString();
   const patch = {
     endedAt,
@@ -133,8 +155,8 @@ function activityPatch(result, error, inputActivity) {
   if (kind) patch.siteEffect = { kind, observedAt: endedAt };
   const summary = inputActivity?.summary?.() ?? result?._activity;
   if (summary && typeof summary === 'object') {
-    if (typeof summary.targetLabel === 'string') patch.targetLabel = summary.targetLabel;
-    if (typeof summary.targetElementId === 'string') patch.targetElementId = summary.targetElementId;
+    if (includeElementDetails && typeof summary.targetLabel === 'string') patch.targetLabel = summary.targetLabel;
+    if (includeElementDetails && typeof summary.targetElementId === 'string') patch.targetElementId = summary.targetElementId;
     if (['not_sent', 'partially_sent', 'sent', 'unknown'].includes(summary.dispatchStatus)
       && summary.inputCounts && typeof summary.inputCounts === 'object') {
       patch.dispatchStatus = summary.dispatchStatus;
@@ -147,29 +169,36 @@ function activityPatch(result, error, inputActivity) {
 export async function finishActivity(activity, result, error, inputActivity) {
   if (!activity) return result;
   const { log } = activity;
-  if (activity.deferred) {
-    const tabId = Number.isInteger(result?.tabId) ? result.tabId : null;
-    const url = typeof result?.url === 'string' ? result.url : null;
-    if (tabId != null && url) {
-      void getActivityLog().ensureVisit(tabId, url).then((visit) => {
-        if (!visit) return null;
-        const created = {
-          kind: 'action', schemaVersion: 1, eventId: activity.activityContext.eventId,
-          tabId, pageVisitId: visit.pageVisitId, host: visit.host,
-          tool: activity.tool, operation: activityOperation(activity.tool, activity.params),
-          startedAt: activity.startedAt, ...activityPatch(result, error, inputActivity),
-          ...(activity.activityContext.batchRunId ? { batchRunId: activity.activityContext.batchRunId, batchStepIndex: activity.activityContext.batchStepIndex } : {}),
-        };
-        return getActivityLog().append(created);
-      }).catch(() => {});
+  let persistence;
+  try {
+    if (activity.deferred) {
+      const tabId = Number.isInteger(result?.tabId) ? result.tabId : null;
+      const url = typeof result?.url === 'string' ? result.url : null;
+      if (tabId != null && url) {
+        persistence = log.ensureVisit(tabId, url).then((visit) => {
+          if (!visit) return null;
+          const created = {
+            kind: 'action', schemaVersion: 1, eventId: activity.activityContext.eventId,
+            tabId, pageVisitId: visit.pageVisitId, host: visit.host,
+            tool: activity.tool, operation: activityOperation(activity.tool, activity.params),
+            startedAt: activity.startedAt, ...activityPatch(result, error, inputActivity, activity.elementDetailsToken.enabled),
+            ...(activity.activityContext.batchRunId ? { batchRunId: activity.activityContext.batchRunId, batchStepIndex: activity.activityContext.batchStepIndex } : {}),
+          };
+          return log.append(created, activity.elementDetailsToken);
+        });
+      }
+    } else {
+      persistence = activity.eventPromise.then(() => {
+        if (!activity.event) return null;
+        const patch = activityPatch(result, error, inputActivity, activity.elementDetailsToken.enabled);
+        return log.update(activity.event.eventId, patch, activity.elementDetailsToken);
+      });
     }
-  } else {
-    const patch = activityPatch(result, error, inputActivity);
-    void activity.eventPromise.then(() => {
-      if (!activity.event) return null;
-      return log.update(activity.event.eventId, patch);
-    }).catch(() => {});
+  } catch {
+    // Activity bookkeeping must never change the browser tool's result.
   }
+  const settledPersistence = Promise.resolve(persistence).catch(() => {});
+  if (activity.releaseBatchActivity) void settledPersistence.then(activity.releaseBatchActivity);
   if (result && typeof result === 'object' && '_activity' in result) {
     const { _activity: _discarded, ...safe } = result;
     return safe;
@@ -180,10 +209,12 @@ export async function finishActivity(activity, result, error, inputActivity) {
 function freshState() {
   return {
     schemaVersion: 1,
+    elementLabelPolicyVersion: ELEMENT_LABEL_POLICY_VERSION,
     events: [],
     currentVisits: [],
     historyTruncated: false,
     incompleteBatchRunIds: [],
+    truncatedBatchRunIds: [],
     includeElementNames: true,
   };
 }
@@ -289,6 +320,7 @@ function normalizeVisit(raw) {
 function normalizeState(raw) {
   const state = freshState();
   if (!raw || raw.schemaVersion !== 1) return state;
+  state.elementLabelPolicyVersion = ELEMENT_LABEL_POLICY_VERSION;
   state.includeElementNames = raw.includeElementNames !== false;
   state.historyTruncated = raw.historyTruncated === true;
   state.currentVisits = Array.isArray(raw.currentVisits)
@@ -299,6 +331,9 @@ function normalizeState(raw) {
     : [];
   if (Array.isArray(raw.incompleteBatchRunIds)) {
     state.incompleteBatchRunIds = [...new Set(raw.incompleteBatchRunIds.filter(validId))].slice(-ACTIVITY_EVENT_CAP);
+  }
+  if (Array.isArray(raw.truncatedBatchRunIds)) {
+    state.truncatedBatchRunIds = [...new Set(raw.truncatedBatchRunIds.filter(validId))].slice(-ACTIVITY_EVENT_CAP);
   }
   return state;
 }
@@ -315,25 +350,71 @@ export function createActivityLog(storageArea = globalThis.chrome?.storage?.sess
   let loadFailed = false;
   let storageError = false;
   let queue = Promise.resolve();
+  let elementDetailsEpoch = 0;
+  const pendingBatchActivities = new Map();
+  let loadPromise;
 
-  async function ensureLoaded() {
-    if (loaded) return;
-    try {
-      const stored = await storageArea.get(ACTIVITY_STORAGE_KEY);
-      state = normalizeState(stored?.[ACTIVITY_STORAGE_KEY]);
-      state.events = state.events.map((event) => event.executionStatus === 'running'
-        ? { ...event, executionStatus: 'unknown' }
-        : event);
-      const unfinished = state.events
-        .filter((event) => event.batchRunId && !event.batchEndedAt)
-        .map((event) => event.batchRunId);
-      state.incompleteBatchRunIds = [...new Set([...state.incompleteBatchRunIds, ...unfinished])].slice(-ACTIVITY_EVENT_CAP);
-    } catch {
-      state = freshState();
-      loadFailed = true;
-      storageError = true;
-    }
-    loaded = true;
+  function withoutElementLabel(raw) {
+    const { targetLabel: _targetLabel, ...safe } = raw;
+    return safe;
+  }
+
+  function withoutElementDetails(raw) {
+    const { targetLabel: _targetLabel, targetElementId: _targetElementId, ...safe } = raw;
+    return safe;
+  }
+
+  function beginBatchActivity(batchRunId) {
+    if (!validId(batchRunId)) return () => {};
+    let resolveActivity;
+    const pending = new Promise((resolve) => { resolveActivity = resolve; });
+    const activities = pendingBatchActivities.get(batchRunId) ?? new Set();
+    activities.add(pending);
+    pendingBatchActivities.set(batchRunId, activities);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      activities.delete(pending);
+      if (activities.size === 0) pendingBatchActivities.delete(batchRunId);
+      resolveActivity();
+    };
+  }
+
+  function ensureLoaded() {
+    if (loaded) return Promise.resolve();
+    if (loadPromise) return loadPromise;
+    loadPromise = (async () => {
+      try {
+        const stored = await storageArea.get(ACTIVITY_STORAGE_KEY);
+        const rawState = stored?.[ACTIVITY_STORAGE_KEY];
+        const migrateLabels = rawState && rawState.elementLabelPolicyVersion !== ELEMENT_LABEL_POLICY_VERSION;
+        const sourceState = migrateLabels && Array.isArray(rawState.events)
+          ? { ...rawState, events: rawState.events.map((event) => event && typeof event === 'object' ? withoutElementLabel(event) : event) }
+          : rawState;
+        state = normalizeState(sourceState);
+        state.events = state.events.map((event) => event.executionStatus === 'running'
+          ? { ...event, executionStatus: 'unknown' }
+          : event);
+        const unfinished = state.events
+          .filter((event) => event.batchRunId && !event.batchEndedAt)
+          .map((event) => event.batchRunId);
+        state.incompleteBatchRunIds = [...new Set([...state.incompleteBatchRunIds, ...unfinished])].slice(-ACTIVITY_EVENT_CAP);
+        if (migrateLabels) {
+          try {
+            await storageArea.set({ [ACTIVITY_STORAGE_KEY]: clone(state) });
+          } catch {
+            storageError = true;
+          }
+        }
+      } catch {
+        state = freshState();
+        loadFailed = true;
+        storageError = true;
+      }
+      loaded = true;
+    })();
+    return loadPromise;
   }
 
   function enqueue(change) {
@@ -371,6 +452,10 @@ export function createActivityLog(storageArea = globalThis.chrome?.storage?.sess
       const data = await this.get();
       return { data, storageError };
     },
+    getElementDetailsToken() {
+      return { epoch: elementDetailsEpoch, enabled: state.includeElementNames };
+    },
+    beginBatchActivity,
     async ensureVisit(tabId, url) {
       let result;
       const next = await enqueue((current) => {
@@ -394,38 +479,54 @@ export function createActivityLog(storageArea = globalThis.chrome?.storage?.sess
     async closeVisit(tabId) {
       return enqueue((current) => ({ ...current, currentVisits: current.currentVisits.filter((item) => item.tabId !== tabId) }));
     },
-    async append(raw) {
+    async append(raw, elementDetailsToken) {
       return enqueue((current) => {
-        const event = sanitizeEvent(raw, current.includeElementNames);
+        const detailsCurrent = !elementDetailsToken
+          || (elementDetailsToken.enabled && elementDetailsToken.epoch === elementDetailsEpoch);
+        const event = sanitizeEvent(detailsCurrent ? raw : withoutElementDetails(raw), current.includeElementNames);
         if (!event || current.events.some((item) => item.eventId === event.eventId)) return current;
         const events = [...current.events, event];
         const incomplete = new Set(current.incompleteBatchRunIds);
+        const truncated = new Set(current.truncatedBatchRunIds);
         if (event.batchRunId) incomplete.add(event.batchRunId);
         let historyTruncated = current.historyTruncated;
         while (events.length > ACTIVITY_EVENT_CAP) {
           const evicted = events.shift();
           historyTruncated = true;
-          if (evicted.batchRunId && events.some((item) => item.batchRunId === evicted.batchRunId)) incomplete.add(evicted.batchRunId);
+          if (evicted.batchRunId && events.some((item) => item.batchRunId === evicted.batchRunId)) {
+            incomplete.add(evicted.batchRunId);
+            truncated.add(evicted.batchRunId);
+          }
         }
-        return { ...current, events, historyTruncated, incompleteBatchRunIds: [...incomplete].slice(-ACTIVITY_EVENT_CAP) };
+        return {
+          ...current, events, historyTruncated,
+          incompleteBatchRunIds: [...incomplete].slice(-ACTIVITY_EVENT_CAP),
+          truncatedBatchRunIds: [...truncated].slice(-ACTIVITY_EVENT_CAP),
+        };
       });
     },
-    async update(eventId, patch) {
+    async update(eventId, patch, elementDetailsToken) {
       return enqueue((current) => ({
         ...current,
         events: current.events.map((item) => item.eventId === eventId
-          ? sanitizeEvent({ ...item, ...patch, eventId: item.eventId }, current.includeElementNames) ?? item
+          ? sanitizeEvent({ ...item, ...(elementDetailsToken && (!elementDetailsToken.enabled || elementDetailsToken.epoch !== elementDetailsEpoch)
+            ? withoutElementDetails(patch)
+            : patch), eventId: item.eventId }, current.includeElementNames) ?? item
           : item),
       }));
     },
     async finishBatch(marker) {
       if (!marker || marker.kind !== 'batch-finished' || marker.schemaVersion !== 1 || !validId(marker.batchRunId)
         || !validTime(marker.endedAt) || !BATCH_EXECUTION.has(marker.executionStatus)) return this.get();
+      await Promise.all([...(pendingBatchActivities.get(marker.batchRunId) ?? [])]);
       return enqueue((current) => {
         if (!current.events.some((item) => item.batchRunId === marker.batchRunId)) return current;
+        const wasTruncated = current.truncatedBatchRunIds.includes(marker.batchRunId);
         return {
           ...current,
-          incompleteBatchRunIds: current.incompleteBatchRunIds.filter((id) => id !== marker.batchRunId),
+          incompleteBatchRunIds: wasTruncated
+            ? current.incompleteBatchRunIds
+            : current.incompleteBatchRunIds.filter((id) => id !== marker.batchRunId),
           events: current.events.map((item) => item.batchRunId === marker.batchRunId
             ? { ...item, batchEndedAt: validTime(marker.endedAt), batchExecutionStatus: marker.executionStatus }
             : item),
@@ -433,6 +534,7 @@ export function createActivityLog(storageArea = globalThis.chrome?.storage?.sess
       });
     },
     async setElementNamesVisible(includeElementNames) {
+      elementDetailsEpoch++;
       return enqueue((current) => ({
         ...current,
         includeElementNames: includeElementNames === true,
@@ -442,7 +544,7 @@ export function createActivityLog(storageArea = globalThis.chrome?.storage?.sess
       }));
     },
     async clear() {
-      return enqueue((current) => ({ ...current, events: [], historyTruncated: false, incompleteBatchRunIds: [] }));
+      return enqueue((current) => ({ ...current, events: [], historyTruncated: false, incompleteBatchRunIds: [], truncatedBatchRunIds: [] }));
     },
   };
 }

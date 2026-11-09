@@ -65,5 +65,5 @@ This research is limited to the checked-out repository and local indexes. No ext
 ## Local implementation evidence
 
 - Batch child metadata is scoped to action calls and the bridge sends the completion marker only to live, capability-enabled participant connections.
-- Click rows receive the resolved element DOM id and confirmed/requested press counts. Element names and ids are both removed when details are hidden.
+- Click rows receive the resolved control label and DOM id when available, plus confirmed/requested click counts. Labels never fall back to contenteditable or generic page text; hiding details erases both labels and ids.
 - Source, unit tests, and the isolated popup fixture are the evidence for these changes; no authenticated site, normal Chrome profile, or external service was used.

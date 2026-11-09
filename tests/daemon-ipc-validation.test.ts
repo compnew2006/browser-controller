@@ -54,6 +54,35 @@ describe('daemon validates IPC request lifecycle', () => {
     expect(isIpcClientMessage({ ...base, activityContext: { eventId: actionContext.eventId, batchStepIndex: 1 } })).toBe(false);
   });
 
+  it.each([
+    ['event id', { kind: 'call', id: 'bad', tool: 'browser_click', params: {}, activityContext: { eventId: { toString: null } } }],
+    ['batch id', { kind: 'call', id: 'bad', tool: 'browser_batch', params: {}, activityContext: {
+      kind: 'batch-finished', schemaVersion: 1, batchRunId: { toString: null },
+      endedAt: '2026-11-09T10:00:00.000Z', executionStatus: 'completed',
+    } }],
+    ['execution status', { kind: 'call', id: 'bad', tool: 'browser_batch', params: {}, activityContext: {
+      kind: 'batch-finished', schemaVersion: 1, batchRunId: '00000000-0000-4000-8000-000000000002',
+      endedAt: '2026-11-09T10:00:00.000Z', executionStatus: { toString: null },
+    } }],
+  ])('rejects non-primitive activity metadata (%s) without throwing', (_label, frame) => {
+    const parsed = JSON.parse(JSON.stringify(frame));
+    expect(() => isIpcClientMessage(parsed)).not.toThrow();
+    expect(isIpcClientMessage(parsed)).toBe(false);
+  });
+
+  it('keeps the daemon alive after an authenticated client sends coercion-hostile activity metadata', async () => {
+    client = await connectIpcClient(daemon.sockPath, daemon.token, 'malformed-activity-fixture');
+    const disconnect = closed(client.socket);
+    client.socket.write(`${JSON.stringify({
+      kind: 'call', id: 'bad-activity', tool: 'browser_click', params: {},
+      activityContext: { eventId: { toString: null } },
+    })}\n`);
+    await disconnect;
+
+    const next = await connectIpcClient(daemon.sockPath, daemon.token, 'healthy-after-activity-fixture');
+    next.close();
+  });
+
   it('processes a call sent in the same packet as the authenticated hello', async () => {
     extension = await connectFakeExtension(daemon, 'pipeline-fixture');
     const socket = net.createConnection(daemon.sockPath);

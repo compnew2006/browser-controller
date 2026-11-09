@@ -351,7 +351,6 @@ export async function handleType(params, _sessionId, _agentName, signal, activit
     }
     if (!loc.success) return refused(tabId, loc);
     if (typeof loc.activityLabel === 'string') activityRecorder?.setTargetLabel?.(loc.activityLabel);
-
     const where = target === undefined ? 'focused element' : targetLabel(target);
     const chars = text ? [...String(text)].length : 0;
     const lines = [];

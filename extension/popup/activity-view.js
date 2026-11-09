@@ -13,7 +13,7 @@ function time(value) {
 
 function actionTitle(event, includeElementNames) {
   const target = includeElementNames ? event.targetLabel : null;
-  if (event.operation === 'click') return target ? `Clicked button: ${target}` : 'Clicked';
+  if (event.operation === 'click') return target ? `Clicked: ${target}` : 'Clicked';
   if (event.operation === 'type') return target ? `Typed into: ${target}` : 'Typed into a field';
   if (event.operation === 'fill') return 'Filled fields';
   if (event.operation === 'drag') return 'Dragged an element';
@@ -92,7 +92,8 @@ function actionRow(event, includeElementNames, stepNumber) {
   </li>`;
 }
 
-function batchCopy(events, incomplete) {
+function batchCopy(events, incomplete, truncated) {
+  if (truncated) return 'Batch activity is incomplete; earlier steps were removed';
   if (incomplete) return 'Batch not confirmed; no completion marker was recorded';
   const status = events.find((event) => event.batchExecutionStatus)?.batchExecutionStatus;
   if (status === 'completed') return 'Batch completed';
@@ -120,8 +121,9 @@ function renderVisit(visit, state) {
     batchNumber++;
     const children = visitBatches.get(event.batchRunId).sort((a, b) => a.batchStepIndex - b.batchStepIndex);
     const incomplete = state.incompleteBatchRunIds.includes(event.batchRunId) || !children.some((item) => item.batchEndedAt);
+    const truncated = state.truncatedBatchRunIds?.includes(event.batchRunId) === true;
     return `<li class="activity-batch">
-      <div class="activity-batch-head"><strong>Batch ${count(batchNumber)}</strong><span>${escapeHtml(batchCopy(children, incomplete))}</span></div>
+      <div class="activity-batch-head"><strong>Batch ${count(batchNumber)}</strong><span>${escapeHtml(batchCopy(children, incomplete, truncated))}</span></div>
       <ol class="activity-batch-steps">${children.map((item) => actionRow(item, state.includeElementNames !== false, ++timelineStep)).join('')}</ol>
     </li>`;
   }).join('');
