@@ -15,6 +15,9 @@ interface FakeListener {
 interface FakeInputEvent {
   type: string;
   isTrusted: boolean;
+  clientX: number;
+  clientY: number;
+  __bcAgentInputPermitId?: string;
   defaultPrevented: boolean;
   propagationStopped: boolean;
   preventDefault: () => void;
@@ -23,10 +26,14 @@ interface FakeInputEvent {
 
 class FakeNode {
   id = '';
-  style = { cssText: '' };
+  className = '';
+  style: { cssText: string; pointerEvents?: string } = { cssText: '' };
   listeners: FakeListener[] = [];
+  children: FakeNode[] = [];
   removed = false;
   constructor(public tagName: string) {}
+  appendChild(node: FakeNode) { this.children.push(node); return node; }
+  querySelector(selector: string) { return this.children.find((node) => selector === `.${node.className}`) ?? null; }
   addEventListener(type: string, fn: (event: FakeInputEvent) => void, options: { capture?: boolean; passive?: boolean } = {}) {
     this.listeners.push({ type, fn, capture: !!options.capture, passive: !!options.passive });
   }
@@ -50,10 +57,12 @@ class FakeDocument extends FakeNode {
 }
 
 /** Input the page would see: user input is trusted, the agent's synthetic input is not. */
-function inputEvent(type: string, isTrusted: boolean): FakeInputEvent {
+function inputEvent(type: string, isTrusted: boolean, clientX = 0, clientY = 0): FakeInputEvent {
   const event: FakeInputEvent = {
     type,
     isTrusted,
+    clientX,
+    clientY,
     defaultPrevented: false,
     propagationStopped: false,
     preventDefault() { event.defaultPrevented = true; },
@@ -63,10 +72,12 @@ function inputEvent(type: string, isTrusted: boolean): FakeInputEvent {
 }
 
 /** Run an injected page function the way chrome.scripting would, in this node process. */
+let movementLockEnabled = false;
 const runInPage = async (opts: { func: (...args: unknown[]) => unknown; args?: unknown[] }) => [{ result: opts.func(...(opts.args ?? [])) }];
 
 (globalThis as unknown as { chrome: unknown }).chrome = {
   scripting: { executeScript: runInPage },
+  storage: { local: { get: async () => ({ agentMouseMovementLock: movementLockEnabled }) } },
 };
 
 const overlay = await import('../extension/lib/overlay.js');
@@ -77,14 +88,20 @@ const documentListeners = (type: string) => document.listeners.filter((l) => l.t
 
 describe('lock shield (WP2b, G2)', () => {
   beforeEach(() => {
+    movementLockEnabled = false;
     document = new FakeDocument();
     (globalThis as unknown as { document: unknown }).document = document;
     (globalThis as unknown as { window: unknown }).window = globalThis;
+    (globalThis as unknown as { top: unknown }).top = globalThis;
     (globalThis as unknown as { __bcAgentInputUntil: number }).__bcAgentInputUntil = 0;
+    (globalThis as unknown as { __bcAgentInputPermit: unknown }).__bcAgentInputPermit = null;
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await overlay.hideLockShield(7);
     delete (globalThis as unknown as { document?: unknown }).document;
     delete (globalThis as unknown as { window?: unknown }).window;
+    delete (globalThis as unknown as { top?: unknown }).top;
+    delete (globalThis as unknown as { __bcAgentInputPermit?: unknown }).__bcAgentInputPermit;
   });
 
   it('the frame never takes hit tests: pointer-events is none, and the frame has no listeners of its own', async () => {
@@ -129,6 +146,27 @@ describe('lock shield (WP2b, G2)', () => {
     const trusted = inputEvent('mousedown', true);
     for (const listener of documentListeners('mousedown')) listener.fn(trusted);
     expect(trusted.defaultPrevented).toBe(false);
+  });
+
+  it('blocks user movement while enabled and permits only the matching agent event', async () => {
+    expect(await overlay.showLockShield(7, 'agent controlling the tab', false, true)).toBe(true);
+    expect(shield().style.pointerEvents).toBe('auto');
+
+    const userMove = inputEvent('mousemove', true, 31, 40);
+    for (const listener of documentListeners('mousemove')) listener.fn(userMove);
+    expect(userMove.defaultPrevented).toBe(true);
+
+    let agentMove: FakeInputEvent | undefined;
+    await overlay.dispatchAgentInput(7, async () => {
+      agentMove = inputEvent('mousemove', true, 30, 40);
+      for (const listener of documentListeners('mousemove')) listener.fn(agentMove);
+    }, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: 30, y: 40 });
+
+    expect(agentMove?.defaultPrevented).toBe(false);
+    expect(agentMove?.__bcAgentInputPermitId).toBeDefined();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((globalThis as unknown as { __bcAgentInputPermit: unknown }).__bcAgentInputPermit).toBeNull();
+    expect(shield().style.pointerEvents).toBe('auto');
   });
 
   it('hiding the frame detaches every listener it added, leaving the page unblocked', async () => {

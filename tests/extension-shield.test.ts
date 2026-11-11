@@ -9,13 +9,16 @@ import { vi, describe, it, expect, beforeAll, beforeEach } from 'vitest';
  */
 
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
-const injections = vi.hoisted(() => [] as Array<{ target: number; func: string; args: unknown[] }>);
-const faults = vi.hoisted(() => ({ activeBadgeThrows: false }));
+const injections = vi.hoisted(() => [] as Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; func: string; args: unknown[] }>);
+const faults = vi.hoisted(() => ({ activeBadgeThrows: false, shieldInjectionThrows: false, storageReadThrows: false }));
 const cursorSetting = vi.hoisted(() => ({ enabled: false }));
+const mouseMovementLockSetting = vi.hoisted(() => ({ enabled: false }));
 const profileLabel = vi.hoisted(() => ({ apply: vi.fn(async (label: unknown) => ({ success: true, browserLabel: String(label) })) }));
 const listeners = vi.hoisted(() => ({
   message: [] as Array<(...args: unknown[]) => unknown>,
   updated: [] as Array<(...args: unknown[]) => unknown>,
+  committed: [] as Array<(...args: unknown[]) => unknown>,
+  replaced: [] as Array<(...args: unknown[]) => unknown>,
 }));
 
 vi.mock('../extension/lib/connection.js', () => ({
@@ -48,24 +51,32 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
     create: async () => ({}),
     captureVisibleTab: async () => 'data:image/png;base64,QUJD',
     onRemoved: { addListener: () => {} },
-    onReplaced: { addListener: () => {} },
+    onReplaced: { addListener: (fn: (...args: unknown[]) => unknown) => { listeners.replaced.push(fn); } },
     onUpdated: { addListener: (fn: (...args: unknown[]) => unknown) => { listeners.updated.push(fn); } },
     onActivated: { addListener: () => {} },
   },
   webNavigation: {
     onCreatedNavigationTarget: { addListener: () => {} },
-    onCommitted: { addListener: () => {} },
+    onCommitted: { addListener: (fn: (...args: unknown[]) => unknown) => { listeners.committed.push(fn); } },
   },
   scripting: {
-    executeScript: async (opts: { target: { tabId: number }; func: () => void; args?: unknown[] }) => {
-      injections.push({ target: opts.target.tabId, func: opts.func.toString(), args: opts.args ?? [] });
-      return [{ result: null }];
+    executeScript: async (opts: { target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; func: () => void; args?: unknown[] }) => {
+      injections.push({ target: opts.target, func: opts.func.toString(), args: opts.args ?? [] });
+      if (faults.shieldInjectionThrows && opts.func.toString().includes('__bc-lock-shield')) throw new Error('cannot inject shield');
+      const frameIds = opts.target.frameIds ?? (opts.target.allFrames ? [0, 2] : [0]);
+      return frameIds.map((frameId) => ({ result: null, frameId }));
     },
   },
   action: { setBadgeBackgroundColor: () => {}, setBadgeText: () => {} },
   storage: {
     session: { get: async () => ({}), set: async () => {} },
-    local: { get: async () => ({ agentCursor: cursorSetting.enabled }), set: async () => {} },
+    local: {
+      get: async () => {
+        if (faults.storageReadThrows) throw new Error('storage unavailable');
+        return { agentCursor: cursorSetting.enabled, agentMouseMovementLock: mouseMovementLockSetting.enabled };
+      },
+      set: async () => {},
+    },
   },
   runtime: {
     id: 'extension-id',
@@ -93,9 +104,10 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
 
 const { handleMessage } = await import('../extension/dispatch/router.js');
 const { handleScreenshot } = await import('../extension/handlers/screenshot.js');
-const { tabLocks, tabControl } = await import('../extension/lib/state.js');
+const { tabLocks, tabControl, wedgedTabs } = await import('../extension/lib/state.js');
 const { lockTabUi } = await import('../extension/lib/lock-ops.js');
 const { registerEventListeners } = await import('../extension/events.js');
+const { dispatchAgentInput, hideLockShield, refreshLockShield, showLockShield } = await import('../extension/lib/overlay.js');
 
 const shieldInjections = () => injections.filter((i) => i.func.includes('__bc-lock-shield'));
 const overlayInjections = () => injections.filter((i) => i.func.includes('__bc-overlay'));
@@ -104,10 +116,15 @@ const flush = (ms = 60) => new Promise((r) => setTimeout(r, ms));
 describe('agent-control shield (blue frame instead of corner badge)', () => {
   beforeEach(() => {
     cursorSetting.enabled = false;
+    mouseMovementLockSetting.enabled = false;
+    faults.activeBadgeThrows = false;
+    faults.shieldInjectionThrows = false;
+    faults.storageReadThrows = false;
     sent.length = 0;
     injections.length = 0;
     tabStore.clear();
     tabLocks.unlockAll();
+    wedgedTabs.delete(3);
     tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
   });
 
@@ -119,6 +136,7 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     expect(shields.length, 'a shield injection must happen for the action').toBeGreaterThanOrEqual(1);
     // The label names the AGENT controlling the tab (user request), not the tool.
     expect(shields[0]!.args).toContain('agent Vitest controlling the tab');
+    expect(shields[0]!.target).toEqual({ tabId: 3 });
     expect(overlayInjections(), 'the old corner badge must not be used anymore').toEqual([]);
     expect(sent.find((f) => f.id === 'a1')?.success).toBe(true);
   });
@@ -127,6 +145,62 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     await handleMessage({ id: 'a4', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
     await flush();
     expect(shieldInjections()[0]!.args).toContain('agent controlling the tab');
+  });
+
+  it('opts into movement and hover blocking across frames only during an agent command', async () => {
+    mouseMovementLockSetting.enabled = true;
+    await handleMessage({ id: 'mouse-lock', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+
+    const shields = shieldInjections();
+    expect(shields[0]!.args).toEqual(['agent controlling the tab', false, true]);
+    expect(shields[0]!.target).toEqual({ tabId: 3, allFrames: true });
+    expect(shields[0]!.func).toContain("'pointermove'");
+    expect(shields[0]!.func).toContain("el.style.pointerEvents = blockMouse ? 'auto' : 'none'");
+    expect(shields.at(-1)!.func).toContain('root.__bcShieldDocListeners');
+    expect(sent.find((f) => f.id === 'mouse-lock')?.success).toBe(true);
+  });
+
+  it('opens a short all-frame permit for each agent CDP input and closes it on failure', async () => {
+    mouseMovementLockSetting.enabled = true;
+    await showLockShield(3, 'agent controlling the tab');
+    const before = injections.length;
+
+    await expect(dispatchAgentInput(3, async () => { throw new Error('CDP failed'); }, 'Input.dispatchMouseEvent', { type: 'mouseMoved' }))
+      .rejects.toThrow('CDP failed');
+
+    const permits = injections.slice(before);
+    expect(permits).toHaveLength(2);
+    expect(permits.map((item) => item.target)).toEqual([
+      { tabId: 3, allFrames: true }, { tabId: 3, frameIds: [0, 2] },
+    ]);
+    expect(permits[0]!.func).toContain('window.__bcAgentInputUntil = until');
+    expect(permits[0]!.args[0]).toMatchObject({ durationMs: 500, eventTypes: ['pointermove', 'mousemove', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave'] });
+    expect(permits[0]!.func).toContain("shield.style.pointerEvents = 'none'");
+    expect(permits[1]!.func).toContain("shield.style.pointerEvents = 'auto'");
+    expect(permits[0]!.func).toContain('window.__bcAgentInputPermit = activePermit');
+    expect(permits[1]!.func).toContain('window.__bcAgentInputPermit?.id !== id');
+    await hideLockShield(3);
+  });
+
+  it('lets the agent dispatch drag events through the movement shield', async () => {
+    mouseMovementLockSetting.enabled = true;
+    await showLockShield(3, 'agent controlling the tab');
+    const before = injections.length;
+    const send = vi.fn(async () => undefined);
+
+    await dispatchAgentInput(3, send, 'Input.dispatchDragEvent', { type: 'drop', x: 40, y: 60 });
+
+    const permits = injections.slice(before);
+    expect(send).toHaveBeenCalledWith('Input.dispatchDragEvent', { type: 'drop', x: 40, y: 60 });
+    expect(permits).toHaveLength(2);
+    expect(permits.map((item) => item.target)).toEqual([
+      { tabId: 3, allFrames: true }, { tabId: 3, frameIds: [0, 2] },
+    ]);
+    expect((permits[0]!.args[0] as { allowMouseTarget: boolean }).allowMouseTarget).toBe(true);
+    expect(permits[0]!.func).toContain("shield.style.pointerEvents = 'none'");
+    expect(permits[0]!.func).toContain('setTimeout');
+    await hideLockShield(3);
   });
 
   it('keeps the visual frame between calls when the agent cursor is enabled', async () => {
@@ -183,9 +257,90 @@ describe('pinning a tab draws no frame (the frame is shown only during a tool ca
   beforeEach(() => {
     sent.length = 0;
     injections.length = 0;
+    mouseMovementLockSetting.enabled = false;
+    faults.activeBadgeThrows = false;
+    faults.shieldInjectionThrows = false;
+    faults.storageReadThrows = false;
     tabStore.clear();
     tabLocks.unlockAll();
     tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
+  });
+
+  it('reinstalls the shield when a frame commits during an active command', async () => {
+    mouseMovementLockSetting.enabled = true;
+    await handleMessage({ id: 'frame-nav', tool: 'browser_wait', params: { tabId: 3, ms: 80 }, sessionId: 's1' });
+    await flush(10);
+    listeners.committed.at(-1)!({ tabId: 3, frameId: 2, documentId: 'frame-doc', url: 'https://example.com/frame' });
+    await flush(10);
+
+    const shows = injections.filter((item) => item.args[0] === 'agent controlling the tab');
+    expect(shows).toHaveLength(2);
+    expect(shows[0]!.target.allFrames).toBe(true);
+    expect(shows[1]!.target.frameIds).toEqual([2]);
+    await flush(100);
+    expect(sent.find((f) => f.id === 'frame-nav')?.success).toBe(true);
+  });
+
+  it('moves active shield ownership with a replaced tab and resolves cleanup to the new id', async () => {
+    mouseMovementLockSetting.enabled = true;
+    await showLockShield(3, 'agent controlling the tab');
+    tabStore.set(4, { id: 4, windowId: 1, url: 'https://example.com/replaced', title: 'Replaced', active: true });
+    const before = injections.length;
+    listeners.replaced.at(-1)!(4, 3);
+    await flush();
+    expect(injections.slice(before).some((item) => item.target.tabId === 4 && item.func.includes('__bc-lock-shield'))).toBe(true);
+    await dispatchAgentInput(3, async () => undefined, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: 20, y: 30 });
+
+    expect(injections.slice(before).every((item) => item.target.tabId === 4)).toBe(true);
+    await hideLockShield(3);
+    expect(injections.at(-1)!.target.tabId).toBe(4);
+  });
+
+  it('refuses input when a replacement tab cannot receive the movement shield', async () => {
+    mouseMovementLockSetting.enabled = true;
+    await showLockShield(3, 'agent controlling the tab');
+    tabStore.set(4, { id: 4, windowId: 1, url: 'https://example.com/replaced', title: 'Replaced', active: true });
+    faults.shieldInjectionThrows = true;
+    listeners.replaced.at(-1)!(4, 3);
+    await flush();
+
+    const send = vi.fn(async () => undefined);
+    await expect(dispatchAgentInput(3, send, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: 20, y: 30 }))
+      .rejects.toThrow('AGENT_INPUT_SHIELD_UNAVAILABLE');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('does not execute a command when the enabled movement shield cannot be installed', async () => {
+    mouseMovementLockSetting.enabled = true;
+    faults.shieldInjectionThrows = true;
+
+    await handleMessage({ id: 'no-shield', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+
+    expect(sent.find((f) => f.id === 'no-shield')).toMatchObject({ success: false });
+    expect(sent.find((f) => f.id === 'no-shield')?.error).toContain('MOUSE_MOVEMENT_LOCK_UNAVAILABLE');
+  });
+
+  it('does not execute a command when the movement-lock setting cannot be read', async () => {
+    faults.storageReadThrows = true;
+
+    await handleMessage({ id: 'no-setting', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+
+    expect(sent.find((f) => f.id === 'no-setting')?.error).toContain('MOUSE_MOVEMENT_LOCK_UNAVAILABLE');
+    expect(sent.find((f) => f.id === 'no-setting')?.success).toBe(false);
+  });
+
+  it('does not reinstall a shield after a wedged command ends', async () => {
+    mouseMovementLockSetting.enabled = true;
+    await showLockShield(3, 'agent controlling the tab');
+    wedgedTabs.set(3, Date.now());
+
+    await handleMessage({ id: 'wedged', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    await flush();
+
+    expect(await refreshLockShield(3)).toBe(false);
+    wedgedTabs.delete(3);
   });
 
   it('lockTabUi takes the lock and injects no frame', () => {

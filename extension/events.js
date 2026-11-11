@@ -14,7 +14,7 @@ import {
   dropDocumentState,
   followReplacedTab,
 } from "./lib/state.js";
-import { hideLockShield, clearAgentCursor } from "./lib/overlay.js";
+import { hideLockShield, clearAgentCursor, forgetLockShield, moveLockShield, refreshLockShield } from "./lib/overlay.js";
 import { createNetworkCapture, pushNetworkEntry } from "./lib/network-capture.js";
 import { lockTabUi, releaseTabUi } from "./lib/lock-ops.js";
 import {
@@ -225,6 +225,7 @@ export function registerEventListeners() {
   // inject would just throw (swallowed) and there is nothing to remove.
   chrome.tabs.onRemoved.addListener(async (tabId) => {
     void getActivityLog().closeVisit(tabId).catch(() => {});
+    forgetLockShield(tabId);
     dropTabState(tabId);
     await releaseVaultTabState(tabId);
     persistSessionState();
@@ -234,6 +235,7 @@ export function registerEventListeners() {
   // the old one's lock and control, as a frozen tab replaced by browser_navigate does.
   chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
     followReplacedTab(removedTabId, addedTabId);
+    if (moveLockShield(removedTabId, addedTabId)) void refreshLockShield(addedTabId);
     void getActivityLog().closeVisit(removedTabId).catch(() => {});
     chrome.tabs.get(addedTabId).then((tab) => {
       if (typeof tab.url === 'string') void getActivityLog().rotateVisit(addedTabId, tab.url).catch(() => {});
@@ -243,9 +245,8 @@ export function registerEventListeners() {
 
   watchOpenedTabs();
 
-  // A loading tab drops its per-document state. No shield is re-injected after
-  // a navigation: the shield exists only while a tool call runs, and that call
-  // removes it when it ends.
+  // Loading drops per-document state. An in-flight tool call reinstalls its
+  // active shield at onCommitted below, then removes it when the call ends.
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (isPrivateVaultUrl(changeInfo.url || "")) registerPrivateVaultTab(tabId);
     if (changeInfo.status === "loading") {
@@ -255,6 +256,9 @@ export function registerEventListeners() {
   });
 
   chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, documentId, url }) => {
+    // A document commit replaces the isolated-world listeners. Reinstall the
+    // shield only in that frame while its agent command is still active.
+    void refreshLockShield(tabId, frameId);
     if (frameId !== 0 || typeof documentId !== "string") return;
     const committedUrl = typeof url === 'string' ? url : null;
     if (committedUrl && isPrivateVaultUrl(committedUrl)) {

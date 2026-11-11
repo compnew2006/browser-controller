@@ -6,8 +6,10 @@ const cdp: Array<{ method: string; params: Record<string, unknown> }> = [];
 const pageResults: unknown[] = [];
 /** Arguments of every page function call, in order. */
 const pageArgs: unknown[][] = [];
+const agentPermitScripts: Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; func: string; args: unknown[] }> = [];
 /** The popup's "Show agent cursor" switch (chrome.storage.local agentCursor). */
 let cursorOn = false;
+let mouseMovementLockOn = false;
 let attachError: Error | null = null;
 let attachCount = 0;
 
@@ -17,14 +19,18 @@ let attachCount = 0;
     onRemoved: { addListener: () => {} },
   },
   scripting: {
-    executeScript: async (opts: { args?: unknown[] }) => {
-      pageArgs.push(opts.args ?? []);
-      return [{ result: pageResults.length ? pageResults.shift() : {} }];
+    executeScript: async (opts: { target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; func?: () => void; args?: unknown[] }) => {
+      const script = opts;
+      if (script.func?.toString().includes('__bcAgentPermitTimer')) {
+        agentPermitScripts.push({ target: script.target, func: script.func.toString(), args: script.args ?? [] });
+      } else pageArgs.push(opts.args ?? []);
+      const frameId = Number.isInteger(opts.target.frameIds?.[0]) ? opts.target.frameIds[0] : 0;
+      return [{ result: pageResults.length ? pageResults.shift() : {}, frameId }];
     },
   },
   storage: {
     session: { get: async () => ({}), set: async () => {} },
-    local: { get: async () => ({ agentCursor: cursorOn }), set: async () => {} },
+    local: { get: async () => ({ agentCursor: cursorOn, agentMouseMovementLock: mouseMovementLockOn }), set: async () => {} },
   },
   debugger: {
     attach: async () => { attachCount++; if (attachError) throw attachError; },
@@ -41,6 +47,7 @@ const ti = await import('../extension/lib/trusted-input.js');
 const session = await import('../extension/lib/cdp-session.js');
 const { fallbackByTab } = await import('../extension/lib/state.js');
 const { handleClick, handleType, parseKeyCombo } = await import('../extension/handlers/interaction.js');
+const { hideLockShield, showLockShield } = await import('../extension/lib/overlay.js');
 
 const inputs = () => cdp.filter((c) => c.method.startsWith('Input.'));
 
@@ -50,6 +57,8 @@ describe('trusted input (CDP)', () => {
     pageResults.length = 0;
     pageArgs.length = 0;
     cursorOn = false;
+    mouseMovementLockOn = false;
+    agentPermitScripts.length = 0;
     attachError = null;
     attachCount = 0;
     await session.detachCdp(5);
@@ -129,6 +138,30 @@ describe('trusted input (CDP)', () => {
     expect(res).toMatchObject({ success: true, input: 'cdp' });
     expect(inputs().map((c) => c.params.type)).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
     expect(inputs()[1].params).toMatchObject({ x: 100, y: 40, button: 'left', clickCount: 1 });
+  });
+
+  it('scopes the mouse-lock bypass to each CDP dispatch, including mouse movement', async () => {
+    mouseMovementLockOn = true;
+    await showLockShield(5, 'agent controlling the tab');
+    agentPermitScripts.length = 0;
+    pageResults.push({ success: true, x: 100, y: 40, visible: true, focused: false });
+
+    const result = await handleClick({ tabId: 5, target: '#go' });
+    expect(result).toMatchObject({ success: true, input: 'cdp' });
+    expect(inputs().map((c) => c.params.type)).toEqual(['mouseMoved', 'mousePressed', 'mouseReleased']);
+    const openedPermits = agentPermitScripts.filter((script) => script.func.includes('window.__bcAgentInputPermit = activePermit'));
+    const closedPermits = agentPermitScripts.filter((script) => typeof script.args[0] === 'string');
+    expect(openedPermits).toHaveLength(3);
+    expect(closedPermits).toHaveLength(3);
+    expect(openedPermits.map((script) => script.args[0])).toMatchObject([
+      { allowMouseTarget: true, eventTypes: expect.arrayContaining(['mousemove']) },
+      { allowMouseTarget: true, eventTypes: ['pointerdown', 'mousedown'] },
+      { allowMouseTarget: true, eventTypes: ['pointerup', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'] },
+    ]);
+    expect(closedPermits.map((script) => script.target)).toEqual([
+      { tabId: 5, frameIds: [0] }, { tabId: 5, frameIds: [0] }, { tabId: 5, frameIds: [0] },
+    ]);
+    await hideLockShield(5);
   });
 
   it('returns numeric-only opt-in click phase timing and distinguishes cold from reused sessions', async () => {

@@ -10,7 +10,7 @@ import {
   releaseSessionSettings, claimTabSetting, releaseBodyCapture, sessionSettingOwners, isSessionStateUnavailable,
 } from '../lib/state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from '../lib/connection.js';
-import { showLockShield, hideLockShield, agentCursorEnabled, clearAgentCursor } from '../lib/overlay.js';
+import { showLockShield, hideLockShield, discardLockShieldState, agentCursorEnabled, agentMouseMovementLockEnabled, clearAgentCursor } from '../lib/overlay.js';
 import { getOpenDialog, dialogLabel, takeFileChooser } from '../lib/cdp-session.js';
 import { handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType } from '../handlers/interaction.js';
@@ -477,16 +477,33 @@ export async function handleMessage(msg) {
       try {
         setCurrentActivity(tool);
         updateBadge('active');
+        let movementLockEnabled = null;
+        try { movementLockEnabled = await agentMouseMovementLockEnabled(); } catch { /* fail closed below */ }
+        let shieldPromise = null;
+        let shieldInstalled = false;
         // Agent control shows the blue input-blocking spectrum for this call only;
         // the label names the AGENT (user request: "agent {name} controlling the tab"), not the
         // running tool. agentName is a top-level WS field (audit M1); fall back
         // to a generic label for anonymous direct-WS callers.
-        // Best effort and bounded: the shield is cosmetic, a frozen page must not block the tool.
+        // A disabled movement lock keeps the historical best-effort shield. When
+        // the user enabled it, the action must not run unless the shield is active.
         if (canDrawShield(tabId)) {
           const showCursor = !!(await overlayStep(agentCursorEnabled()));
-          await overlayStep(showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab', showCursor));
+          shieldPromise = showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab', showCursor, movementLockEnabled === true);
+          shieldInstalled = (await overlayStep(shieldPromise)) === true;
+          if (!shieldInstalled) {
+            // A timed-out injection cannot be cancelled. Remove a late shield
+            // once its promise settles so it cannot outlive this call.
+            void shieldPromise.then((installed) => installed && hideLockShield(tabId)).catch(() => {});
+          }
         }
         try {
+          if (movementLockEnabled === null) {
+            throw new Error('MOUSE_MOVEMENT_LOCK_UNAVAILABLE: could not read the extension setting, so the tab was left untouched.');
+          }
+          if (movementLockEnabled && !shieldInstalled) {
+            throw new Error('MOUSE_MOVEMENT_LOCK_UNAVAILABLE: could not install the input shield, so the tool action was not sent.');
+          }
           // The shield step above can take a while: check again before the handler sends anything.
           if (controller.signal.aborted) throw cancelledError();
           const result = await dispatch(tool, p, sessionId, agentName, controller.signal, p?.observe === true, msg.activityContext);
@@ -499,16 +516,16 @@ export async function handleMessage(msg) {
           updateBadge(isWsConnected() ? 'connected' : 'disconnected');
           // The input block ends with the call. With the visible cursor enabled,
           // retain the frame as a non-interactive cue during the control linger.
-          // A wedged page cannot run the
-          // removal; its next document drops the frame. A JavaScript dialog open now may be one
-          // this call opened: it blocks the removal until it is answered, so the removal goes out
-          // without an await. The call answers and frees the tab, and chrome.scripting runs the
-          // removal once the dialog closes. Otherwise the removal is awaited within the overlay budget.
-          if (!wedgedTabs.has(tabId)) {
+          // A wedged renderer cannot run cleanup; discard its state so the next document is not re-locked.
+          if (wedgedTabs.has(tabId)) {
+            discardLockShieldState(tabId);
+          } else {
             const visible = tabControl.controller(tabId) && await overlayStep(agentCursorEnabled());
             // Owned tabs remain controlled until release; shared tabs use the normal activity linger.
             const linger = visible ? (sessionId && tabLocks.owner(tabId) === sessionId ? -1 : CONTROL_LINGER_MS) : 0;
             const removeShield = () => linger ? hideLockShield(tabId, linger) : hideLockShield(tabId);
+            // A JavaScript dialog blocks removal until answered, so submit that cleanup without awaiting.
+            // Otherwise overlayStep bounds the removal wait.
             if (getOpenDialog(tabId)) removeShield().catch(() => {});
             else await overlayStep(removeShield());
           }

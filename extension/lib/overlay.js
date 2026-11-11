@@ -10,6 +10,58 @@
 
 /** chrome.storage.local key of the popup's "Show agent cursor" switch. */
 export const AGENT_CURSOR_KEY = 'agentCursor';
+export const AGENT_MOUSE_MOVEMENT_LOCK_KEY = 'agentMouseMovementLock';
+
+const activeShields = new Map();
+const activeShieldAliases = new Map();
+const AGENT_INPUT_PERMIT_MS = 500;
+let nextAgentInputPermitId = 0;
+
+function agentInputEventTypes(method, params) {
+  if (method === 'Input.dispatchMouseEvent') {
+    switch (params?.type) {
+      case 'mouseMoved': return ['pointermove', 'mousemove', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave'];
+      case 'mousePressed': return ['pointerdown', 'mousedown'];
+      case 'mouseReleased': return ['pointerup', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'];
+      case 'mouseWheel': return ['wheel'];
+      default: return [];
+    }
+  }
+  if (method === 'Input.dispatchDragEvent') {
+    const type = { dragEnter: 'dragenter', dragOver: 'dragover', dragLeave: 'dragleave', dragStart: 'dragstart', drop: 'drop', cancel: 'dragend' }[params?.type];
+    return type ? [type] : [];
+  }
+  if (method === 'Input.dispatchKeyEvent') {
+    switch (params?.type) {
+      case 'rawKeyDown': return ['keydown'];
+      case 'keyDown': return ['keydown', 'keypress', 'beforeinput', 'input'];
+      case 'char': return ['keypress', 'beforeinput', 'input'];
+      case 'keyUp': return ['keyup'];
+      default: return [];
+    }
+  }
+  if (method === 'Input.insertText') return ['beforeinput', 'input'];
+  return [];
+}
+
+function resolveShieldTabId(tabId) {
+  return activeShieldAliases.get(tabId) ?? tabId;
+}
+
+async function clearAgentInputPermit(tabId, permitId, { restoreMouseTarget, frameIds = [] }) {
+  await chrome.scripting.executeScript({
+    target: frameIds.length ? { tabId, frameIds } : { tabId, allFrames: true },
+    func: (id, restoreMouse) => {
+      if (window.__bcAgentInputPermit?.id !== id) return;
+      window.__bcAgentInputPermit = null;
+      window.__bcAgentInputUntil = 0;
+      clearTimeout(window.__bcAgentPermitTimer);
+      const shield = document.getElementById('__bc-lock-shield');
+      if (restoreMouse && shield?.__bcBlockMouseMovement) shield.style.pointerEvents = 'auto';
+    },
+    args: [permitId, restoreMouseTarget],
+  });
+}
 
 /**
  * The agent cursor is opt-in (popup → Settings): its glide holds mouse
@@ -24,46 +76,131 @@ export async function agentCursorEnabled() {
   }
 }
 
+/** The optional pointer-movement shield, read once when each tool call starts. */
+export async function agentMouseMovementLockEnabled() {
+  return (await chrome.storage.local.get(AGENT_MOUSE_MOVEMENT_LOCK_KEY))?.[AGENT_MOUSE_MOVEMENT_LOCK_KEY] === true;
+}
+
+function createAgentInputPermit(method, params) {
+  const permitId = `${Date.now()}-${++nextAgentInputPermitId}`;
+  const mouseDispatch = method === 'Input.dispatchMouseEvent' || method === 'Input.dispatchDragEvent';
+  const permit = {
+    id: permitId,
+    durationMs: AGENT_INPUT_PERMIT_MS,
+    eventTypes: agentInputEventTypes(method, params),
+    x: Number.isFinite(params?.x) ? params.x : null,
+    y: Number.isFinite(params?.y) ? params.y : null,
+    allowMouseTarget: mouseDispatch,
+  };
+  if (!permit.eventTypes.length) throw new Error(`AGENT_INPUT_PERMIT_UNSUPPORTED: ${method} ${String(params?.type ?? '')}`);
+  return permit;
+}
+
+async function installAgentInputPermit(tabId, permit) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: (incomingPermit) => {
+        const until = Date.now() + incomingPermit.durationMs;
+        const activePermit = { ...incomingPermit, until };
+        window.__bcAgentInputPermit = activePermit;
+        window.__bcAgentInputUntil = until;
+        clearTimeout(window.__bcAgentPermitTimer);
+        window.__bcAgentPermitTimer = setTimeout(() => {
+          if (window.__bcAgentInputPermit?.id !== incomingPermit.id) return;
+          window.__bcAgentInputPermit = null;
+          window.__bcAgentInputUntil = 0;
+          const shield = document.getElementById('__bc-lock-shield');
+          if (incomingPermit.allowMouseTarget && shield?.__bcBlockMouseMovement) shield.style.pointerEvents = 'auto';
+        }, incomingPermit.durationMs);
+        const shield = document.getElementById('__bc-lock-shield');
+        if (incomingPermit.allowMouseTarget && shield?.__bcBlockMouseMovement) shield.style.pointerEvents = 'none';
+      },
+      args: [permit],
+    });
+    if (!Array.isArray(results) || results.length === 0) throw new Error('No frame accepted the input permit.');
+    return results.map((result) => result.frameId).filter(Number.isInteger);
+  } catch (error) {
+    try { await clearAgentInputPermit(tabId, permit.id, { restoreMouseTarget: permit.allowMouseTarget, frameIds: [] }); } catch { /* a partial frame injection may already be gone */ }
+    throw new Error(`AGENT_INPUT_PERMIT_FAILED: ${String(error?.message || error)}`, { cause: error });
+  }
+}
+
+/** Dispatch one CDP input while briefly letting it reach the page through the shield. */
+export async function dispatchAgentInput(tabId, send, method, params) {
+  const targetTabId = resolveShieldTabId(tabId);
+  const shieldState = activeShields.get(targetTabId);
+  if (!shieldState?.options.blockMouseMovement) return send(method, params);
+  if (!shieldState.readiness || !await shieldState.readiness) {
+    throw new Error('AGENT_INPUT_SHIELD_UNAVAILABLE: the movement shield is not installed in the current tab.');
+  }
+
+  const permit = createAgentInputPermit(method, params);
+  const frameIds = await installAgentInputPermit(targetTabId, permit);
+
+  try {
+    return await send(method, params);
+  } finally {
+    try {
+      await clearAgentInputPermit(targetTabId, permit.id, { restoreMouseTarget: permit.allowMouseTarget, frameIds });
+    } catch {
+      // The page may have navigated or closed while the input was in flight.
+    }
+  }
+}
+
 // Lock-shield: a full-viewport translucent frame with a blue inner glow. The frame is
-// visual only: pointer-events:none keeps it out of hit-testing, so the page
-// keeps its own hover state (JS menus stay open while the agent works) and the
-// agent's trusted CDP input lands on the page elements directly.
+// normally visual only: pointer-events:none keeps it out of hit-testing, so
+// the page keeps its hover state. The optional movement lock switches hit-
+// testing on to suppress CSS :hover, and temporarily switches it off for one
+// trusted agent CDP dispatch.
 // The USER's input is blocked by capture-phase listeners on `document`, which
 // cancel pointer, key and wheel events before any page handler sees them. The
-// agent's own synthetic events (isTrusted:false) and its CDP input (isTrusted,
-// inside the window lib/trusted-input.js opens with __bcAgentInputUntil) pass
-// through. Focus events are not intercepted: swallowing them broke the page's
+// agent's own synthetic events (isTrusted:false) and its CDP input pass through.
+// Focus events are not intercepted: swallowing them broke the page's
 // focus handlers. See specs/tab-control-lock/.
 // `label` (optional) renders a status badge INSIDE the frame (the router passes
 // the agent's name). Returns whether the injection succeeded — on protected pages
 // (chrome:// …) it silently never appears, and callers must be able to say so
 // instead of reporting a protected lock (audit HIGH #4).
-export async function showLockShield(tabId, label, keepCursor = false) {
+async function injectLockShield(tabId, options, frameId = null) {
   try {
     const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (lbl, cursorActive) => {
-        let el = document.getElementById('__bc-lock-shield');
+      target: frameId != null
+        ? { tabId, frameIds: [frameId] }
+        : options.blockMouseMovement ? { tabId, allFrames: true } : { tabId },
+      func: (lbl, cursorActive, blockMouse) => {
+        const isTopFrame = window === window.top;
+        const root = document.documentElement;
+        const previous = root.__bcShieldDocListeners;
+        if (previous && typeof previous.fn === 'function' && Array.isArray(previous.types)) {
+          for (const type of previous.types) {
+            const opts = type === 'wheel' || type === 'keydown' || type === 'keyup'
+              ? { capture: true, passive: false }
+              : { capture: true };
+            document.removeEventListener(type, previous.fn, opts);
+          }
+        }
+        root.__bcShieldDocListeners = null;
+
+        let el = isTopFrame ? document.getElementById('__bc-lock-shield') : null;
         // An idle visual frame has no input listeners; replace it with a fresh
-        // active shield so the next call gets its own blocking lifetime.
-        if (el && !el.__bcShieldDocListeners) {
+        // active shield so this call gets its own blocking lifetime.
+        if (el && !previous) {
           clearTimeout(el.__bcVisualTimer);
           el.remove();
           el = null;
         }
-        if (cursorActive) {
+        if (isTopFrame && cursorActive) {
           const cursor = document.getElementById('__bc-agent-cursor');
           if (cursor) {
             clearTimeout(cursor.__bcIdle);
             cursor.style.opacity = '1';
           }
         }
-        if (!el) {
+        if (isTopFrame && !el) {
           el = document.createElement('div');
           el.id = '__bc-lock-shield';
-          // Blue spectrum fading from the viewport edges toward the center
-          // Narrow edge bands keep the control cue visible without covering
-          // much of the page; the inset glow follows the same scale.
           el.style.cssText =
             'position:fixed;inset:0;z-index:2147483647;pointer-events:none;' +
             'background:' +
@@ -72,42 +209,53 @@ export async function showLockShield(tabId, label, keepCursor = false) {
               'linear-gradient(to bottom,rgba(37,99,235,.48) 0%, transparent 5%),' +
               'linear-gradient(to top,    rgba(37,99,235,.48) 0%, transparent 5%);' +
             'box-shadow:inset 0 0 35px 7.5px rgba(37,99,235,.25);';
-          const block = (e) => {
-            // Synthetic events (isTrusted===false, dispatched by a page script such
-            // as browser_evaluate) MUST pass through — otherwise the capture-phase
-            // document listener would swallow them before they reach the page.
-            // Real user input is isTrusted===true (DOM invariant, unforgeable) and
-            // gets blocked. (Fix-loop 3: audit C2.)
-            if (e.isTrusted === false) return;
-            // The agent's own CDP input (trusted-input.js) is isTrusted===true
-            // too: it opens a short pass-through window around each action.
-            if (window.__bcAgentInputUntil > Date.now()) return;
-            // The owner answers a vault approval card even while an agent call runs (specs/006).
-            // The mark is set in this isolated world, so a page element cannot claim it.
-            if (typeof e.composedPath === 'function' && e.composedPath().some((node) => node && node.__bcVaultHost === true)) return;
-            e.preventDefault();
-            e.stopImmediatePropagation();
-          };
-          // Every listener sits on `document` in the capture phase. The frame
-          // never receives events itself (pointer-events:none), and `document`
-          // is an ancestor of everything in <body>, so these fire site-wide.
-          // The `el` node is a sibling of <body> under <html>, so listeners on
-          // it would never be on the propagation path of page events.
-          const pointerTypes = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'];
-          const keyWheelTypes = ['keydown', 'keyup', 'wheel'];
-          for (const type of pointerTypes) document.addEventListener(type, block, { capture: true });
-          // wheel/keydown/keyup need passive:false so preventDefault() is honored.
-          for (const type of keyWheelTypes) document.addEventListener(type, block, { capture: true, passive: false });
-          // Stash the handler + types on `el` so hideLockShield can detach them
-          // before removing `el` (el.remove() does NOT auto-remove listeners
-          // bound to `document` — they would keep blocking input after unlock).
-          el.__bcShieldDocListeners = { fn: block, types: [...pointerTypes, ...keyWheelTypes] };
-          // document.documentElement exists even before <body> (early injection).
-          document.documentElement.appendChild(el);
+          root.appendChild(el);
         }
-        // Status label inside the frame (the old corner badge, folded into the
-        // shield so agent control shows ONE element: the blue frame). Passing
-        // no label clears it, leaving the bare frame.
+        if (el) {
+          el.__bcBlockMouseMovement = blockMouse;
+          // Hit-testing this transparent frame suppresses page :hover styles as
+          // well as mouse events. Agent CDP dispatches briefly pass through it.
+          el.style.pointerEvents = blockMouse ? 'auto' : 'none';
+        }
+        window.__bcMouseMovementLockActive = blockMouse;
+
+        const block = (e) => {
+          // Synthetic page events remain available to browser_evaluate.
+          if (e.isTrusted === false) return;
+          // Agent CDP events are admitted only for the current dispatch.
+          const permit = window.__bcAgentInputPermit;
+          const matchesPermit = permit
+            && permit.until > Date.now()
+            && Array.isArray(permit.eventTypes)
+            && permit.eventTypes.includes(e.type)
+            && (window !== window.top || permit.x == null || (
+              Number.isFinite(e.clientX) && Number.isFinite(e.clientY)
+              && Math.abs(e.clientX - permit.x) <= 1
+              && Math.abs(e.clientY - permit.y) <= 1
+            ));
+          if (matchesPermit) {
+            e.__bcAgentInputPermitId = permit.id;
+            return;
+          }
+          if (!blockMouse && window.__bcAgentInputUntil > Date.now()) return;
+          // An owner can still answer a vault approval card during an agent call.
+          if (typeof e.composedPath === 'function' && e.composedPath().some((node) => node && node.__bcVaultHost === true)) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        };
+        const pointerTypes = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu'];
+        const movementTypes = blockMouse ? [
+          'pointermove', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave',
+          'mousemove', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave',
+          'dragstart', 'drag', 'dragend', 'dragenter', 'dragleave', 'dragover', 'drop',
+        ] : [];
+        const keyWheelTypes = ['keydown', 'keyup', 'wheel'];
+        for (const type of [...pointerTypes, ...movementTypes]) document.addEventListener(type, block, { capture: true });
+        for (const type of keyWheelTypes) document.addEventListener(type, block, { capture: true, passive: false });
+        // Store per frame: document listeners survive removing the visual element.
+        root.__bcShieldDocListeners = { fn: block, types: [...pointerTypes, ...movementTypes, ...keyWheelTypes] };
+
+        if (!isTopFrame) return;
         let badge = el.querySelector('.__bc-shield-label');
         if (lbl) {
           if (!badge) {
@@ -120,11 +268,6 @@ export async function showLockShield(tabId, label, keepCursor = false) {
             el.appendChild(badge);
           }
           badge.textContent = lbl;
-          // Self-expiry: if the service worker dies mid-action, nothing ever
-          // runs the hide step and this badge would stick forever on a tab the
-          // agent is no longer touching (seen live in production use). The
-          // page self-heals — a label not refreshed within 60s removes
-          // itself. The FRAME's lifetime is the call's (router).
           clearTimeout(window.__bcShieldBadgeTimer);
           window.__bcShieldBadgeTimer = setTimeout(() => badge.remove(), 60000);
         } else if (badge) {
@@ -132,26 +275,100 @@ export async function showLockShield(tabId, label, keepCursor = false) {
           badge.remove();
         }
       },
-      args: keepCursor ? [label ?? null, true] : [label ?? null],
+      args: [options.label, options.keepCursor, options.blockMouseMovement],
     });
-    return Array.isArray(results);
+    return Array.isArray(results) && results.length > 0;
   } catch {
     return false; // protected page / closed tab — caller decides how to report
   }
 }
 
+export async function showLockShield(tabId, label, keepCursor = false, movementLockOverride = undefined) {
+  const options = {
+    label: label ?? null,
+    keepCursor: keepCursor === true,
+    blockMouseMovement: typeof movementLockOverride === 'boolean'
+      ? movementLockOverride
+      : await agentMouseMovementLockEnabled(),
+  };
+  const shieldState = { options, readiness: null };
+  activeShields.set(tabId, shieldState);
+  const installation = injectLockShield(tabId, options);
+  shieldState.readiness = installation;
+  if (!await installation) {
+    await hideLockShield(tabId);
+    return false;
+  }
+  const activeTabId = resolveShieldTabId(tabId);
+  if (activeShields.get(activeTabId) === shieldState && shieldState.readiness === installation) {
+    shieldState.readiness = Promise.resolve(true);
+  }
+  return true;
+}
+
+/** Reapply the in-flight call shield when a top-level or child document commits. */
+export async function refreshLockShield(tabId, frameId = null) {
+  const shieldState = activeShields.get(tabId);
+  if (!shieldState) return false;
+  const { options } = shieldState;
+  if (!options.blockMouseMovement && frameId != null && frameId !== 0) return true;
+  const installation = injectLockShield(tabId, options, frameId);
+  shieldState.readiness = installation;
+  const installed = await installation;
+  if (activeShields.get(tabId) !== shieldState) {
+    await hideLockShield(tabId);
+    return false;
+  }
+  if (shieldState.readiness === installation) shieldState.readiness = Promise.resolve(installed);
+  return installed;
+}
+
+/** Move the in-flight shield state before Chrome completes its tab replacement. */
+export function moveLockShield(fromTabId, toTabId) {
+  if (fromTabId === toTabId) return false;
+  const shieldState = activeShields.get(fromTabId);
+  if (!shieldState) return false;
+  activeShields.delete(fromTabId);
+  activeShields.set(toTabId, shieldState);
+  for (const [alias, target] of activeShieldAliases) {
+    if (target === fromTabId) activeShieldAliases.set(alias, toTabId);
+  }
+  activeShieldAliases.set(fromTabId, toTabId);
+  return true;
+}
+
+export function forgetLockShield(tabId) {
+  activeShields.delete(tabId);
+  // A removed source tab may still be the id captured by an in-flight router
+  // finally block. Keep that alias until hideLockShield resolves its replacement.
+  for (const [alias, target] of activeShieldAliases) {
+    if (target === tabId) activeShieldAliases.delete(alias);
+  }
+}
+
+export function discardLockShieldState(tabId) {
+  const targetTabId = resolveShieldTabId(tabId);
+  activeShields.delete(tabId);
+  activeShields.delete(targetTabId);
+  for (const [alias, target] of activeShieldAliases) {
+    if (alias === tabId || target === targetTabId) activeShieldAliases.delete(alias);
+  }
+}
+
 export async function hideLockShield(tabId, lingerMs = 0) {
+  const targetTabId = resolveShieldTabId(tabId);
+  discardLockShieldState(tabId);
   try {
     await chrome.scripting.executeScript({
-      target: { tabId },
+      // The service worker may have restarted and lost which frames held the active shield.
+      target: { tabId: targetTabId, allFrames: true },
       func: (linger) => {
-        const el = document.getElementById('__bc-lock-shield');
-        if (!el) return; // no-op if absent
-        clearTimeout(el.__bcVisualTimer);
-        // Detach the input-blocking listeners (all of them sit on `document`,
-        // and removing `el` does not remove those, so detach them explicitly
-        // to avoid leaking pointer/keyboard/wheel blocks after unlock).
-        const bound = el.__bcShieldDocListeners;
+        window.__bcMouseMovementLockActive = false;
+        window.__bcAgentInputPermit = null;
+        window.__bcAgentInputUntil = 0;
+        clearTimeout(window.__bcAgentPermitTimer);
+        const root = document.documentElement;
+        const bound = root?.__bcShieldDocListeners;
         if (bound && typeof bound.fn === 'function' && Array.isArray(bound.types)) {
           for (const type of bound.types) {
             const opts = type === 'wheel' || type === 'keydown' || type === 'keyup'
@@ -159,11 +376,17 @@ export async function hideLockShield(tabId, lingerMs = 0) {
               : { capture: true };
             document.removeEventListener(type, bound.fn, opts);
           }
-          el.__bcShieldDocListeners = null;
+          root.__bcShieldDocListeners = null;
         }
+        if (window !== window.top) return;
+        const el = document.getElementById('__bc-lock-shield');
+        if (!el) return;
+        clearTimeout(el.__bcVisualTimer);
+        clearTimeout(el.__bcAgentPermitTimer);
+        el.style.pointerEvents = 'none';
+        el.__bcBlockMouseMovement = false;
         if (linger) {
-          // Keep only the visual cue while the agent is thinking. The capture
-          // listeners have already been detached, so the owner can use the page.
+          // The frame may remain as a visual cue, but never retains hit-testing.
           if (linger > 0) el.__bcVisualTimer = setTimeout(() => el.remove(), linger);
           const cursor = document.getElementById('__bc-agent-cursor');
           if (cursor) {
@@ -186,7 +409,7 @@ export async function setLockShieldHidden(tabId, hidden) {
       target: { tabId },
       func: (hide) => {
         const frame = document.getElementById('__bc-lock-shield');
-        if (frame) frame.style.display = hide ? 'none' : '';
+        if (frame) frame.style.opacity = hide ? '0' : '';
       },
       args: [hidden],
     });

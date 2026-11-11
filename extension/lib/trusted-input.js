@@ -12,7 +12,7 @@
 import { ensureCdp, ensureViewport, hasCdp, getOpenDialog, subscribeCdpEvents, holdFileChooser } from './cdp-session.js';
 import { safeExec, execDom, getFallback, wedgedError } from './page-exec.js';
 import { wedgedTabs } from './state.js';
-import { agentCursorEnabled } from './overlay.js';
+import { agentCursorEnabled, dispatchAgentInput } from './overlay.js';
 import { parseTarget } from './target.js';
 import { refErrorMessage } from './ref-errors.js';
 import { sleep } from './timing.js';
@@ -34,9 +34,8 @@ export async function cdpClickAt(send, x, y, { button = 'left', clickCount = 1, 
  * runtime (D.resolveTarget), scroll it into view when it is not in full view, optionally
  * focus/select it, and return its centre in TOP-level viewport coordinates (what CDP expects).
  * A point `target` is returned as it is: no scroll, no focus, no element checks.
- * Also opens the agent's input window (__bcAgentInputUntil, lib/overlay.js) for
- * a few seconds, so the user-input block lets its trusted events through. With
- * `cursor` ({ effect, count }) the agent cursor glides to that centre (`cursorMs`).
+ * The legacy input window is used only when the movement lock is off. With
+ * `cursor` ({ effect, count }) the agent cursor glides to the resolved centre.
  * Kept self-contained: it is serialized into the page by chrome.scripting.
  */
 function pageLocate(fb, mode, cursor, check, target, expect) {
@@ -87,7 +86,7 @@ function pageLocate(fb, mode, cursor, check, target, expect) {
   }
 
   // The agent's trusted input passes the user-input block (see overlay.js).
-  window.__bcAgentInputUntil = Date.now() + 8000;
+  if (!window.__bcMouseMovementLockActive) window.__bcAgentInputUntil = Date.now() + 8000;
 
   if (viewPoint) {
     // A point is aimed at as it is: no scroll, no focus, no element checks. `visible`
@@ -264,13 +263,13 @@ function pageLocate(fb, mode, cursor, check, target, expect) {
 
 /**
  * Page-side: what is at a top-level viewport point (pierces shadow roots and
- * same-origin frames), open the agent's input window, and glide the agent
- * cursor there.
+ * same-origin frames), retain the legacy input window when the movement lock
+ * is off, and glide the agent cursor there.
  */
 function pagePointInfo(x, y, effect, count) {
   const D = globalThis.__bcDom;
   if (!D || (effect && !D.cursor)) return { __needDom: true };
-  window.__bcAgentInputUntil = Date.now() + 8000;
+  if (!window.__bcMouseMovementLockActive) window.__bcAgentInputUntil = Date.now() + 8000;
   const inView = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight;
   const cursorMs = effect && D.cursor ? D.cursor(x, y, effect, count) : 0;
   const el = D.elementAt(x, y);
@@ -403,7 +402,7 @@ export async function locatePointer(tabId, target, effect, count = 1) {
   const loc = await locateTarget(tabId, { ...aim, cursor: { effect, count } });
   if (!loc?.success || !(loc.cursorMs > 0)) return loc;
   await sleep(loc.cursorMs);
-  // A throw here (the target changed) must not leave the input window and press watch armed.
+  // A throw here (the target changed) must not leave the press watch armed.
   const again = await locateTarget(tabId, { ...aim, cursor: { effect: 'track' } }).catch(async (err) => { await releaseShield(tabId); throw err; });
   // The answer is the measurement after the glide, never the first one: a target that
   // vanished or became blocked during the glide is reported, not clicked where it was.
@@ -490,7 +489,7 @@ export function inputSession(tabId, send, signal, activityRecorder) {
       await chooser.ready;
       let dispatch;
       try {
-        dispatch = send(method, params);
+        dispatch = dispatchAgentInput(tabId, send, method, params);
       } catch (error) {
         activityRecorder?.observe?.(method, params, 'unknown');
         throw error;

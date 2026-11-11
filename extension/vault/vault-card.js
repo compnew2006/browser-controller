@@ -261,7 +261,11 @@
    */
   function trustedChoice(state, event, region) {
     if (!event.isTrusted || state.pending || state.hiding || Date.now() < state.armedAt) return false;
-    if ((Number(window.__bcAgentInputUntil) || 0) > Date.now()) { say(state, 'agentInput'); return false; }
+    const permit = window.__bcAgentInputPermit;
+    const agentInput = permit
+      ? permit.until > Date.now() && event.__bcAgentInputPermitId === permit.id
+      : (Number(window.__bcAgentInputUntil) || 0) > Date.now();
+    if (agentInput) { say(state, 'agentInput'); return false; }
     if (!document.hasFocus()) { say(state, 'unfocused'); return false; }
     if (state.tracksVisibility && !state.visible) { say(state, 'covered'); return false; }
     if (state.rect !== rectOf(state.host)) { rearm(state); say(state, 'moved'); return false; }
@@ -374,6 +378,7 @@
     };
     current = state;
     // The agent's input is refused from now on: a later mark means it tried to aim at this card.
+    window.__bcAgentInputPermit = null;
     window.__bcAgentInputUntil = 0;
     allow.addEventListener('click', (event) => choose(state, 'allow', event));
     deny.addEventListener('click', (event) => choose(state, 'deny', event));

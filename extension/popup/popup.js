@@ -6,7 +6,8 @@
 import { escapeHtml, agentLabelFor, controlBadgeParts, openTabsSignature, renderOpenTabRows } from './open-tabs-view.js';
 import { bindVaultOpenButton } from './popup-vault.js';
 import { bindProfileLabel, updateProfileLabel } from './profile-label.js';
-import { bindDebouncedInput } from './settings-input.js';
+import { bindBooleanSetting, bindDebouncedInput } from './settings-input.js';
+import { AGENT_MOUSE_MOVEMENT_LOCK_KEY } from '../lib/overlay.js';
 import { authenticatedDaemonFetch, daemonFailureKind } from '../lib/daemon-auth.js';
 import { bindActionActivity } from './activity-view.js';
 
@@ -439,14 +440,8 @@ bindDebouncedInput(enrollmentInput, 400, () => {
 
 // Agent cursor (opt-in, off by default): the background reads this key before
 // every mouse action, so flipping the switch applies to the next action.
-const agentCursorInput = document.getElementById('agentCursor');
-chrome.storage.local.get('agentCursor', (stored) => {
-  agentCursorInput.checked = stored.agentCursor === true;
-});
-agentCursorInput.addEventListener('change', () => {
-  chrome.storage.local.set({ agentCursor: agentCursorInput.checked });
-  addLog(agentCursorInput.checked ? 'Agent cursor on' : 'Agent cursor off');
-});
+bindBooleanSetting(document.getElementById('agentCursor'), 'agentCursor', (enabled) => addLog(enabled ? 'Agent cursor on' : 'Agent cursor off'));
+bindBooleanSetting(document.getElementById('agentMouseMovementLock'), AGENT_MOUSE_MOVEMENT_LOCK_KEY, (enabled) => addLog(enabled ? 'Mouse movement lock on' : 'Mouse movement lock off'));
 
 // ── Row actions (event delegation over the re-rendered lists) ──────────────
 

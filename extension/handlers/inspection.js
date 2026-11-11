@@ -14,6 +14,7 @@ import { fallbackByTab, persistSessionState } from '../lib/state.js';
 import { PAGE_FALLBACK_INSTALL } from '../utils/smart-selector.js';
 import { parseTarget, targetLabel } from '../lib/target.js';
 import { refErrorMessage, reboundNote } from '../lib/ref-errors.js';
+import { dispatchAgentInput } from '../lib/overlay.js';
 
 /** browser_snapshot: the default and the largest `maxChars`. */
 export const SNAPSHOT_MAX_CHARS = 8_000;
@@ -169,7 +170,7 @@ export async function handleScroll(params, _sessionId, _agentName, _signal, acti
     // A background tab holds the wheel until it draws a frame: keep frames coming until the scroll settles.
     after = await withFrames(tabId, send, async () => {
       try {
-        await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: aim.x, y: aim.y, deltaX: dx, deltaY: dy });
+        await dispatchAgentInput(tabId, send, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x: aim.x, y: aim.y, deltaX: dx, deltaY: dy });
         activityRecorder?.observe?.('Input.dispatchMouseEvent', { type: 'mouseWheel' }, 'sent');
       } catch (error) {
         activityRecorder?.observe?.('Input.dispatchMouseEvent', { type: 'mouseWheel' }, 'unknown');
