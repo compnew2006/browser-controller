@@ -15,10 +15,10 @@ describe("Tool Registry", () => {
     'browser_scroll', 'browser_wait', 'browser_evaluate', 'browser_handle_dialog',
     'browser_batch', 'browser_emulate', 'browser_logs', 'browser_mock',
     'browser_inspect_element', 'browser_safety', 'browser_vault', 'browser_memory', 'browser_memory_policy',
-    'browser_site_map',
+    'browser_site_map', 'browser_fetch_many',
   ];
-  // Runs entirely in the MCP process (it calls other tools' handlers): no wire name.
-  const localTools = new Set(['browser_batch', 'browser_safety']);
+  // Runs in the MCP process and may compose other handlers; no extension frame.
+  const localTools = new Set(['browser_batch', 'browser_safety', 'browser_fetch_many']);
 
   it("registers the public tools, in contract order", () => {
     expect(allTools.map((t) => t.name)).toEqual(expectedTools);

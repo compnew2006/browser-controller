@@ -5,7 +5,7 @@ import { tabIdParam, forwardHandler } from './types.js';
 export const mockTool: ToolDefinition = {
   name: 'browser_mock',
   summary: 'Block or fake network responses for one tab',
-  description: 'Rules for the tab\'s requests (URL glob or substring): block, or answer with status, body and headers (not with block). rules replaces all rules; [] clears. Up to 50 rules.',
+  description: 'Set request rules by URL glob/substring: block, or reply with status, body and headers. rules replaces all; [] clears. Limit: 50.',
   inputSchema: z.object({
     tabId: tabIdParam,
     rules: z.array(z.object({

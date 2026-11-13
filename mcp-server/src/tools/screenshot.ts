@@ -5,7 +5,7 @@ import { tabIdParam, targetParam, forwardHandler } from './types.js';
 export const screenshotTool: ToolDefinition = {
   name: 'browser_screenshot',
   summary: 'Screenshot of a tab, an element or a region',
-  description: 'JPEG of the viewport, of target (cropped to its box) or of region (CSS px). Longest side at most 1568 px.',
+  description: 'Viewport JPEG; target crops to its box, region uses CSS px. Longest side: 1568 px.',
   inputSchema: z.object({
     tabId: tabIdParam,
     target: targetParam.optional(),

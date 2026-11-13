@@ -272,7 +272,7 @@ const freezePreflightSchema = z.object({
 export const batchTool: ToolDefinition = {
   name: 'browser_batch',
   summary: 'Run up to 50 browser actions in one call',
-  description: 'Run up to 50 {tool,params} calls in order; stops on failure unless onError is continue. tabId fills missing step tab IDs except browser_tabs. Each step returns its result.',
+  description: 'Run up to 50 {tool,params} calls in order. Stops on failure unless onError=continue; fills missing step tabIds except browser_tabs. Each step returns its result.',
   inputSchema: z.object({
     tabId: tabIdParam.optional(),
     maxChars: z.number().int().min(1_000).max(500_000).optional().describe('Cap on the batch\'s whole text; later steps are cut past it (default 120000)'),

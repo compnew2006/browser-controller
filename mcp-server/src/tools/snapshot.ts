@@ -66,7 +66,7 @@ async function snapshotHandler(host: ToolHost, params: Record<string, unknown>):
 export const snapshotTool: ToolDefinition = {
   name: 'browser_snapshot',
   summary: 'Accessibility tree of the page with element refs',
-  description: 'Accessibility tree with refs. Scope by target or query; passwords masked. With delta:true, pass the prior revision as since; apply the line splice or replace on kind:"full".',
+  description: 'Accessibility tree with refs; scope by target or query. Passwords are masked. With delta:true, pass the prior revision as since; apply the line splice or replace on kind:"full".',
   inputSchema: z.object({
     tabId: tabIdParam,
     target: targetParam.optional(),

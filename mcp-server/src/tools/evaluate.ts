@@ -16,7 +16,7 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
 export const evaluateTool: ToolDefinition = {
   name: 'browser_evaluate',
   summary: 'Run JavaScript in the page (top-level await)',
-  description: 'Run JavaScript in the tab: one expression is the result; several statements need `return` (`const x = 2; return x * 21`). Top-level await works. Over CDP; via: scripting if the debugger cannot attach. Prefer click and type. With browser_safety on, follows the site\'s safety action.',
+  description: 'Run JavaScript in the tab; expressions return values, statements use return. Top-level await works. Uses CDP, then scripting if needed. Prefer click/type; browser_safety applies the site\'s rule.',
   inputSchema: z.object({
     tabId: tabIdParam,
     expression: z.string(),

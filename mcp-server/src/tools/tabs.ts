@@ -53,7 +53,7 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
 export const tabsTool: ToolDefinition = {
   name: 'browser_tabs',
   summary: 'List tabs/profiles, select a browser, set session policy',
-  description: 'list: tabs; profiles: connected browser IDs/names and read-only tab availability (does not switch profiles); close/focus require tabId; browser selects a profile (auto = earliest-connected); session reads/sets policy.',
+  description: 'list: tabs. profiles: connected browser IDs/names and read-only availability (no switch). close/focus need tabId; browser selects a profile (auto = earliest connected); session reads/sets policy.',
   inputSchema: z.object({
     action: z.enum(['list', 'profiles', 'close', 'focus', 'session']).optional().describe('Default list; profiles is read-only'),
     tabId: tabIdParam.optional(),

@@ -33,16 +33,16 @@ async function listedTools(): Promise<Array<{ name: string; description?: string
 }
 
 describe('Browser Controller 3.0 server surface', () => {
-  it('tools/list shows exactly the 22 contract tools, in order', async () => {
+  it('tools/list shows exactly the 23 contract tools, in order', async () => {
     const tools = await listedTools();
     expect(tools.map((t) => t.name)).toEqual(allTools.map((t) => t.name));
-    expect(tools).toHaveLength(22);
+    expect(tools).toHaveLength(23);
     expect(tools.map((tool) => tool.name)).not.toContain('browser_vault_internal_fill');
     const vault = tools.find((tool) => tool.name === 'browser_vault')!;
     expect(JSON.stringify(vault.inputSchema)).not.toMatch(/password|identifier|grantId|credentialId/);
   });
 
-  it('tools/list fits the token budget (all 22 definitions as the SDK sends them, <= 20 000 chars)', async () => {
+  it('tools/list fits the token budget (all 23 definitions as the SDK sends them, <= 20 000 chars)', async () => {
     const tools = await listedTools();
     const json = JSON.stringify(tools);
     // chars / 4 is the rough o200k estimate: 20 000 chars is about 5 000 tokens (18 000 before browser_memory, T038;

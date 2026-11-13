@@ -5,7 +5,7 @@ import { tabIdParam, forwardHandler } from './types.js';
 export const emulateTool: ToolDefinition = {
   name: 'browser_emulate',
   summary: 'Emulate viewport, network, CPU, location, theme or user agent',
-  description: 'Emulate in one tab: viewport (never resizes the window), network, cpuThrottling, geolocation, colorScheme, reducedMotion, userAgent. reset:true clears all.',
+  description: 'Emulate one tab\'s viewport (no window resize), network, CPU, geolocation, color scheme, reduced motion or user agent. reset:true clears all.',
   inputSchema: z.object({
     tabId: tabIdParam,
     viewport: z.object({

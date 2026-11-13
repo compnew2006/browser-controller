@@ -31,7 +31,7 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
 export const waitTool: ToolDefinition = {
   name: 'browser_wait',
   summary: 'Wait for an element, a URL, a delay, or the page to settle',
-  description: 'Wait for one of: target visible (gone:true = hidden), url (substring or glob), ms (delay), until:"stable" (page stops changing). Fails TIMEOUT.',
+  description: 'Wait for target visibility (gone:true = hidden), URL (substring/glob), ms, or until stable. Fails TIMEOUT.',
   inputSchema: z.object({
     tabId: tabIdParam,
     target: targetParam.optional(),

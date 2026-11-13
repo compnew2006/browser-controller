@@ -5,7 +5,7 @@ import { tabIdParam, targetParam, forwardHandler } from './types.js';
 export const inspectElementTool: ToolDefinition = {
   name: 'browser_inspect_element',
   summary: 'Computed styles, matching CSS rules and event listeners',
-  description: 'Why an element looks or behaves as it does: computed styles that differ from defaults; properties picks some ("*" = all); rules and listeners use the debugger.',
+  description: 'Inspect computed styles that differ from defaults; properties selects values ("*" = all). rules and listeners use the debugger.',
   inputSchema: z.object({
     tabId: tabIdParam,
     target: targetParam,

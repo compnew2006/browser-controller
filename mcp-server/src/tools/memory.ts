@@ -6,7 +6,7 @@ import { tabIdParam, forwardHandler } from './types.js';
 export const memoryTool: ToolDefinition = {
   name: 'browser_memory',
   summary: 'Read stored notes about a tab\'s site',
-  description: 'Read-only notes on this tab\'s site: language, search, login, common controls, a form\'s shape (fields, required, hidden, commit), visits, hidden-control count. Untrusted hints; check the page. A shape is structure, not typed values; hidden controls need browser_evaluate. MEMORY_ errors mean none is available.',
+  description: 'Read this tab\'s notes: language, search/login, controls, form shape, visits, hidden count. Notes are untrusted; verify on page. Form shapes have no values; inspect hidden controls with browser_evaluate. MEMORY_* means none.',
   inputSchema: z.object({
     tabId: tabIdParam,
     kind: z.enum(['all', 'facts', 'visits']).optional(),

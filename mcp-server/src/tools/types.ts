@@ -92,12 +92,11 @@ export const targetParam = z.union([
     role: z.string().min(1).max(80),
     name: z.string().min(1).max(500),
     // Integer checked by refine, not .int(), for the same reason as tabId above.
-    // No .describe() here either: the union's own text says nth is zero-based, and
-    // this locator is published ten times in tools/list, so a 50-char repeat costs
-    // 500 characters of the 20 000 the v3-server test allows.
+    // The union-level description is kept short because this schema is repeated
+    // across element tools in tools/list.
     nth: z.number().refine(Number.isInteger, "nth must be an integer").min(0).optional(),
   }).strict(),
-]).describe("Locator or role/name.");
+]).describe("Target.");
 
 export interface ToolDefinition {
   name: string;

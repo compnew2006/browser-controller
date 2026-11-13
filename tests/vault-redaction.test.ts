@@ -67,6 +67,17 @@ describe('VaultRedactionRegistry', () => {
     expect(JSON.stringify(sanitized).includes(imageBytes)).toBe(true);
   });
 
+  it('scrubs page content returned by browser_fetch_many', () => {
+    const registry = new VaultRedactionRegistry();
+    const secret = `page-${crypto.randomBytes(16).toString('hex')}`;
+    registry.register(scopeA, secret, 'doc-a');
+    const result = registry.sanitize(scopeA, {
+      success: true,
+      text: JSON.stringify([{ url: '/', fields: { account: secret }, text: secret }]),
+    }, { toolName: 'browser_fetch_many' }) as Record<string, unknown>;
+    expect(String(result.text)).not.toContain(secret);
+  });
+
   it('preserves the raw screenshot wire image only at its trusted root image path', () => {
     const registry = new VaultRedactionRegistry();
     registry.register(scopeA, 'a', 'doc-a');

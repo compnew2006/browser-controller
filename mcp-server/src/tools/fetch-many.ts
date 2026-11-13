@@ -87,12 +87,11 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
   const payload = value === undefined ? raw : value;
   return textResult(JSON.stringify(payload));
 };
-(handler as { toolName?: string }).toolName = 'browser_fetch_many';
 
 export const fetchManyTool: ToolDefinition = {
   name: 'browser_fetch_many',
   summary: 'Fetch several pages of one site in one call',
-  description: 'Read many pages of the tab\'s own site in ONE call: fetches each URL with the tab\'s session cookies, parses it, and returns the fields you asked for. Use it to read a list of pages (repos, articles, rows) without one navigation per page. URLs are relative to the site root or absolute; fields map a name to a CSS selector. It reads: it never clicks, types or submits.',
+  description: 'Fetch URLs read-only. Relative URLs use site root; only same-origin requests send this tab\'s cookies. fields maps names to CSS selectors; text adds up to 4,000 chars/page. No clicks or submits.',
   inputSchema: z.object({
     tabId: tabIdParam,
     urls: z.array(z.string().min(1).max(2_000)).min(1).max(50),

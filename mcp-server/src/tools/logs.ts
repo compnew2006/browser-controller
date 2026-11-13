@@ -5,7 +5,7 @@ import { tabIdParam, forwardHandler } from './types.js';
 export const logsTool: ToolDefinition = {
   name: 'browser_logs',
   summary: 'Console messages and network requests of a tab',
-  description: 'Console messages and network requests of the current page. filter, errors, since, all, requestId and bodies narrow it; clear empties it, and cannot combine with requestId.',
+  description: 'Read page console and network requests. Use filter, errors, since, all, requestId or bodies to narrow; clear empties logs and cannot combine with requestId.',
   inputSchema: z.object({
     tabId: tabIdParam,
     kind: z.enum(['console', 'network']).optional(),

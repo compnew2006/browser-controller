@@ -484,20 +484,26 @@ describe('the router and a file chooser that agent input opened', () => {
 });
 
 describe('dispatch registry ↔ MCP tool registry (drift guard)', () => {
-  // browser_batch and browser_safety are server-only; browser_vault is daemon-owned
-  // and uses private internal frames rather than the generic extension tool dispatcher.
+  // browser_batch, browser_safety and browser_fetch_many run in the MCP process;
+  // fetch_many composes browser_evaluate instead of adding an extension action.
+  // browser_vault is daemon-owned and uses private frames rather than the generic dispatcher.
   // browser_memory, browser_memory_policy and browser_site_map are daemon-owned too: they reach the extension only through the internal context action.
-  const wireTools = allTools.filter((t) => !['browser_batch', 'browser_safety'].includes(t.name));
+  const localTools = new Set(['browser_batch', 'browser_safety', 'browser_fetch_many']);
+  const wireTools = allTools.filter((t) => !localTools.has(t.name));
   const extensionTools = wireTools.filter((t) => !['browser_vault', 'browser_memory', 'browser_memory_policy', 'browser_site_map'].includes(t.name));
 
-  it('every registered MCP tool has an extension handler', () => {
+  it('every extension-backed MCP tool has an extension handler', () => {
     for (const tool of extensionTools) {
       expect(dispatchedTools, `${tool.name} has no extension handler`).toContain(tool.name);
     }
   });
 
-  it('dispatches exactly the known tool set (no stray handlers)', () => {
+  it('dispatches exactly the extension-backed tool set (no stray handlers)', () => {
     expect(dispatchedTools).toEqual(extensionTools.map((tool) => tool.name));
+  });
+
+  it('keeps MCP-local tools out of the extension dispatcher', () => {
+    for (const tool of localTools) expect(dispatchedTools).not.toContain(tool);
   });
 
   it('keeps the daemon-owned vault tool and internal vault actions out of the extension registry', () => {

@@ -152,7 +152,7 @@ async function handler(host: ToolHost, params: Record<string, unknown>): Promise
 export const memoryPolicyTool: ToolDefinition = {
   name: NAME,
   summary: 'Request a website-memory change; the owner confirms it',
-  description: 'Request a website-memory or site-map (map_*) change; it applies only if the owner confirms it in this client. tabId picks the site; path a page or prefix.',
+  description: 'Request an owner-confirmed website-memory or site-map (map_*) change. tabId selects the site; path is a page or prefix.',
   inputSchema: z.object({
     action: z.enum(POLICY_ACTIONS),
     tabId: tabIdParam.optional(),
