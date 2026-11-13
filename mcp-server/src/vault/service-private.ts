@@ -7,6 +7,7 @@ import {
 import { isRecord } from '../core/guards.js';
 import { VaultServiceCore } from './service-core.js';
 import { ERROR_CODES } from '../core/error-codes.js';
+import { commitPortableVault, exportPortableVault, previewPortableVault } from './service-portable.js';
 
 /** What the owner chose on an approval card. */
 type CardChoice = 'allow' | 'deny' | 'page' | 'cancel';
@@ -68,6 +69,21 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
         case 'restore':
           requireStrictKeys(payload, ['operation', 'backupId']);
           return await this.privateRestore(connection, payload.backupId);
+        case 'portableExportStart':
+          requireStrictKeys(payload, ['operation', 'passphrase']);
+          return await exportPortableVault(this.storeFor(connection.browserId), payload.passphrase);
+        case 'portableImportPreview':
+          requireStrictKeys(payload, ['operation', 'archive', 'passphrase']);
+          return await previewPortableVault(this.storeFor(connection.browserId), payload.archive, payload.passphrase);
+        case 'portableImportCommit':
+          requireStrictKeys(payload, ['operation', 'archive', 'passphrase', 'confirmReplace']);
+          return await commitPortableVault({
+            store: this.storeFor(connection.browserId),
+            browserId: connection.browserId,
+            revokeGrants: (scope) => this.grants.revokeScope(scope),
+            cancelOperations: (scope) => this.cancelScopeOperations(scope),
+            now: this.now,
+          }, payload.archive, payload.passphrase, payload.confirmReplace);
         default:
           return publicError(ERROR_CODES.INVALID_ARGUMENT);
       }
@@ -554,4 +570,5 @@ export abstract class VaultServicePrivate extends VaultServiceCore {
     await store.restoreBackup(backupId, this.now());
     return { success: true, status: 'restored' };
   }
+
 }

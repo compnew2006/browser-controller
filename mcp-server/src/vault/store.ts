@@ -11,6 +11,8 @@ import { VaultStorageError, fileError } from './store-errors.js';
 import { assertOwnerMode, readSafeFile, syncDirectory, writeExclusive, writeVaultFile, type VaultWriteContext } from './store-files.js';
 import { backupsToPrune, dataFromEnvelope, envelopeFor, parseBackup, parseJson, type BackupPackage, type RestoreJournal } from './store-format.js';
 import { ERROR_CODES } from '../core/error-codes.js';
+import type { PortableVaultData } from './portable-format.js';
+import { replacePortableData as replacePortableDataWithAccess } from './store-portable.js';
 
 export { VaultStorageError } from './store-errors.js';
 export { VAULT_BACKUP_RETENTION } from './store-format.js';
@@ -189,6 +191,15 @@ export class CredentialVaultStore {
     return ((await this.readData()).allowlist ?? []).map((entry) => ({ ...entry }));
   }
 
+  /** One unlocked read of portable records only; local audit history stays inside the destination profile. */
+  async snapshotPortableData(): Promise<Pick<VaultData, 'entries' | 'allowlist'>> {
+    const data = await this.readData();
+    return {
+      entries: data.entries.map((entry) => ({ ...entry })),
+      allowlist: (data.allowlist ?? []).map((entry) => ({ ...entry })),
+    };
+  }
+
   /** Adds an origin to the allowlist; false when it was already there. */
   async allowlistAdd(origin: string, at: number): Promise<boolean> {
     const parsed = VaultAllowlistEntrySchema.safeParse({ origin, addedAt: at });
@@ -232,16 +243,21 @@ export class CredentialVaultStore {
       try {
         const envelope = await this.readRawEnvelope();
         dataFromEnvelope(envelope, this.namespace, key);
-        const id = randomId('bkp');
-        const backup: BackupPackage = { version: VAULT_VERSION, namespace: this.namespace, createdAt: now, key: key.toString('base64'), envelope };
-        const file = path.join(this.backups, `${id}.json`);
-        await writeVaultFile(file, Buffer.from(JSON.stringify(backup), 'utf8'), MAX_BACKUP_BYTES, this.writeContext, true);
-        await this.pruneBackups(id);
+        const id = await this.writeBackupSnapshot(now, key, envelope);
         return { id, createdAt: now };
       } finally {
         key.fill(0);
       }
     });
+  }
+
+  private async writeBackupSnapshot(now: number, key: Buffer, envelope: VaultEnvelope): Promise<string> {
+    const id = randomId('bkp');
+    const backup: BackupPackage = { version: VAULT_VERSION, namespace: this.namespace, createdAt: now, key: key.toString('base64'), envelope };
+    const file = path.join(this.backups, `${id}.json`);
+    await writeVaultFile(file, Buffer.from(JSON.stringify(backup), 'utf8'), MAX_BACKUP_BYTES, this.writeContext, true);
+    await this.pruneBackups(id);
+    return id;
   }
 
   /** Best effort: a prune failure never fails the backup. Only backup files are touched, never the live store or key. */
@@ -321,37 +337,63 @@ export class CredentialVaultStore {
       });
       if (restored.audit.length > VAULT_MAX_AUDIT_EVENTS) restored.audit.splice(0, restored.audit.length - VAULT_MAX_AUDIT_EVENTS);
       const nextEnvelope = envelopeFor(VaultDataSchema.parse(restored), this.namespace, backupKey);
-      const suffix = crypto.randomBytes(12).toString('hex');
-      const journal: RestoreJournal = {
-        version: VAULT_VERSION,
-        backupId: id,
-        hadKey: await this.exists(this.keyPath),
-        hadStore: await this.exists(this.storePath),
-        stagedKey: `.restore-${suffix}.key.tmp`,
-        stagedStore: `.restore-${suffix}.store.tmp`,
-        previousKey: `.restore-${suffix}.key.old`,
-        previousStore: `.restore-${suffix}.store.old`,
-      };
-      const stagedKeyPath = path.join(this.directory, journal.stagedKey);
-      const stagedStorePath = path.join(this.directory, journal.stagedStore);
-      let journalWritten = false;
       try {
-        await writeExclusive(stagedKeyPath, backupKey);
-        await writeExclusive(stagedStorePath, Buffer.from(JSON.stringify(nextEnvelope), 'utf8'));
-        await writeVaultFile(this.restoreJournalPath, Buffer.from(JSON.stringify(journal), 'utf8'), 4_096, this.writeContext, true);
-        journalWritten = true;
-        await this.commitRestore(journal);
-        this.lock();
-        this.key = Buffer.from(backupKey);
+        const [hadKey, hadStore] = await Promise.all([this.exists(this.keyPath), this.exists(this.storePath)]);
+        await this.stageRestore(id, backupKey, nextEnvelope, hadKey, hadStore);
       } finally {
         currentKey?.fill(0);
         backupKey.fill(0);
-        if (!journalWritten) {
-          await fs.unlink(stagedKeyPath).catch(() => {});
-          await fs.unlink(stagedStorePath).catch(() => {});
-        }
       }
     });
+  }
+
+  /** Atomically replaces portable records, after validating capacity and preserving the prior local state. */
+  async replacePortableData(value: PortableVaultData, now = Date.now()): Promise<{ backupId: string; entryCount: number; allowlistCount: number }> {
+    return replacePortableDataWithAccess({
+      namespace: this.namespace,
+      keyPath: this.keyPath,
+      storePath: this.storePath,
+      restoreJournalPath: this.restoreJournalPath,
+      hasRuntimeKey: () => this.key !== null,
+      withMutationLock: (work) => this.withMutationLock(work),
+      exists: (file) => this.exists(file),
+      requireKey: () => this.requireKey(),
+      readKey: () => this.readKey(),
+      readRawEnvelope: () => this.readRawEnvelope(),
+      writeBackupSnapshot: (at, key, envelope) => this.writeBackupSnapshot(at, key, envelope),
+      stageRestore: (id, key, envelope, hadKey, hadStore) => this.stageRestore(id, key, envelope, hadKey, hadStore),
+    }, value, now, KEY_BYTES, MAX_STORE_BYTES);
+  }
+
+  private async stageRestore(backupId: string, key: Buffer, envelope: VaultEnvelope, hadKey: boolean, hadStore: boolean): Promise<void> {
+    const suffix = crypto.randomBytes(12).toString('hex');
+    const journal: RestoreJournal = {
+      version: VAULT_VERSION,
+      backupId,
+      hadKey,
+      hadStore,
+      stagedKey: `.restore-${suffix}.key.tmp`,
+      stagedStore: `.restore-${suffix}.store.tmp`,
+      previousKey: `.restore-${suffix}.key.old`,
+      previousStore: `.restore-${suffix}.store.old`,
+    };
+    const stagedKeyPath = path.join(this.directory, journal.stagedKey);
+    const stagedStorePath = path.join(this.directory, journal.stagedStore);
+    let journalWritten = false;
+    try {
+      await writeExclusive(stagedKeyPath, key);
+      await writeExclusive(stagedStorePath, Buffer.from(JSON.stringify(envelope), 'utf8'));
+      await writeVaultFile(this.restoreJournalPath, Buffer.from(JSON.stringify(journal), 'utf8'), 4_096, this.writeContext, true);
+      journalWritten = true;
+      await this.commitRestore(journal);
+      this.lock();
+      this.key = Buffer.from(key);
+    } finally {
+      if (!journalWritten) {
+        await fs.unlink(stagedKeyPath).catch(() => {});
+        await fs.unlink(stagedStorePath).catch(() => {});
+      }
+    }
   }
 
   private async readData(): Promise<VaultData> {

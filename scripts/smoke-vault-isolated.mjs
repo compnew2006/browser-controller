@@ -192,6 +192,7 @@ async function main() {
   const mcpResults = [];
   let fillCount = 0;
   let listCount = 0;
+  let secondContext;
 
   try {
     privateDiagnostics.stage = 'isolated-daemon';
@@ -234,6 +235,7 @@ async function main() {
     context = await chromium.launchPersistentContext(profileDir, {
       executablePath,
       headless: true,
+      acceptDownloads: true,
       args: [
         '--no-first-run', '--disable-default-apps',
         `--disable-extensions-except=${extensionDir}`,
@@ -297,7 +299,7 @@ async function main() {
       throw new Error(`private vault access UI unavailable (state ${uiState}; actions ${actions})`);
     });
     await activateButtonByKeyboard(vaultPage, 'Set up local vault');
-    await vaultPage.getByRole('status').waitFor({ state: 'attached', timeout: 2_000 }).catch(() => {});
+    await vaultPage.locator('#notice').waitFor({ state: 'attached', timeout: 2_000 }).catch(() => {});
     await vaultPage.getByText('Unlocked', { exact: true }).waitFor({ timeout: 10_000 });
     await vaultPage.getByRole('heading', { name: 'Save a sign-in' }).waitFor({ timeout: 5_000 });
 
@@ -320,7 +322,7 @@ async function main() {
     ensure(formValuesSurvived, 'private save fields or keyboard focus were lost during the five-second state refresh');
     await activateButtonByKeyboard(vaultPage, 'Save, allow this site, and fill', { scopeHeading: 'Save a sign-in' });
     await vaultPage.getByText('Check the site access box before saving and filling.', { exact: true }).waitFor({ timeout: 2_000 });
-    const keyboardValidationErrorDisplayed = await vaultPage.getByRole('status').textContent()
+    const keyboardValidationErrorDisplayed = await vaultPage.locator('#notice').textContent()
       .then((text) => text?.includes('Check the site access box before saving and filling.') === true);
     ensure(keyboardValidationErrorDisplayed, 'the private UI did not clearly display its keyboard-triggered consent error');
     await focusByKeyboard(vaultPage, { selector: '#requests input[type="checkbox"]' });
@@ -341,6 +343,101 @@ async function main() {
     const savedSiteGrant = privateStateAfterSave?.grants?.find((grant) => grant.purpose === 'site' && grant.via === 'page');
     ensure(savedSiteGrant, 'private UI state did not list the site approval');
 
+    if (process.argv.includes('--portable-roundtrip-only')) {
+      privateDiagnostics.stage = 'portable-export-import';
+      const portablePassphrase = `synthetic-portable-${crypto.randomBytes(24).toString('hex')}`;
+      privateDiagnostics.secrets.add(portablePassphrase);
+      const beforeImport = await privateRpc(vaultPage, { operation: 'getState' });
+      ensure(beforeImport?.entries?.length === 1, 'portable fixture did not start with one saved account');
+      const expectedSummary = `This file contains ${beforeImport.entries.length} saved account${beforeImport.entries.length === 1 ? '' : 's'} and ${beforeImport.allowlist.length} always allowed site${beforeImport.allowlist.length === 1 ? '' : 's'}. The destination will be replaced after confirmation.`;
+      const downloadPromise = vaultPage.waitForEvent('download');
+      await vaultPage.locator('#exportPassphrase').fill(portablePassphrase);
+      await vaultPage.locator('#exportPassphraseConfirm').fill(portablePassphrase);
+      await vaultPage.getByRole('button', { name: 'Prepare portable copy' }).click();
+      await vaultPage.getByText('Your encrypted copy is ready.', { exact: false }).waitFor({ timeout: 20_000 });
+      ensure(await vaultPage.locator('#exportPassphrase').inputValue() === ''
+        && await vaultPage.locator('#exportPassphraseConfirm').inputValue() === '', 'export passphrase fields were not cleared');
+      await vaultPage.getByRole('link', { name: 'Save portable copy' }).click();
+      const download = await downloadPromise;
+      const archivePath = path.join(tempRoot, 'portable-copy.json');
+      await download.saveAs(archivePath);
+      const archive = await fs.readFile(archivePath);
+      ensure(archive.length > 0 && !archive.includes(Buffer.from(syntheticPassword))
+        && !archive.includes(Buffer.from(portablePassphrase)), 'the portable file contained plaintext account data or its passphrase');
+
+      const destinationProfileDir = path.join(tempRoot, 'profile-destination');
+      secondContext = await chromium.launchPersistentContext(destinationProfileDir, {
+        executablePath,
+        headless: true,
+        acceptDownloads: true,
+        args: [
+          '--no-first-run', '--disable-default-apps',
+          `--disable-extensions-except=${extensionDir}`,
+          `--load-extension=${extensionDir}`,
+        ],
+      });
+      secondContext.on('console', (message) => privateDiagnostics.logs.push(message.text()));
+      secondContext.on('page', (page) => page.on('pageerror', (error) => privateDiagnostics.logs.push(error.message)));
+      let destinationWorker = secondContext.serviceWorkers()[0];
+      if (!destinationWorker) destinationWorker = await secondContext.waitForEvent('serviceworker', { timeout: 15_000 });
+      const destinationExtensionId = new URL(destinationWorker.url()).host;
+      ensure(destinationExtensionId === extensionId, 'temporary profiles did not load the same isolated extension');
+      const destinationPage = await secondContext.newPage();
+      await destinationPage.goto(`chrome-extension://${destinationExtensionId}/vault/vault.html`);
+      await destinationPage.getByText('Not set up', { exact: true }).waitFor({ timeout: 15_000 });
+      await destinationPage.getByText('Import is available for this empty profile.', { exact: false }).waitFor({ timeout: 10_000 });
+      const destinationBefore = await privateRpc(destinationPage, { operation: 'getState' });
+      ensure(destinationBefore?.status === 'empty' && destinationBefore.entries?.length === 0,
+        'the second temporary profile did not start with an empty independent vault');
+
+      await destinationPage.locator('#portableFile').setInputFiles(archivePath);
+      await destinationPage.locator('#importPassphrase').fill('synthetic-wrong-passphrase');
+      await destinationPage.getByRole('button', { name: 'Check file' }).click();
+      await destinationPage.getByText('The file could not be opened.', { exact: false }).waitFor({ timeout: 20_000 });
+      const afterWrongPassphrase = await privateRpc(destinationPage, { operation: 'getState' });
+      ensure(afterWrongPassphrase?.status === 'empty' && afterWrongPassphrase.entries?.length === 0,
+        'a wrong portable passphrase changed the empty destination vault');
+
+      await destinationPage.locator('#importPassphrase').fill(portablePassphrase);
+      await destinationPage.getByRole('button', { name: 'Check file' }).click();
+      try {
+        await destinationPage.getByText(expectedSummary, { exact: true }).waitFor({ timeout: 20_000 });
+      } catch {
+        const statusText = await destinationPage.locator('#portableStatus').textContent().catch(() => 'unavailable');
+        throw new Error(`portable preview did not appear (${scrubDiagnostic(statusText)}; vault ${await destinationPage.locator('#vaultState').textContent().catch(() => 'unavailable')})`);
+      }
+      ensure(await destinationPage.locator('#importPassphrase').inputValue() === '', 'import preview passphrase was not cleared');
+      ensure(await destinationPage.locator('#commitPortable').isDisabled(), 'the import was enabled before explicit replacement confirmation');
+      await destinationPage.locator('#confirmPortableReplace').check();
+      await destinationPage.locator('#commitPassphrase').fill(portablePassphrase);
+      ensure(await destinationPage.locator('#commitPortable').isEnabled(), 'explicit confirmation and passphrase did not enable replacement');
+      await destinationPage.locator('#commitPortable').click();
+      await destinationPage.getByText('Vault replaced.', { exact: false }).waitFor({ timeout: 20_000 });
+      ensure(await destinationPage.locator('#commitPassphrase').inputValue() === '', 'commit passphrase was not cleared');
+      const afterImport = await privateRpc(destinationPage, { operation: 'getState' });
+      const sourceAfterImport = await privateRpc(vaultPage, { operation: 'getState' });
+      const backups = await privateRpc(destinationPage, { operation: 'listBackups' });
+      ensure(afterImport?.entries?.length === 1 && afterImport.entries[0].id !== beforeImport.entries[0].id,
+        'portable import did not create a fresh destination-local account ID');
+      ensure(sourceAfterImport?.entries?.[0]?.id === beforeImport.entries[0].id,
+        'importing into the second profile changed the source vault');
+      ensure(Array.isArray(backups?.backups) && backups.backups.length > 0, 'portable import did not create a local recovery snapshot');
+      ensure(!(await scanFilesFor(tempRoot, portablePassphrase)), 'the portable passphrase was written to temporary profile or daemon storage');
+      console.log(JSON.stringify({
+        result: 'passed',
+        identity: 'two-temporary-disposable-chromium-profiles',
+        importedIntoIndependentEmptyProfile: true,
+        previewCountsMatchSource: true,
+        portableExportWasEncrypted: true,
+        saveRequiredSeparateOwnerClick: true,
+        wrongPassphrasePreservedDestination: true,
+        previewRequiredExplicitReplaceAndPassphrase: true,
+        importedAccountReceivedFreshId: true,
+        localRecoverySnapshotCreated: true,
+      }));
+      return;
+    }
+
     const closedRequest = parseSuccess(await call('browser_vault', { action: 'save_login', tabId, label: 'Cancel-on-close fixture' }), 'browser_vault close-cancel request');
     ensure(closedRequest.status === 'user_action_required' && typeof closedRequest.requestId === 'string', 'close-cancel request was not created');
     vaultPage = await locatePrivateVaultPage(context, extensionId);
@@ -353,7 +450,7 @@ async function main() {
     await vaultPage.locator('#requests article').filter({ has: vaultPage.getByRole('heading', { name: 'Save a sign-in' }) }).waitFor({ timeout: 5_000 });
     await activateButtonByKeyboard(vaultPage, 'Decline', { scopeHeading: 'Save a sign-in' });
     await vaultPage.getByText('Request declined.', { exact: true }).waitFor({ timeout: 5_000 });
-    const keyboardCancelStateDisplayed = await vaultPage.getByRole('status').textContent()
+    const keyboardCancelStateDisplayed = await vaultPage.locator('#notice').textContent()
       .then((text) => text?.includes('Request declined.') === true);
     ensure(keyboardCancelStateDisplayed, 'the private UI did not clearly display its keyboard-triggered cancellation state');
     const declinedState = parseSuccess(await call('browser_vault', { action: 'status', requestId: declinedRequest.requestId }), 'browser_vault declined status');
@@ -585,6 +682,7 @@ async function main() {
   } finally {
     await client?.close().catch(() => {});
     await secondClient?.close().catch(() => {});
+    await secondContext?.close().catch(() => {});
     await context?.close().catch(() => {});
     await new Promise((resolve) => fixture.server.close(resolve));
     if (daemon && daemon.exitCode === null) {

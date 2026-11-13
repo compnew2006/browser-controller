@@ -51,7 +51,7 @@ describe('registerTools', () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name)).toEqual(allTools.map((t) => t.name));
-    expect(tools).toHaveLength(22);
+    expect(tools).toHaveLength(23);
     expect(tools.map((t) => t.name)).not.toContain('browser_tools');
   });
 
@@ -70,6 +70,18 @@ describe('registerTools', () => {
     const result = await client.callTool({ name: 'browser_click', arguments: { tabId: 1 } });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('target');
+    expect(host.calls).toHaveLength(0);
+  });
+
+  it('keeps portable vault transfer operations off the public MCP surface', async () => {
+    const host = makeFakeHost();
+    const { client } = await setup(host);
+    const result = await client.callTool({
+      name: 'browser_vault',
+      arguments: { action: 'portableExportStart', passphrase: 'synthetic-only-passphrase' },
+    });
+
+    expect(result.isError).toBe(true);
     expect(host.calls).toHaveLength(0);
   });
 

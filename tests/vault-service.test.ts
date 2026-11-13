@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { VaultService, type VaultBrowserContext, type VaultTransport } from '../mcp-server/src/vault/service.js';
 import { safeMessage, type PrivateConnection } from '../mcp-server/src/vault/service-common.js';
 import { scopeForBrowser } from '../mcp-server/src/vault/store.js';
+import { decryptPortableArchive, encryptPortableArchive } from '../mcp-server/src/vault/portable-format.js';
 import { forwardHandler } from '../mcp-server/src/tools/types.js';
 import { routeVaultAwareCall } from '../mcp-server/src/vault/daemon-routing.js';
 
@@ -135,6 +136,70 @@ describe('VaultService', () => {
     await service.handlePublic(SESSION, { action: 'save_login', tabId: 3 });
     const state = await service.handlePrivateUi(connection(), { operation: 'getState' }) as any;
     expect(state.requests[0].sessionLabel).toBe('FixtureAgent · session fixture');
+  });
+
+  it('exports only portable vault records through the private page and refuses a locked vault', async () => {
+    const { service, connection } = await setup();
+    const passphrase = 'synthetic portable passphrase';
+
+    await expect(service.handlePrivateUi(connection(), { operation: 'portableExportStart', passphrase }))
+      .resolves.toMatchObject({ success: false, code: 'VAULT_LOCKED' });
+
+    await service.handlePrivateUi(connection(), { operation: 'unlock' });
+    const handle = await saveAccount(service, connection, 17);
+    await service.handlePrivateUi(connection(), { operation: 'allowlistAdd', origin: ORIGIN });
+    const result = await service.handlePrivateUi(connection(), { operation: 'portableExportStart', passphrase });
+
+    expect(result.success).toBe(true);
+    expect(Buffer.isBuffer(result.archive)).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('synthetic-only');
+    expect(JSON.stringify(result)).not.toContain(passphrase);
+    const portable = await decryptPortableArchive(result.archive as Buffer, passphrase);
+    expect(portable.entries).toHaveLength(1);
+    expect(portable.entries[0]).toMatchObject({ identifier: 'fixture-user', password: 'synthetic-only', origin: ORIGIN });
+    expect(portable.entries[0]).not.toHaveProperty('id');
+    expect(portable.allowlist).toEqual([{ origin: ORIGIN, addedAt: expect.any(Number) }]);
+    expect(portable).not.toHaveProperty('audit');
+    expect(handle).toMatch(/^cred_[a-f0-9]{32}$/);
+  });
+
+  it('previews counts only, leaves the destination unchanged, and replaces it only after confirmation', async () => {
+    const { service, connection } = await setup();
+    const passphrase = 'synthetic portable passphrase';
+    const archive = await encryptPortableArchive({
+      entries: [{
+        kind: 'login', label: 'Imported fixture', identifier: 'import-user', password: 'synthetic-import-secret',
+        origin: ORIGIN, createdAt: 10, updatedAt: 11,
+      }],
+      allowlist: [{ origin: ORIGIN, addedAt: 12 }],
+    }, passphrase);
+    await service.handlePrivateUi(connection(), { operation: 'unlock' });
+    const originalHandle = await saveAccount(service, connection, 18);
+
+    const preview = await service.handlePrivateUi(connection(), { operation: 'portableImportPreview', archive, passphrase });
+    expect(preview).toEqual({ success: true, entryCount: 1, allowlistCount: 1 });
+    expect(JSON.stringify(preview)).not.toContain('synthetic-import-secret');
+    expect((await service.handlePrivateUi(connection(), { operation: 'getState' })).entries)
+      .toEqual([expect.objectContaining({ id: originalHandle, label: 'fixture' })]);
+
+    await expect(service.handlePrivateUi(connection(), {
+      operation: 'portableImportCommit', archive, passphrase: 'synthetic wrong passphrase', confirmReplace: true,
+    })).resolves.toMatchObject({ success: false, code: 'VAULT_STORAGE_INVALID' });
+    await expect(service.handlePrivateUi(connection(), {
+      operation: 'portableImportCommit', archive, passphrase, confirmReplace: false,
+    })).resolves.toMatchObject({ success: false, code: 'INVALID_ARGUMENT' });
+    expect((await service.handlePrivateUi(connection(), { operation: 'getState' })).entries)
+      .toEqual([expect.objectContaining({ id: originalHandle, label: 'fixture' })]);
+
+    const committed = await service.handlePrivateUi(connection(), {
+      operation: 'portableImportCommit', archive, passphrase, confirmReplace: true,
+    });
+    expect(committed).toMatchObject({ success: true, status: 'imported', entryCount: 1, allowlistCount: 1 });
+    const state = await service.handlePrivateUi(connection(), { operation: 'getState' });
+    expect(state.entries).toEqual([expect.objectContaining({ label: 'Imported fixture', identifier: 'import-user' })]);
+    expect(state.entries[0]).not.toHaveProperty('password');
+    expect(state.entries[0].id).not.toBe(originalHandle);
+    expect(state.allowlist).toEqual([{ origin: ORIGIN, addedAt: 12 }]);
   });
 
   it('routes a public vault refusal through redaction and the real MCP error wrapper with its code intact', async () => {

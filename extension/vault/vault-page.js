@@ -1,3 +1,5 @@
+import { createPortableVaultPage } from './portable-vault-page.js';
+
 const $ = (selector) => document.querySelector(selector);
 const notice = $('#notice');
 const requestsEl = $('#requests');
@@ -66,9 +68,12 @@ function rpc(payload) {
   });
 }
 
+const portableVaultPage = createPortableVaultPage({ rpc, isExternalBusy: () => busy, onImported: () => refreshState({ keepNotice: true }) });
+
 function setBusy(value) {
   busy = value;
-  document.querySelectorAll('button').forEach((button) => { button.disabled = value; });
+  document.querySelectorAll('button:not(#cancelPortableTransfer)').forEach((button) => { button.disabled = value; });
+  portableVaultPage?.setExternalBusy(value);
 }
 
 /** `successMessage` is a string, or a function of the daemon's reply when the outcome decides the wording. */
@@ -95,6 +100,7 @@ async function refreshState(options = {}) {
   const response = await rpc({ operation: 'getState' });
   if (response.success !== true) {
     state = null;
+    portableVaultPage?.updateVaultState(null);
     $('#vaultState').textContent = 'Unavailable';
     $('#profileLine').textContent = 'The private vault connection is unavailable.';
     requestsEl.replaceChildren(element('p', 'empty', explain(response)));
@@ -103,6 +109,7 @@ async function refreshState(options = {}) {
     return;
   }
   state = response;
+  portableVaultPage?.updateVaultState(state);
   if (notice.dataset.kind === 'error') setNotice('');
   renderState();
 }

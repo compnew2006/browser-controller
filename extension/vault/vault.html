@@ -56,6 +56,45 @@
       <div class="section-heading"><h2 id="accessTitle">Vault settings</h2></div>
       <div class="access-row" id="accessActions"></div>
       <div class="backup-list" id="backups"></div>
+      <div class="portable-backup" id="portableBackup" aria-labelledby="portableTitle">
+        <h3 id="portableTitle">Portable copy</h3>
+        <p class="section-note">Includes saved accounts and always allowed sites. Audit history and temporary approvals stay in this browser. If you lose the passphrase, the portable copy cannot be opened.</p>
+        <p class="muted" id="portableAvailability" role="status" aria-live="polite"></p>
+        <div class="portable-grid">
+          <form class="portable-flow" id="portableExportForm">
+            <h4>Export a copy</h4>
+            <label for="exportPassphrase">Passphrase</label>
+            <input id="exportPassphrase" type="password" required maxlength="1024" autocomplete="new-password" aria-describedby="exportPassphraseHint">
+            <label for="exportPassphraseConfirm">Confirm passphrase</label>
+            <input id="exportPassphraseConfirm" type="password" required maxlength="1024" autocomplete="new-password">
+            <p class="muted" id="exportPassphraseHint">Use at least 12 characters. A longer phrase is easier to remember.</p>
+            <button class="button primary" id="exportPortable" type="submit">Prepare portable copy</button>
+          </form>
+          <form class="portable-flow" id="portableImportForm">
+            <h4>Import a copy</h4>
+            <label for="portableFile">Portable copy file</label>
+            <input id="portableFile" type="file" required accept=".json,application/json">
+            <label for="importPassphrase">File passphrase</label>
+            <input id="importPassphrase" type="password" required maxlength="1024" autocomplete="new-password">
+            <button class="button" id="previewPortable" type="submit">Check file</button>
+          </form>
+        </div>
+        <div class="portable-review" id="portableReview" hidden>
+          <p id="portableReviewSummary"></p>
+          <label class="portable-confirm" for="confirmPortableReplace">
+            <input id="confirmPortableReplace" type="checkbox">
+            <span>Replace this profile’s saved accounts and always allowed sites.</span>
+          </label>
+          <label for="commitPassphrase">Re-enter the file passphrase to replace the vault</label>
+          <input id="commitPassphrase" type="password" maxlength="1024" autocomplete="new-password">
+          <button class="button danger" id="commitPortable" type="button" disabled>Replace vault</button>
+        </div>
+        <p class="portable-status" id="portableStatus" role="status" aria-live="polite" hidden></p>
+        <div class="portable-actions">
+          <a class="button primary" id="savePortableArchive" hidden>Save portable copy</a>
+          <button class="button text-button" id="cancelPortableTransfer" type="button" hidden>Cancel transfer</button>
+        </div>
+      </div>
     </section>
   </main>
   <script type="module" src="vault-page.js"></script>

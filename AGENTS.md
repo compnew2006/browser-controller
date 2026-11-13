@@ -31,3 +31,10 @@ Spec Kit is configured under `.specify/`; Codex skills are under `.agents/skills
 ## Commits and Pull Requests
 
 Use scoped Conventional Commits, e.g. `refactor(vault): ...` or `docs(audit): ...`. PRs describe behavior, scope, and checks; note protocol/security changes, include UI screenshots, and link issues. Open an issue before larger changes, as `README.md` requests.
+
+## Active Technologies
+- TypeScript/JavaScript ESM on Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`; existing `zod`, `ws`, and Node built-in `node:crypto` / `node:fs`.
+- Credential Vault persists browser-scoped encrypted files and local recovery snapshots; the portable-backup plan keeps transfer state in bounded memory.
+
+## Recent Changes
+- 010-portable-vault-backup (tasks stage): Approved plan for passphrase-protected export/import using existing crypto and private vault transport; implementation has not started.

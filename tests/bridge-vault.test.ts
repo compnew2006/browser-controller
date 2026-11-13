@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 import { ExtensionBridge } from '../mcp-server/src/bridge.js';
 import { CREDENTIAL_VAULT_CAPABILITY, EXTENSION_PROTOCOL_CAPABILITIES, VAULT_SITE_APPROVAL_CAPABILITY } from '../mcp-server/src/protocol/index.js';
 import { authenticatedHelloAck, sendAuthInit, testBridgeCredentials } from './helpers/bridge-auth.js';
 import { freePort } from './helpers/free-port.js';
+import {
+  MAX_PORTABLE_CHUNK_BYTES, PortableTransferSessions,
+} from '../mcp-server/src/vault/portable-transfers.js';
+import { MAX_PORTABLE_ARCHIVE_BYTES } from '../mcp-server/src/vault/portable-format.js';
 
 // The OS assigns the port: vitest runs test files in parallel, and a range
 // picked by arithmetic can collide with another file in the same run.
@@ -17,6 +21,7 @@ afterEach(async () => {
   bridges.forEach((bridge) => bridge.stop());
   bridges.length = 0;
   await new Promise((resolve) => setTimeout(resolve, 40));
+  vi.restoreAllMocks();
 });
 
 async function startBridge() {
@@ -244,5 +249,234 @@ describe('credential vault bridge boundary', () => {
       expect(primary).toEqual([]);
       expect(other).toHaveLength(1);
     });
+  });
+});
+
+describe('private portable transfer bounds', () => {
+  let now = 1_000;
+  let transfers: PortableTransferSessions;
+
+  afterEach(() => transfers?.dispose());
+
+  it('serves export bytes in bounded sequential chunks and clears the completed transfer', () => {
+    transfers = new PortableTransferSessions(() => now, 0);
+    const archive = Buffer.alloc(MAX_PORTABLE_CHUNK_BYTES + 17, 0x5a);
+    const started = transfers.startExport('fixture-connection-001', archive);
+
+    expect(started.byteLength).toBe(archive.length);
+    const first = transfers.readExportChunk('fixture-connection-001', started.transferId, 0);
+    expect(Buffer.from(first.chunkBase64, 'base64')).toEqual(archive.subarray(0, MAX_PORTABLE_CHUNK_BYTES));
+    expect(first.done).toBe(false);
+    expect(() => transfers.readExportChunk('fixture-connection-001', started.transferId, 1)).toThrow(/INVALID_ARGUMENT/);
+
+    const expectedLast = Buffer.from(archive.subarray(MAX_PORTABLE_CHUNK_BYTES));
+    const last = transfers.readExportChunk('fixture-connection-001', started.transferId, MAX_PORTABLE_CHUNK_BYTES);
+    expect(Buffer.from(last.chunkBase64, 'base64')).toEqual(expectedLast);
+    expect(last.done).toBe(true);
+    expect(() => transfers.readExportChunk('fixture-connection-001', started.transferId, archive.length)).toThrow();
+    expect(archive.every((byte) => byte === 0)).toBe(true);
+  });
+
+  it('requires canonical, contiguous upload chunks and binds previews to the owning connection', () => {
+    transfers = new PortableTransferSessions(() => now, 0);
+    const started = transfers.startImport('fixture-connection-001', 5);
+    expect(() => transfers.appendImportChunk('fixture-connection-001', started.transferId, 1, 'YQ==')).toThrow(/INVALID_ARGUMENT/);
+    expect(() => transfers.appendImportChunk('fixture-connection-001', started.transferId, 0, 'YQ===')).toThrow(/INVALID_ARGUMENT/);
+    const uploaded = Buffer.from('abcde');
+    expect(transfers.appendImportChunk('fixture-connection-001', started.transferId, 0, uploaded.toString('base64'))).toMatchObject({ received: 5, done: true });
+
+    const preview = transfers.beginImportPreview('fixture-connection-001', started.transferId);
+    expect(preview.archive).toEqual(uploaded);
+    expect(() => transfers.beginImportPreview('fixture-other-connection', started.transferId)).toThrow(/VAULT_PERMISSION_DENIED/);
+    transfers.finishImportPreview('fixture-connection-001', started.transferId, preview.previewToken, true);
+    expect(() => transfers.beginImportCommit('fixture-other-connection', preview.previewToken)).toThrow(/VAULT_PERMISSION_DENIED/);
+    expect(transfers.beginImportCommit('fixture-connection-001', preview.previewToken)).toEqual({ transferId: started.transferId, archive: uploaded });
+    transfers.finishImportCommit('fixture-connection-001', started.transferId, preview.previewToken, false);
+    expect(transfers.cancel('fixture-connection-001', preview.previewToken)).toBe(true);
+    expect(transfers.cancel('fixture-connection-001', preview.previewToken)).toBe(false);
+  });
+
+  it('limits transfers per connection, across the daemon, and by archive size', () => {
+    transfers = new PortableTransferSessions(() => now, 0);
+    const fullArchive = Buffer.alloc(MAX_PORTABLE_ARCHIVE_BYTES, 0x1);
+    const first = transfers.startExport('fixture-connection-001', fullArchive);
+    expect(() => transfers.startImport('fixture-connection-001', 1)).toThrow(/VAULT_BUSY/);
+    transfers.startImport('fixture-connection-002', MAX_PORTABLE_ARCHIVE_BYTES);
+    expect(() => transfers.startImport('fixture-connection-003', 1)).toThrow(/VAULT_BUSY/);
+    expect(() => transfers.startImport('fixture-connection-003', MAX_PORTABLE_ARCHIVE_BYTES + 1)).toThrow(/RESPONSE_TOO_LARGE/);
+    expect(transfers.cancel('fixture-connection-001', first.transferId)).toBe(true);
+    expect(transfers.startImport('fixture-connection-003', 1).chunkBytes).toBe(MAX_PORTABLE_CHUNK_BYTES);
+  });
+
+  it('wipes buffers on idle expiry, absolute expiry, connection cleanup, and disposal', () => {
+    transfers = new PortableTransferSessions(() => now, 0, 10, 30);
+    const idleArchive = Buffer.from('idle-only');
+    const idle = transfers.startExport('fixture-idle-connection', idleArchive);
+    now += 10;
+    expect(() => transfers.readExportChunk('fixture-idle-connection', idle.transferId, 0)).toThrow(/VAULT_PERMISSION_DENIED/);
+    expect(idleArchive.every((byte) => byte === 0)).toBe(true);
+
+    now += 1;
+    const hardArchive = Buffer.alloc(MAX_PORTABLE_CHUNK_BYTES * 2 + 1, 0x2a);
+    const hard = transfers.startImport('fixture-hard-connection', hardArchive.length);
+    transfers.appendImportChunk('fixture-hard-connection', hard.transferId, 0, hardArchive.subarray(0, MAX_PORTABLE_CHUNK_BYTES).toString('base64'));
+    now += 9;
+    transfers.appendImportChunk('fixture-hard-connection', hard.transferId, MAX_PORTABLE_CHUNK_BYTES,
+      hardArchive.subarray(MAX_PORTABLE_CHUNK_BYTES, MAX_PORTABLE_CHUNK_BYTES * 2).toString('base64'));
+    now += 9;
+    transfers.appendImportChunk('fixture-hard-connection', hard.transferId, MAX_PORTABLE_CHUNK_BYTES * 2, hardArchive.subarray(-1).toString('base64'));
+    const preview = transfers.beginImportPreview('fixture-hard-connection', hard.transferId);
+    transfers.finishImportPreview('fixture-hard-connection', hard.transferId, preview.previewToken, true);
+    now += 9;
+    transfers.beginImportCommit('fixture-hard-connection', preview.previewToken);
+    transfers.finishImportCommit('fixture-hard-connection', hard.transferId, preview.previewToken, false);
+    now += 3;
+    expect(() => transfers.beginImportCommit('fixture-hard-connection', preview.previewToken)).toThrow(/VAULT_PERMISSION_DENIED/);
+    expect(preview.archive.every((byte) => byte === 0)).toBe(true);
+
+    const disconnectedArchive = Buffer.from('disconnect-only');
+    transfers.startExport('fixture-disconnect-connection', disconnectedArchive);
+    transfers.clearConnection('fixture-disconnect-connection');
+    expect(disconnectedArchive.every((byte) => byte === 0)).toBe(true);
+
+    const disposedArchive = Buffer.from('dispose-only');
+    transfers.startExport('fixture-dispose-connection', disposedArchive);
+    transfers.dispose();
+    expect(disposedArchive.every((byte) => byte === 0)).toBe(true);
+  });
+});
+
+describe('portable private UI bridge protocol', () => {
+  function uiClient() {
+    const pending = new Map<string, (result: Record<string, any>) => void>();
+    let sequence = 0;
+    return {
+      onFrame(_socket: WebSocket, frame: Record<string, any>) {
+        if (frame.type !== 'vaultUiResponse' || typeof frame.id !== 'string') return;
+        const resolve = pending.get(frame.id);
+        if (!resolve) return;
+        pending.delete(frame.id);
+        resolve(frame.result);
+      },
+      request(socket: WebSocket, payload: Record<string, unknown>) {
+        const id = `ui_${String(++sequence).padStart(32, '0')}`;
+        return new Promise<Record<string, any>>((resolve) => {
+          pending.set(id, resolve);
+          socket.send(JSON.stringify({ type: 'vaultUiRequest', id, payload }));
+        });
+      },
+    };
+  }
+
+  it('keeps the export archive inside the daemon and returns only sequential encrypted chunks', async () => {
+    const bridge = await startBridge();
+    const archive = Buffer.from('synthetic-archive-content');
+    const logs: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args) => logs.push(args.join(' ')));
+    bridge.vaultTransport.setService({
+      revokeConnection() {},
+      cancelPrivateUiRequests() {},
+      async handlePrivateUi(_connection: unknown, payload: Record<string, unknown>) {
+        if (payload.operation === 'portableExportStart') return { success: true, status: 'portable_export_ready', archive: Buffer.from(archive) };
+        return { success: false, code: 'INVALID_ARGUMENT' };
+      },
+    } as any);
+    const client = uiClient();
+    const socket = await connectExtension(bridge['port'], 'fixture-portable-export', { onFrame: client.onFrame });
+
+    const started = await client.request(socket, { operation: 'portableExportStart', passphrase: 'synthetic-only-secret' });
+    expect(started).toMatchObject({ success: true, byteLength: archive.length, chunkBytes: MAX_PORTABLE_CHUNK_BYTES });
+    expect(started).not.toHaveProperty('archive');
+    const chunk = await client.request(socket, { operation: 'portableExportChunk', transferId: started.transferId, offset: 0 });
+    expect(chunk).toMatchObject({ success: true, offset: 0, done: true });
+    expect(Buffer.from(chunk.chunkBase64, 'base64')).toEqual(archive);
+    expect(JSON.stringify(started)).not.toContain('synthetic-only-secret');
+    expect(archive.every((byte) => byte !== 0)).toBe(true);
+    expect(logs.join('\n')).not.toContain('synthetic-only-secret');
+    expect(logs.join('\n')).not.toContain(archive.toString());
+  });
+
+  it('routes import preview and commit by the owning connection and reuses only encrypted bytes', async () => {
+    const bridge = await startBridge();
+    const archive = Buffer.from('synthetic-encrypted-import-archive');
+    const serviceCalls: Array<{ operation: unknown; archive?: Buffer; passphrase?: unknown; confirmReplace?: unknown }> = [];
+    bridge.vaultTransport.setService({
+      revokeConnection() {},
+      cancelPrivateUiRequests() {},
+      async handlePrivateUi(_connection: unknown, payload: Record<string, unknown>) {
+        serviceCalls.push({
+          operation: payload.operation,
+          ...(Buffer.isBuffer(payload.archive) ? { archive: Buffer.from(payload.archive) } : {}),
+          ...(typeof payload.passphrase === 'string' ? { passphrase: payload.passphrase } : {}),
+          ...(payload.confirmReplace !== undefined ? { confirmReplace: payload.confirmReplace } : {}),
+        });
+        if (payload.operation === 'portableImportPreview') return { success: true, entryCount: 2, allowlistCount: 1 };
+        if (payload.operation === 'portableImportCommit') return { success: true, status: 'imported', entryCount: 2, allowlistCount: 1 };
+        return { success: false, code: 'INVALID_ARGUMENT' };
+      },
+    } as any);
+
+    const ownerClient = uiClient();
+    const owner = await connectExtension(bridge['port'], 'fixture-portable-owner', { onFrame: ownerClient.onFrame });
+    const upload = await ownerClient.request(owner, { operation: 'portableImportStart', byteLength: archive.length });
+    const uploaded = await ownerClient.request(owner, {
+      operation: 'portableImportChunk', transferId: upload.transferId, offset: 0, chunkBase64: archive.toString('base64'),
+    });
+    expect(uploaded).toMatchObject({ success: true, received: archive.length, done: true });
+    const preview = await ownerClient.request(owner, {
+      operation: 'portableImportPreview', transferId: upload.transferId, passphrase: 'synthetic-owner-passphrase',
+    });
+    expect(preview).toMatchObject({ success: true, entryCount: 2, allowlistCount: 1, previewToken: expect.stringMatching(/^pvi_[a-f0-9]{32}$/) });
+    expect(preview).not.toHaveProperty('archive');
+
+    const otherClient = uiClient();
+    const other = await connectExtension(bridge['port'], 'fixture-portable-other', { onFrame: otherClient.onFrame });
+    await expect(otherClient.request(other, {
+      operation: 'portableImportCommit', previewToken: preview.previewToken,
+      passphrase: 'synthetic-owner-passphrase', confirmReplace: true,
+    })).resolves.toMatchObject({ success: false, code: 'VAULT_PERMISSION_DENIED' });
+
+    const committed = await ownerClient.request(owner, {
+      operation: 'portableImportCommit', previewToken: preview.previewToken,
+      passphrase: 'synthetic-owner-passphrase', confirmReplace: true,
+    });
+    expect(committed).toMatchObject({ success: true, status: 'imported', entryCount: 2, allowlistCount: 1 });
+    expect(serviceCalls.map((call) => call.operation)).toEqual(['portableImportPreview', 'portableImportCommit']);
+    expect(serviceCalls.every((call) => call.archive?.equals(archive))).toBe(true);
+    expect(serviceCalls.every((call) => call.passphrase === 'synthetic-owner-passphrase')).toBe(true);
+    expect(serviceCalls[1]?.confirmReplace).toBe(true);
+  });
+
+  it('clears the connection-owned encrypted bytes when the vault page closes or the extension disconnects', async () => {
+    const bridge = await startBridge();
+    const closeArchive = Buffer.from('clear-on-ui-close');
+    const disconnectArchive = Buffer.from('clear-on-disconnect');
+    const archives = [closeArchive, disconnectArchive];
+    bridge.vaultTransport.setService({
+      revokeConnection() {},
+      cancelPrivateUiRequests() {},
+      async handlePrivateUi() {
+        return { success: true, status: 'portable_export_ready', archive: archives.shift() };
+      },
+    } as any);
+
+    const closingClient = uiClient();
+    const closingSocket = await connectExtension(bridge['port'], 'fixture-portable-close', { onFrame: closingClient.onFrame });
+    await closingClient.request(closingSocket, { operation: 'portableExportStart', passphrase: 'synthetic-close-passphrase' });
+    closingSocket.send(JSON.stringify({ type: 'vaultUiClosed' }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(closeArchive.every((byte) => byte === 0)).toBe(true);
+
+    const disconnectClient = uiClient();
+    const disconnectSocket = await connectExtension(bridge['port'], 'fixture-portable-disconnect', { onFrame: disconnectClient.onFrame });
+    await disconnectClient.request(disconnectSocket, { operation: 'portableExportStart', passphrase: 'synthetic-disconnect-passphrase' });
+    const closed = new Promise<void>((resolve) => disconnectSocket.once('close', () => resolve()));
+    disconnectSocket.close();
+    await closed;
+    const cleanupDeadline = Date.now() + 250;
+    while (disconnectArchive.some((byte) => byte !== 0) && Date.now() < cleanupDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(disconnectArchive.every((byte) => byte === 0)).toBe(true);
   });
 });

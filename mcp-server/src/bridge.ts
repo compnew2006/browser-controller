@@ -582,7 +582,7 @@ export class ExtensionBridge {
   }
 
   stop(): void {
-    this.stopPingLoop();
+    this.stopPingLoop(); this.vaultTransport.dispose();
     this.rejectAllPending('Server shutting down');
     this.connectionWaiters.forEach(w => w.reject(new Error('Server shutting down')));
     this.connectionWaiters = [];

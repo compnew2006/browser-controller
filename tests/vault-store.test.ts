@@ -6,6 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CredentialVaultStore, VaultStorageError, VAULT_BACKUP_RETENTION } from '../mcp-server/src/vault/store.js';
 import type { VaultCredential } from '../mcp-server/src/vault/types.js';
+import type { PortableVaultData } from '../mcp-server/src/vault/portable-format.js';
 
 let stateDir: string;
 const roots: string[] = [];
@@ -13,8 +14,8 @@ const browserId = `test-browser-${process.pid}`;
 /** win32 has no comparable owner or mode bits, so the owner rule cannot be checked there. */
 const posix = process.platform !== 'win32';
 
-async function newStore(options: { beforeCommit?: (file: string) => void | Promise<void> } = {}) {
-  const store = new CredentialVaultStore({ stateDir, browserId, ...options });
+async function newStore(options: { beforeCommit?: (file: string) => void | Promise<void>; browserId?: string } = {}) {
+  const store = new CredentialVaultStore({ stateDir, browserId: options.browserId ?? browserId, ...options });
   return store;
 }
 
@@ -95,6 +96,137 @@ describe('CredentialVaultStore', () => {
     const reopened = await newStore();
     await reopened.unlock();
     expect((await reopened.get('cred_0123456789abcdef0123456789abcdef'))?.password === password).toBe(true);
+  });
+
+  it('returns one unlocked portable snapshot of accounts and allowed sites without audit data', async () => {
+    const store = await newStore();
+    await store.initialize();
+    const saved = entry('cred_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'synthetic-portable-password');
+    await store.upsert(saved);
+    await store.allowlistAdd('https://fixture.test', 123);
+
+    const snapshot = await store.snapshotPortableData();
+    expect(snapshot).toEqual({
+      entries: [saved],
+      allowlist: [{ origin: 'https://fixture.test', addedAt: 123 }],
+    });
+    expect(snapshot).not.toHaveProperty('audit');
+    snapshot.entries[0]!.password = 'changed-copy-only';
+    expect((await store.list())[0]!.password).toBe('synthetic-portable-password');
+  });
+
+  it('replaces a ready vault with fresh IDs, keeps local audit, and snapshots the prior state', async () => {
+    const store = await newStore();
+    await store.initialize();
+    const original = entry('cred_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'synthetic-original-password');
+    await store.upsert(original);
+    await store.allowlistAdd('https://old.fixture.test', 10);
+    await store.audit({
+      id: 'audit_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', action: 'create', browserScope: store.namespace,
+      at: 11, result: 'success',
+    });
+    const imported: PortableVaultData = {
+      version: 1,
+      entries: [{
+        kind: 'login', label: 'Imported account', identifier: 'new-user', password: 'synthetic-import-password',
+        origin: 'https://new.fixture.test', createdAt: 20, updatedAt: 21,
+      }],
+      allowlist: [{ origin: 'https://new.fixture.test', addedAt: 22 }],
+    };
+
+    const result = await store.replacePortableData(imported, 30);
+    const current = await store.list();
+    expect(current).toHaveLength(1);
+    expect(current[0]).toMatchObject({
+      kind: 'login', label: 'Imported account', identifier: 'new-user', password: 'synthetic-import-password',
+      origin: 'https://new.fixture.test', createdAt: 20, updatedAt: 21,
+    });
+    expect(current[0]!.id).not.toBe('cred_source_id_not_portable');
+    expect(current[0]!.id).not.toBe(original.id);
+    expect(await store.allowlist()).toEqual([{ origin: 'https://new.fixture.test', addedAt: 22 }]);
+    const data = await (store as unknown as { readData(): Promise<{ audit: Array<Record<string, unknown>> }> }).readData();
+    expect(data.audit).toEqual([
+      expect.objectContaining({ id: 'audit_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', action: 'create' }),
+      expect.objectContaining({ action: 'restore', browserScope: store.namespace, at: 30, result: 'success' }),
+    ]);
+    expect(result.backupId).toMatch(/^bkp_[a-f0-9]{32}$/);
+
+    await store.restoreBackup(result.backupId, 31);
+    expect(await store.list()).toEqual([original]);
+    expect(await store.allowlist()).toEqual([{ origin: 'https://old.fixture.test', addedAt: 10 }]);
+  });
+
+  it('creates a protected empty-state snapshot before import into an empty vault', async () => {
+    const store = await newStore();
+    const imported: PortableVaultData = {
+      version: 1,
+      entries: [],
+      allowlist: [{ origin: 'https://new.fixture.test', addedAt: 22 }],
+    };
+
+    const result = await store.replacePortableData(imported, 30);
+    expect(await store.status()).toBe('ready');
+    expect(store.isUnlocked).toBe(true);
+    expect(await store.allowlist()).toEqual(imported.allowlist);
+    await store.restoreBackup(result.backupId, 31);
+    expect(await store.list()).toEqual([]);
+    expect(await store.allowlist()).toEqual([]);
+  });
+
+  it('recovers an interrupted portable replacement using the existing restore journal', async () => {
+    const store = await newStore({ browserId: `test-journal-browser-${process.pid}` });
+    await store.initialize();
+    const original = entry('cred_cccccccccccccccccccccccccccccccc', 'synthetic-before-interruption');
+    await store.upsert(original);
+    const imported: PortableVaultData = {
+      version: 1,
+      entries: [{
+        kind: 'login', label: 'Interrupted import', identifier: 'new-user', password: 'synthetic-after-interruption',
+        origin: 'https://fixture.test', createdAt: 2, updatedAt: 3,
+      }],
+      allowlist: [],
+    };
+    const originalRename = fs.rename;
+    const rename = vi.spyOn(fs, 'rename').mockImplementation(async (source, target) => {
+      if (typeof source === 'string' && source.includes('.restore-') && source.endsWith('.store.tmp')) {
+        throw Object.assign(new Error('synthetic interruption'), { code: 'EIO' });
+      }
+      return originalRename(source, target);
+    });
+    let snapshotId: string;
+    try {
+      await expect(store.replacePortableData(imported, 40)).rejects.toMatchObject({ code: 'VAULT_RECOVERY_REQUIRED' });
+      expect(await store.status()).toBe('incomplete');
+      snapshotId = (await store.listBackups())[0]!.id;
+    } finally {
+      rename.mockRestore();
+    }
+
+    await store.restoreBackup(snapshotId, 41);
+    expect(await store.status()).toBe('ready');
+    expect(await store.list()).toEqual([original]);
+  });
+
+  it('rejects incomplete destination files and oversized replacement before creating a snapshot', async () => {
+    const store = await newStore();
+    await store.initialize();
+    await store.lock();
+    await fs.unlink(path.join(store.directory, 'key'));
+    await expect(store.replacePortableData({ version: 1, entries: [], allowlist: [] }, 40))
+      .rejects.toMatchObject({ code: 'VAULT_RECOVERY_REQUIRED' });
+
+    const empty = await newStore({ browserId: `test-empty-browser-${process.pid}` });
+    const oversized: PortableVaultData = {
+      version: 1,
+      entries: Array.from({ length: 1_000 }, (_, index) => ({
+        kind: 'login' as const, label: 'Fixture', identifier: `user-${index}`, password: '🔐'.repeat(2_048),
+        origin: 'https://fixture.test', createdAt: 1, updatedAt: 1,
+      })),
+      allowlist: [],
+    };
+    await expect(empty.replacePortableData(oversized, 41)).rejects.toMatchObject({ code: 'RESPONSE_TOO_LARGE' });
+    expect(await empty.status()).toBe('empty');
+    expect(await empty.listBackups()).toEqual([]);
   });
 
   it('preserves existing encrypted data when the key is missing or invalid', async () => {

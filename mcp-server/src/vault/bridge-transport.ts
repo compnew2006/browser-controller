@@ -5,6 +5,9 @@ import type { VaultService } from './service.js';
 import { ERROR_CODES, formatError } from '../core/error-codes.js';
 import { isRecord } from '../core/guards.js';
 import { createLogger } from '../core/logger.js';
+import { PortableTransferSessions } from './portable-transfers.js';
+import { VaultStorageError } from './store-errors.js';
+import { safeCode } from './service-common.js';
 
 const log = createLogger('browser-controller-daemon');
 
@@ -18,11 +21,21 @@ interface PendingVaultAction {
   onAbort?: () => void;
 }
 
+function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function invalidTransferRequest(): Record<string, unknown> {
+  return { success: false, code: ERROR_CODES.INVALID_ARGUMENT, message: 'The portable vault transfer request is invalid.' };
+}
+
 /** Owns the private vault wire protocol, separate from normal retried tools. */
 export class VaultBridgeTransport {
   private pending = new Map<string, PendingVaultAction>();
   private requestId = 0;
   private service: VaultService | null = null;
+  private readonly portableTransfers = new PortableTransferSessions();
 
   constructor(private readonly connections: ExtensionConnections) {}
 
@@ -167,6 +180,7 @@ export class VaultBridgeTransport {
         return true;
       case 'vaultUiClosed':
         if (this.supportsVault(conn)) {
+          this.portableTransfers.clearConnection(conn.connectionId);
           this.service?.cancelPrivateUiRequests(conn.browserId, conn.connectionId);
         }
         return true;
@@ -193,8 +207,13 @@ export class VaultBridgeTransport {
   }
 
   connectionDropped(conn: ExtensionConnection, reason: string): void {
+    this.portableTransfers.clearConnection(conn.connectionId);
     this.service?.revokeConnection(conn.browserId, conn.connectionId);
     this.rejectPending(reason, conn);
+  }
+
+  dispose(): void {
+    this.portableTransfers.dispose();
   }
 
   rejectPending(reason: string, onlyConn?: ExtensionConnection): void {
@@ -267,13 +286,28 @@ export class VaultBridgeTransport {
       result = { success: false, code: ERROR_CODES.VAULT_EXTENSION_REQUIRED, message: 'Reload the Browser Controller extension to use the credential vault.' };
     } else {
       try {
-        result = await this.service.handlePrivateUi({
+        const connection = {
           browserId: conn.browserId,
           browserLabel: conn.label,
           connectionId: conn.connectionId,
-        }, message.payload);
-      } catch {
-        result = { success: false, code: ERROR_CODES.VAULT_STORAGE_INVALID, message: 'The local vault could not be safely read or written.' };
+        };
+        if (isRecord(message.payload) && typeof message.payload.operation === 'string'
+          && message.payload.operation.startsWith('portable')) {
+          result = await this.handlePortableUiRequest(connection, message.payload);
+        } else {
+          if (isRecord(message.payload) && (message.payload.operation === 'lock' || message.payload.operation === 'restore')) {
+            this.portableTransfers.clearConnection(conn.connectionId);
+          }
+          result = await this.service.handlePrivateUi(connection, message.payload);
+        }
+      } catch (error) {
+        const code = error instanceof VaultStorageError ? error.code : safeCode(error);
+        const messageText = code === ERROR_CODES.RESPONSE_TOO_LARGE
+          ? 'The portable vault archive exceeds the supported size limit.'
+          : code === ERROR_CODES.INVALID_ARGUMENT
+            ? 'The portable vault transfer request is invalid.'
+            : 'The local vault could not be safely read or written.';
+        result = { success: false, code, message: messageText };
       }
     }
     if (!this.connections.has(conn) || conn.ws.readyState !== WebSocket.OPEN) return;
@@ -284,6 +318,97 @@ export class VaultBridgeTransport {
       : (isRecord(result) && typeof result.code === 'string' ? result.code : 'unknown');
     log.info(`vault ui ${operation} -> ${outcome}`);
     this.send(conn, { type: 'vaultUiResponse', id: message.id, result });
+  }
+
+  private async handlePortableUiRequest(
+    connection: { browserId: string; browserLabel: string; connectionId: string },
+    payload: Record<string, unknown>,
+  ): Promise<unknown> {
+    const operation = payload.operation;
+    const service = this.service;
+    if (!service) return { success: false, code: ERROR_CODES.VAULT_EXTENSION_REQUIRED };
+    switch (operation) {
+      case 'portableExportStart': {
+        if (!hasExactKeys(payload, ['operation', 'passphrase']) || typeof payload.passphrase !== 'string') return invalidTransferRequest();
+        const result = await service.handlePrivateUi(connection, payload);
+        if (!isRecord(result) || result.success !== true || !Buffer.isBuffer(result.archive)) return result;
+        try {
+          const started = this.portableTransfers.startExport(connection.connectionId, result.archive);
+          return { success: true, status: 'ready', ...started };
+        } catch (error) {
+          result.archive.fill(0);
+          throw error;
+        }
+      }
+      case 'portableExportChunk': {
+        if (!hasExactKeys(payload, ['operation', 'transferId', 'offset'])) return invalidTransferRequest();
+        if (typeof payload.transferId !== 'string' || !Number.isSafeInteger(payload.offset)) return invalidTransferRequest();
+        const chunk = this.portableTransfers.readExportChunk(connection.connectionId, payload.transferId, payload.offset);
+        return { success: true, status: chunk.done ? 'complete' : 'chunk_sent', ...chunk };
+      }
+      case 'portableImportStart': {
+        if (!hasExactKeys(payload, ['operation', 'byteLength'])) return invalidTransferRequest();
+        return { success: true, status: 'uploading', ...this.portableTransfers.startImport(connection.connectionId, payload.byteLength) };
+      }
+      case 'portableImportChunk': {
+        if (!hasExactKeys(payload, ['operation', 'transferId', 'offset', 'chunkBase64'])
+          || typeof payload.transferId !== 'string') return invalidTransferRequest();
+        const chunk = this.portableTransfers.appendImportChunk(connection.connectionId, payload.transferId, payload.offset, payload.chunkBase64);
+        return {
+          success: true,
+          status: chunk.done ? 'uploaded' : 'uploading',
+          ...chunk,
+        };
+      }
+      case 'portableImportPreview': {
+        if (!hasExactKeys(payload, ['operation', 'transferId', 'passphrase'])
+          || typeof payload.transferId !== 'string' || typeof payload.passphrase !== 'string') return invalidTransferRequest();
+        const preview = this.portableTransfers.beginImportPreview(connection.connectionId, payload.transferId);
+        let success = false;
+        try {
+          const result = await service.handlePrivateUi(connection, {
+            operation: 'portableImportPreview', archive: preview.archive, passphrase: payload.passphrase,
+          });
+          success = isRecord(result) && result.success === true;
+          if (!success) return result;
+          return {
+            success: true,
+            status: 'previewed',
+            entryCount: result.entryCount,
+            allowlistCount: result.allowlistCount,
+            previewToken: preview.previewToken,
+          };
+        } finally {
+          this.portableTransfers.finishImportPreview(connection.connectionId, payload.transferId, preview.previewToken, success);
+        }
+      }
+      case 'portableImportCommit': {
+        if (!hasExactKeys(payload, ['operation', 'previewToken', 'passphrase', 'confirmReplace'])
+          || typeof payload.previewToken !== 'string' || typeof payload.passphrase !== 'string'
+          || payload.confirmReplace !== true) return invalidTransferRequest();
+        const commit = this.portableTransfers.beginImportCommit(connection.connectionId, payload.previewToken);
+        let success = false;
+        try {
+          const result = await service.handlePrivateUi(connection, {
+            operation: 'portableImportCommit',
+            archive: commit.archive,
+            passphrase: payload.passphrase,
+            confirmReplace: payload.confirmReplace,
+          });
+          success = isRecord(result) && result.success === true;
+          return result;
+        } finally {
+          this.portableTransfers.finishImportCommit(connection.connectionId, commit.transferId, payload.previewToken, success);
+        }
+      }
+      case 'portableTransferCancel': {
+        if (!hasExactKeys(payload, ['operation', 'transferId']) || typeof payload.transferId !== 'string') return invalidTransferRequest();
+        this.portableTransfers.cancel(connection.connectionId, payload.transferId);
+        return { success: true, status: 'cancelled' };
+      }
+      default:
+        return invalidTransferRequest();
+    }
   }
 
   private send(conn: ExtensionConnection, message: Record<string, unknown>): void {
