@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { knowledgeEntrySchema, type KnowledgeEntry } from './knowledge-entry.js';
 import { canonicalOrigin } from './policy.js';
+import { relatedSiteSchema } from './knowledge-record.js';
 
 const TTL_MS = 5 * 60 * 1000;
 const MAX_DRAFTS = 128;
@@ -25,6 +26,7 @@ export interface KnowledgeDraft {
   expiresAt: string;
   binding: DraftBinding;
   entries: KnowledgeEntry[];
+  relatedSites?: z.infer<typeof relatedSiteSchema>[];
   digest: string;
 }
 
@@ -47,13 +49,20 @@ export class KnowledgeDrafts {
     this.deadlines.delete(id);
   }
 
-  prepare(binding: DraftBinding, entries: KnowledgeEntry[]): KnowledgeDraft {
+  prepare(binding: DraftBinding, entries: KnowledgeEntry[], relatedSites?: z.infer<typeof relatedSiteSchema>[]): KnowledgeDraft {
     const validatedBinding = draftBindingSchema.safeParse(binding);
-    const validatedEntries = z.array(knowledgeEntrySchema).min(1).max(8).safeParse(entries);
-    if (!validatedBinding.success || !validatedEntries.success) throw new Error('Invalid site knowledge draft');
+    const validatedEntries = z.array(knowledgeEntrySchema).max(8).safeParse(entries);
+    const validatedSites = z.array(relatedSiteSchema).max(8).optional().safeParse(relatedSites);
+    if (!validatedBinding.success || !validatedEntries.success || !validatedSites.success) throw new Error('Invalid site knowledge draft');
+    const sites = validatedSites.data;
+    const count = validatedEntries.data.length + (sites?.length ?? 0);
+    if (count === 0 || count > 8 || (sites?.length && binding.operation !== 'add')) throw new Error('Invalid site knowledge draft');
     const ids = new Set(validatedEntries.data.map((entry) => entry.id));
     if (ids.size !== validatedEntries.data.length) throw new Error('Invalid site knowledge draft');
-    const canonical = JSON.stringify({ binding: validatedBinding.data, entries: validatedEntries.data });
+    const origins = sites?.map((site) => site.origin) ?? [];
+    if (origins.includes(binding.origin) || new Set(origins).size !== origins.length) throw new Error('Invalid site knowledge draft');
+    const sitePayload = sites === undefined ? {} : { relatedSites: sites };
+    const canonical = JSON.stringify({ binding: validatedBinding.data, entries: validatedEntries.data, ...sitePayload });
     if (Buffer.byteLength(canonical, 'utf8') > MAX_PREVIEW_BYTES) throw new Error('Site knowledge preview exceeds limit');
     const timestamp = this.now();
     const elapsed = this.monotonic();
@@ -65,7 +74,7 @@ export class KnowledgeDrafts {
     if (this.drafts.size >= MAX_DRAFTS) throw new Error('Site knowledge draft limit reached');
     const draft: KnowledgeDraft = {
       id: randomUUID(), createdAt: new Date(timestamp).toISOString(), expiresAt: new Date(timestamp + TTL_MS).toISOString(),
-      binding: validatedBinding.data, entries: validatedEntries.data,
+      binding: validatedBinding.data, entries: validatedEntries.data, ...sitePayload,
       digest: createHash('sha256').update(canonical).digest('hex'),
     };
     this.drafts.set(draft.id, structuredClone(draft));

@@ -102,6 +102,13 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
     }
   });
 
+  it('refuses site knowledge writes over authenticated IPC while the owner interface is unqualified', async () => {
+    const name = 'browser_site_knowledge_manage';
+    const result = (await callAll([name]))[name];
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/^UNKNOWN_TOOL:/u);
+  });
+
   it('echoes a valid correlation id and replaces malformed ids', async () => {
     expect((await callAll(['browser_nope'], 'abc12345')).browser_nope.cid).toBe('abc12345');
     expect((await callAll(['browser_nope'], 'invalid\nvalue')).browser_nope.cid).toMatch(/^[a-z0-9]{8}$/u);

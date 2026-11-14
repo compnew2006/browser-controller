@@ -4,7 +4,7 @@ import { KnowledgeDeletionJournal } from './knowledge-deletion-journal.js';
 import { createKnowledgeProposal } from './knowledge-entry.js';
 import { JsonKnowledgePolicyStore } from './knowledge-policy-store.js';
 import { permitsKnowledge, type KnowledgePolicy } from './knowledge-policy.js';
-import type { KnowledgeFile } from './knowledge-record.js';
+import { createRelatedSiteProposal, validateKnowledgeRecord, type KnowledgeFile } from './knowledge-record.js';
 import { JsonKnowledgeStore } from './knowledge-store.js';
 import type { MemoryPolicy } from './policy.js';
 
@@ -80,11 +80,20 @@ export class KnowledgeService {
     return snapshot.record;
   }
 
-  async prepareAdd(inputs: unknown[]): Promise<KnowledgeDraft> {
-    if (!Array.isArray(inputs) || inputs.length === 0 || inputs.length > 8) throw new Error('Invalid site knowledge proposal');
+  async prepareAdd(inputs: unknown[], relatedInputs: unknown[] = []): Promise<KnowledgeDraft> {
+    if (!Array.isArray(inputs) || !Array.isArray(relatedInputs) || inputs.length + relatedInputs.length === 0
+        || inputs.length + relatedInputs.length > 8) throw new Error('Invalid site knowledge proposal');
     const entries = inputs.map(createKnowledgeProposal);
+    const relatedSites = relatedInputs.map(createRelatedSiteProposal);
     const snapshot = await this.snapshot();
-    return this.drafts.prepare(this.binding(snapshot, 'add'), entries);
+    const combinedSites = [...(snapshot.record?.relatedSites ?? []), ...relatedSites];
+    validateKnowledgeRecord({
+      schemaVersion: 1, browserId: snapshot.context.browserId, origin: snapshot.context.origin,
+      revision: (snapshot.record?.revision ?? 0) + 1, updatedAt: new Date().toISOString(),
+      entries: [...(snapshot.record?.entries ?? []), ...entries],
+      ...(snapshot.record?.relatedSites === undefined && relatedSites.length === 0 ? {} : { relatedSites: combinedSites }),
+    });
+    return this.drafts.prepare(this.binding(snapshot, 'add'), entries, relatedSites.length ? relatedSites : undefined);
   }
 
   async prepareEdit(id: string, input: unknown): Promise<KnowledgeDraft> {
@@ -142,10 +151,14 @@ export class KnowledgeService {
           entries = entries.filter((entry) => entry.id !== selected.id);
         }
       }
+      const relatedSites = draft.relatedSites?.length
+        ? [...(snapshot.record?.relatedSites ?? []), ...draft.relatedSites]
+        : snapshot.record?.relatedSites;
       const record: KnowledgeFile = {
         schemaVersion: 1, browserId: binding.browserId, origin: binding.origin,
         revision: binding.revision + 1, updatedAt: new Date().toISOString(),
         entries,
+        ...(relatedSites === undefined ? {} : { relatedSites }),
       };
       await this.store.put(record, binding.revision, {
         signal,

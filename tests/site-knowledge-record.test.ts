@@ -15,6 +15,37 @@ function record(): Record<string, unknown> {
 }
 
 describe('site knowledge record boundary', () => {
+  const relation = () => ({
+    origin: 'https://other.invalid', relationship: 'staging_for', source: 'task_summary',
+    attestation: 'declared', observedAt: null,
+  });
+
+  it('accepts bounded descriptive related sites without changing legacy records', () => {
+    const value = { ...record(), relatedSites: [relation()] };
+    expect(validateKnowledgeRecord(value)).toEqual(value);
+    expect(validateKnowledgeRecord(record())).toEqual(record());
+  });
+
+  it.each([
+    ['same origin', [ { ...relation(), origin: 'https://example.invalid' } ]],
+    ['duplicate origin', [relation(), relation()]],
+    ['non-canonical origin', [ { ...relation(), origin: 'https://other.invalid/path' } ]],
+    ['too many references', Array.from({ length: 21 }, (_, i) => ({ ...relation(), origin: `https://site${i}.invalid` }))],
+    ['unknown relationship', [ { ...relation(), relationship: 'trusted' } ]],
+    ['invalid source', [ { ...relation(), source: 'invented' } ]],
+    ['invalid attestation', [ { ...relation(), attestation: 'proven' } ]],
+    ['invalid observation time', [ { ...relation(), observedAt: 'tomorrow' } ]],
+    ['extra field', [ { ...relation(), secret: 'synthetic-marker' } ]],
+  ])('rejects %s in related sites without echo', (_name, relatedSites) => {
+    try {
+      validateKnowledgeRecord({ ...record(), relatedSites });
+      throw new Error('expected rejection');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'INVALID_ARGUMENT' });
+      expect(String(error)).not.toContain('synthetic-marker');
+    }
+  });
+
   it('accepts a bounded Arabic record without rewriting it', () => {
     const value = record();
     expect(validateKnowledgeRecord(value)).toEqual(value);

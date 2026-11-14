@@ -5,9 +5,15 @@
 ## Scope وKnowledgeFile
 
 - **Scope**: `browserId` غير افتراضي، canonical HTTP(S) `origin`، وهوية connection وsession الفعلية. للأدوات العامة تُشتق القيم من اتصال extension وسياق tab، ولا تُقبل هوية profile يزوّدها الوكيل. لا هوية حساب في P1؛ البيانات الخاصة بحساب مرفوضة.
-- **KnowledgeFile**: `schemaVersion: 1`، `browserId`، `origin`، `revision` عدد صحيح متزايد، `updatedAt` UTC، و`entries` محدودة. يخزن مستقلاً عن `memory/sites` و`memory/maps` في مسار مشتق باستخدام hash للـ profile وorigin. `browserId` وorigin الموجودان داخل الملف يُقارنان بالنطاق المشتق؛ الاسم المجزأ ليس ACL أو تشفيرًا.
+- **KnowledgeFile**: `schemaVersion: 1`، `browserId`، `origin`، `revision` عدد صحيح متزايد، `updatedAt` UTC، و`entries` و`relatedSites` محدودتان. يخزن مستقلاً عن `memory/sites` و`memory/maps` في مسار مشتق باستخدام hash للـ profile وorigin. `browserId` وorigin الموجودان داخل الملف يُقارنان بالنطاق المشتق؛ الاسم المجزأ ليس ACL أو تشفيرًا.
 - ملف واحد بحد 128 KiB و100 عنصر؛ 500 ملف للـ profile و32 MiB إجمالي. عند بلوغ الحد ترفض الكتابة دون حذف قديم تلقائيًا. الحدود أولية لمراجعة المالك ويمكن تعديلها في الخطة قبل التنفيذ، لا عبر جداول منفصلة عن validators.
 - النسخة غير المدعومة أو الملف غير الصالح لا يُستبدل ولا يُحذف تلقائيًا؛ تظهر حالة محددة دون بيانات حساسة. التحول بين إصدارات 008 يتطلب migration منفصلًا بموافقة، وليس أثناء القراءة.
+
+## RelatedSite
+
+- `relatedSites` قائمة بحد أقصى 20 مرجعًا وصفيًا محفوظة داخل ملف الموقع المصدر. يتضمن كل مرجع `origin` canonical مختلفًا عن origin الملف، وعلاقة من `same_product | staging_for | production_for | other`، ومصدرًا و`attestation` وفق حقول `KnowledgeEntry.source`، و`observedAt` كـ UTC أو null. تُرفض origins غير الصالحة أو المكررة داخل الملف.
+- تُراجع تغييرات القائمة مع محتوى ملف الموقع المصدر وتدخل في بصمة الموافقة ونسخته. العلاقة ادعاء منسوب لمصدر وليست دليلًا على البيئة أو التفويض، ولا تُستنتج من اسم المضيف.
+- عند قراءة ملف المصدر، يُعاد مرجع العلاقة فقط. لا يُفتح origin الهدف ولا تُقرأ أو تُبحث أو تُصدّر بياناته، ولا تنتقل العلاقة أو صلاحيات القراءة عبر سلسلة علاقات. لقراءة الهدف يجب اشتقاق scope مستقل من سياق مصرح به لذلك الـ origin والـ profile.
 
 ## KnowledgeEntry
 
@@ -17,7 +23,7 @@
 - `source`: نوع `owner_statement`, `direct_observation`, `historical_record`, `task_summary`، ومرجع اختياري آمن، مع تمييز `attestation: corroborated | declared`. مصدر وكيل لا يثبت نفسه؛ إذا لم يوجد دليل جلسة يمكن ربطه بالنتيجة يبقى declared/unverified. لا يُفتح المرجع تلقائيًا.
 - `observedAt` و`lastVerifiedAt`: UTC أو null عندما لا يُعرف؛ `createdAt` و`updatedAt` UTC يسجلهما النظام. لا يُفترض أن وقت الإدخال وقت الملاحظة.
 - `status`: `unverified`, `verified_at_time`, `historical`, `needs_recheck`؛ نجاح الاختبار يتطلب دليلًا ووقت تحقق. `execution`: `planned`, `performed`, `unknown`, `not_applicable`؛ `testOutcome`: `not_run`, `passed`, `failed`, `unknown`, `not_applicable`.
-- `relatedIds`: روابط داخل نفس scope لمعلومة مشكلة/تغيير/اختبار أو ادعاءات متعارضة؛ الموقع المرتبط يُسجل كمعلومة منسوبة لمصدر، ولا يجلب بيانات profile آخر. العلاقات لا تستبدل أي ادعاء تلقائيًا.
+- `relatedIds`: روابط داخل نفس scope لمعلومة مشكلة/تغيير/اختبار أو ادعاءات متعارضة؛ لا تستخدم لتمثيل موقع آخر. تُستخدم `relatedSites` للعلاقة بين origins كما سبق، دون جلب بيانات أي موقع آخر. العلاقات لا تستبدل أي ادعاء تلقائيًا.
 
 التحقق من detector best-effort لا يضمن خلو أي نص حر من الأسرار؛ تُرفض علامات الاختبار المعروفة وتلزم مراجعة المالك ولا يُزعم ضمان يتجاوزها. لا تحفظ المدخلات الحساسة المكتشفة حتى في رسائل الرفض.
 

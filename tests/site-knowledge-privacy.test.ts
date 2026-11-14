@@ -54,6 +54,23 @@ describe('site knowledge privacy boundaries', () => {
     expect(await service.read()).toBeNull();
   });
 
+  it('rejects credentials and query data in a related site without echo or persistence', async () => {
+    const marker = 'synthetic-related-secret';
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const candidate of [`https://user:${marker}@other.invalid`, `https://other.invalid/?token=${marker}`]) {
+      let failure: unknown;
+      try {
+        await service.prepareAdd([], [{ origin: candidate, relationship: 'same_product', source: 'task_summary', observedAt: null }]);
+      } catch (caught) { failure = caught; }
+      expect(failure).toBeTruthy();
+      expect(String(failure)).not.toContain(marker);
+    }
+    expect(JSON.stringify(log.mock.calls)).not.toContain(marker);
+    expect(JSON.stringify(error.mock.calls)).not.toContain(marker);
+    expect(await service.read()).toBeNull();
+  });
+
   it('rejects agent-supplied IDs, system timestamps and verification claims', async () => {
     for (const extra of [{ id: 'chosen-id' }, { createdAt: '2026-11-05T00:00:00.000Z' }, { attestation: 'corroborated' }, { source: 'owner_statement' }]) {
       await expect(service.prepareAdd([{ ...safeInput(), ...extra }])).rejects.toThrow();

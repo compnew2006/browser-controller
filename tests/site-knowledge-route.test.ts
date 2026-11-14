@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +14,7 @@ beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowledg
 afterEach(async () => { await fs.rm(dir, { recursive: true, force: true }); });
 const signal = () => new AbortController().signal;
 
-async function setup() {
+async function setup(relatedSites?: Array<{ origin: string; relationship: 'same_product'; source: 'task_summary'; attestation: 'declared'; observedAt: null }>) {
   await writePolicy(dir, enablePolicy(defaultPolicy(), '2026-11-05T00:00:00.000Z'));
   const policies = new JsonKnowledgePolicyStore(dir);
   const initial = await policies.get('profile-a');
@@ -23,7 +23,7 @@ async function setup() {
     category: 'site', subject: `معلومة ${index}`, body: 'بيانات تجريبية', source: 'task_summary',
   }));
   const store = new JsonKnowledgeStore(dir);
-  await store.put({ schemaVersion: 1, browserId: 'profile-a', origin: 'https://example.invalid', revision: 1, updatedAt: '2026-11-05T00:00:00.000Z', entries }, 0,
+  await store.put({ schemaVersion: 1, browserId: 'profile-a', origin: 'https://example.invalid', revision: 1, updatedAt: '2026-11-05T00:00:00.000Z', entries, ...(relatedSites ? { relatedSites } : {}) }, 0,
     { validateCommit: () => true, finalizeCommit: () => {} });
   const context = { url: 'https://example.invalid/page', incognito: false, topLevel: true, stable: true, anonymous: true };
   const connection = { browserId: 'profile-a', connectionId: 'connection-a', ambiguous: false, supportsSiteContext: true };
@@ -35,6 +35,35 @@ async function setup() {
 }
 
 describe('site knowledge read route', () => {
+  it('pages descriptive site references without accessing the referenced origins', async () => {
+    const relatedSites = Array.from({ length: 20 }, (_, index) => ({
+      origin: `https://${'a'.repeat(450)}${index}.invalid`, relationship: 'same_product' as const,
+      source: 'task_summary' as const, attestation: 'declared' as const, observedAt: null,
+    }));
+    const { router } = await setup(relatedSites);
+    const get = vi.spyOn(JsonKnowledgeStore.prototype, 'get');
+    try {
+      const seen = [];
+      const seenEntries = [];
+      let cursor: string | null = null;
+      do {
+        const response = await router.read({ tabId: 7, ...(cursor ? { cursor } : {}) }, 'session-a', 'agent', signal());
+        if (!response.success) throw new Error('expected a page');
+        expect(Buffer.byteLength(JSON.stringify(response.result), 'utf8')).toBeLessThanOrEqual(8192);
+        seen.push(...(response.result.relatedSites ?? []));
+        seenEntries.push(...response.result.entries.map((entry) => entry.id));
+        cursor = response.result.nextCursor;
+      } while (cursor);
+      expect(seen).toEqual(relatedSites);
+      expect(seenEntries).toHaveLength(25);
+      expect(new Set(seenEntries).size).toBe(25);
+      const search = await router.read({ tabId: 7, action: 'search', query: 'معلومة' }, 'session-a', 'agent', signal());
+      expect(search.success && search.result.relatedSites).toBeUndefined();
+      expect(get).toHaveBeenCalled();
+      expect(get.mock.calls.every(([profile, origin]) => profile === 'profile-a' && origin === 'https://example.invalid')).toBe(true);
+    } finally { get.mockRestore(); }
+  });
+
   it('searches Arabic text and binds cursors to the query and category', async () => {
     const { router } = await setup();
     const first = await router.read({ tabId: 7, action: 'search', query: 'معلومة', category: 'site' }, 'session-a', 'agent', signal());

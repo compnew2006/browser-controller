@@ -37,4 +37,5 @@ Use scoped Conventional Commits, e.g. `refactor(vault): ...` or `docs(audit): ..
 - Credential Vault persists browser-scoped encrypted files and local recovery snapshots; the portable-backup plan keeps transfer state in bounded memory.
 
 ## Recent Changes
+- 008-site-knowledge (plan, security checklist, and dependency-ordered tasks prepared for review; execution remains gated by owner review and P0 UI proof).
 - 010-portable-vault-backup (tasks stage): Approved plan for passphrase-protected export/import using existing crypto and private vault transport; implementation has not started.

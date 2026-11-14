@@ -6,6 +6,7 @@ import { KnowledgeService, type TrustedKnowledgeContext } from '../mcp-server/sr
 import { JsonKnowledgePolicyStore } from '../mcp-server/src/memory/knowledge-policy-store.js';
 import { JsonKnowledgeStore } from '../mcp-server/src/memory/knowledge-store.js';
 import { KnowledgeDeletionJournal } from '../mcp-server/src/memory/knowledge-deletion-journal.js';
+import { createKnowledgeProposal } from '../mcp-server/src/memory/knowledge-entry.js';
 import { transitionKnowledgePolicy } from '../mcp-server/src/memory/knowledge-policy.js';
 import { defaultPolicy, enablePolicy } from '../mcp-server/src/memory/policy.js';
 
@@ -26,6 +27,101 @@ async function enablePolicyForTest(profile = 'profile-a'): Promise<void> {
 }
 
 describe('site knowledge service in isolation', () => {
+  it('binds proposed related sites to the reviewed draft and commits them with the selected entries', async () => {
+    await enablePolicyForTest();
+    const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
+    const relation = { origin: 'https://other.invalid', relationship: 'same_product', source: 'task_summary', observedAt: null };
+    const draft = await service.prepareAdd([input()], [relation]);
+    expect(draft.relatedSites).toEqual([{ ...relation, attestation: 'declared' }]);
+    expect(await service.read()).toBeNull();
+    const preview = await service.preview(draft.id, 'add');
+    expect(preview.relatedSites).toEqual(draft.relatedSites);
+    preview.relatedSites![0]!.origin = 'https://changed.invalid';
+    const saved = await service.commitAdd(draft.id, () => true);
+    expect(saved.relatedSites).toEqual([{ ...relation, attestation: 'declared' }]);
+    expect(saved.entries).toHaveLength(1);
+    await expect(service.commitAdd(draft.id, () => true)).rejects.toThrow();
+  });
+
+  it('rejects unsafe or unapproved related site proposals without writing', async () => {
+    await enablePolicyForTest();
+    const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
+    const relation = { origin: 'https://other.invalid', relationship: 'same_product', source: 'task_summary', observedAt: null };
+    for (const candidate of [
+      { ...relation, origin: initialContext().origin }, { ...relation, origin: 'https://other.invalid/path' },
+      { ...relation, attestation: 'corroborated' }, { ...relation, source: 'owner_statement' },
+    ]) await expect(service.prepareAdd([], [candidate])).rejects.toThrow();
+    await expect(service.prepareAdd([], [relation, relation])).rejects.toThrow();
+    const draft = await service.prepareAdd([], [relation]);
+    await expect(service.commitAdd(draft.id, () => false)).rejects.toThrow();
+    expect(await service.read()).toBeNull();
+  });
+
+  it('rejects stale or oversized related-site batches without a partial write', async () => {
+    await enablePolicyForTest();
+    const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
+    const relation = (index: number) => ({ origin: `https://site${index}.invalid`, relationship: 'same_product', source: 'task_summary', observedAt: null });
+    await expect(service.prepareAdd([input()], Array.from({ length: 8 }, (_, index) => relation(index)))).rejects.toThrow();
+    const first = await service.prepareAdd([], [relation(1)]);
+    const stale = await service.prepareAdd([], [relation(2)]);
+    await service.commitAdd(first.id, () => true);
+    await expect(service.commitAdd(stale.id, () => true)).rejects.toThrow();
+    expect((await service.read())?.relatedSites).toEqual([{ ...relation(1), attestation: 'declared' }]);
+    await expect(service.prepareAdd([], [relation(1)])).rejects.toThrow();
+  });
+
+  it('refuses a proposal that would exceed the record relationship limit before review', async () => {
+    await enablePolicyForTest();
+    const makeSite = (index: number) => ({
+      origin: `https://site${index}.invalid`, relationship: 'same_product' as const,
+      source: 'task_summary' as const, attestation: 'declared' as const, observedAt: null,
+    });
+    const store = new JsonKnowledgeStore(dir);
+    const relatedSites = Array.from({ length: 20 }, (_, index) => makeSite(index));
+    await store.put({ schemaVersion: 1, browserId: 'profile-a', origin: initialContext().origin, revision: 1,
+      updatedAt: '2026-11-05T00:00:00.000Z', entries: [], relatedSites }, 0,
+    { validateCommit: () => true, finalizeCommit: () => {} });
+    const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
+    const { attestation: _attestation, ...candidate } = makeSite(20);
+    await expect(service.prepareAdd([], [candidate])).rejects.toThrow();
+    expect((await service.read())?.relatedSites).toEqual(relatedSites);
+  });
+
+  it('refuses a proposal that would exceed the record entry limit before review', async () => {
+    await enablePolicyForTest();
+    const entries = Array.from({ length: 100 }, (_, index) => createKnowledgeProposal({ ...input(), subject: `معلومة ${index}` }));
+    const store = new JsonKnowledgeStore(dir);
+    await store.put({ schemaVersion: 1, browserId: 'profile-a', origin: initialContext().origin, revision: 1,
+      updatedAt: '2026-11-05T00:00:00.000Z', entries }, 0,
+    { validateCommit: () => true, finalizeCommit: () => {} });
+    const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
+    await expect(service.prepareAdd([input()])).rejects.toThrow();
+    expect((await service.read())?.entries).toEqual(entries);
+  });
+
+  it('preserves descriptive related sites when adding, editing and deleting entries', async () => {
+    await enablePolicyForTest();
+    const relatedSites = [{
+      origin: 'https://other.invalid', relationship: 'same_product' as const, source: 'task_summary' as const,
+      attestation: 'declared' as const, observedAt: null,
+    }];
+    const store = new JsonKnowledgeStore(dir);
+    await store.put({
+      schemaVersion: 1, browserId: 'profile-a', origin: initialContext().origin, revision: 1,
+      updatedAt: '2026-11-05T00:00:00.000Z', entries: [], relatedSites,
+    }, 0, { validateCommit: () => true, finalizeCommit: () => {} });
+    const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
+    const add = await service.prepareAdd([input()]);
+    const added = await service.commitAdd(add.id, () => true);
+    expect(added.relatedSites).toEqual(relatedSites);
+    const edit = await service.prepareEdit(added.entries[0]!.id, { ...input(), body: 'نص معدل' });
+    const edited = await service.commitEdit(edit.id, () => true);
+    expect(edited.relatedSites).toEqual(relatedSites);
+    const deletion = await service.prepareDelete(edited.entries[0]!.id);
+    expect((await service.commitDelete(deletion.id, () => true)).relatedSites).toEqual(relatedSites);
+    expect((await service.read())?.relatedSites).toEqual(relatedSites);
+  });
+
   it('fails closed while knowledge policy is disabled', async () => {
     const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
     await expect(service.prepareAdd([input()])).rejects.toThrow();
@@ -80,7 +176,9 @@ describe('site knowledge service in isolation', () => {
   it('writes only the selected proposed entries after an approved commit', async () => {
     await enablePolicyForTest();
     const service = new KnowledgeService(dir, { currentContext: async () => initialContext(), currentMemoryPolicy: memory });
-    const draft = await service.prepareAdd([input(), { ...input(), subject: 'ثانية' }]);
+    const candidates = [input(), { ...input(), subject: 'ثانية' }, { ...input(), subject: 'ثالثة غير مختارة' }];
+    const draft = await service.prepareAdd(candidates.slice(0, 2));
+    expect((await service.preview(draft.id, 'add')).entries.map((entry) => entry.subject)).toEqual(['معلومة', 'ثانية']);
     await service.commitAdd(draft.id, () => true);
     const record = await service.read();
     expect(record?.entries.map((entry) => entry.subject)).toEqual(['معلومة', 'ثانية']);

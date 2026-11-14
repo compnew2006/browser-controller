@@ -7,12 +7,14 @@ import { JsonKnowledgePolicyStore } from './knowledge-policy-store.js';
 import { readPolicy } from './policy.js';
 import { KnowledgeService } from './knowledge-service.js';
 import type { KnowledgeEntry } from './knowledge-entry.js';
+import type { KnowledgeFile } from './knowledge-record.js';
 
 type RouteDependencies = Omit<KnowledgeContextProviderDependencies, 'memoryPolicy' | 'knowledgePolicy' | 'knowledgePolicyForCommit' | 'epoch'> & {
   memoryDir: string;
 };
 
-type ReadResult = { success: true; result: { untrusted: true; entries: KnowledgeEntry[]; nextCursor: string | null } }
+type RelatedSite = NonNullable<KnowledgeFile['relatedSites']>[number];
+type ReadResult = { success: true; result: { untrusted: true; entries: KnowledgeEntry[]; relatedSites?: RelatedSite[]; nextCursor: string | null } }
   | { success: false; error: string };
 
 const argsSchema = z.object({
@@ -20,7 +22,7 @@ const argsSchema = z.object({
   action: z.enum(['read', 'search']).optional(), query: z.string().min(1).max(160).optional(),
   category: z.enum(['site', 'role', 'function', 'problem', 'change', 'test']).optional(),
 }).strict().refine((value) => value.action === 'search' || value.query === undefined);
-const cursorSchema = z.object({ v: z.literal(1), offset: z.number().int().nonnegative().safe(), revision: z.number().int().nonnegative().safe(), scope: z.string().min(1) }).strict();
+const cursorSchema = z.object({ v: z.literal(1), offset: z.number().int().nonnegative().safe(), siteOffset: z.number().int().nonnegative().safe(), revision: z.number().int().nonnegative().safe(), scope: z.string().min(1) }).strict();
 const MAX_PAGE_BYTES = 8 * 1024;
 
 /** Daemon-side read path. This module does not register tools or enable knowledge. */
@@ -36,13 +38,13 @@ export class KnowledgeReadRouter {
     return createHmac('sha256', this.cursorKey).update(JSON.stringify([sessionId, browserId, origin, filter])).digest('base64url');
   }
 
-  private cursor(offset: number, revision: number, scope: string): string {
-    const payload = Buffer.from(JSON.stringify({ v: 1, offset, revision, scope })).toString('base64url');
+  private cursor(offset: number, siteOffset: number, revision: number, scope: string): string {
+    const payload = Buffer.from(JSON.stringify({ v: 1, offset, siteOffset, revision, scope })).toString('base64url');
     const mac = createHmac('sha256', this.cursorKey).update(payload).digest('base64url');
     return `${payload}.${mac}`;
   }
 
-  private parseCursor(token: string, revision: number, scope: string): number {
+  private parseCursor(token: string, revision: number, scope: string): { offset: number; siteOffset: number } {
     const parts = token.split('.');
     if (parts.length !== 2) throw new Error('Invalid site knowledge cursor');
     const [payload, signature] = parts as [string, string];
@@ -56,7 +58,7 @@ export class KnowledgeReadRouter {
     }
     const parsed = cursorSchema.safeParse(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')));
     if (!parsed.success || parsed.data.revision !== revision || parsed.data.scope !== scope) throw new Error('Invalid site knowledge cursor');
-    return parsed.data.offset;
+    return { offset: parsed.data.offset, siteOffset: parsed.data.siteOffset };
   }
 
   async read(raw: unknown, sessionId: string, agentName: string, signal: AbortSignal): Promise<ReadResult> {
@@ -88,21 +90,35 @@ export class KnowledgeReadRouter {
       const matches = record.entries.filter((entry) => (!args.data.category || entry.category === args.data.category)
         && (!query || `${entry.subject}\n${entry.body}`.normalize('NFC').toLocaleLowerCase('und').includes(query)));
       const scope = this.scopeDigest(sessionId, current.browserId, current.origin, filter);
-      const offset = args.data.cursor ? this.parseCursor(args.data.cursor, record.revision, scope) : 0;
-      if (offset >= matches.length && (offset !== 0 || args.data.cursor)) throw new Error();
+      const sites = filter.action === 'read' ? record.relatedSites : undefined;
+      const position = args.data.cursor ? this.parseCursor(args.data.cursor, record.revision, scope) : { offset: 0, siteOffset: 0 };
+      const { offset, siteOffset } = position;
+      if (offset > matches.length || siteOffset > (sites?.length ?? 0)
+          || (args.data.cursor && offset === matches.length && siteOffset === (sites?.length ?? 0))) throw new Error();
       const entries: KnowledgeEntry[] = [];
+      const relatedSites: RelatedSite[] = [];
       let next = offset;
+      let nextSite = siteOffset;
+      const result = (candidateEntries: KnowledgeEntry[], candidateSites: RelatedSite[], entryOffset: number, relatedOffset: number) => ({
+        untrusted: true as const, entries: candidateEntries,
+        ...(sites === undefined ? {} : { relatedSites: candidateSites }),
+        nextCursor: entryOffset < matches.length || relatedOffset < (sites?.length ?? 0)
+          ? this.cursor(entryOffset, relatedOffset, record.revision, scope) : null,
+      });
+      while (sites && nextSite < sites.length) {
+        const candidate = [...relatedSites, sites[nextSite]!];
+        if (Buffer.byteLength(JSON.stringify(result(entries, candidate, next, nextSite + 1)), 'utf8') > MAX_PAGE_BYTES) break;
+        relatedSites.push(sites[nextSite]!);
+        nextSite += 1;
+      }
       while (next < matches.length && entries.length < 20) {
         const candidate = [...entries, matches[next]!];
-        const nextOffset = next + 1;
-        const nextCursor = nextOffset < matches.length ? this.cursor(nextOffset, record.revision, scope) : null;
-        if (Buffer.byteLength(JSON.stringify({ untrusted: true, entries: candidate, nextCursor }), 'utf8') > MAX_PAGE_BYTES) break;
+        if (Buffer.byteLength(JSON.stringify(result(candidate, relatedSites, next + 1, nextSite)), 'utf8') > MAX_PAGE_BYTES) break;
         entries.push(matches[next]!);
-        next = nextOffset;
+        next += 1;
       }
-      if (next === offset && next < matches.length) throw new Error();
-      const nextCursor = next < matches.length ? this.cursor(next, record.revision, scope) : null;
-      return { success: true, result: { untrusted: true, entries, nextCursor } };
+      if (next === offset && nextSite === siteOffset && (next < matches.length || nextSite < (sites?.length ?? 0))) throw new Error();
+      return { success: true, result: result(entries, relatedSites, next, nextSite) };
     } catch {
       return { success: false, error: formatError(ERROR_CODES.MEMORY_UNAVAILABLE, 'Site knowledge is unavailable or its scope changed.') };
     }
