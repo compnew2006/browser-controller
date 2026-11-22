@@ -46,16 +46,30 @@
  * after the first failure, 1500ms after the second, 4000ms after the
  * third — the wait before the fourth attempt).
  *
- * A coded `TIMEOUT` on a mutating step is an unknown outcome, not a
- * known failure: the action may have executed and only its reply was
- * lost, so it is reconciled before any retry — exactly like an uncoded
- * failure — and retries only when reconciliation says `not-happened`
- * (controller ruling, fix round 1). A `TIMEOUT` on a read-only step
- * retries without reconciling: there is no effect to double. The other
- * retryable codes need no reconcile: `TAB_WEDGED` means the frozen tab
- * never ran the call, and `NOT_CONNECTED` / `NAVIGATION_FAILED` mean
- * the call never reached the page — in both cases there is no executed
- * action to double.
+ * A coded retryable failure on a mutating step is an unknown outcome,
+ * not a known failure: the action may have executed and only its reply
+ * was lost, so it is reconciled before any retry — exactly like an
+ * uncoded failure — and retries only when reconciliation says
+ * `not-happened` (controller ruling, fix round 2). This holds for every
+ * retryable code, not just `TIMEOUT`: no per-code "never ran" reasoning
+ * survives the evidence. `bridge.ts` `rejectAllPending` rejects an
+ * already-sent call as `NOT_CONNECTED` with "it may have run in the
+ * page before the browser went away", indistinguishable by code from a
+ * call that never connected; and `extension/lib/page-exec.js`
+ * `safeExec` races an in-flight `executeScript` — which "can't be
+ * aborted" — against a timer that throws `TAB_WEDGED`, so the script
+ * may still run to completion after the error, indistinguishable by
+ * code from the `assertResponsive` pre-check path where the call
+ * genuinely never ran. A retryable failure on a mutating step is an
+ * unknown outcome by definition, so reconcile first. A retryable
+ * failure on a read-only step retries without reconciling: there is no
+ * effect to double. The availability cost is accepted: when the link or
+ * tab is down the reconcile read itself fails and the step fails as
+ * unknown instead of retrying blind — double execution is the harm to
+ * avoid, and the task can be re-run once connectivity returns. For a
+ * genuine failed navigation the reconcile read shows the effect absent
+ * (`not-happened`) and permits the retry anyway, at the cost of one
+ * extra snapshot read.
  *
  * The runner-facing application of the policy lives here too, so the
  * runner stays orchestration: `executeStepWithRecovery` runs one step's
@@ -285,10 +299,10 @@ export interface ExecuteStepOptions {
   policy?: RetryPolicy;
   /**
    * Whether the step can change site data — the runner's P4 mutating
-   * classification (`isMutatingTool`). A coded TIMEOUT on such a step is
-   * reconciled before any retry: the action may have executed and only
-   * its reply was lost. A read-only step retries a TIMEOUT without
-   * reconciling, since there is no effect to double.
+   * classification (`isMutatingTool`). A coded retryable failure on such
+   * a step is reconciled before any retry: the action may have executed
+   * and only its reply was lost. A read-only step retries a retryable
+   * failure without reconciling, since there is no effect to double.
    */
   mutating: boolean;
   /** Wait between retries; defaults to a real timer. */
@@ -313,9 +327,10 @@ export interface ExecuteStepOptions {
 /**
  * Execute one step's tool call under the recovery policy, and report what
  * happened: `result` carries the successful tool result; `reconciled`
- * means an unknown outcome — an uncoded failure, or a TIMEOUT on a
- * mutating step — was reconciled and the step's effect confirmed present,
- * so the step is already `ok` and must never run again; `failed`
+ * means an unknown outcome — an uncoded failure, or a retryable coded
+ * failure on a mutating step — was reconciled and the step's effect
+ * confirmed present, so the step is already `ok` and must never run
+ * again; `failed`
  * means the step was failed through `fail` (a definite failure, an
  * unreconcilable unknown, or no attempts left). `reconciledUrl` is the
  * page a reconciliation saw, when one ran — the caller uses it as the
@@ -364,10 +379,12 @@ export async function executeStepWithRecovery(
    * Classify one failed attempt. Returns what happens next: `'retry'`
    * runs the next attempt after the policy backoff; `'done'` means
    * reconciliation confirmed the step; `'failed'` means the step was
-   * failed through `fail`. A coded retryable failure retries — except a
-   * TIMEOUT on a mutating step, which is an unknown outcome (the action
-   * may have executed and only its reply was lost) and is reconciled
-   * first, like an uncoded failure. Any other coded failure — rate
+   * failed through `fail`. A coded retryable failure retries — except
+   * on a mutating step, where it is an unknown outcome (the action may
+   * have executed and only its reply was lost) and is reconciled
+   * first, like an uncoded failure: no per-code "never ran" reasoning
+   * survives the evidence (see the module header), so every retryable
+   * code reconciles on a mutating step. Any other coded failure — rate
    * limit, permission denial, locked tab, or any definite failure —
    * stops at once. An uncoded failure has no code to branch on, so its
    * outcome is unknown: it is reconciled before any retry, and only a
@@ -380,7 +397,7 @@ export async function executeStepWithRecovery(
   ): Promise<'retry' | 'done' | 'failed'> {
     if (code !== undefined) {
       if (shouldRetry(code, attempt, policy)) {
-        if (code === 'TIMEOUT' && options.mutating) {
+        if (options.mutating) {
           const { decision } = await reconcileBeforeRetry();
           if (decision !== 'not-happened') return decision;
         }

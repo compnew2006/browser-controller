@@ -763,6 +763,162 @@ describe('a coded TIMEOUT on a mutating step reconciles first', () => {
   });
 });
 
+describe('a coded retryable failure on a mutating step reconciles first (all retryable codes)', () => {
+  /**
+   * One mutating submit step: the fake executes the mutation on every
+   * call (counted in `executions`) and plays the scripted result — a
+   * coded failure means the call executed but its reply was lost.
+   */
+  function mutatingFailureTask(code: string): {
+    tools: Map<string, ToolDefinition>;
+    calls: string[];
+    executions: string[];
+  } {
+    const calls: string[] = [];
+    const executions: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'fake-submit',
+        scriptedTool(
+          'fake-submit',
+          calls,
+          [new Error(`${code}: the call executed but its reply was lost`), textResult('submitted')],
+          false,
+          z.object({}).strict(),
+          () => {
+            executions.push('fake-submit');
+          },
+        ),
+      ],
+      ['browser_snapshot', snapshotTool([], 'submitted')],
+    ]);
+    return { tools, calls, executions };
+  }
+
+  function submitTask(): Task {
+    return {
+      id: 'task-1',
+      goal: 'Submit the form',
+      constraints: ['allow-mutations'],
+      steps: [{ tool: 'fake-submit', params: {}, verify: [{ kind: 'text-present', value: 'submitted' }] }],
+      state: 'planned',
+      evidence: [],
+    };
+  }
+
+  it.each(['NOT_CONNECTED', 'TAB_WEDGED'])(
+    'a mutating %s whose effect is already present is never executed twice',
+    async (code) => {
+      // Fix round 2, Important 2 (remainder): the TIMEOUT-only scoping
+      // was wrong — a retryable failure on a mutating step is an unknown
+      // outcome for every retryable code. bridge.ts rejectAllPending
+      // rejects an already-sent call as NOT_CONNECTED ("it may have run
+      // in the page before the browser went away"), and page-exec.js
+      // safeExec races an in-flight executeScript that "can't be
+      // aborted" against a timer that throws TAB_WEDGED, so the script
+      // may still run to completion after the error. Either way the
+      // effect may already be present, so the retry reconciles first
+      // and a confirmed effect means the tool never runs again.
+      const { tools, calls, executions } = mutatingFailureTask(code);
+      const reads: PageSnapshot[] = [];
+      await saveTask(submitTask(), dir);
+
+      const done = await runTask('task-1', {
+        tasksDir: dir,
+        tools,
+        host: dummyHost,
+        recovery: {
+          readPage: async () => {
+            const page: PageSnapshot = { url: 'https://example.com/done', text: 'submitted', ref: 'reconcile' };
+            reads.push(page);
+            return page;
+          },
+        },
+      });
+
+      expect(done.state).toBe('done');
+      expect(done.steps[0]?.result?.status).toBe('ok');
+      expect(done.steps[0]?.result?.detail).toContain('reconciled');
+      // The mutation executed once — the failure lost its reply — and
+      // the reconcile found the effect present, so the tool never ran
+      // again.
+      expect(executions).toEqual(['fake-submit']);
+      expect(calls).toEqual(['fake-submit']);
+      expect(reads.length).toBe(1);
+    },
+  );
+
+  it('a mutating TAB_WEDGED retries when reconciliation says the effect did not happen', async () => {
+    // The widened codes still retry when the effect is confirmed absent:
+    // the reconcile read shows the form still blank, so the retry cannot
+    // execute the action twice.
+    const { tools, calls, executions } = mutatingFailureTask('TAB_WEDGED');
+    const reads: PageSnapshot[] = [];
+    const slept: number[] = [];
+    await saveTask(submitTask(), dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      recovery: {
+        readPage: async () => {
+          const page: PageSnapshot = {
+            url: 'https://example.com/form',
+            text: 'the form, still blank',
+            ref: 'reconcile',
+          };
+          reads.push(page);
+          return page;
+        },
+        sleep: async (ms) => { slept.push(ms); },
+      },
+    });
+
+    expect(done.state).toBe('done');
+    expect(done.steps[0]?.result?.status).toBe('ok');
+    expect(executions).toEqual(['fake-submit', 'fake-submit']);
+    expect(calls).toEqual(['fake-submit', 'fake-submit']);
+    expect(reads.length).toBe(1);
+    expect(slept).toEqual([500]);
+  });
+
+  it('a read-only step still retries a NOT_CONNECTED without reconciling', async () => {
+    // The widening is mutating-only: a read-only step has no effect to
+    // double, so it keeps the direct retry with no reconcile read.
+    const calls: string[] = [];
+    const snapshotCalls: string[] = [];
+    const slept: number[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'fake-ok',
+        scriptedTool('fake-ok', calls, [
+          failureResult('NOT_CONNECTED: browser disconnected'),
+          textResult('page loaded'),
+        ]),
+      ],
+      ['browser_snapshot', snapshotTool(snapshotCalls, 'page loaded')],
+    ]);
+    await saveTask(oneStepTask(), dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+      recovery: { sleep: async (ms) => { slept.push(ms); } },
+    });
+
+    expect(done.state).toBe('done');
+    expect(calls).toEqual(['fake-ok', 'fake-ok']);
+    expect(slept).toEqual([500]);
+    // The one snapshot read is the post-step verification, not a
+    // reconcile.
+    expect(snapshotCalls).toEqual(['browser_snapshot']);
+    expect(done.steps[0]?.result?.status).toBe('ok');
+  });
+});
+
 describe('resume reconciles an unknown step instead of blindly re-running it', () => {
   const LOGIN_FORM_TEXT =
     '- textbox "Email" [ref=e1]\n- textbox "Password" [ref=e2]\n- button "Sign in" [ref=e3]';
