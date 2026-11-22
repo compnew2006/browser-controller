@@ -56,10 +56,15 @@
  * task is not failed. A security-warning page fails the step as
  * `verify-failed`: it is never a login page and never a successful target
  * page, and it has to be dismissed explicitly first. A login page without
- * redirect proof is not an expiry, so verification judges it. Re-checking
- * the page before continuing is `resumeAfterLogin`'s job in `session.ts`,
- * not this runner's: a `paused-login` task handed to `runTask` directly
- * resumes from its first unfinished step as before.
+ * redirect proof is not an expiry, so verification judges it. The redirect
+ * proof for a non-navigate step is the page the task was on before the step,
+ * seeded at run start from the completed steps (last navigate target, else
+ * the URL the last completed step verified against), so a resumed run still
+ * proves expiry on its first unfinished step. Re-checking the page before
+ * continuing is `resumeAfterLogin`'s job in `session.ts`, not this runner's:
+ * `runTask` refuses a `paused-login` task outright and directs the caller
+ * to `resumeAfterLogin` — the single resume entry point — instead of
+ * executing a step blind on whatever page is showing.
  *
  * Read-only default (FR-020, binding ruling P4): a step that can change site
  * data (save/send/delete) is refused unless the task explicitly allows
@@ -249,6 +254,41 @@ function boundTabFromCompletedSteps(task: Task): number | undefined {
   return bound;
 }
 
+/** The URL of the page a completed step verified against, from its recorded evidence (`verifyStep` writes `verified N rule(s) at <url>; ...`). */
+const VERIFIED_URL = /verified \d+ rule\(s\) at (\S+); snapshot=/u;
+
+function verifiedUrlOf(step: TaskStep): string | undefined {
+  if (step.result?.status !== 'ok' || !step.result.detail) return undefined;
+  return VERIFIED_URL.exec(step.result.detail)?.[1];
+}
+
+/**
+ * The page the task was on when its last completed step finished — the
+ * redirect proof for the first unfinished step. A resumed run skips `ok`
+ * steps without running them, so without this the first unfinished step —
+ * a snapshot, a click, anything but a navigate — would have no expected URL
+ * and a landing on a login URL would read as `login-page`, not `expired`.
+ * Prefer the last completed navigate's target; otherwise the URL the last
+ * completed step verified against. A history navigate (`back` / `forward` /
+ * `reload`) names no URL, so it falls through to the verified URL instead.
+ */
+function lastUrlFromCompletedSteps(task: Task): string | undefined {
+  let last: string | undefined;
+  for (const step of task.steps) {
+    if (step.result?.status !== 'ok') continue;
+    if (
+      step.tool === 'browser_navigate' &&
+      typeof step.params.url === 'string' &&
+      !NAVIGATE_HISTORY_ACTIONS.has(step.params.url)
+    ) {
+      last = step.params.url;
+    } else {
+      last = verifiedUrlOf(step) ?? last;
+    }
+  }
+  return last;
+}
+
 async function failStep(
   task: Task,
   step: TaskStep,
@@ -266,7 +306,9 @@ async function failStep(
 /**
  * Run a saved task from its first unfinished step. Returns the task in its
  * final state: `done` when every step verified, `failed` at the first step
- * that did not. Throws when the task was never saved.
+ * that did not. Throws when the task was never saved, and when the task is
+ * `paused-login` — that state resumes only through `resumeAfterLogin`,
+ * which re-checks the page first.
  */
 export async function runTask(id: string, options: RunTaskOptions = {}): Promise<Task> {
   const tools = options.tools ?? toolMap;
@@ -275,6 +317,15 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
 
   const task = await loadTask(id, options.tasksDir);
   if (!task) throw new Error(`task not found: ${id}`);
+
+  // A task paused for login resumes only through `resumeAfterLogin`, which
+  // re-checks the page first: running it directly would execute the next
+  // step blind on whatever page is showing — possibly still the login page.
+  if (task.state === 'paused-login') {
+    throw new Error(
+      `cannot run task ${id} directly: task is paused-login — resume it with resumeAfterLogin, which re-checks the page first`,
+    );
+  }
 
   task.state = 'running';
   await saveTask(task, options.tasksDir);
@@ -290,7 +341,9 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   // The page the task was on before the current step — the redirect proof:
   // a landing on a login URL only counts as an expiry when the task meant
   // to be somewhere else. A navigate step's target is that proof instead.
-  let lastUrl: string | undefined;
+  // Seeded from the completed steps, so a resumed run whose first
+  // unfinished step is not a navigate still has a proof to check against.
+  let lastUrl: string | undefined = lastUrlFromCompletedSteps(task);
 
   for (let index = 0; index < task.steps.length; index++) {
     const step = task.steps[index];

@@ -277,7 +277,9 @@ describe('runner', () => {
     ]);
     const task = twoStepTask();
     task.steps[0]!.result = { status: 'ok', detail: 'already done' };
-    task.state = 'paused-login';
+    // A `paused-login` task resumes only through `resumeAfterLogin`, so this
+    // resume-from-unfinished-step case runs from `running`, not paused-login.
+    task.state = 'running';
     await saveTask(task, dir);
 
     const done = await runTask('task-1', {
@@ -633,7 +635,9 @@ describe('runner against the real registry', () => {
     // As if a previous run completed the navigate and recorded its tab.
     task.steps[0]!.params = { url: 'https://example.com', tabId: 42 };
     task.steps[0]!.result = { status: 'ok', detail: 'loaded' };
-    task.state = 'paused-login';
+    // A `paused-login` task resumes only through `resumeAfterLogin`, so this
+    // tab-rebind case runs from `running`, not paused-login.
+    task.state = 'running';
     await saveTask(task, dir);
 
     const done = await runTask(task.id, { tasksDir: dir, tools });

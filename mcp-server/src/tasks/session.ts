@@ -9,7 +9,11 @@
  *    a warning interstitial can name a login URL and can carry words a login
  *    form also carries, so it must never be read as a login page, and it is
  *    never a successful target page either. It has to be dismissed explicitly
- *    first; this agent never dismisses it.
+ *    first; this agent never dismisses it. Detection is anchored to
+ *    interstitial signals — a `net::err_cert` code, or an interstitial
+ *    heading phrase on a heading line (or the first line of a role-less
+ *    snapshot) — so a page that merely discusses certificates or security
+ *    warnings in its body text is not a warning page.
  * 2. A landing on a login URL the task did not mean to be on is `expired`:
  *    the session ended mid-task and the site bounced the task to login. The
  *    proof of the redirect is `expectedUrl` — where the task meant to be —
@@ -35,6 +39,11 @@
  * first step without an `ok` result, which is where a resume continues from.
  * `resumeAfterLogin` re-checks the page first and only continues from that
  * same step when the page is no longer a login, expired, or warning page.
+ * It is the single resume entry point: `runTask` refuses a `paused-login`
+ * task handed to it directly, so a resume that skips the re-check cannot
+ * happen by accident. `resumeAfterLogin` flips the task to `running` before
+ * calling the continuation, so a continuation that is `runTask` passes that
+ * guard.
  * The continuation itself is injected (`continueWith`, normally `runTask`):
  * importing the runner here would make runner and session import each other.
  */
@@ -68,21 +77,53 @@ export type DetectSessionFn = (
 const SIGN_IN_PATH = /(?:^|\/)(?:log-?in|sign-?in|auth|sso|oauth2?|session\/new|accounts?\/login)(?:[/._-]|$)/iu;
 
 /**
- * Chrome/Edge security-interstitial phrasing. These are the words of the
- * interstitial itself, not of a page about security: a normal page does not
- * tell the reader its connection is not private.
+ * Chrome/Edge security-interstitial signals, anchored so a page that merely
+ * discusses certificates or security warnings is never a warning page:
+ * - a `net::err_cert` error code anywhere in the text — that code only
+ *   appears on the interstitial / error page itself;
+ * - an interstitial heading phrase, matched only on a heading line of the
+ *   accessibility tree or on the first non-empty line (a role-less
+ *   plain-text snapshot, as the http SMACC case shows it, puts its heading
+ *   first). The same phrase in body text — a help article explaining what
+ *   "your connection is not private" means — is not an interstitial.
+ * The generic phrases `certificate error` and `security warning` are
+ * deliberately absent: they are what help articles and settings pages say,
+ * not what the interstitial says. The contracted `isn't` variant is
+ * included: Chrome renders both forms.
  */
-const WARNING_PHRASES = [
+const WARNING_CODE = /net::err_cert|err_cert_/iu;
+const WARNING_HEADING_PHRASES = [
   'your connection is not private',
+  "your connection isn't private",
   'privacy error',
   'attackers might be trying to steal',
-  'net::err_cert',
-  'err_cert_',
   "this site isn't secure",
-  'certificate error',
-  'security warning',
   'potential security risk',
 ];
+
+/** The accessible name quoted in a `heading` line of the accessibility tree, if this line is one. */
+function headingNameOf(line: string): string | undefined {
+  const match = /^\s*(?:-\s+)?heading\s+"([^"]*)"/iu.exec(line);
+  return match?.[1];
+}
+
+/**
+ * Whether the snapshot is a security interstitial: a certificate error
+ * code, or an interstitial heading phrase on a heading line or the first
+ * non-empty line. Body text that merely discusses certificates or security
+ * warnings does not count.
+ */
+function isWarningPage(text: string): boolean {
+  const lowered = text.toLowerCase();
+  if (WARNING_CODE.test(lowered)) return true;
+  const lines = text.split('\n');
+  const firstLine = lines.find((line) => line.trim() !== '');
+  const headingLines = lines.map((line) => headingNameOf(line)).filter((name) => name !== undefined);
+  const candidates = [...headingLines, firstLine ?? ''];
+  return candidates.some((candidate) =>
+    WARNING_HEADING_PHRASES.some((phrase) => candidate.toLowerCase().includes(phrase)),
+  );
+}
 
 /** Accessible names of a password field, in the snapshot's languages. */
 const PASSWORD_NAMES = ['password', 'كلمة المرور', 'كلمة السر'];
@@ -207,10 +248,9 @@ export function detectSession(
   knownLoginUrls: readonly string[] = [],
 ): SessionState {
   void profile;
-  const lowered = page.text.toLowerCase();
   // The warning first: it can name a login URL and carry login words, and
   // it is neither a login page nor a successful target page.
-  if (WARNING_PHRASES.some((phrase) => lowered.includes(phrase))) return 'warning-page';
+  if (isWarningPage(page.text)) return 'warning-page';
   if (page.url !== '' && isLoginUrl(page.url, knownLoginUrls)) {
     return isRedirect(page.url, page.expectedUrl, knownLoginUrls) ? 'expired' : 'login-page';
   }

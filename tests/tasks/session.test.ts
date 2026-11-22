@@ -115,6 +115,36 @@ describe('detectSession', () => {
     expect(detectSession('default', 'http://example.com', page)).toBe('warning-page');
   });
 
+  it('does not classify a help page that merely discusses certificates and security warnings as a warning page', () => {
+    const page: SessionPage = {
+      url: 'https://example.com/help/certificates',
+      text:
+        'heading "Certificate help"\n' +
+        "If you see a certificate error or a security warning, your connection is not private — this article explains what that means and how to check the certificate.\n" +
+        '- link "Back to help" [ref=e1]',
+      ref: 'browser_snapshot tab 42',
+    };
+    expect(detectSession('default', 'https://example.com', page)).toBe('logged-in');
+  });
+
+  it("detects the contracted interstitial heading as a warning page", () => {
+    const page: SessionPage = {
+      url: 'https://example.com/dashboard',
+      text: 'heading "Your connection isn\'t private"\nAttackers might be trying to steal your information\n- button "Back to safety" [ref=e1]',
+      ref: 'browser_snapshot tab 42',
+    };
+    expect(detectSession('default', 'https://example.com', page)).toBe('warning-page');
+  });
+
+  it('detects a role-less interstitial whose first line is the heading as a warning page', () => {
+    const page: SessionPage = {
+      url: 'https://example.com/dashboard',
+      text: 'Your connection is not private\nBack to safety\nAdvanced',
+      ref: 'browser_snapshot tab 42',
+    };
+    expect(detectSession('default', 'https://example.com', page)).toBe('warning-page');
+  });
+
   it('returns logged-in for an ordinary page on the expected origin', () => {
     const page: SessionPage = {
       url: 'https://example.com/dashboard',
@@ -347,6 +377,162 @@ describe('runner pauses and resumes on session expiry', () => {
     expect(paused.steps[1]?.result).toBeUndefined();
     expect(calls).toEqual(['browser_navigate', 'browser_snapshot']);
     expect(paused.evidence.join('\n')).toContain('step 1 of 2');
+  });
+
+  it('pauses on expiry for a non-navigate step after resume, using the completed navigate as the redirect proof', async () => {
+    const calls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, navigateSchema)],
+      [
+        'browser_snapshot',
+        fakeTool(
+          'browser_snapshot',
+          calls,
+          outcomeOf({ success: true, text: LOGIN_FORM_TEXT, url: 'https://example.com/login?next=%2Fdashboard', tabId: 42 }),
+          true,
+          tabSchema,
+        ),
+      ],
+    ]);
+    const task = taskWithSteps();
+    task.steps[0]!.result = { status: 'ok', detail: 'navigated' };
+    await saveTask(task, dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      session: { knownLoginUrls: ['https://example.com/login'] },
+    });
+    expect(paused.state).toBe('paused-login');
+    expect(paused.steps[0]?.result?.status).toBe('ok');
+    expect(paused.steps[1]?.result).toBeUndefined();
+    // The completed navigate step was skipped, so only the snapshot step ran —
+    // and its expiry was still proven from the navigate's target.
+    expect(calls).toEqual(['browser_snapshot']);
+    expect(paused.evidence.join('\n')).toContain('step 2 of 2');
+  });
+
+  it('seeds the redirect proof from the URL the last completed step verified against when no navigate completed', async () => {
+    const calls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_snapshot',
+        fakeTool(
+          'browser_snapshot',
+          calls,
+          outcomeOf({ success: true, text: LOGIN_FORM_TEXT, url: 'https://example.com/login?next=%2Fdashboard', tabId: 42 }),
+          true,
+          tabSchema,
+        ),
+      ],
+    ]);
+    const task = taskWithSteps();
+    task.steps[0] = { tool: 'browser_snapshot', params: {}, verify: [{ kind: 'no-error-text', value: "isn't working" }] };
+    task.steps[0]!.result = {
+      status: 'ok',
+      detail: 'verified 1 rule(s) at https://example.com/dashboard; snapshot=browser_snapshot tab 42; observed="heading \\"Dashboard\\""',
+    };
+    await saveTask(task, dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      session: { knownLoginUrls: ['https://example.com/login'] },
+    });
+    expect(paused.state).toBe('paused-login');
+    expect(paused.steps[1]?.result).toBeUndefined();
+    expect(calls).toEqual(['browser_snapshot']);
+  });
+
+  it('refuses a paused-login task handed to runTask directly and runs nothing', async () => {
+    const calls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, navigateSchema)],
+      [
+        'browser_snapshot',
+        fakeTool(
+          'browser_snapshot',
+          calls,
+          outcomeOf({ success: true, text: 'heading "Dashboard"', url: 'https://example.com/dashboard', tabId: 42 }),
+          true,
+          tabSchema,
+        ),
+      ],
+    ]);
+    const task = taskWithSteps();
+    task.steps[0]!.result = { status: 'ok', detail: 'navigated' };
+    task.state = 'paused-login';
+    await saveTask(task, dir);
+
+    await expect(runTask('task-1', { tasksDir: dir, tools, host: dummyHost })).rejects.toThrowError(
+      /resumeAfterLogin/,
+    );
+    expect(calls).toEqual([]);
+    const reloaded = await loadTask('task-1', dir);
+    expect(reloaded?.state).toBe('paused-login');
+  });
+
+  it('resumeAfterLogin still continues through runTask once the re-check passes', async () => {
+    const calls: string[] = [];
+    let phase: 'login' | 'dashboard' = 'login';
+    const snapshotTool: ToolDefinition = {
+      name: 'browser_snapshot',
+      summary: 'Fake browser_snapshot for session tests',
+      description: 'Test-only stand-in for browser_snapshot.',
+      inputSchema: tabSchema,
+      idempotent: true as const,
+      handler: async () => {
+        calls.push('browser_snapshot');
+        return phase === 'login'
+          ? outcomeOf({ success: true, text: LOGIN_FORM_TEXT, url: 'https://example.com/login?next=%2Fdashboard', tabId: 42 })
+          : outcomeOf({ success: true, text: 'heading "Dashboard"', url: 'https://example.com/dashboard', tabId: 42 });
+      },
+    };
+    const tools = new Map<string, ToolDefinition>([
+      ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, navigateSchema)],
+      ['browser_snapshot', snapshotTool],
+    ]);
+    await saveTask(taskWithSteps(), dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      session: { knownLoginUrls: ['https://example.com/login'] },
+    });
+    expect(paused.state).toBe('paused-login');
+
+    phase = 'dashboard';
+    const resumed = await resumeAfterLogin('task-1', {
+      tasksDir: dir,
+      knownLoginUrls: ['https://example.com/login'],
+      readPage: async () => ({
+        url: 'https://example.com/dashboard',
+        text: 'heading "Dashboard"',
+        ref: 'browser_snapshot tab 42',
+      }),
+      continueWith: async (task) =>
+        runTask(task.id, {
+          tasksDir: dir,
+          tools,
+          host: dummyHost,
+          session: { knownLoginUrls: ['https://example.com/login'] },
+        }),
+    });
+    expect(resumed.state).toBe('done');
+    expect(resumed.steps[0]?.result?.status).toBe('ok');
+    expect(resumed.steps[1]?.result?.status).toBe('ok');
+    // Run 1: navigate + the verification snapshot read. Run 2: navigate +
+    // its verification snapshot read, then the snapshot step itself.
+    expect(calls).toEqual([
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_navigate',
+      'browser_snapshot',
+      'browser_snapshot',
+    ]);
   });
 
   it('fails the step when the page is a security warning, never a login and never a success', async () => {
