@@ -514,7 +514,7 @@ describe('dispatch registry ↔ MCP tool registry (drift guard)', () => {
   // tools and the task store, and never send a frame to the extension.
   // browser_vault is daemon-owned and uses private frames rather than the generic dispatcher.
   // browser_memory, browser_memory_policy and browser_site_map are daemon-owned too: they reach the extension only through the internal context action.
-  const localTools = new Set(['browser_batch', 'browser_safety', 'browser_fetch_many', 'browser_task_start', 'browser_task_status', 'browser_task_cancel', 'browser_task_answer']);
+  const localTools = new Set(['browser_batch', 'browser_safety', 'browser_fetch_many', 'browser_task_start', 'browser_task_status', 'browser_task_cancel', 'browser_task_answer', 'browser_task_resume']);
   const wireTools = allTools.filter((t) => !localTools.has(t.name));
   const extensionTools = wireTools.filter((t) => !['browser_vault', 'browser_memory', 'browser_memory_policy', 'browser_site_map'].includes(t.name));
 
