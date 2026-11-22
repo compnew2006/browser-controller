@@ -41,8 +41,12 @@ const taskQuestions = bindTaskQuestions((questionId, answer) => {
     if (resp?.success) {
       // Evidence (Design §7): the answer joins the confirmed list with its
       // task, so the Evidence panel keeps it after the question leaves pending.
+      // The task id comes from the map captured at poll time, not from a
+      // lookup in lastTaskQuestions: the 2 s poll may already have
+      // refreshed that list by answer time, and the lookup would miss —
+      // leaving the Evidence entry with no task.
       const asked = lastTaskQuestions.find((q) => q.id === questionId);
-      confirmedAnswers.push({ taskId: asked?.taskId || '', questionId, answer });
+      confirmedAnswers.push({ taskId: questionTaskById.get(questionId) ?? asked?.taskId ?? '', questionId, answer });
       addLog('Answer confirmed by daemon', 'ok'); refreshStatus();
     } else addLog(`Answer failed: ${resp?.error || 'unknown'}`, 'err');
   });
@@ -60,6 +64,10 @@ let lastTabs = [];        // [{id, url, title, active, lockedBy, controlledBy, o
 // question (state.taskQuestions); confirmed answers are recorded here, in
 // this popup session only, for the Evidence panel — see task-panels-view.js.
 let lastTaskQuestions = [];
+// Question id -> task id, captured when a poll arrives (see updateUI):
+// by answer time the next poll may already have refreshed
+// lastTaskQuestions, so the id must be captured, not looked up then.
+const questionTaskById = new Map();
 const confirmedAnswers = [];
 let lastTaskPanelsSig = '';
 
@@ -318,9 +326,9 @@ function renderTaskPanels(questions) {
   if (sig === lastTaskPanelsSig) return;
   lastTaskPanelsSig = sig;
   const taskRows = renderTaskRows(list);
-  taskListEl.innerHTML = taskRows || '<div class="empty">No active task</div>';
+  taskListEl.innerHTML = taskRows || '<div class="empty">No task waiting for an answer</div>';
   const evidenceRows = renderEvidenceRows(list, confirmedAnswers);
-  evidenceListEl.innerHTML = evidenceRows || '<div class="empty">Nothing confirmed yet</div>';
+  evidenceListEl.innerHTML = evidenceRows || '<div class="empty">No questions or answers in this popup session</div>';
 }
 
 // ── Status rendering ───────────────────────────────────────────────────────
@@ -366,6 +374,12 @@ function updateUI(state) {
   lastTabs = Array.isArray(state.tabs) ? state.tabs : [];
   renderOpenTabs(); taskQuestions.render(state.taskQuestions);
   lastTaskQuestions = Array.isArray(state.taskQuestions) ? state.taskQuestions : [];
+  questionTaskById.clear();
+  for (const question of lastTaskQuestions) {
+    if (question && typeof question.id === 'string' && typeof question.taskId === 'string') {
+      questionTaskById.set(question.id, question.taskId);
+    }
+  }
   renderTaskPanels(lastTaskQuestions);
 }
 

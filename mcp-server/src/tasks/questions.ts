@@ -209,6 +209,11 @@ export async function pauseForQuestion(taskId: string, stepIndex?: number, tasks
   }
   const index = stepIndex ?? firstUnfinishedStep(task);
   task.state = 'paused-question';
+  // The report describes the state the task settled in; the pause leaves
+  // it, so the record carries no report until the task settles again —
+  // otherwise a reader would see a report that claims the task is still
+  // in its earlier state while it waits on a question.
+  delete task.report;
   task.evidence.push(
     `paused for question at step ${index + 1} of ${task.steps.length} — waiting for the user's answer; resumes from the same step, never from the start`,
   );
@@ -312,7 +317,9 @@ export async function answerQuestion(
     if (question) pending.set(question.id, question);
   }
   if (!question) throw new Error(`question not found: ${id}`);
-  if (question.options && !question.options.includes(answer)) {
+  // The options check is case-insensitive, like `isApproval` below: an
+  // answer of "Yes" to a `['yes', 'no']` question is the same answer.
+  if (question.options && !question.options.some((option) => option.toLowerCase() === answer.trim().toLowerCase())) {
     throw new Error(`answer "${answer}" is not one of the options for question ${id}`);
   }
   if (question.kind === 'text' && answer.trim() === '') {

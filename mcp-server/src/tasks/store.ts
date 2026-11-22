@@ -65,7 +65,7 @@ const VERIFY_KINDS: ReadonlySet<string> = new Set(['url-contains', 'text-present
 
 /** The project's current state path for tasks. The caller may pass an explicit directory instead. */
 export function defaultTasksDir(): string {
-  const stateDir = process.env.BC_STATE_DIR ?? path.join(os.homedir(), '.browser-controller');
+  const stateDir = process.env.BC_STATE_DIR || path.join(os.homedir(), '.browser-controller');
   return path.join(stateDir, 'tasks');
 }
 
@@ -116,7 +116,9 @@ function validateVerifyRule(raw: unknown): VerifyRule {
     case 'url-contains':
     case 'text-present':
     case 'no-error-text':
-      if (!hasOnlyKeys(raw, ['kind', 'value']) || typeof raw.value !== 'string') throw corrupt('a verify rule needs a string value');
+      if (!hasOnlyKeys(raw, ['kind', 'value']) || typeof raw.value !== 'string' || raw.value === '') {
+        throw corrupt('a verify rule needs a non-empty string value');
+      }
       return { kind: raw.kind, value: raw.value };
     case 'element-count':
       if (!hasOnlyKeys(raw, ['kind', 'selector', 'count']) || typeof raw.selector !== 'string' || typeof raw.count !== 'number' || !Number.isSafeInteger(raw.count) || raw.count < 0) {
@@ -217,12 +219,13 @@ function validateEvidenceReport(raw: unknown): EvidenceReport {
 
 /** A parsed task, or an error when the record is not a task. Unknown fields are rejected, so a file written by a newer shape never loads as an old one. */
 export function validateTask(raw: unknown): Task {
-  if (!isRecord(raw) || !hasOnlyKeys(raw, ['id', 'goal', 'constraints', 'steps', 'state', 'evidence', 'report', 'sessionId', 'cancelled'])) throw corrupt('a task needs id, goal, constraints, steps, state and evidence');
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ['id', 'goal', 'constraints', 'steps', 'state', 'evidence', 'report', 'sessionId', 'cancelled'])) throw corrupt('a task needs id, goal, constraints, steps, state and evidence (report, sessionId and cancelled are optional)');
   // A stored id that fails validation is file-content corruption, not a
   // caller error: `requireTaskId` throws 'invalid-argument' for a
   // caller-supplied id, so only this call site translates it to 'corrupt'.
-  // `loadTask`/`saveTask` still call `requireTaskId` directly on the id the
-  // caller passes, and that failure stays 'invalid-argument'.
+  // `loadTask` still calls `requireTaskId` directly on the id the caller
+  // passes, and that failure stays 'invalid-argument'; `saveTask`
+  // validates solely through this function.
   let id: string;
   try {
     id = requireTaskId(raw.id);

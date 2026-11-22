@@ -103,6 +103,16 @@ describe('planner', () => {
     expect(task.steps[0]?.verify).toContainEqual({ kind: 'url-contains', value: 'example.com' });
   });
 
+  it('keeps a balanced closing paren in a Wikipedia-style URL', () => {
+    const task = planTask('Open https://en.wikipedia.org/wiki/PC_(x) for the specs', []);
+    expect(task.steps[0]?.params).toEqual({ url: 'https://en.wikipedia.org/wiki/PC_(x)' });
+  });
+
+  it('strips an unbalanced closing paren after a URL', () => {
+    const task = planTask('Open https://example.com/foo).', []);
+    expect(task.steps[0]?.params).toEqual({ url: 'https://example.com/foo' });
+  });
+
   it('rejects an empty goal', () => {
     expect(() => planTask('   ', [])).toThrowError(/goal/);
   });

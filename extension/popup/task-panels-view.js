@@ -14,6 +14,11 @@
  * with no pending question is invisible here; that is a data gap, not a
  * rendering choice — the full server-side evidence report (Task 5) has no
  * popup endpoint yet. Nothing here invents steps, numbers, or outcomes.
+ * FR-018 (Tasks as state AND steps, Evidence as the report summary) is
+ * therefore NOT delivered by these panels: the copy says what the panels
+ * actually show instead of overclaiming, and the endpoint that would
+ * deliver it is a documented follow-up (see
+ * docs/superpowers/plans/2026-11-22-professional-browsing-layer-endpoint-followup.md).
  */
 import { escapeHtml } from './open-tabs-view.js';
 

@@ -388,6 +388,7 @@ describe('end-to-end audit task', () => {
     // run continued from there.
     expect(browser.calls.filter((call) => call === 'browser_navigate')).toHaveLength(1);
     // Every snapshot read went to the tab the navigate opened.
+    expect(browser.snapshotTabIds.length).toBeGreaterThan(0);
     expect(browser.snapshotTabIds.every((tabId) => tabId === 42)).toBe(true);
 
     // The evidence report: the values verbatim, the source, nothing left

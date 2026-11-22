@@ -68,8 +68,9 @@
  * unknown instead of retrying blind — double execution is the harm to
  * avoid, and the task can be re-run once connectivity returns. For a
  * genuine failed navigation the reconcile read shows the effect absent
- * (`not-happened`) and permits the retry anyway, at the cost of one
- * extra snapshot read.
+ * (`not-happened`) and permits the retry anyway, when the re-read page is
+ * readable — a failed navigation that leaves a Chrome error page fails
+ * verification, so the step stays unknown instead of retrying.
  *
  * The runner-facing application of the policy lives here too, so the
  * runner stays orchestration: `executeStepWithRecovery` runs one step's

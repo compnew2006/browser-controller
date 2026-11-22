@@ -20,3 +20,12 @@ export * from './cancel-guard.js';
 export * from './wiring.js';
 export * from './task-question-route.js';
 export * from './tools.js';
+
+/**
+ * Both `runner.js` and `mutations.js` export `ALLOW_MUTATIONS`,
+ * `isMutatingTool` and `taskAllowsMutations`, so the star-exports above
+ * drop all three as ambiguous — this explicit export is the one that
+ * wins, and the barrel keeps the classification it used to re-export
+ * from the runner.
+ */
+export { ALLOW_MUTATIONS, isMutatingTool, taskAllowsMutations } from './mutations.js';

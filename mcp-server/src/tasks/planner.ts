@@ -20,7 +20,30 @@ import type { Task, TaskStep, VerifyRule } from './types.js';
 
 const URL_PATTERN = /https?:\/\/[^\s"'<>]+/u;
 /** Sentence punctuation a goal may leave after a URL ("see https://example.com."). */
-const TRAILING_PUNCTUATION = /[.,;:!?)\]}]+$/u;
+const TRAILING_SENTENCE_PUNCTUATION = /[.,;:!?]+$/u;
+/** A closing bracket and its opener, for the balance check below. */
+const CLOSERS: Readonly<Record<string, string>> = { ')': '(', ']': '[', '}': '{' };
+
+/**
+ * Strip sentence punctuation after a URL, and a trailing closer only when
+ * it is unbalanced — a Wikipedia-style URL such as
+ * `https://en.wikipedia.org/wiki/PC_(x)` keeps its closing paren, while a
+ * parenthesised mention `(see https://example.com/foo)` loses the closer
+ * that only closes the sentence's own paren.
+ */
+function stripTrailingPunctuation(raw: string): string {
+  let url = raw.replace(TRAILING_SENTENCE_PUNCTUATION, '');
+  for (;;) {
+    const last = url.at(-1);
+    if (last === undefined) return url;
+    const opener = CLOSERS[last];
+    if (opener === undefined) return url;
+    const opens = [...url].filter((ch) => ch === opener).length;
+    const closes = [...url].filter((ch) => ch === last).length;
+    if (closes <= opens) return url;
+    url = url.slice(0, -1).replace(TRAILING_SENTENCE_PUNCTUATION, '');
+  }
+}
 /** The Chrome error text a page must not show (plan §3, FR-007). */
 const ERROR_TEXT = "isn't working";
 
@@ -42,7 +65,7 @@ export function planTask(goal: string, constraints: string[] = []): Task {
   const steps: TaskStep[] = [];
   const match = URL_PATTERN.exec(trimmed);
   if (match) {
-    const url = match[0].replace(TRAILING_PUNCTUATION, '');
+    const url = stripTrailingPunctuation(match[0]);
     let host = url;
     try {
       host = new URL(url).host;

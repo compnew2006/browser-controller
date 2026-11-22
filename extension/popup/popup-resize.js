@@ -58,8 +58,8 @@ export function bindPopupResizer() {
     startScreenX = e.screenX;
     startScreenY = e.screenY;
     const cs = getComputedStyle(document.documentElement);
-    startW = parseInt(cs.width, ) || 380;
-    startH = parseInt(cs.height, ) || 540;
+    startW = parseInt(cs.width, 10) || 380;
+    startH = parseInt(cs.height, 10) || 540;
     pendingTargetW = startW;
     pendingTargetH = startH;
     e.preventDefault();

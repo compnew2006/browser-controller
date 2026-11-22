@@ -12,6 +12,7 @@ import {
 } from '../../mcp-server/src/tasks/questions.js';
 import type { Question } from '../../mcp-server/src/tasks/questions.js';
 import { loadTask, saveTask } from '../../mcp-server/src/tasks/store.js';
+import { saveTaskWithReport } from '../../mcp-server/src/tasks/reporting.js';
 import { runTask } from '../../mcp-server/src/tasks/runner.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
@@ -157,6 +158,17 @@ describe('pauseForQuestion', () => {
     await saveTask(done, dir);
     await expect(pauseForQuestion('task-1', 0, dir)).rejects.toThrowError(/cannot pause.*done/);
   });
+
+  it('drops a stale report when pausing for a question', async () => {
+    const task = taskWithSteps();
+    await saveTask(task, dir);
+    await saveTaskWithReport(task, dir);
+    expect((await loadTask('task-1', dir))?.report).toBeDefined();
+    await pauseForQuestion('task-1', 0, dir);
+    // The report described the earlier state; the paused record carries
+    // none until the task settles again.
+    expect((await loadTask('task-1', dir))?.report).toBeUndefined();
+  });
 });
 
 describe('answerQuestion', () => {
@@ -256,6 +268,13 @@ describe('answerQuestion', () => {
     const resumed = await answerQuestion(question.id, 'quarterly sales', { tasksDir: dir });
     expect(resumed.state).toBe('running');
     expect(resumed.evidence.join('\n')).toContain('quarterly sales');
+  });
+
+  it('accepts "Yes" for a yes/no question, like isApproval does', async () => {
+    await saveTask(taskWithSteps(), dir);
+    const question = await askQuestion('task-1', 'Proceed?', ['yes', 'no'], { tasksDir: dir, kind: 'confirm' });
+    const resumed = await answerQuestion(question.id, 'Yes', { tasksDir: dir });
+    expect(resumed.state).toBe('running');
   });
 });
 

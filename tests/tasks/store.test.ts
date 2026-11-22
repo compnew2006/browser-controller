@@ -177,4 +177,10 @@ describe('task store', () => {
     const badSession = { ...task, sessionId: 42 };
     await expect(saveTask(badSession as unknown as Task, dir)).rejects.toThrowError(/session id must be a string/);
   });
+
+  it('rejects an empty verify rule value', async () => {
+    const task = pausedLoginTask();
+    task.steps[0]!.verify = [{ kind: 'url-contains', value: '' }];
+    await expect(saveTask(task, dir)).rejects.toThrowError(/non-empty string value/);
+  });
 });
