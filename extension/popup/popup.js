@@ -33,7 +33,7 @@ const settingsTabBtn = document.getElementById('settingsTab');
 const actionActivity = bindActionActivity();
 const taskQuestions = bindTaskQuestions((questionId, answer) => {
   chrome.runtime.sendMessage({ type: 'answerTaskQuestion', questionId, answer }, (resp) => {
-    if (resp?.success) { addLog('Answer sent', 'ok'); refreshStatus(); } else addLog(`Answer failed: ${resp?.error || 'unknown'}`, 'err');
+    if (resp?.success) { addLog('Answer confirmed by daemon', 'ok'); refreshStatus(); } else addLog(`Answer failed: ${resp?.error || 'unknown'}`, 'err');
   });
 });
 

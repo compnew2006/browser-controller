@@ -44,7 +44,7 @@ import {
 } from "./lib/vault-actions.js";
 import { dropCard, takeCardDecision } from "./lib/vault-card.js";
 import { getActivityLog } from "./lib/activity-log.js";
-import { takeTaskQuestion } from "./lib/task-questions.js";
+import { peekTaskQuestion, recordTaskQuestion, takeTaskQuestion, waitForTaskAnswerAck } from "./lib/task-questions.js";
 
 function isPopupSender(sender) {
   return sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL("popup/popup.html");
@@ -137,9 +137,13 @@ export function registerEventListeners() {
       // question card. Only the popup may answer: a page content script
       // must never be able to answer for the user. The answer goes to the
       // daemon over the WebSocket as a `taskAnswer` frame, where the bridge
-      // routes it to `answerQuestion`; the question leaves the pending list
-      // at once, so the card disappears on the next status poll even before
-      // the daemon confirms.
+      // routes it to `answerQuestion` and acks it as `taskAnswerAck`; the
+      // popup is told success only once that ack lands — a frame handed to
+      // the socket is not an acceptance. The question leaves the pending
+      // list only once `sendJson` says the frame left the socket, so a
+      // socket that drops between the connected-check and the send keeps
+      // the card for retry instead of losing the answer; a refused or
+      // unconfirmed answer is re-recorded, so the card comes back.
       if (!isPopupSender(sender)) return false;
       if (typeof msg.questionId !== "string" || typeof msg.answer !== "string" || msg.answer.trim() === "") {
         respond({ success: false, error: "A question id and a non-empty answer are required." });
@@ -152,14 +156,26 @@ export function registerEventListeners() {
         respond({ success: false, error: "Daemon not connected — try again once it reconnects." });
         return false;
       }
-      const question = takeTaskQuestion(msg.questionId);
+      const question = peekTaskQuestion(msg.questionId);
       if (!question) {
         respond({ success: false, error: "That question is no longer pending." });
         return false;
       }
-      sendJson({ type: "taskAnswer", questionId: msg.questionId, answer: msg.answer });
-      respond({ success: true });
-      return false;
+      if (!sendJson({ type: "taskAnswer", questionId: msg.questionId, answer: msg.answer })) {
+        respond({ success: false, error: "Daemon not connected — try again once it reconnects." });
+        return false;
+      }
+      takeTaskQuestion(msg.questionId);
+      waitForTaskAnswerAck(msg.questionId).then((ack) => {
+        if (ack.ok) {
+          respond({ success: true });
+          return;
+        }
+        recordTaskQuestion(question);
+        broadcastStatus(`Answer to task ${question.taskId} was not accepted — try again`).catch(() => {});
+        respond({ success: false, error: ack.error || "The daemon did not accept the answer." });
+      });
+      return true; // async response — respond() fires when the ack (or its timeout) lands
     }
     if (msg.type === "setToken") {
       respond(applyToken(msg.token));

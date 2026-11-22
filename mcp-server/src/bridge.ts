@@ -32,48 +32,15 @@ import {
 import { MAX_WS_BUFFERED_BYTES, MAX_WS_MESSAGE_BYTES, WS_HARD_MAX_PAYLOAD_BYTES, rejectOversizedFrame } from './bridge-frames.js';
 import { tabsAcrossBrowsers } from './bridge-tabs.js';
 import { VaultBridgeTransport } from './vault/bridge-transport.js';
+import type { BridgeOptions, PendingRequest } from './bridge-types.js';
+import { dispatchTaskAnswer, type TaskAnswerHandler } from './bridge-task-answers.js';
+import type { Question } from './tasks/questions.js';
 
 export { isDaemonResponsiveOnPort } from './bridge-security.js';
 export { MAX_WS_MESSAGE_BYTES } from './bridge-frames.js';
 export { MAX_WS_BUFFERED_BYTES };
 
 const log = createLogger('Bridge');
-
-interface PendingRequest {
-  resolve: (value: unknown) => void;
-  reject: (reason: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
-  tool: string;
-  retries: number;
-  params: Record<string, unknown>;
-  /** Abort listener registered for this request (audit C2); removed on settle. */
-  onAbort?: (() => void) | null;
-  signal?: AbortSignal | null;
-  /** The extension connection (browser) this call was sent to. */
-  conn?: ExtensionConnection;
-}
-
-interface BridgeOptions {
-  port: number;
-  host?: string;
-  /** Auth token used to verify the extension proof after daemon identity is established. */
-  token: string;
-  /**
-   * Enrollment secret used to prove daemon identity and authenticate HTTP
-   * challenges without sending the secret to the extension or port owner.
-   */
-  enrollmentSecret: string;
-  maxRetries?: number;
-  pingIntervalMs?: number;
-  defaultTimeoutMs?: number;
-  maxWsPayloadBytes?: number;
-  /** How long a peer may take to answer our hello with its helloAck before it is refused. */
-  handshakeGraceMs?: number;
-  /** How long callTool waits for an extension to connect before failing with NOT_CONNECTED. */
-  connectionWaitMs?: number;
-  /** Within `windowMs` (60 s) of the start or of an extension drop one is likely reconnecting: wait `ms` instead. */
-  reconnectWait?: { ms: number; windowMs?: number };
-}
 
 export class ExtensionBridge {
   private httpServer: http.Server | null = null;
@@ -82,6 +49,10 @@ export class ExtensionBridge {
   readonly activityBatchParticipants = new ActivityBatchParticipants(this.conns);
   readonly vaultTransport = new VaultBridgeTransport(this.conns);
   private pendingRequests = new Map<string, PendingRequest>();
+  /** Handler for the extension's `taskAnswer` frames (Design §5): set by the daemon, bound to `answerQuestion`. */
+  private taskAnswerHandler: TaskAnswerHandler | null = null;
+  /** Pending questions a reconnecting extension is re-asked (Design §5): set by the daemon. */
+  private pendingTaskQuestionsProvider: (() => Question[]) | null = null;
   private requestId = 0;
   private port: number;
   private host: string;
@@ -141,6 +112,16 @@ export class ExtensionBridge {
     this.sessionRoster = provider;
   }
 
+  /** Set by the daemon: route the popup's `taskAnswer` frames to `answerQuestion`. */
+  setTaskAnswerHandler(handler: TaskAnswerHandler): void {
+    this.taskAnswerHandler = handler;
+  }
+
+  /** Set by the daemon: re-ask the pending questions when an extension (re)connects. */
+  setPendingTaskQuestionsProvider(provider: () => Question[]): void {
+    this.pendingTaskQuestionsProvider = provider;
+  }
+
   private markExtensionReady(conn: ExtensionConnection, info?: { browserId?: unknown; browserLabel?: unknown; capabilities?: unknown }): void {
     this.conns.markReady(conn, info);
     // A reconnect of the same browser replaces its old socket.
@@ -156,11 +137,23 @@ export class ExtensionBridge {
     log.info(`Extension connected (browser ${conn.label})`);
     // Only this connection: it alone may have missed releaseSession frames (F4-2).
     if (this.sessionRoster) {
-      try {
-        conn.ws.send(JSON.stringify({ type: 'sessionRoster', sessionIds: this.sessionRoster() }));
-      } catch {
-        // socket gone — close path will fire
+      this.sendToConn(conn, { type: 'sessionRoster', sessionIds: this.sessionRoster() });
+    }
+    // A reconnecting extension may have missed the question (or the daemon
+    // restarted): re-ask what is still pending so the popup card returns.
+    if (this.pendingTaskQuestionsProvider) {
+      for (const question of this.pendingTaskQuestionsProvider()) {
+        this.sendToConn(conn, { type: 'taskQuestion', question });
       }
+    }
+  }
+
+  /** Send one frame to one connection; a gone socket is the close path's problem, not this call's. */
+  private sendToConn(conn: ExtensionConnection, frame: Record<string, unknown>): void {
+    try {
+      conn.ws.send(JSON.stringify(frame));
+    } catch {
+      // socket gone — close path will fire
     }
   }
 
@@ -325,6 +318,12 @@ export class ExtensionBridge {
               return;
             }
             if (this.vaultTransport.handleMessage(msg, conn)) return;
+            // The popup's answer to a task question (Design §5): no request
+            // id, so it never resolves against pendingRequests — it is
+            // routed to the daemon's answer handler here, with an ack back.
+            if (dispatchTaskAnswer(msg, this.taskAnswerHandler, (ack) => {
+              this.sendToConn(conn, { type: 'taskAnswerAck', ...ack });
+            })) return;
             this.handleResponse(msg, conn);
           } catch (err) {
             log.error('Parse error:', err);

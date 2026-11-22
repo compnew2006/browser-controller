@@ -5,13 +5,17 @@ import { renderQuestionCard, renderQuestionCards } from '../extension/popup/ques
 import {
   clearTaskQuestions,
   isTaskQuestionMessage,
+  peekTaskQuestion,
   pendingTaskQuestions,
   recordTaskQuestion,
+  resolveTaskAnswerAck,
   takeTaskQuestion,
+  waitForTaskAnswerAck,
 } from '../extension/lib/task-questions.js';
 
 const repoRoot = join(import.meta.dirname, '..');
 const popupHtml = readFileSync(join(repoRoot, 'extension', 'popup', 'popup.html'), 'utf8');
+const popupJs = readFileSync(join(repoRoot, 'extension', 'popup', 'popup.js'), 'utf8');
 const questionCardSource = readFileSync(join(repoRoot, 'extension', 'popup', 'question-card.js'), 'utf8');
 
 const choiceQuestion = {
@@ -150,5 +154,35 @@ describe('pending task questions (extension store)', () => {
     expect(pending).toHaveLength(1);
     expect(pending[0]?.id).toBe('q-9');
     clearTaskQuestions();
+  });
+
+  it('peeks a question without taking it out', () => {
+    clearTaskQuestions();
+    recordTaskQuestion(choiceQuestion);
+    expect(peekTaskQuestion('q-1')).toEqual(choiceQuestion);
+    expect(pendingTaskQuestions()).toEqual([choiceQuestion]);
+    expect(peekTaskQuestion('q-9')).toBeUndefined();
+    clearTaskQuestions();
+  });
+});
+
+describe('task answer acknowledgement (taskAnswerAck)', () => {
+  it('resolves a waiter with the daemon ack, and ignores acks nobody waits on', async () => {
+    const waiting = waitForTaskAnswerAck('q-1', 1000);
+    expect(resolveTaskAnswerAck({ type: 'taskAnswerAck', questionId: 'q-1', ok: true })).toBe(true);
+    await expect(waiting).resolves.toEqual({ ok: true, error: undefined });
+    expect(resolveTaskAnswerAck({ type: 'taskAnswerAck', questionId: 'q-1', ok: true })).toBe(false);
+    expect(resolveTaskAnswerAck({ type: 'other', questionId: 'q-1', ok: true })).toBe(false);
+    expect(resolveTaskAnswerAck({ type: 'taskAnswerAck', questionId: 'q-2', ok: false, error: 'gone' })).toBe(false);
+  });
+
+  it('a missing ack resolves the waiter as not accepted after its timeout', async () => {
+    const waiting = waitForTaskAnswerAck('q-1', 10);
+    await expect(waiting).resolves.toEqual({ ok: false, error: expect.stringMatching(/did not confirm/) });
+  });
+
+  it('the popup reports an answer only once the daemon confirms it', () => {
+    expect(popupJs).toContain('Answer confirmed by daemon');
+    expect(popupJs).not.toContain("addLog('Answer sent'");
   });
 });

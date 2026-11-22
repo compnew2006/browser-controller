@@ -28,7 +28,7 @@ import { handleVaultAction, isPrivateVaultTab } from '../lib/vault-actions.js';
 import { buildSiteContext, captureTabUrlBounded } from '../lib/site-context.js';
 import { handleMemoryContext } from '../handlers/memory-context.js';
 import { beginActivity, createInputActivity, finishActivity, finishActivityBatch } from '../lib/activity-log.js';
-import { isTaskQuestionMessage, recordTaskQuestion } from '../lib/task-questions.js';
+import { isTaskQuestionMessage, recordTaskQuestion, resolveTaskAnswerAck } from '../lib/task-questions.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -380,6 +380,14 @@ export async function handleMessage(msg) {
       recordTaskQuestion(msg.question);
       broadcastStatus(`Task ${msg.question.taskId} is waiting for your answer`).catch(() => {});
     }
+    return; // control message — no response expected
+  }
+  if (msg.type === "taskAnswerAck") {
+    // The daemon's verdict on a `taskAnswer` frame (Design §5): resolve the
+    // waiter `events.js` registered when the popup answered, so the popup
+    // is told success only once the daemon actually accepted the answer.
+    // An ack with no waiter (late, or for another browser) is ignored.
+    resolveTaskAnswerAck(msg);
     return; // control message — no response expected
   }
 

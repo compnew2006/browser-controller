@@ -15,12 +15,17 @@
  * normally bound to `bridge.sendControl('taskQuestion', …)` by the daemon):
  * this module owns the pause/resume bookkeeping, the channel owns delivery.
  *
- * Questions live in a module-level registry, keyed by question id — the task
- * shape from Task 1 has no questions field, so they are not persisted in the
- * task file. The pause itself IS persisted (state `paused-question` + the
+ * Questions live in a module-level registry, keyed by question id, and are
+ * also persisted — one file per question under `<tasksDir>/questions/`
+ * (`question-store.ts`, on the task store's own pattern) — because the task
+ * shape from Task 1 has no questions field, so they cannot live in the task
+ * file. The pause itself IS persisted too (state `paused-question` + the
  * step number in the evidence, via the store), so a restart still knows the
- * task is waiting; the question text is also in the evidence, so what was
- * asked survives even if the registry does not.
+ * task is waiting; the persisted file is what makes it answerable after
+ * one: `answerQuestion` loads a question from disk when the registry no
+ * longer holds it, and `restorePendingQuestions` rehydrates the registry
+ * (and re-asks the questions) at daemon start. A question file is deleted
+ * the moment its answer lands.
  *
  * Mutation approval (binding ruling P4, second approval path): a question
  * may carry `context` naming the mutating step it approves. Answering `yes`
@@ -31,7 +36,8 @@
  * runner's refusal without a question does.
  */
 import { randomUUID } from 'node:crypto';
-import { loadTask, saveTask } from './store.js';
+import { defaultTasksDir, loadTask, saveTask } from './store.js';
+import { deletePendingQuestion, listPendingQuestions, loadPendingQuestion, savePendingQuestion } from './question-store.js';
 import type { Task } from './types.js';
 
 /** The kind of a question: a choice between options, a yes/no confirmation, or a free-text answer. */
@@ -91,6 +97,42 @@ const pending = new Map<string, Question>();
 /** Every question asked and not yet answered. */
 export function pendingQuestions(): Question[] {
   return [...pending.values()].map((question) => ({ ...question }));
+}
+
+/**
+ * Rehydrate the registry from the persisted pending questions — the daemon
+ * calls this at start, before any extension can connect, so a restart
+ * neither loses the questions nor wedges their tasks. A persisted question
+ * whose task is gone, or is no longer `paused-question`, is stale: its file
+ * is deleted and it is not restored. Returns the questions that are still
+ * waiting.
+ */
+export async function restorePendingQuestions(tasksDir: string = defaultTasksDir()): Promise<Question[]> {
+  const restored: Question[] = [];
+  for (const question of await listPendingQuestions(tasksDir)) {
+    let task: Task | null = null;
+    try {
+      task = await loadTask(question.taskId, tasksDir);
+    } catch {
+      // A task file that cannot be read is stale: its question goes with it.
+    }
+    if (!task || task.state !== 'paused-question') {
+      await deletePendingQuestion(question.id, tasksDir);
+      continue;
+    }
+    pending.set(question.id, question);
+    restored.push({ ...question });
+  }
+  return restored;
+}
+
+/** Forget a persisted question once its answer has landed; a stale file is dropped by the next restore. */
+async function forgetPersistedQuestion(id: string, tasksDir?: string): Promise<void> {
+  try {
+    await deletePendingQuestion(id, tasksDir ?? defaultTasksDir());
+  } catch {
+    // The answer already landed; the file is harmless until restore drops it.
+  }
 }
 
 /** The per-step mutation-approval constraint a `yes` answer records on the task. */
@@ -169,6 +211,16 @@ export async function askQuestion(
     ...(opts.context ? { context: opts.context } : {}),
   };
   pending.set(question.id, question);
+  // Persist before delivering: a daemon restart between the ask and the
+  // answer must not lose the question. A persist failure does not unpause
+  // the task — the question stays pending in memory and answerable this
+  // session, and the failure is recorded as evidence, like a send failure.
+  try {
+    await savePendingQuestion(question, opts.tasksDir ?? defaultTasksDir());
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    task.evidence.push(`question ${question.id} could not be persisted: ${detail} — the question stays pending in memory only and will not survive a restart`);
+  }
   task.evidence.push(`question ${question.id} at step ${index + 1} of ${task.steps.length}: ${trimmed}`);
   await saveTask(task, opts.tasksDir);
   if (opts.send) {
@@ -194,16 +246,24 @@ function isApproval(answer: string): boolean {
  * question records the per-step approval on the task first, so the resume
  * runs that step without re-asking; a `no` fails the task instead, with the
  * refusal recorded as evidence and the step marked failed — the continuation
- * never runs. Throws when the question is unknown (never asked, or already
- * answered), when the answer is not one of the question's options, or when
- * the task is not `paused-question`.
+ * never runs. Throws when the question is unknown (never asked, already
+ * answered, or its persisted file is gone), when the answer is not one of
+ * the question's options, or when the task is not `paused-question`.
  */
 export async function answerQuestion(
   id: string,
   answer: string,
   options: AnswerQuestionOptions = {},
 ): Promise<Task> {
-  const question = pending.get(id);
+  // The registry is in-memory: after a daemon restart it is empty, so a
+  // question asked before the restart is loaded back from its persisted
+  // file here instead of throwing "question not found" for a task that is
+  // visibly still waiting.
+  let question = pending.get(id);
+  if (!question) {
+    question = (await loadPendingQuestion(id, options.tasksDir ?? defaultTasksDir())) ?? undefined;
+    if (question) pending.set(question.id, question);
+  }
   if (!question) throw new Error(`question not found: ${id}`);
   if (question.options && !question.options.includes(answer)) {
     throw new Error(`answer "${answer}" is not one of the options for question ${id}`);
@@ -230,6 +290,7 @@ export async function answerQuestion(
     task.evidence.push(`answer to question ${id} at step ${index + 1} of ${task.steps.length}: ${answer} — ${detail}`);
     task.state = 'failed';
     await saveTask(task, options.tasksDir);
+    await forgetPersistedQuestion(id, options.tasksDir);
     return task;
   }
 
@@ -245,6 +306,7 @@ export async function answerQuestion(
     `answer to question ${id} at step ${index + 1} of ${task.steps.length}: ${answer} — resuming from the same step`,
   );
   await saveTask(task, options.tasksDir);
+  await forgetPersistedQuestion(id, options.tasksDir);
   if (options.continueWith) return options.continueWith(task);
   return task;
 }

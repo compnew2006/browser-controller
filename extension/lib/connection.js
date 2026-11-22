@@ -81,11 +81,11 @@ export function setCurrentActivity(name) {
   currentActivity = name;
 }
 
-/** Send a JSON frame to the daemon if (and only if) the socket is open. */
+/** Send a JSON frame to the daemon if (and only if) the socket is open. Returns whether the frame left: a caller that must not lose its message (a task answer) takes its question out only on true. */
 export function sendJson(obj) {
-  if (ws?.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(obj));
-  }
+  if (ws?.readyState !== WebSocket.OPEN) return false;
+  try { ws.send(JSON.stringify(obj)); } catch { return false; } // the socket closed between the check and the send
+  return true;
 }
 
 export function sendVaultProtectionTabRemoved(removal) {

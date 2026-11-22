@@ -51,6 +51,7 @@ import {
   validateIpcHandshake,
 } from './protocol/index.js';
 import { ExtensionBridge } from './bridge.js';
+import { createDaemonBridge } from './daemon-bridge.js';
 import { isActivityContextFrame, isBatchFinishedFrame } from './protocol/frames.js';
 import { isKnownWireTool } from './protocol/wire-tools.js';
 import { armIpcHelloTimer } from './ipc-hello-timer.js';
@@ -127,7 +128,7 @@ class Daemon {
   /** Heartbeat timer — evicts half-open IPC sockets (see startHeartbeat). */
   private heartbeatTimer: NodeJS.Timeout | null = null;
 
-  private initialize(): void {
+  private async initialize(): Promise<void> {
     this.token = loadOrCreateToken().token;
     // Enrollment secret gates the HTTP endpoints (especially /pair, which hands
     // out the auth token). See SECURITY.md "First-contact TOFU window".
@@ -135,15 +136,14 @@ class Daemon {
     // Forward the token + enrollment secret to the bridge so the WS upgrade
     // (challenge-response authentication) and HTTP endpoints (signed challenge,
     // request proof, and response proof) are all enforced by the bridge.
-    this.bridge = new ExtensionBridge({
-      port: DEFAULT_WS_PORT,
-      host: DEFAULT_WS_HOST,
+    // The factory also wires the task-answer receiver and restores the
+    // pending questions, before the bridge starts listening.
+    this.bridge = await createDaemonBridge({
       token: this.token,
       enrollmentSecret: this.enrollmentSecret,
-      // The extension retries after 1, 2 and 4 s: a call right after a daemon restart waits for it.
-      reconnectWait: { ms: RECONNECT_WAIT_MS },
+      reconnectWaitMs: RECONNECT_WAIT_MS,
+      sessionRoster: () => [...this.clients.values()].map((client) => client.sessionId),
     });
-    this.bridge.setSessionRoster(() => [...this.clients.values()].map((client) => client.sessionId));
     const vaultTransport: VaultTransport = {
       getBrowserContext: async (sessionId) => this.bridge.vaultTransport.getBrowserContext(sessionId),
       callVaultAction: (action, params, sessionId, signal, agentName) => this.bridge.vaultTransport.callAction(action, params, sessionId, signal, agentName),
@@ -167,7 +167,7 @@ class Daemon {
     await acquireDaemonLock();
 
     try {
-      this.initialize();
+      await this.initialize();
       // 1) extension-facing WS server (task 1.0).
       await this.bridge.start();
       this.bridge.registerHttpHandler((req, url) => this.handleHttp(req, url));
