@@ -92,11 +92,16 @@ function validateQuestionContext(raw: unknown): QuestionContext {
     raw.stepIndex < 0 ||
     typeof raw.tool !== 'string' ||
     raw.tool.length === 0 ||
-    !isRecord(raw.params)
+    // The persisted context carries param key names only, never param
+    // values: a value under any key can be a credential, so the store
+    // refuses a params object (or any non-string entry) instead of
+    // persisting it.
+    !Array.isArray(raw.params) ||
+    raw.params.some((param) => typeof param !== 'string' || param.length === 0)
   ) {
-    throw corrupt('a question context needs a step index, a tool name and params');
+    throw corrupt('a question context needs a step index, a tool name and param key names');
   }
-  return { stepIndex: raw.stepIndex, tool: raw.tool, params: raw.params };
+  return { stepIndex: raw.stepIndex, tool: raw.tool, params: [...(raw.params as string[])] };
 }
 
 /** A parsed question, or an error when the record is not one. Unknown fields are rejected. */

@@ -297,7 +297,7 @@ describe('mutation-approval question flow (runner + questions)', () => {
       text: string;
       options?: string[];
       kind: 'confirm' | 'choice' | 'text';
-      context?: { stepIndex: number; tool: string; params: Record<string, unknown> };
+      context?: { stepIndex: number; tool: string; params: string[] };
     }): Promise<Question> =>
       askQuestion(input.taskId, input.text, input.options, {
         tasksDir: dir,
@@ -339,7 +339,7 @@ describe('mutation-approval question flow (runner + questions)', () => {
     expect(question.kind).toBe('confirm');
     expect(question.options).toEqual(['yes', 'no']);
     expect(question.text).toContain('fake-click');
-    expect(question.context).toEqual({ stepIndex: 0, tool: 'fake-click', params: {} });
+    expect(question.context).toEqual({ stepIndex: 0, tool: 'fake-click', params: [] });
     expect(pendingQuestions().map((q) => q.id)).toContain(question.id);
   });
 

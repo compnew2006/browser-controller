@@ -48,7 +48,13 @@ export type QuestionKind = 'choice' | 'confirm' | 'text';
 export interface QuestionContext {
   stepIndex: number;
   tool: string;
-  params: Record<string, unknown>;
+  /**
+   * The mutating step's param key names only — never param values. A value
+   * under any key, sensitive-named or generic, can be a credential, so no
+   * value of any param may reach a question, task evidence, or a persisted
+   * question file; the key names are all the user needs to judge the step.
+   */
+  params: string[];
 }
 
 /** A question asked of the user: what to ask, what to answer with, and which task waits for it. */
@@ -158,31 +164,27 @@ function isSensitiveParamKey(key: string): boolean {
 }
 
 /**
- * A mutating step's params as a question-safe summary: sensitive keys are
- * dropped outright, and every other value is shown as a short string,
- * truncated — so a long typed value cannot smuggle a secret past the
- * key list either. The shape stays a params object, so it can stand in
- * for the raw params wherever a question context is persisted.
+ * A mutating step's params as a question-safe summary: the param key names
+ * only, never any param value. No value may appear under any key —
+ * sensitive-named or generic — because a typed or filled credential can sit
+ * under a generic key (`text`, `fields[].value`, `expression`), and
+ * truncation does not save a short secret: a value of 40 chars or fewer
+ * would still leak in full. Sensitive-named keys are dropped outright, so
+ * not even their names reach the question. The result is a list of key
+ * names, so it can stand in for the raw params wherever a question
+ * context is persisted.
  */
-export function redactParamsForQuestion(params: Record<string, unknown>): Record<string, unknown> {
-  const redacted: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(params)) {
-    if (isSensitiveParamKey(key)) continue;
-    const shown = typeof value === 'string' ? value : JSON.stringify(value) ?? '';
-    redacted[key] = shown.length > 40 ? `${shown.slice(0, 40)}…` : shown;
-  }
-  return redacted;
+export function redactParamsForQuestion(params: Record<string, unknown>): string[] {
+  return Object.keys(params).filter((key) => !isSensitiveParamKey(key));
 }
 
 /**
- * The mutation-approval question text: the step, the tool, and a redacted,
- * truncated param summary — never raw param values. Capped at 200 chars,
- * so a step with many params cannot flood the popup card or the evidence.
+ * The mutation-approval question text: the step, the tool, and the param
+ * key names — never any param value. Capped at 200 chars, so a step with
+ * many params cannot flood the popup card or the evidence.
  */
 export function mutationApprovalQuestionText(stepIndex: number, tool: string, params: Record<string, unknown>): string {
-  const summary = Object.entries(redactParamsForQuestion(params))
-    .map(([key, value]) => `${key}=${String(value)}`)
-    .join(', ');
+  const summary = redactParamsForQuestion(params).join(', ');
   const text = `Allow step ${stepIndex + 1} (${tool}) to change site data?${summary === '' ? '' : ` ${summary}`}`;
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }

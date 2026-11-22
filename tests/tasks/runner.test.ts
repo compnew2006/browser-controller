@@ -885,19 +885,143 @@ describe('mutation-approval question redaction', () => {
     expect(paused.state).toBe('paused-question');
     expect(asked).toHaveLength(1);
     // The user can still judge the step: the tool name is there, and the
-    // harmless param survives — but the credential value is nowhere.
+    // harmless param's key name survives — but no param value is anywhere,
+    // and the credential-named key is dropped outright.
     expect(asked[0]?.text).toContain('fake-fill');
-    expect(asked[0]?.text).toContain('target=e1');
+    expect(asked[0]?.text).toContain('target');
+    expect(asked[0]?.text).not.toContain('e1');
     expect(asked[0]?.text).not.toContain(secret);
     expect(asked[0]?.text).not.toContain('password');
     expect(asked[0]?.text.length).toBeLessThanOrEqual(201);
     const reloaded = await loadTask('task-1', dir);
     expect(reloaded?.evidence.join('\n')).not.toContain(secret);
+    // The old `key=value` form must be gone from the evidence; a bare
+    // 'e1' substring check would false-positive on the random question
+    // UUID in the same evidence lines.
+    expect(reloaded?.evidence.join('\n')).not.toContain('target=e1');
     const pending = await listPendingQuestions(dir);
     expect(pending).toHaveLength(1);
     const stored = await loadPendingQuestion(pending[0]!.id, dir);
     expect(JSON.stringify(stored)).not.toContain(secret);
+    expect(JSON.stringify(stored)).not.toContain('target=e1');
+    expect(stored?.context?.params).toEqual(['target']);
     expect(stored?.text).toContain('fake-fill');
+  });
+
+  /**
+   * One mutating step through the real `runTask` → `askQuestion` path:
+   * returns the asked question text, the paused task, and the persisted
+   * question file, so each carrier can assert the secret appears nowhere.
+   */
+  async function runMutatingStep(
+    tool: ToolDefinition,
+    params: Record<string, unknown>,
+  ): Promise<{ text: string; stored: Awaited<ReturnType<typeof loadPendingQuestion>>; evidence: string }> {
+    const tools = new Map<string, ToolDefinition>([
+      [tool.name, tool],
+      ['browser_snapshot', snapshotTool([], 'page loaded')],
+    ]);
+    const task: Task = {
+      id: 'task-1',
+      goal: 'Do the mutating step',
+      constraints: ['read-only'],
+      steps: [{ tool: tool.name, params, verify: [{ kind: 'no-error-text', value: "isn't working" }] }],
+      state: 'planned',
+      evidence: [],
+    };
+    await saveTask(task, dir);
+    const asked: string[] = [];
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: {
+        ask: async (input) => {
+          asked.push(input.text);
+          return askQuestion(input.taskId, input.text, input.options, {
+            tasksDir: dir,
+            kind: input.kind,
+            context: input.context,
+          });
+        },
+      },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(asked).toHaveLength(1);
+    const pending = await listPendingQuestions(dir);
+    expect(pending).toHaveLength(1);
+    const stored = await loadPendingQuestion(pending[0]!.id, dir);
+    const reloaded = await loadTask('task-1', dir);
+    return { text: asked[0]!, stored, evidence: reloaded?.evidence.join('\n') ?? '' };
+  }
+
+  it('a browser_type-like step never leaks its generic-key text value', async () => {
+    const secret = 's3cret-typed-p4ssw0rd!';
+    const { text, stored, evidence } = await runMutatingStep(
+      fakeTool(
+        'fake-type',
+        [],
+        textResult('typed'),
+        false,
+        z.object({ target: z.string(), text: z.string() }).strict(),
+      ),
+      { target: 'e1', text: secret },
+    );
+    expect(text).toContain('fake-type');
+    expect(text).toContain('target');
+    expect(text).toContain('text');
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain('e1');
+    expect(text.length).toBeLessThanOrEqual(201);
+    expect(evidence).not.toContain(secret);
+    expect(JSON.stringify(stored)).not.toContain(secret);
+    expect(stored?.context?.params).toEqual(['target', 'text']);
+  });
+
+  it('a browser_fill-like step never leaks a nested fields[].value, not even its 40-char prefix', async () => {
+    const secret = 'fill-secret-value-that-is-longer-than-forty-chars-0123456789';
+    const { text, stored, evidence } = await runMutatingStep(
+      fakeTool(
+        'fake-fill-fields',
+        [],
+        textResult('filled'),
+        false,
+        z.object({ fields: z.array(z.object({ selector: z.string(), value: z.string() })) }).strict(),
+      ),
+      { fields: [{ selector: '#pw', value: secret }] },
+    );
+    expect(text).toContain('fake-fill-fields');
+    expect(text).toContain('fields');
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain(secret.slice(0, 40));
+    expect(text).not.toContain('#pw');
+    expect(evidence).not.toContain(secret);
+    expect(evidence).not.toContain(secret.slice(0, 40));
+    expect(JSON.stringify(stored)).not.toContain(secret);
+    expect(JSON.stringify(stored)).not.toContain(secret.slice(0, 40));
+    expect(stored?.context?.params).toEqual(['fields']);
+  });
+
+  it('a browser_evaluate-like step never leaks its expression', async () => {
+    const secret = "document.querySelector('#pw').value = 'hunter2-secret'";
+    const { text, stored, evidence } = await runMutatingStep(
+      fakeTool(
+        'fake-evaluate',
+        [],
+        textResult('evaluated'),
+        false,
+        z.object({ expression: z.string() }).strict(),
+      ),
+      { expression: secret },
+    );
+    expect(text).toContain('fake-evaluate');
+    expect(text).toContain('expression');
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain('hunter2-secret');
+    expect(evidence).not.toContain(secret);
+    expect(JSON.stringify(stored)).not.toContain(secret);
+    expect(JSON.stringify(stored)).not.toContain('hunter2-secret');
+    expect(stored?.context?.params).toEqual(['expression']);
   });
 });
 

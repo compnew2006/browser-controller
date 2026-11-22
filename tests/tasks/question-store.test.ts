@@ -25,7 +25,7 @@ const choice: Question = {
   text: 'Which report should I open?',
   options: ['Sales', 'Stock'],
   kind: 'choice',
-  context: { stepIndex: 0, tool: 'browser_navigate', params: { url: 'https://example.com' } },
+  context: { stepIndex: 0, tool: 'browser_navigate', params: ['url'] },
 };
 
 describe('question store', () => {
@@ -75,5 +75,13 @@ describe('question store', () => {
     expect(() => validatePendingQuestion({ ...choice, surprise: true })).toThrowError(/needs id, taskId, text and kind/);
     expect(() => validatePendingQuestion({ ...choice, kind: 'essay' })).toThrowError(/known kind/);
     expect(() => validatePendingQuestion({ ...choice, options: ['A', ''] })).toThrowError(/non-empty strings/);
+  });
+
+  it('rejects a question context whose params carry values instead of key names', () => {
+    const withValues = {
+      ...choice,
+      context: { stepIndex: 0, tool: 'browser_navigate', params: { url: 'https://example.com' } },
+    };
+    expect(() => validatePendingQuestion(withValues)).toThrowError(/param key names/);
   });
 });

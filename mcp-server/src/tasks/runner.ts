@@ -395,12 +395,13 @@ async function runTaskSteps(
         try {
           await options.questions.ask({
             taskId: id,
-            // The question text never carries raw param values: a mutating
+            // The question text never carries param values: a mutating
             // step's params can hold typed or filled text, including
             // credentials, and this text is persisted in task evidence
             // and the question file, rendered in the popup card, and
             // returned to the agent via `browser_task_status` — so it
-            // names the tool and a redacted, truncated param summary.
+            // names the tool and the param key names only, and the
+            // persisted context carries those key names, never values.
             text: mutationApprovalQuestionText(index, step.tool, validated),
             options: ['yes', 'no'],
             kind: 'confirm',
