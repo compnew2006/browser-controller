@@ -23,8 +23,10 @@
  * call succeeds, it reads the page again with `browser_snapshot` on the
  * tab the step acted on — unless the step itself was `browser_snapshot`,
  * in which case its own result already is the snapshot. When no snapshot
- * tool is available (a test map without one, or no host to call it with),
- * the step's own result stands in as the snapshot. The snapshot read is
+ * tool is available, or no host is available to call it with, the step
+ * fails as `verify-failed` instead of falling back to its own result: a
+ * tool result alone is never evidence of success, so verification must
+ * never pass on a page that was never read. The snapshot read is
  * an extra `browser_snapshot` call after most steps; that is the cost of
  * verifying against the page instead of the tool result. A snapshot that
  * cannot be read fails the step as `verify-failed` — verification must
@@ -149,9 +151,10 @@ function resultText(result: ToolResult): string {
  * is followed by a fresh `browser_snapshot` read on the tab it acted on —
  * the read is a plain handler call, not a step, so it needs no P4 approval
  * (the snapshot tool is an idempotent read) and no param preparation beyond
- * the tab to read. When no snapshot tool or no host is available, the
- * step's own result stands in. Throws when the snapshot read fails, so the
- * caller fails the step as `verify-failed` instead of passing it unread.
+ * the tab to read and the widest snapshot the schema allows. When no
+ * snapshot tool or no host is available, or the read itself fails, it
+ * throws, so the caller fails the step as `verify-failed` instead of
+ * passing it unread: the step's own result is never a substitute snapshot.
  */
 async function readSnapshotAfterStep(
   step: TaskStep,
@@ -162,24 +165,30 @@ async function readSnapshotAfterStep(
 ): Promise<PageSnapshot> {
   if (step.tool === 'browser_snapshot') return pageSnapshotFromResult(result, 'browser_snapshot result');
   const snapshotDef = tools.get('browser_snapshot');
-  if (snapshotDef && host) {
-    const params: Record<string, unknown> = {};
-    if (tabId !== undefined && 'tabId' in snapshotDef.inputSchema.shape) params.tabId = tabId;
-    let snapshotResult: ToolResult;
-    try {
-      snapshotResult = await snapshotDef.handler(host, params);
-    } catch (error) {
-      throw new Error(
-        `snapshot unavailable after ${step.tool}: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
-    }
-    if (snapshotResult.isError) {
-      throw new Error(`snapshot unavailable after ${step.tool}: ${resultText(snapshotResult)}`);
-    }
-    return pageSnapshotFromResult(snapshotResult, `browser_snapshot${tabId !== undefined ? ` tab ${tabId}` : ''}`);
+  if (!snapshotDef) {
+    throw new Error(`snapshot unavailable after ${step.tool}: no browser_snapshot tool available to read the page`);
   }
-  return pageSnapshotFromResult(result, `result of ${step.tool}`);
+  if (!host) {
+    throw new Error(`snapshot unavailable after ${step.tool}: no tool host available to read the page`);
+  }
+  const params: Record<string, unknown> = {};
+  if (tabId !== undefined && 'tabId' in snapshotDef.inputSchema.shape) params.tabId = tabId;
+  // Read the whole tree the schema allows: the 8000-char default truncates
+  // long accessibility trees, so content below the cut would falsely fail.
+  if ('maxChars' in snapshotDef.inputSchema.shape) params.maxChars = 50000;
+  let snapshotResult: ToolResult;
+  try {
+    snapshotResult = await snapshotDef.handler(host, params);
+  } catch (error) {
+    throw new Error(
+      `snapshot unavailable after ${step.tool}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (snapshotResult.isError) {
+    throw new Error(`snapshot unavailable after ${step.tool}: ${resultText(snapshotResult)}`);
+  }
+  return pageSnapshotFromResult(snapshotResult, `browser_snapshot${tabId !== undefined ? ` tab ${tabId}` : ''}`);
 }
 
 /**
@@ -322,9 +331,17 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       if (openedTabId !== undefined) boundTabId = openedTabId;
     }
 
+    // The tab to verify against: the tab the step's result names (a tab it
+    // opened), else the tab the step ran on — its explicit tabId, or the
+    // bound tab injected into it — else the bound tab. The explicit tabId
+    // must win over the bound tab: a step targeting tab 99 while bound to
+    // tab 42 is verified against tab 99, never tab 42.
+    const verifyTabId =
+      openedTabId ?? (typeof validated.tabId === 'number' ? validated.tabId : boundTabId);
+
     let outcome: VerifyOutcome;
     try {
-      const snapshot = await readSnapshotAfterStep(step, result, tools, options.host, boundTabId);
+      const snapshot = await readSnapshotAfterStep(step, result, tools, options.host, verifyTabId);
       outcome = await verify(step, snapshot);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

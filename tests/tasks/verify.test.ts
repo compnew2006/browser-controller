@@ -42,6 +42,38 @@ describe('verifyStep', () => {
     expect(outcome.evidence).toContain('https://example.com/welcome');
   });
 
+  it('counts only the role token, not substring mentions', () => {
+    const page = {
+      ...loadedPage,
+      text: '- link "About" [ref=e1]\n- paragraph "Press the button to continue" [ref=e2]',
+    };
+    // 'a' appears in "About" and "paragraph", and 'button' in the paragraph
+    // label — neither is an element of that role, so both count 0.
+    const letterA = verifyStep(stepWith([{ kind: 'element-count', selector: 'a', count: 1 }]), page);
+    expect(letterA.ok).toBe(false);
+    expect(letterA.evidence).toContain('found 0 element(s) matching "a"');
+    const proseButton = verifyStep(stepWith([{ kind: 'element-count', selector: 'button', count: 1 }]), page);
+    expect(proseButton.ok).toBe(false);
+    expect(proseButton.evidence).toContain('found 0 element(s) matching "button"');
+    // The roles that are actually there do count, case-insensitively.
+    expect(verifyStep(stepWith([{ kind: 'element-count', selector: 'link', count: 1 }]), page).ok).toBe(true);
+    expect(verifyStep(stepWith([{ kind: 'element-count', selector: 'paragraph', count: 1 }]), page).ok).toBe(true);
+    const capitalised = verifyStep(
+      stepWith([{ kind: 'element-count', selector: 'Button', count: 1 }]),
+      { ...loadedPage, text: '- button "Buy now" [ref=e2]' },
+    );
+    expect(capitalised.ok).toBe(true);
+  });
+
+  it('fails naming an unsupported selector instead of counting 0', () => {
+    for (const selector of ['#submit', 'button.primary', '[data-testid="x"]']) {
+      const outcome = verifyStep(stepWith([{ kind: 'element-count', selector, count: 1 }]), loadedPage);
+      expect(outcome.ok).toBe(false);
+      expect(outcome.code).toBe('VERIFY_FAILED');
+      expect(outcome.evidence).toContain(`unsupported selector "${selector}"`);
+    }
+  });
+
   it('fails url-contains when the page landed elsewhere', () => {
     const outcome = verifyStep(stepWith([{ kind: 'url-contains', value: 'example.com' }]), {
       ...loadedPage,

@@ -17,10 +17,13 @@
  * be one either, even when no rule names its text. The step's rules then run
  * in order and the first failure is reported.
  *
- * `element-count` counts snapshot lines mentioning the selector: the
- * snapshot is an accessibility tree (one element per line), not a DOM, so
- * there is no CSS query to run against it. The match is case-insensitive,
- * matching how the tree spells roles and labels.
+ * `element-count` counts snapshot lines whose accessibility-tree role token
+ * is the selector: the snapshot is an accessibility tree (one element per
+ * line, the role first), not a DOM, so there is no CSS query to run
+ * against it. A selector that is not a bare role name — `#id`, `.class`,
+ * `[attr]`, or anything with CSS syntax — fails naming itself as
+ * unsupported instead of silently counting 0, so "no such element" and
+ * "unsupported selector" are never confused.
  */
 import { rawResultOf } from '../tools/types.js';
 import type { ToolResult } from '../tools/types.js';
@@ -78,6 +81,22 @@ function checkNoErrorText(rule: Extract<VerifyRule, { kind: 'no-error-text' }>, 
   return undefined;
 }
 
+/** A bare accessibility-tree role name: one token of letters, digits, hyphens. */
+const ROLE_NAME = /^[A-Za-z][A-Za-z0-9-]*$/;
+
+/**
+ * The role token at the start of one accessibility-tree line, e.g. `button`
+ * in `  - button "Buy now" [ref=e2]` — indentation and the `- ` bullet are
+ * not part of the role. Undefined when the line is not an element line (the
+ * `page:` header, the truncation note). The token must be followed by
+ * whitespace, a quote, a `[`, or the end of the line, so `button` never
+ * matches `button-group` or a line whose label merely mentions the word.
+ */
+function roleOfLine(line: string): string | undefined {
+  const match = /^\s*(?:-\s+)?([A-Za-z][A-Za-z0-9-]*)(?=\s|"|\[|$)/u.exec(line);
+  return match?.[1]?.toLowerCase();
+}
+
 /** One rule against the snapshot; the failure detail, or undefined when it passes. */
 function checkRule(rule: VerifyRule, snapshot: PageSnapshot): string | undefined {
   switch (rule.kind) {
@@ -91,8 +110,11 @@ function checkRule(rule: VerifyRule, snapshot: PageSnapshot): string | undefined
       }
       return undefined;
     case 'element-count': {
-      const needle = rule.selector.toLowerCase();
-      const found = snapshot.text.split('\n').filter((line) => line.toLowerCase().includes(needle)).length;
+      if (!ROLE_NAME.test(rule.selector)) {
+        return `unsupported selector "${rule.selector}": element-count matches accessibility-tree role names only (e.g. "button"), not CSS selectors`;
+      }
+      const wanted = rule.selector.toLowerCase();
+      const found = snapshot.text.split('\n').filter((line) => roleOfLine(line) === wanted).length;
       if (found !== rule.count) return `found ${found} element(s) matching "${rule.selector}", expected ${rule.count}`;
       return undefined;
     }
@@ -131,8 +153,8 @@ export function verifyStep(step: TaskStep, snapshot: PageSnapshot): VerifyOutcom
 /**
  * Build a snapshot from a tool result: the first text it carries, the URL
  * its raw result names (if any), and the caller's reference for the evidence.
- * Used when the step itself read the page (`browser_snapshot`) or when no
- * snapshot tool is available to read it again.
+ * Used when the step itself read the page (`browser_snapshot`): its own
+ * result already is the snapshot, so no second read is needed.
  */
 export function pageSnapshotFromResult(result: ToolResult, ref: string): PageSnapshot {
   const first = result.content.find((item) => item.type === 'text');

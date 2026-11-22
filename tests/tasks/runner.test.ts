@@ -57,6 +57,20 @@ function twoStepTask(id = 'task-1'): Task {
   };
 }
 
+/** A host fake tools ignore; its only job is to let the runner call the snapshot tool. */
+const dummyHost: ToolHost = {
+  callTool: async () => {
+    throw new Error('no extension in test');
+  },
+};
+
+const tabSchema = z.object({ tabId: z.number().optional() }).strict();
+
+/** A fake `browser_snapshot` answering with fixed page text (its calls go to `calls`). */
+function snapshotTool(calls: string[], text: string): ToolDefinition {
+  return fakeTool('browser_snapshot', calls, textResult(text), true, tabSchema);
+}
+
 describe('planner', () => {
   it('splits a goal with a URL into navigate and snapshot steps', () => {
     const task = planTask('Open https://example.com and confirm it loaded', ['read-only']);
@@ -93,15 +107,18 @@ describe('planner', () => {
 describe('runner', () => {
   it('test_runner_stops_at_failed_verification', async () => {
     const calls: string[] = [];
+    const snapshotCalls: string[] = [];
     const tools = new Map<string, ToolDefinition>([
       ['fake-ok', fakeTool('fake-ok', calls, textResult('page loaded'))],
       ['fake-next', fakeTool('fake-next', calls, textResult('next page'))],
+      ['browser_snapshot', snapshotTool(snapshotCalls, 'page loaded')],
     ]);
     await saveTask(twoStepTask(), dir);
 
     const done = await runTask('task-1', {
       tasksDir: dir,
       tools,
+      host: dummyHost,
       verify: (_step, snapshot) => ({ ok: false, evidence: `page shows an error: ${snapshot.text}` }),
     });
 
@@ -109,25 +126,30 @@ describe('runner', () => {
     expect(done.steps[0]?.result?.status).toBe('verify-failed');
     expect(done.steps[1]?.result).toBeUndefined();
     expect(calls).toEqual(['fake-ok']);
+    expect(snapshotCalls).toEqual(['browser_snapshot']);
     expect(done.evidence.join('\n')).toContain('page shows an error: page loaded');
   });
 
   it('runs every step in order and finishes done when all verify', async () => {
     const calls: string[] = [];
+    const snapshotCalls: string[] = [];
     const tools = new Map<string, ToolDefinition>([
       ['fake-ok', fakeTool('fake-ok', calls, textResult('page loaded'))],
       ['fake-next', fakeTool('fake-next', calls, textResult('next page'))],
+      ['browser_snapshot', snapshotTool(snapshotCalls, 'page loaded')],
     ]);
     await saveTask(twoStepTask(), dir);
 
     const done = await runTask('task-1', {
       tasksDir: dir,
       tools,
+      host: dummyHost,
       verify: () => ({ ok: true, evidence: 'checked' }),
     });
 
     expect(done.state).toBe('done');
     expect(calls).toEqual(['fake-ok', 'fake-next']);
+    expect(snapshotCalls).toEqual(['browser_snapshot', 'browser_snapshot']);
     expect(done.steps.map((step) => step.result?.status)).toEqual(['ok', 'ok']);
     expect(done.evidence.length).toBe(2);
   });
@@ -194,8 +216,10 @@ describe('runner', () => {
 
   it('runs a mutating step when the task explicitly allows mutations', async () => {
     const calls: string[] = [];
+    const snapshotCalls: string[] = [];
     const tools = new Map<string, ToolDefinition>([
       ['fake-click', fakeTool('fake-click', calls, textResult('clicked'), false)],
+      ['browser_snapshot', snapshotTool(snapshotCalls, 'clicked')],
     ]);
     await saveTask(
       {
@@ -212,10 +236,12 @@ describe('runner', () => {
     const done = await runTask('task-1', {
       tasksDir: dir,
       tools,
+      host: dummyHost,
       verify: () => ({ ok: true, evidence: 'checked' }),
     });
     expect(done.state).toBe('done');
     expect(calls).toEqual(['fake-click']);
+    expect(snapshotCalls).toEqual(['browser_snapshot']);
   });
 
   it('fails a step whose tool is not registered and runs nothing after it', async () => {
@@ -243,9 +269,11 @@ describe('runner', () => {
 
   it('resumes from the first unfinished step and keeps completed work', async () => {
     const calls: string[] = [];
+    const snapshotCalls: string[] = [];
     const tools = new Map<string, ToolDefinition>([
       ['fake-ok', fakeTool('fake-ok', calls, textResult('page loaded'))],
       ['fake-next', fakeTool('fake-next', calls, textResult('next page'))],
+      ['browser_snapshot', snapshotTool(snapshotCalls, 'next page')],
     ]);
     const task = twoStepTask();
     task.steps[0]!.result = { status: 'ok', detail: 'already done' };
@@ -255,10 +283,12 @@ describe('runner', () => {
     const done = await runTask('task-1', {
       tasksDir: dir,
       tools,
+      host: dummyHost,
       verify: () => ({ ok: true, evidence: 'checked' }),
     });
     expect(done.state).toBe('done');
     expect(calls).toEqual(['fake-next']);
+    expect(snapshotCalls).toEqual(['browser_snapshot']);
     expect(done.steps[0]?.result).toEqual({ status: 'ok', detail: 'already done' });
   });
 
@@ -268,15 +298,7 @@ describe('runner', () => {
 });
 
 describe('runner verification through the real verifier', () => {
-  /** A host fake tools ignore; its only job is to let the runner call the snapshot tool. */
-  const dummyHost: ToolHost = {
-    callTool: async () => {
-      throw new Error('no extension in test');
-    },
-  };
-
   const navigateSchema = z.object({ url: z.string(), incognito: z.boolean().optional() }).strict();
-  const tabSchema = z.object({ tabId: z.number().optional() }).strict();
   const navigateTask: Task = {
     id: 'task-1',
     goal: 'Open the example page',
@@ -353,7 +375,7 @@ describe('runner verification through the real verifier', () => {
     expect(done.steps[0]?.result?.detail).toContain('snapshot unavailable');
   });
 
-  it('falls back to the step result when no snapshot tool is available', async () => {
+  it('fails verification when no snapshot tool is available, instead of trusting the step result', async () => {
     const calls: string[] = [];
     const tools = new Map<string, ToolDefinition>([
       ['fake-ok', fakeTool('fake-ok', calls, textResult("This page isn't working"))],
@@ -373,8 +395,59 @@ describe('runner verification through the real verifier', () => {
     const done = await runTask('task-1', { tasksDir: dir, tools });
     expect(done.state).toBe('failed');
     expect(done.steps[0]?.result?.status).toBe('verify-failed');
-    expect(done.steps[0]?.result?.detail).toContain("isn't working");
+    expect(done.steps[0]?.result?.detail).toContain('snapshot unavailable');
     expect(calls).toEqual(['fake-ok']);
+  });
+
+  it('verifies a step against its own explicit tab, not the bound tab', async () => {
+    const calls: string[] = [];
+    const seen: Array<Record<string, unknown>> = [];
+    // The bound tab (42) shows an error page; the step's own tab (99) is clean.
+    // Reading the wrong tab would fail this step.
+    const snapshotPerTab: ToolDefinition = {
+      name: 'browser_snapshot',
+      summary: 'Fake browser_snapshot',
+      description: 'Test-only stand-in for browser_snapshot.',
+      inputSchema: tabSchema,
+      idempotent: true,
+      handler: async (_host, params) => {
+        seen.push(params);
+        return params.tabId === 42 ? textResult("This page isn't working") : textResult('page text');
+      },
+    };
+    const tools = new Map<string, ToolDefinition>([
+      ['fake-act', fakeTool('fake-act', calls, textResult('acted'), true, tabSchema)],
+      ['browser_snapshot', snapshotPerTab],
+    ]);
+    await saveTask(
+      {
+        id: 'task-1',
+        goal: 'Act on tab 99 while bound to tab 42',
+        constraints: ['read-only'],
+        steps: [
+          {
+            tool: 'fake-act',
+            params: { tabId: 42 },
+            verify: [{ kind: 'no-error-text', value: "isn't working" }],
+            result: { status: 'ok', detail: 'already done' },
+          },
+          {
+            tool: 'fake-act',
+            params: { tabId: 99 },
+            verify: [{ kind: 'no-error-text', value: "isn't working" }],
+          },
+        ],
+        state: 'planned',
+        evidence: [],
+      },
+      dir,
+    );
+
+    const done = await runTask('task-1', { tasksDir: dir, tools, host: dummyHost });
+    expect(done.state).toBe('done');
+    expect(calls).toEqual(['fake-act']);
+    expect(seen).toEqual([{ tabId: 99 }]);
+    expect(done.steps[1]?.result?.status).toBe('ok');
   });
 });
 
@@ -431,10 +504,12 @@ describe('isMutatingTool', () => {
 describe('P4 navigate exception', () => {
   it('runs a plain-URL navigate without approval while refusing a mutating tool in the same task', async () => {
     const calls: string[] = [];
+    const snapshotCalls: string[] = [];
     const navigateSchema = z.object({ url: z.string(), incognito: z.boolean().optional() }).strict();
     const tools = new Map<string, ToolDefinition>([
       ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, navigateSchema)],
       ['browser_click', fakeTool('browser_click', calls, textResult('clicked'), false)],
+      ['browser_snapshot', snapshotTool(snapshotCalls, 'loaded')],
     ]);
     await saveTask(
       {
@@ -451,9 +526,10 @@ describe('P4 navigate exception', () => {
       dir,
     );
 
-    const done = await runTask('task-1', { tasksDir: dir, tools });
+    const done = await runTask('task-1', { tasksDir: dir, tools, host: dummyHost });
     expect(done.state).toBe('failed');
     expect(calls).toEqual(['browser_navigate']);
+    expect(snapshotCalls).toEqual(['browser_snapshot']);
     expect(done.steps[1]?.result?.status).toBe('failed');
     expect(done.steps[1]?.result?.detail).toMatch(/refused.*approval/i);
   });
@@ -510,7 +586,7 @@ describe('runner against the real registry', () => {
     const done = await runTask(task.id, { tasksDir: dir, host: registryHost(calls) });
     expect(done.state).toBe('done');
     expect(calls.find((call) => call.tool === 'browser_navigate')?.params).toEqual({ url: 'https://example.com' });
-    expect(calls.find((call) => call.tool === 'browser_snapshot')?.params).toEqual({ tabId: 42 });
+    expect(calls.find((call) => call.tool === 'browser_snapshot')?.params).toEqual({ tabId: 42, maxChars: 50000 });
   });
 
   it('runs a planned no-URL task: the snapshot is bound to the first listed tab', async () => {
@@ -521,7 +597,7 @@ describe('runner against the real registry', () => {
     const done = await runTask(task.id, { tasksDir: dir, host: registryHost(calls) });
     expect(done.state).toBe('done');
     expect(calls.find((call) => call.tool === 'browser_tabs')?.params).toEqual({ action: 'list' });
-    expect(calls.find((call) => call.tool === 'browser_snapshot')?.params).toEqual({ tabId: 7 });
+    expect(calls.find((call) => call.tool === 'browser_snapshot')?.params).toEqual({ tabId: 7, maxChars: 50000 });
   });
 
   it('fails a snapshot with no tab to bind to, with evidence, and never calls the tool', async () => {
