@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit task fixture</title>
+<!--
+  Local fixture for the professional browsing layer's end-to-end audit task
+  (specs/011-professional-browsing-layer, Task 10; tests/tasks/e2e-audit-task.test.ts).
+  One page with three views, no network and no external resources:
+
+  - login:     a sign-in form. Submitting it shows the dashboard.
+  - dashboard: numeric values the audit verifies (Balance 1,234.56,
+               Invoices 42, Account code ABC-123), an "Include archived
+               records" control that reveals a fourth value (7), an
+               "End session" button that returns to the login view
+               (the session-expiry the audit task must survive), and a
+               link to the error view.
+  - error:     a Chrome-style error page ("This page isn't working",
+               ERR_CONNECTION_RESET) — verification must fail on it,
+               never report success because navigation itself worked.
+
+  Routing: the view comes from the pathname first, then the hash, then the
+  default (login). Pathname routing is what makes the fixture usable as a
+  served page — served over http at /task-fixture/login,
+  /task-fixture/dashboard and /task-fixture/error (the same pattern
+  scripts/smoke-real-chrome.mjs uses for scripts/pages/drag-and-drop.html).
+  It matters because the session agent's login-URL matcher strips query
+  and fragment (mcp-server/src/tasks/session.ts, withoutQuery), so
+  hash-only views (#login vs #dashboard on one file URL) cannot be told
+  apart and the dashboard would read as a login page. Opening the file
+  directly still works through the hash fallback (#login, #dashboard,
+  #error).
+-->
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 16px; color: #222; background: #fff; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  p { margin: 4px 0 10px; color: #555; }
+  section { display: none; }
+  section.active { display: block; }
+  label { display: block; margin: 8px 0; }
+  input { display: block; margin-top: 2px; padding: 6px; }
+  button { padding: 8px 12px; margin: 4px 4px 4px 0; cursor: pointer; }
+  .values p { color: #222; }
+</style>
+</head>
+<body>
+<section id="view-login">
+  <h1>Audit fixture — Sign in</h1>
+  <p>Sign in to open the audit dashboard. Any credentials work: this fixture keeps no accounts.</p>
+  <form id="login-form">
+    <label>Email <input type="email" name="email" autocomplete="username"></label>
+    <label>Password <input type="password" name="password" autocomplete="current-password"></label>
+    <button type="submit">Sign in</button>
+  </form>
+</section>
+
+<section id="view-dashboard">
+  <h1>Audit fixture — Dashboard</h1>
+  <div class="values">
+    <p>Balance: 1,234.56</p>
+    <p>Invoices: 42</p>
+    <p>Account code: ABC-123</p>
+    <p id="archived" hidden>Archived records: 7</p>
+  </div>
+  <button id="include-archived" type="button">Include archived records</button>
+  <button id="end-session" type="button">End session</button>
+  <p><a id="show-error" href="#error">Show the error page</a></p>
+</section>
+
+<section id="view-error">
+  <h1>This page isn't working</h1>
+  <p>task-fixture.html didn't send any data.</p>
+  <p>ERR_CONNECTION_RESET</p>
+  <p><a id="back-to-dashboard" href="#dashboard">Back to the dashboard</a></p>
+</section>
+
+<script>
+(() => {
+  const views = { login: 'view-login', dashboard: 'view-dashboard', error: 'view-error' };
+  function showView(name) {
+    const wanted = views[name] || views.login;
+    for (const id of Object.values(views)) document.getElementById(id).classList.remove('active');
+    document.getElementById(wanted).classList.add('active');
+  }
+  function viewFromLocation() {
+    // Served use: /task-fixture/dashboard (pathname first). File use:
+    // task-fixture.html#dashboard (hash fallback). Anything else: login.
+    const segment = location.pathname.split('/').filter(Boolean).pop();
+    if (segment === 'dashboard' || segment === 'error') return segment;
+    const hash = location.hash.replace(/^#/, '');
+    if (hash === 'dashboard' || hash === 'error' || hash === 'login') return hash;
+    return 'login';
+  }
+  function go(name) {
+    // Keep the URL in step with the view so a snapshot names where the
+    // task actually is: /task-fixture/dashboard when served, #dashboard
+    // when opened as a file.
+    if (location.pathname.indexOf('/task-fixture/') === 0) {
+      history.replaceState(null, '', `/task-fixture/${name}`);
+    } else {
+      history.replaceState(null, '', `#${name}`);
+    }
+    showView(name);
+  }
+  document.getElementById('login-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    go('dashboard');
+  });
+  document.getElementById('end-session').addEventListener('click', () => go('login'));
+  document.getElementById('include-archived').addEventListener('click', () => {
+    document.getElementById('archived').hidden = false;
+  });
+  document.getElementById('show-error').addEventListener('click', (e) => {
+    e.preventDefault();
+    go('error');
+  });
+  document.getElementById('back-to-dashboard').addEventListener('click', (e) => {
+    e.preventDefault();
+    go('dashboard');
+  });
+  window.addEventListener('hashchange', () => showView(viewFromLocation()));
+  showView(viewFromLocation());
+})();
+</script>
+</body>
+</html>
