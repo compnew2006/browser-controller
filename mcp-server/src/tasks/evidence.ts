@@ -92,10 +92,14 @@ const URL_PATTERN = /https?:\/\/[^\s;"']+/gu;
  * element names, e.g. `heading "Welcome"`) do not cut the value short;
  * the optional trailing ` (...)` is the runner's param-normalisation
  * notes, which follow the quoted excerpt and are not part of the value.
+ * That trailing group is greedy too: a note may itself contain
+ * parentheses — the wait tool's note reads `time is read as ms: 15000
+ * (seconds to ms)` — so a `[^)]*` tail would fail to match and the
+ * whole detail would be carried as the value instead of the excerpt.
  * When the detail matches neither shape, there is no excerpt to take and
  * the caller falls back to the whole detail.
  */
-const OBSERVED_PATTERN = /observed="([\s\S]*)"(?: \([^)]*\))?$/u;
+const OBSERVED_PATTERN = /observed="([\s\S]*)"(?: \(.*\))?$/u;
 
 /** A verify rule in one line, e.g. `url-contains "example.com"`, `element-count button = 2`. */
 function describeRule(rule: VerifyRule): string {
@@ -173,12 +177,19 @@ export function buildEvidenceReport(task: Task): { text: string; json: EvidenceR
 
   const sources: string[] = [];
   for (const entry of checked) {
-    if (entry.detail === undefined) continue;
+    if (entry.status !== 'ok' || entry.detail === undefined) continue;
     for (const url of extractUrls(entry.detail)) {
       if (!sources.includes(url)) sources.push(url);
     }
   }
   for (const line of task.evidence) {
+    // Evidence lines are per-step (`step N (tool): <status> — <detail>`);
+    // only an `ok` step's line may contribute a source. Lines with no
+    // step prefix (session notes such as `paused for login at step N`)
+    // name no step and contribute nothing.
+    const stepNumber = /^step (\d+) /u.exec(line)?.[1];
+    if (stepNumber === undefined) continue;
+    if (checked[Number(stepNumber) - 1]?.status !== 'ok') continue;
     for (const url of extractUrls(line)) {
       if (!sources.includes(url)) sources.push(url);
     }

@@ -182,4 +182,117 @@ describe('buildEvidenceReport', () => {
     );
     expect(report.json.values[0]?.value).toBe('page read, code 200');
   });
+
+  it('strips a plain trailing runner note from the observed value', () => {
+    const report = buildEvidenceReport(
+      taskWith({
+        steps: [
+          {
+            tool: 'browser_wait',
+            params: { time: 15 },
+            verify: [],
+            result: {
+              status: 'ok',
+              detail:
+                'verified 0 rule(s) at https://example.com; snapshot=browser_snapshot tab 42; observed="waited 15000 ms" (note: screenshot taken)',
+            },
+          },
+        ],
+        state: 'done',
+      }),
+    );
+    expect(report.json.values[0]?.value).toBe('waited 15000 ms');
+  });
+
+  it('strips a trailing note that itself contains parentheses', () => {
+    // The real browser_wait detail shape: the runner appends the wait
+    // tool's note, which itself reads `(seconds to ms)`.
+    const report = buildEvidenceReport(
+      taskWith({
+        steps: [
+          {
+            tool: 'browser_wait',
+            params: { time: 15 },
+            verify: [],
+            result: {
+              status: 'ok',
+              detail:
+                'verified 1 rule(s) at https://example.com; snapshot=browser_snapshot tab 42; observed="waited 15000 ms" (note: time is read as ms: 15000 (seconds to ms))',
+            },
+          },
+        ],
+        state: 'done',
+      }),
+    );
+    expect(report.json.values[0]?.value).toBe('waited 15000 ms');
+  });
+
+  it('strips a trailing note that contains quotes', () => {
+    const report = buildEvidenceReport(
+      taskWith({
+        steps: [
+          {
+            tool: 'browser_snapshot',
+            params: {},
+            verify: [],
+            result: {
+              status: 'ok',
+              detail:
+                'verified 0 rule(s) at https://example.com; snapshot=browser_snapshot tab 42; observed="ok" (note: page says "hello")',
+            },
+          },
+        ],
+        state: 'done',
+      }),
+    );
+    expect(report.json.values[0]?.value).toBe('ok');
+  });
+
+  it('takes sources only from ok steps, never from failed or verify-failed ones', () => {
+    const report = buildEvidenceReport(
+      taskWith({
+        state: 'failed',
+        steps: [
+          {
+            tool: 'browser_navigate',
+            params: { url: 'https://example.com/account' },
+            verify: [{ kind: 'url-contains', value: 'example.com/account' }],
+            result: {
+              status: 'ok',
+              detail:
+                'verified 1 rule(s) at https://example.com/account; snapshot=browser_snapshot tab 42; observed="الرصيد: 1,234.56 ريال"',
+            },
+          },
+          {
+            tool: 'browser_snapshot',
+            params: {},
+            verify: [{ kind: 'no-error-text', value: "isn't working" }],
+            result: {
+              status: 'verify-failed',
+              detail:
+                'verification failed: page shows error text "isn\'t working" — url=https://example.com/unverified; snapshot=browser_snapshot tab 42; observed="this page isn\'t working"',
+            },
+          },
+          {
+            tool: 'browser_navigate',
+            params: { url: 'https://example.com/missing' },
+            verify: [],
+            result: {
+              status: 'failed',
+              detail: 'navigation to https://example.com/missing failed; tab closed',
+            },
+          },
+        ],
+        evidence: [
+          'step 1 (browser_navigate): ok — verified 1 rule(s) at https://example.com/account; snapshot=browser_snapshot tab 42; observed="الرصيد: 1,234.56 ريال"',
+          'step 2 (browser_snapshot): verify-failed — verification failed: page shows error text "isn\'t working" — url=https://example.com/unverified; snapshot=browser_snapshot tab 42; observed="this page isn\'t working"',
+          'step 3 (browser_navigate): failed — navigation to https://example.com/missing failed; tab closed',
+        ],
+      }),
+    );
+    // Only the verified step's URL is a source: the verify-failed page
+    // was never confirmed as checked, and the failed navigation never
+    // arrived — neither URL was visited, so neither is a source.
+    expect(report.json.sources).toEqual(['https://example.com/account']);
+  });
 });
