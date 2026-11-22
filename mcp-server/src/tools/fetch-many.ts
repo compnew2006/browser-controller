@@ -91,7 +91,7 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
 export const fetchManyTool: ToolDefinition = {
   name: 'browser_fetch_many',
   summary: 'Fetch several pages of one site in one call',
-  description: 'Fetch URLs read-only. Relative URLs use site root; only same-origin requests send this tab\'s cookies. fields maps names to CSS selectors; text adds up to 4,000 chars/page. No clicks or submits.',
+  description: 'Fetch URLs read-only; relative URLs use the site root. Only same-origin requests send cookies. fields maps names to selectors; text adds up to 4,000 chars/page.',
   inputSchema: z.object({
     tabId: tabIdParam,
     urls: z.array(z.string().min(1).max(2_000)).min(1).max(50),

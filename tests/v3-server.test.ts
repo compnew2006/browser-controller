@@ -33,16 +33,16 @@ async function listedTools(): Promise<Array<{ name: string; description?: string
 }
 
 describe('Browser Controller 3.0 server surface', () => {
-  it('tools/list shows exactly the 27 contract tools, in order', async () => {
+  it('tools/list shows exactly the 28 contract tools, in order', async () => {
     const tools = await listedTools();
     expect(tools.map((t) => t.name)).toEqual(allTools.map((t) => t.name));
-    expect(tools).toHaveLength(27);
+    expect(tools).toHaveLength(28);
     expect(tools.map((tool) => tool.name)).not.toContain('browser_vault_internal_fill');
     const vault = tools.find((tool) => tool.name === 'browser_vault')!;
     expect(JSON.stringify(vault.inputSchema)).not.toMatch(/password|identifier|grantId|credentialId/);
   });
 
-  it('tools/list fits the token budget (all 27 definitions as the SDK sends them, <= 22 000 chars)', async () => {
+  it('tools/list fits the token budget (all 28 definitions as the SDK sends them, <= 22 000 chars)', async () => {
     const tools = await listedTools();
     const json = JSON.stringify(tools);
     // chars / 4 is the rough o200k estimate: 20 000 chars is about 5 000 tokens (18 000 before browser_memory, T038;
@@ -51,6 +51,9 @@ describe('Browser Controller 3.0 server surface', () => {
     // 19 992 once the form-shape facts rewrote browser_memory's description (007).
     // 21 759 once the four browser_task_* tools landed (Task 8, 2026-11-22): the
     // budget moves to 22 000 with them, about 5 500 tokens.
+    // 21 646 once browser_task_resume landed and the longest descriptions
+    // were trimmed (final-review fix wave, 2026-11-22): five task tools,
+    // still under the 22 000 budget with room for the next tool.
     expect(json.length, `tools/list is ${json.length} chars (~${Math.round(json.length / 4)} tokens)`).toBeLessThanOrEqual(22_000);
   });
 

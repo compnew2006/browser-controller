@@ -105,6 +105,7 @@ export const TRUSTED_TOOL_RESULT_FIELDS: Readonly<Record<string, readonly string
   browser_task_status: [],
   browser_task_cancel: [],
   browser_task_answer: [],
+  browser_task_resume: [],
   browser_fetch_many: [],
   browser_vault: [
     'status', 'code', 'message', 'requestId', 'purpose', 'origin', 'handle', 'accounts',

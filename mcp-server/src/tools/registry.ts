@@ -22,7 +22,7 @@ import { vaultTool } from './vault.js';
 import { memoryTool } from './memory.js';
 import { memoryPolicyTool } from './memory-policy.js';
 import { siteMapTool } from './site-map.js';
-import { taskAnswerTool, taskCancelTool, taskStartTool, taskStatusTool } from '../tasks/tools.js';
+import { taskAnswerTool, taskCancelTool, taskResumeTool, taskStartTool, taskStatusTool } from '../tasks/tools.js';
 
 /**
  * The tools, in the order tools/list shows them. Extension-backed ones forward
@@ -62,6 +62,7 @@ export const allTools: ToolDefinition[] = [
   taskStatusTool,
   taskCancelTool,
   taskAnswerTool,
+  taskResumeTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

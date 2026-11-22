@@ -790,6 +790,7 @@ describe('registry mutation guard', () => {
     'browser_task_start',
     'browser_task_cancel',
     'browser_task_answer',
+    'browser_task_resume',
   ]);
 
   it('classifies every registered tool: idempotent reads, mixed, or writes', () => {

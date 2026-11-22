@@ -32,6 +32,7 @@ export const TOOL_NAMES = Object.freeze([
   'browser_tabs',
   'browser_task_answer',
   'browser_task_cancel',
+  'browser_task_resume',
   'browser_task_start',
   'browser_task_status',
   'browser_text',

@@ -132,7 +132,7 @@ const handler = async (
 export const fillTool: ToolDefinition = {
   name: 'browser_fill',
   summary: 'Fill several form fields in one call',
-  description: 'Fill up to 50 fields: text/date/time/color/range, select, toggle or file. Select uses value/label; toggles use booleans. File paths must be absolute and are checked first; hidden inputs work by selector, label or upload button. Never submits.',
+  description: 'Fill up to 50 fields: text/date/time/color/range, select, toggle or file. Select uses value/label; toggles use booleans. File paths must be absolute. Never submits.',
   inputSchema: z.object({
     tabId: tabIdParam,
     ...actionOptionsShape,

@@ -176,7 +176,7 @@ describe('the wire contract: identifiers', () => {
 describe('the wire contract: the names a wire tool may have', () => {
   it('accepts every registered tool', () => {
     for (const tool of TOOL_NAMES) expect(isKnownWireTool(tool), tool).toBe(true);
-    expect(TOOL_NAMES.length).toBe(27);
+    expect(TOOL_NAMES.length).toBe(28);
   });
 
   it('accepts the internal wire action the daemon forwards', () => {
