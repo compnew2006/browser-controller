@@ -8,8 +8,11 @@
  * file (0o600) in the same directory, fsynced, and renamed over the target,
  * and reads refuse symbolic links and files other users may reach. A task
  * file that fails validation fails closed: `loadTask` throws, `listTasks`
- * skips it. Only the store's own directory is created (0o700); the caller
- * passes an explicit directory in tests so nothing touches the real state.
+ * quarantines it (`<id>.json.corrupt-<ms>`) and skips it. A file that cannot
+ * be read, or is too large, throws from both — `listTasks` never silently
+ * drops a task the process cannot read. Only the store's own directory is
+ * created (0o700); the caller passes an explicit directory in tests so
+ * nothing touches the real state.
  */
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -19,6 +22,7 @@ import {
   atomicWriteFile,
   errorCode,
   isGoneAfterError,
+  quarantineName,
   readSafeFile,
   type OwnerModePolicy,
   type SafeReadPolicy,
@@ -26,12 +30,26 @@ import {
 import { isRecord } from '../core/guards.js';
 import type { StepResult, Task, TaskState, TaskStep, VerifyRule } from './types.js';
 
-/** The task store's own error: an invalid id, a corrupt file, or an unreadable directory. */
+/**
+ * The task store's own error: an invalid id, a corrupt file, or an unreadable
+ * directory. The kind is what `listTasks` decides on: only `corrupt` files are
+ * skipped (and quarantined); `unavailable` and `invalid-argument` are rethrown,
+ * so a listing never silently drops a task the process cannot read.
+ */
+export type TaskStoreErrorKind = 'corrupt' | 'unavailable' | 'invalid-argument';
+
 export class TaskStoreError extends Error {
-  constructor(message: string) {
+  readonly kind: TaskStoreErrorKind;
+  constructor(message: string, kind: TaskStoreErrorKind = 'unavailable') {
     super(message);
     this.name = 'TaskStoreError';
+    this.kind = kind;
   }
+}
+
+/** A file whose contents are not a task. */
+function corrupt(message: string): TaskStoreError {
+  return new TaskStoreError(message, 'corrupt');
 }
 
 /** A task file is small — a goal, constraints, steps and evidence — so a file past this is corrupt, not a task. */
@@ -55,7 +73,7 @@ function taskFileName(id: string): string {
 }
 
 function requireTaskId(id: unknown): string {
-  if (typeof id !== 'string' || !TASK_ID.test(id)) throw new TaskStoreError('a task id starts with a letter or digit and holds only letters, digits, "-" and "_"');
+  if (typeof id !== 'string' || !TASK_ID.test(id)) throw new TaskStoreError('a task id starts with a letter or digit and holds only letters, digits, "-" and "_"', 'invalid-argument');
   return id;
 }
 
@@ -92,36 +110,36 @@ function hasOnlyKeys(record: Record<string, unknown>, keys: readonly string[]): 
 }
 
 function validateVerifyRule(raw: unknown): VerifyRule {
-  if (!isRecord(raw) || typeof raw.kind !== 'string' || !VERIFY_KINDS.has(raw.kind)) throw new TaskStoreError('a verify rule needs a known kind');
+  if (!isRecord(raw) || typeof raw.kind !== 'string' || !VERIFY_KINDS.has(raw.kind)) throw corrupt('a verify rule needs a known kind');
   switch (raw.kind) {
     case 'url-contains':
     case 'text-present':
     case 'no-error-text':
-      if (!hasOnlyKeys(raw, ['kind', 'value']) || typeof raw.value !== 'string') throw new TaskStoreError('a verify rule needs a string value');
+      if (!hasOnlyKeys(raw, ['kind', 'value']) || typeof raw.value !== 'string') throw corrupt('a verify rule needs a string value');
       return { kind: raw.kind, value: raw.value };
     case 'element-count':
       if (!hasOnlyKeys(raw, ['kind', 'selector', 'count']) || typeof raw.selector !== 'string' || typeof raw.count !== 'number' || !Number.isSafeInteger(raw.count) || raw.count < 0) {
-        throw new TaskStoreError('an element-count rule needs a selector and a non-negative count');
+        throw corrupt('an element-count rule needs a selector and a non-negative count');
       }
       return { kind: 'element-count', selector: raw.selector, count: raw.count };
     default:
-      throw new TaskStoreError('a verify rule needs a known kind');
+      throw corrupt('a verify rule needs a known kind');
   }
 }
 
 function validateStepResult(raw: unknown): StepResult {
   if (!isRecord(raw) || typeof raw.status !== 'string' || !STEP_STATUSES.has(raw.status) || !hasOnlyKeys(raw, ['status', 'detail'])) {
-    throw new TaskStoreError('a step result needs a known status');
+    throw corrupt('a step result needs a known status');
   }
-  if (raw.detail !== undefined && typeof raw.detail !== 'string') throw new TaskStoreError('a step result detail must be a string');
+  if (raw.detail !== undefined && typeof raw.detail !== 'string') throw corrupt('a step result detail must be a string');
   return raw.detail === undefined ? { status: raw.status as StepResult['status'] } : { status: raw.status as StepResult['status'], detail: raw.detail };
 }
 
 function validateStep(raw: unknown): TaskStep {
-  if (!isRecord(raw) || !hasOnlyKeys(raw, ['tool', 'params', 'verify', 'result'])) throw new TaskStoreError('a task step needs tool, params and verify');
-  if (typeof raw.tool !== 'string' || raw.tool.length === 0) throw new TaskStoreError('a task step needs a tool name');
-  if (!isRecord(raw.params)) throw new TaskStoreError('task step params must be an object');
-  if (!Array.isArray(raw.verify)) throw new TaskStoreError('task step verify must be a list of rules');
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ['tool', 'params', 'verify', 'result'])) throw corrupt('a task step needs tool, params and verify');
+  if (typeof raw.tool !== 'string' || raw.tool.length === 0) throw corrupt('a task step needs a tool name');
+  if (!isRecord(raw.params)) throw corrupt('task step params must be an object');
+  if (!Array.isArray(raw.verify)) throw corrupt('task step verify must be a list of rules');
   const step: TaskStep = { tool: raw.tool, params: raw.params, verify: raw.verify.map(validateVerifyRule) };
   if (raw.result !== undefined) step.result = validateStepResult(raw.result);
   return step;
@@ -129,13 +147,13 @@ function validateStep(raw: unknown): TaskStep {
 
 /** A parsed task, or an error when the record is not a task. Unknown fields are rejected, so a file written by a newer shape never loads as an old one. */
 export function validateTask(raw: unknown): Task {
-  if (!isRecord(raw) || !hasOnlyKeys(raw, ['id', 'goal', 'constraints', 'steps', 'state', 'evidence'])) throw new TaskStoreError('a task needs id, goal, constraints, steps, state and evidence');
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ['id', 'goal', 'constraints', 'steps', 'state', 'evidence'])) throw corrupt('a task needs id, goal, constraints, steps, state and evidence');
   const id = requireTaskId(raw.id);
-  if (typeof raw.goal !== 'string' || raw.goal.length === 0) throw new TaskStoreError('a task needs a goal');
-  if (!isStringArray(raw.constraints)) throw new TaskStoreError('task constraints must be a list of strings');
-  if (!Array.isArray(raw.steps)) throw new TaskStoreError('task steps must be a list');
-  if (typeof raw.state !== 'string' || !TASK_STATES.has(raw.state)) throw new TaskStoreError('a task needs a known state');
-  if (!isStringArray(raw.evidence)) throw new TaskStoreError('task evidence must be a list of strings');
+  if (typeof raw.goal !== 'string' || raw.goal.length === 0) throw corrupt('a task needs a goal');
+  if (!isStringArray(raw.constraints)) throw corrupt('task constraints must be a list of strings');
+  if (!Array.isArray(raw.steps)) throw corrupt('task steps must be a list');
+  if (typeof raw.state !== 'string' || !TASK_STATES.has(raw.state)) throw corrupt('a task needs a known state');
+  if (!isStringArray(raw.evidence)) throw corrupt('task evidence must be a list of strings');
   return {
     id,
     goal: raw.goal,
@@ -171,14 +189,14 @@ export async function loadTask(id: string, tasksDir: string = defaultTasksDir())
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new TaskStoreError('task file is not valid JSON');
+    throw corrupt('task file is not valid JSON');
   }
   const task = validateTask(raw);
-  if (task.id !== validId) throw new TaskStoreError('task id does not match the file name');
+  if (task.id !== validId) throw corrupt('task id does not match the file name');
   return task;
 }
 
-/** Every saved task, by id. Files that fail validation are skipped; a directory that cannot be read throws. */
+/** Every saved task, by id. Corrupt files are quarantined and skipped; a file that cannot be read, or is too large, throws — the same convention as the map store's `listMaps`, which skips only `MEMORY_CORRUPT`. A directory that cannot be read throws. */
 export async function listTasks(tasksDir: string = defaultTasksDir()): Promise<Task[]> {
   let names: string[];
   try {
@@ -193,9 +211,21 @@ export async function listTasks(tasksDir: string = defaultTasksDir()): Promise<T
       const task = await loadTask(name.slice(0, -'.json'.length), tasksDir);
       if (task) tasks.push(task);
     } catch (error) {
-      if (error instanceof TaskStoreError) continue;
+      if (error instanceof TaskStoreError && error.kind === 'corrupt') {
+        await quarantineTaskFile(tasksDir, name);
+        continue;
+      }
       throw error;
     }
   }
   return tasks;
+}
+
+/** Move a corrupt task file aside as `<name>.corrupt-<ms>`, so it is kept for inspection and never listed again. */
+async function quarantineTaskFile(tasksDir: string, name: string): Promise<void> {
+  try {
+    await fsp.rename(path.join(tasksDir, name), path.join(tasksDir, quarantineName(name, Date.now())));
+  } catch {
+    // The listing still skips the file; the corrupt file stays where it is.
+  }
 }
