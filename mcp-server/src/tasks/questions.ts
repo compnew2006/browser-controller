@@ -141,6 +141,52 @@ export function mutationApprovalConstraint(stepIndex: number): string {
   return `allow-mutations:step:${stepIndex}`;
 }
 
+/**
+ * Param keys whose values must never reach a question, task evidence, or a
+ * persisted question file: a mutating step's params can carry typed or
+ * filled text, including credentials. Matching is by substring on the
+ * lower-cased key, so `password`, `currentPassword`, `apiKey` and the like
+ * are all caught; a key that merely contains one of these words is
+ * dropped too — a dropped harmless param is safer than a leaked secret.
+ */
+const SENSITIVE_PARAM_KEYS = ['password', 'passwd', 'pwd', 'secret', 'token', 'credential', 'apikey', 'api_key', 'auth', 'otp', 'pin'];
+
+/** Whether a param key names a value that must never be shown. */
+function isSensitiveParamKey(key: string): boolean {
+  const lowered = key.toLowerCase();
+  return SENSITIVE_PARAM_KEYS.some((sensitive) => lowered.includes(sensitive));
+}
+
+/**
+ * A mutating step's params as a question-safe summary: sensitive keys are
+ * dropped outright, and every other value is shown as a short string,
+ * truncated — so a long typed value cannot smuggle a secret past the
+ * key list either. The shape stays a params object, so it can stand in
+ * for the raw params wherever a question context is persisted.
+ */
+export function redactParamsForQuestion(params: Record<string, unknown>): Record<string, unknown> {
+  const redacted: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    if (isSensitiveParamKey(key)) continue;
+    const shown = typeof value === 'string' ? value : JSON.stringify(value) ?? '';
+    redacted[key] = shown.length > 40 ? `${shown.slice(0, 40)}…` : shown;
+  }
+  return redacted;
+}
+
+/**
+ * The mutation-approval question text: the step, the tool, and a redacted,
+ * truncated param summary — never raw param values. Capped at 200 chars,
+ * so a step with many params cannot flood the popup card or the evidence.
+ */
+export function mutationApprovalQuestionText(stepIndex: number, tool: string, params: Record<string, unknown>): string {
+  const summary = Object.entries(redactParamsForQuestion(params))
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(', ');
+  const text = `Allow step ${stepIndex + 1} (${tool}) to change site data?${summary === '' ? '' : ` ${summary}`}`;
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+}
+
 /** The first step without an `ok` result — where a resume continues from — or the last step when all are done. */
 function firstUnfinishedStep(task: Task): number {
   const index = task.steps.findIndex((step) => step.result?.status !== 'ok');

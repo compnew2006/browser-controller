@@ -104,8 +104,8 @@ import type { Task, TaskStep } from './types.js';
 import type { PageSnapshot, VerifyOutcome } from './verify.js';
 import { readFreshSnapshot, readSnapshotAfterStep, verifyStep } from './verify.js';
 import type { DetectSessionFn, SessionPage, SessionState } from './session.js';
-import { detectSession, originOf, pauseForLogin } from './session.js';
-import type { Question, QuestionContext, QuestionKind } from './questions.js';
+import { detectSession, lastKnownUrl, originOf, pauseForLogin } from './session.js';
+import { mutationApprovalQuestionText, redactParamsForQuestion, type Question, type QuestionContext, type QuestionKind } from './questions.js';
 import type { RetryPolicy } from './recovery.js';
 import { executeStepWithRecovery, reconcileUnknownStep } from './recovery.js';
 import { ERROR_CODES, formatError } from '../core/error-codes.js';
@@ -203,41 +203,6 @@ function boundTabFromCompletedSteps(task: Task): number | undefined {
   return bound;
 }
 
-/** The URL of the page a completed step verified against, from its recorded evidence (`verifyStep` writes `verified N rule(s) at <url>; ...`). */
-const VERIFIED_URL = /verified \d+ rule\(s\) at (\S+); snapshot=/u;
-
-function verifiedUrlOf(step: TaskStep): string | undefined {
-  if (step.result?.status !== 'ok' || !step.result.detail) return undefined;
-  return VERIFIED_URL.exec(step.result.detail)?.[1];
-}
-
-/**
- * The page the task was on when its last completed step finished — the
- * redirect proof for the first unfinished step. A resumed run skips `ok`
- * steps without running them, so without this the first unfinished step —
- * a snapshot, a click, anything but a navigate — would have no expected URL
- * and a landing on a login URL would read as `login-page`, not `expired`.
- * Prefer the last completed navigate's target; otherwise the URL the last
- * completed step verified against. A history navigate (`back` / `forward` /
- * `reload`) names no URL, so it falls through to the verified URL instead.
- */
-function lastUrlFromCompletedSteps(task: Task): string | undefined {
-  let last: string | undefined;
-  for (const step of task.steps) {
-    if (step.result?.status !== 'ok') continue;
-    if (
-      step.tool === 'browser_navigate' &&
-      typeof step.params.url === 'string' &&
-      !NAVIGATE_HISTORY_ACTIONS.has(step.params.url)
-    ) {
-      last = step.params.url;
-    } else {
-      last = verifiedUrlOf(step) ?? last;
-    }
-  }
-  return last;
-}
-
 async function failStep(
   task: Task,
   step: TaskStep,
@@ -295,6 +260,16 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     );
   }
 
+  // A task with no steps cannot run: completing it with no evidence would
+  // claim success for work that never happened. Fail it instead, with the
+  // reason recorded, so a zero-step record is visible, not vacuously done.
+  if (task.steps.length === 0) {
+    task.state = 'failed';
+    task.evidence.push('failed: the task has no steps — a zero-step task cannot run and completes with no evidence');
+    await saveTaskUnlessCancelled(task, options.tasksDir);
+    return task;
+  }
+
   try {
     return await runTaskSteps(task, id, tools, verify, hostRequired, options);
   } catch (error) {
@@ -347,7 +322,7 @@ async function runTaskSteps(
   // to be somewhere else. A navigate step's target is that proof instead.
   // Seeded from the completed steps, so a resumed run whose first
   // unfinished step is not a navigate still has a proof to check against.
-  let lastUrl: string | undefined = lastUrlFromCompletedSteps(task);
+  let lastUrl: string | undefined = lastKnownUrl(task);
 
   // The page re-read reconciliation runs against: a fresh snapshot on
   // the tab the task is bound to (or the caller's injected reader).
@@ -420,10 +395,16 @@ async function runTaskSteps(
         try {
           await options.questions.ask({
             taskId: id,
-            text: `Allow step ${index + 1} (${step.tool}) to change site data? ${JSON.stringify(validated)}`,
+            // The question text never carries raw param values: a mutating
+            // step's params can hold typed or filled text, including
+            // credentials, and this text is persisted in task evidence
+            // and the question file, rendered in the popup card, and
+            // returned to the agent via `browser_task_status` — so it
+            // names the tool and a redacted, truncated param summary.
+            text: mutationApprovalQuestionText(index, step.tool, validated),
             options: ['yes', 'no'],
             kind: 'confirm',
-            context: { stepIndex: index, tool: step.tool, params: validated },
+            context: { stepIndex: index, tool: step.tool, params: redactParamsForQuestion(validated) },
           });
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);

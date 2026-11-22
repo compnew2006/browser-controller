@@ -5,6 +5,8 @@ import path from 'node:path';
 import { z } from 'zod';
 import { loadTask, saveTask } from '../../mcp-server/src/tasks/store.js';
 import { saveTaskWithReport } from '../../mcp-server/src/tasks/reporting.js';
+import { askQuestion } from '../../mcp-server/src/tasks/questions.js';
+import { listPendingQuestions, loadPendingQuestion } from '../../mcp-server/src/tasks/question-store.js';
 import { runTaskWithReport, configureTaskRunner } from '../../mcp-server/src/tasks/wiring.js';
 import { planTask } from '../../mcp-server/src/tasks/planner.js';
 import { isMutatingTool, runTask } from '../../mcp-server/src/tasks/runner.js';
@@ -818,5 +820,85 @@ describe('registry mutation guard', () => {
     expect(isMutatingTool(logs, { tabId: 1, clear: true })).toBe(true);
     expect(isMutatingTool(tabs, { action: 'list' })).toBe(false);
     expect(isMutatingTool(tabs, { action: 'close', tabId: 1 })).toBe(true);
+  });
+});
+
+describe('mutation-approval question redaction', () => {
+  it('a mutation-approval question never carries credential-like param values', async () => {
+    const calls: string[] = [];
+    const snapshotCalls: string[] = [];
+    const secret = 'hunter2-secret-value';
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'fake-fill',
+        fakeTool(
+          'fake-fill',
+          calls,
+          textResult('filled'),
+          false,
+          z.object({ target: z.string(), password: z.string() }).strict(),
+        ),
+      ],
+      ['browser_snapshot', snapshotTool(snapshotCalls, 'page loaded')],
+    ]);
+    const task: Task = {
+      id: 'task-1',
+      goal: 'Fill the login form',
+      constraints: ['read-only'],
+      steps: [
+        {
+          tool: 'fake-fill',
+          params: { target: 'e1', password: secret },
+          verify: [{ kind: 'no-error-text', value: "isn't working" }],
+        },
+      ],
+      state: 'planned',
+      evidence: [],
+    };
+    await saveTask(task, dir);
+    const asked: Array<{ text: string }> = [];
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: {
+        ask: async (input) => {
+          asked.push({ text: input.text });
+          return askQuestion(input.taskId, input.text, input.options, {
+            tasksDir: dir,
+            kind: input.kind,
+            context: input.context,
+          });
+        },
+      },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(asked).toHaveLength(1);
+    // The user can still judge the step: the tool name is there, and the
+    // harmless param survives — but the credential value is nowhere.
+    expect(asked[0]?.text).toContain('fake-fill');
+    expect(asked[0]?.text).toContain('target=e1');
+    expect(asked[0]?.text).not.toContain(secret);
+    expect(asked[0]?.text).not.toContain('password');
+    expect(asked[0]?.text.length).toBeLessThanOrEqual(201);
+    const reloaded = await loadTask('task-1', dir);
+    expect(reloaded?.evidence.join('\n')).not.toContain(secret);
+    const pending = await listPendingQuestions(dir);
+    expect(pending).toHaveLength(1);
+    const stored = await loadPendingQuestion(pending[0]!.id, dir);
+    expect(JSON.stringify(stored)).not.toContain(secret);
+    expect(stored?.text).toContain('fake-fill');
+  });
+});
+
+describe('zero-step tasks', () => {
+  it('a zero-step task fails instead of completing with no evidence', async () => {
+    const task: Task = { id: 'task-1', goal: 'Do nothing', constraints: [], steps: [], state: 'planned', evidence: [] };
+    await saveTask(task, dir);
+    const failed = await runTask('task-1', { tasksDir: dir, tools: new Map(), host: dummyHost });
+    expect(failed.state).toBe('failed');
+    expect(failed.evidence.join('\n')).toContain('no steps');
+    const stored = await loadTask('task-1', dir);
+    expect(stored?.state).toBe('failed');
   });
 });
