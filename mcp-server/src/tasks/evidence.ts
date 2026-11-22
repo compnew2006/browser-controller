@@ -30,9 +30,10 @@
  * Unconfirmed vs not verified — the split the report uses:
  * - ما بقي غير مؤكد (unconfirmed): the outcome is unknown. A step that
  *   never ran (no result), a step whose tool failed (`failed` — the page
- *   was never read, so what happened is unknown), and a task paused
- *   mid-way (`paused-question` / `paused-login` — the remaining work is
- *   still open).
+ *   was never read, so what happened is unknown), a step that ran but was
+ *   never verified (`unknown` — the effect is unconfirmed), and a task
+ *   paused mid-way (`paused-question` / `paused-login` — the remaining
+ *   work is still open).
  * - ما لم يُتحقق منه (not verified): verification did not pass. A step
  *   whose verification failed (`verify-failed`), and a step that never ran
  *   (verification never had a page to check). A `failed` step is NOT
@@ -49,7 +50,7 @@ export interface CheckedStep {
   step: number;
   tool: string;
   verify: string[];
-  status: 'ok' | 'failed' | 'verify-failed' | 'not-run';
+  status: 'ok' | 'failed' | 'verify-failed' | 'unknown' | 'not-run';
   /** The step result's detail, verbatim, when the step ran. */
   detail?: string;
 }
@@ -147,6 +148,8 @@ function statusLine(status: CheckedStep['status']): string {
       return 'فشل التنفيذ';
     case 'verify-failed':
       return 'فشل التحقق';
+    case 'unknown':
+      return 'نتيجتها غير معروفة';
     case 'not-run':
       return 'لم تُنفذ';
   }
@@ -206,6 +209,16 @@ export function buildEvidenceReport(task: Task): { text: string; json: EvidenceR
         step: entry.step,
         tool: entry.tool,
         reason: `فشل التنفيذ — نتيجتها غير معروفة${entry.detail ? `: ${entry.detail}` : ''}`,
+      });
+    } else if (entry.status === 'unknown') {
+      // The step ran but its outcome was never confirmed: like `failed`,
+      // the primary fact is the unknown outcome, so it is unconfirmed
+      // only — verification never ran, so there is no verification
+      // failure to list under not-verified.
+      unconfirmed.push({
+        step: entry.step,
+        tool: entry.tool,
+        reason: `نتيجتها غير معروفة — لم يُؤكد حدوث أثرها أم لا${entry.detail ? `: ${entry.detail}` : ''}`,
       });
     } else if (entry.status === 'verify-failed') {
       notVerified.push({

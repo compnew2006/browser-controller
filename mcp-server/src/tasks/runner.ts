@@ -26,11 +26,9 @@
  * tool is available, or no host is available to call it with, the step
  * fails as `verify-failed` instead of falling back to its own result: a
  * tool result alone is never evidence of success, so verification must
- * never pass on a page that was never read. The snapshot read is
- * an extra `browser_snapshot` call after most steps; that is the cost of
- * verifying against the page instead of the tool result. A snapshot that
- * cannot be read fails the step as `verify-failed` — verification must
- * never pass on an unread page.
+ * never pass on a page that was never read. The snapshot read is an extra
+ * `browser_snapshot` call after most steps; that is the cost of verifying
+ * against the page instead of the tool result.
  *
  * Params are validated before a step runs: `prepareToolParams` applies the
  * tool's own schema (plus its `normalize`, for borrowed parameter names), so
@@ -44,27 +42,34 @@
  * session's own tab, else the user's focused tab) — and injects it into a
  * later step that takes `tabId` and names none, mirroring the default-tab
  * logic in `tools/batch.ts`. The tab a step acted on is recorded on that
- * step's params, so a resumed run rebinds to it from the completed steps
- * instead of losing it. A step that still has no tab to bind to fails
- * validation with the evidence, never executes silently.
+ * step's params, so a resumed run rebinds to it instead of losing it. A
+ * step that still has no tab to bind to fails validation with the
+ * evidence, never executes silently.
  *
  * Session check (Design §2): after each step's snapshot read, and before
  * its verification, the runner asks the session agent what page the task is
  * on. A landing on a login URL the task did not mean to be on is an expiry:
- * the task pauses in `paused-login` at that step — the step keeps no result,
- * so the resume re-runs it — and the user completes login by takeover; the
- * task is not failed. A security-warning page fails the step as
- * `verify-failed`: it is never a login page and never a successful target
- * page, and it has to be dismissed explicitly first. A login page without
- * redirect proof is not an expiry, so verification judges it. The redirect
- * proof for a non-navigate step is the page the task was on before the step,
- * seeded at run start from the completed steps (last navigate target, else
- * the URL the last completed step verified against), so a resumed run still
- * proves expiry on its first unfinished step. Re-checking the page before
- * continuing is `resumeAfterLogin`'s job in `session.ts`, not this runner's:
- * `runTask` refuses a `paused-login` task outright and directs the caller
- * to `resumeAfterLogin` — the single resume entry point — instead of
- * executing a step blind on whatever page is showing.
+ * the task pauses in `paused-login` at that step — the step is recorded
+ * `unknown`, so the resume reconciles it (re-reads the page and confirms
+ * whether its effect happened) before re-running it — and the user
+ * completes login by takeover; the task is not failed. A security-warning
+ * page fails the step as `verify-failed`: it is never a login page and never
+ * a successful target page, and it has to be dismissed explicitly first. A
+ * login page without redirect proof is not an expiry, so verification
+ * judges it. The redirect proof for a non-navigate step is the page the
+ * task was on before the step, seeded at run start from the completed
+ * steps (last navigate target, else the URL the last completed step
+ * verified against), so a resumed run still proves expiry on its first
+ * unfinished step. Re-checking the page before continuing is
+ * `resumeAfterLogin`'s job in `session.ts`, not this runner's: `runTask`
+ * refuses a `paused-login` task outright and directs the caller there —
+ * the single resume entry point — instead of executing a step blind on
+ * whatever page is showing.
+ *
+ * Recovery (Design §6, `recovery.ts`): retryable failures retry inside
+ * the policy's attempt budget under the first attempt's approval, and an
+ * unknown outcome is reconciled before any retry — so a paused-then-
+ * resumed mutating step is never executed twice blind.
  *
  * Read-only default (FR-020, binding ruling P4): a step that can change site
  * data (save/send/delete) is refused unless the task explicitly allows
@@ -88,11 +93,14 @@ import { prepareToolParams } from '../tools/params.js';
 import { loadTask, saveTask } from './store.js';
 import type { Task, TaskStep } from './types.js';
 import type { PageSnapshot, VerifyOutcome } from './verify.js';
-import { pageSnapshotFromResult, verifyStep } from './verify.js';
+import { readFreshSnapshot, readSnapshotAfterStep, verifyStep } from './verify.js';
 import type { DetectSessionFn, SessionPage, SessionState } from './session.js';
 import { detectSession, originOf, pauseForLogin } from './session.js';
 import type { Question, QuestionContext, QuestionKind } from './questions.js';
 import { mutationApprovalConstraint } from './questions.js';
+import type { RetryPolicy } from './recovery.js';
+import { executeStepWithRecovery, reconcileUnknownStep } from './recovery.js';
+import { ERROR_CODES, formatError } from '../core/error-codes.js';
 
 /** Verify one step against the page snapshot taken after it. */
 export type VerifyStepFn = (step: TaskStep, snapshot: PageSnapshot) => VerifyOutcome | Promise<VerifyOutcome>;
@@ -135,6 +143,19 @@ export interface RunTaskOptions {
     profile?: string;
     knownLoginUrls?: readonly string[];
     detectSession?: DetectSessionFn;
+  };
+  /**
+   * The recovery policy (Design §6, `recovery.ts`): retryable failures
+   * retry inside the attempt budget; an unknown outcome is reconciled
+   * before any retry. `readPage` re-reads the page for reconciliation
+   * (default: a fresh `browser_snapshot` on the bound tab); `sleep`
+   * waits between retries (default: a real timer); `policy` overrides
+   * the Design values (tests only).
+   */
+  recovery?: {
+    policy?: RetryPolicy;
+    readPage?: () => Promise<PageSnapshot>;
+    sleep?: (ms: number) => Promise<void>;
   };
 }
 
@@ -206,57 +227,6 @@ export function taskAllowsMutations(task: Task, stepIndex?: number): boolean {
   return stepIndex !== undefined && task.constraints.includes(mutationApprovalConstraint(stepIndex));
 }
 
-function resultText(result: ToolResult): string {
-  const first = result.content.find((item) => item.type === 'text');
-  return first && first.type === 'text' ? first.text : '';
-}
-
-/**
- * The page snapshot to verify a step against. A `browser_snapshot` step
- * already read the page, so its own result is the snapshot. Any other step
- * is followed by a fresh `browser_snapshot` read on the tab it acted on —
- * the read is a plain handler call, not a step, so it needs no P4 approval
- * (the snapshot tool is an idempotent read) and no param preparation beyond
- * the tab to read and the widest snapshot the schema allows. When no
- * snapshot tool or no host is available, or the read itself fails, it
- * throws, so the caller fails the step as `verify-failed` instead of
- * passing it unread: the step's own result is never a substitute snapshot.
- */
-async function readSnapshotAfterStep(
-  step: TaskStep,
-  result: ToolResult,
-  tools: ReadonlyMap<string, ToolDefinition>,
-  host: ToolHost | undefined,
-  tabId: number | undefined,
-): Promise<PageSnapshot> {
-  if (step.tool === 'browser_snapshot') return pageSnapshotFromResult(result, 'browser_snapshot result');
-  const snapshotDef = tools.get('browser_snapshot');
-  if (!snapshotDef) {
-    throw new Error(`snapshot unavailable after ${step.tool}: no browser_snapshot tool available to read the page`);
-  }
-  if (!host) {
-    throw new Error(`snapshot unavailable after ${step.tool}: no tool host available to read the page`);
-  }
-  const params: Record<string, unknown> = {};
-  if (tabId !== undefined && 'tabId' in snapshotDef.inputSchema.shape) params.tabId = tabId;
-  // Read the whole tree the schema allows: the 8000-char default truncates
-  // long accessibility trees, so content below the cut would falsely fail.
-  if ('maxChars' in snapshotDef.inputSchema.shape) params.maxChars = 50000;
-  let snapshotResult: ToolResult;
-  try {
-    snapshotResult = await snapshotDef.handler(host, params);
-  } catch (error) {
-    throw new Error(
-      `snapshot unavailable after ${step.tool}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-  if (snapshotResult.isError) {
-    throw new Error(`snapshot unavailable after ${step.tool}: ${resultText(snapshotResult)}`);
-  }
-  return pageSnapshotFromResult(snapshotResult, `browser_snapshot${tabId !== undefined ? ` tab ${tabId}` : ''}`);
-}
-
 /**
  * The tab a step's result names, if any: the `tabId` a navigate/snapshot
  * result carries, or the first tab of a `browser_tabs list` result — the
@@ -278,11 +248,11 @@ function tabIdFromResult(result: ToolResult): number | undefined {
   return undefined;
 }
 
-/** The tab the completed steps already bound, if any — the resume rebind. */
+/** The tab the completed steps already bound, if any — the resume rebind. A step recorded `unknown` executed too, so its tab counts: it is the tab the resume must reconcile — and re-run — on. */
 function boundTabFromCompletedSteps(task: Task): number | undefined {
   let bound: number | undefined;
   for (const step of task.steps) {
-    if (step.result?.status !== 'ok') continue;
+    if (step.result?.status !== 'ok' && step.result?.status !== 'unknown') continue;
     if (typeof step.params.tabId === 'number') bound = step.params.tabId;
   }
   return bound;
@@ -390,10 +360,32 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   // unfinished step is not a navigate still has a proof to check against.
   let lastUrl: string | undefined = lastUrlFromCompletedSteps(task);
 
+  // The page re-read reconciliation runs against: a fresh snapshot on
+  // the tab the task is bound to (or the caller's injected reader).
+  const reconcileReadPage =
+    options.recovery?.readPage ??
+    (() => readFreshSnapshot(tools, options.host, boundTabId, 'to reconcile the step'));
+
   for (let index = 0; index < task.steps.length; index++) {
     const step = task.steps[index];
     // Resume: a step that already verified keeps its result and never re-runs.
     if (step.result?.status === 'ok') continue;
+
+    // Resume after a pause left this step's outcome unknown: reconcile
+    // it (`recovery.ts`) before running it again — never blindly
+    // re-execute a step that may already have run (Design §6).
+    if (step.result?.status === 'unknown') {
+      const resumed = await reconcileUnknownStep(task, step, {
+        readPage: reconcileReadPage,
+        verify,
+        save: () => saveTask(task, options.tasksDir),
+        fail: (detail) => failStep(task, step, index, 'failed', detail, options.tasksDir),
+      });
+      if (resumed.url !== undefined) lastUrl = resumed.url;
+      if (resumed.outcome === 'confirmed') continue;
+      if (resumed.outcome === 'unknown') return task;
+      // `not-happened`: fall through to execute the step.
+    }
 
     const def = tools.get(step.tool);
     if (!def) {
@@ -467,19 +459,33 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       return task;
     }
 
-    let result: ToolResult;
-    try {
+    // The tool call runs under the recovery policy (`recovery.ts`):
+    // attempts share the one validation and the one approval above, so a
+    // retry runs under the same approval the first attempt had — it
+    // neither re-asks for approval nor executes without it.
+    const attempt = await executeStepWithRecovery(
+      task,
+      step,
       // Registry tools need the host (checked above); injected tools ignore it.
-      result = await def.handler(options.host as ToolHost, validated);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      await failStep(task, step, index, 'failed', detail, options.tasksDir);
-      return task;
+      () => def.handler(options.host as ToolHost, validated),
+      {
+        policy: options.recovery?.policy,
+        sleep: options.recovery?.sleep,
+        readPage: reconcileReadPage,
+        verify,
+        fail: (detail) => failStep(task, step, index, 'failed', detail, options.tasksDir),
+      },
+    );
+    if (attempt.reconciledUrl !== undefined) lastUrl = attempt.reconciledUrl;
+    if (attempt.kind === 'failed') return task;
+    if (attempt.kind === 'reconciled') {
+      // Reconciliation confirmed the step after an uncoded failure: its
+      // result is already ok — verification already ran, against the fresh
+      // read, inside the reconciliation — so the step is done.
+      await saveTask(task, options.tasksDir);
+      continue;
     }
-    if (result.isError) {
-      await failStep(task, step, index, 'failed', resultText(result), options.tasksDir);
-      return task;
-    }
+    const result = attempt.result;
 
     // The tab this step acted on, so the verification snapshot reads the
     // same tab — and the binding is recorded on the step if it opened one.
@@ -492,8 +498,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     // The tab to verify against: the tab the step's result names (a tab it
     // opened), else the tab the step ran on — its explicit tabId, or the
     // bound tab injected into it — else the bound tab. The explicit tabId
-    // must win over the bound tab: a step targeting tab 99 while bound to
-    // tab 42 is verified against tab 99, never tab 42.
+    // must win over the bound tab.
     const verifyTabId =
       openedTabId ?? (typeof validated.tabId === 'number' ? validated.tabId : boundTabId);
 
@@ -525,10 +530,25 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       knownLoginUrls,
     );
     if (sessionState === 'expired') {
-      // The session ended mid-task: pause in `paused-login` at this step —
-      // the step keeps no result, so the resume re-runs it — and hand the
-      // login to the user (takeover). The task is not failed: its progress
-      // stands, and `resumeAfterLogin` continues from this same step.
+      // The session ended mid-task: the step executed — its tool call
+      // returned — but it was never verified, so its outcome is unknown.
+      // Record it as unknown, not blank, so the resume reconciles it
+      // before re-running it, instead of executing it a second time
+      // blind. The tab the step acted on is recorded with it, so the
+      // resume reconciles — and re-runs — on that tab. Then pause in
+      // `paused-login` and hand the login to the user (takeover).
+      if (openedTabId !== undefined && 'tabId' in def.inputSchema.shape) {
+        step.params = { ...step.params, tabId: openedTabId };
+      }
+      step.result = {
+        status: 'unknown',
+        detail: formatError(
+          ERROR_CODES.OUTCOME_UNKNOWN,
+          `the step executed but the session expired before verification — the outcome is unknown until the resume reconciles it; url=${snapshot.url}`,
+        ),
+      };
+      task.evidence.push(`step ${index + 1} (${step.tool}): unknown — ${step.result.detail}`);
+      await saveTask(task, options.tasksDir);
       return pauseForLogin(id, index, options.tasksDir);
     }
     if (sessionState === 'warning-page') {

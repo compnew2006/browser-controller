@@ -59,7 +59,7 @@ const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const TASK_FILE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}\.json$/u;
 
 const TASK_STATES: ReadonlySet<string> = new Set(['planned', 'running', 'paused-question', 'paused-login', 'done', 'failed']);
-const STEP_STATUSES: ReadonlySet<string> = new Set(['ok', 'failed', 'verify-failed']);
+const STEP_STATUSES: ReadonlySet<string> = new Set(['ok', 'failed', 'verify-failed', 'unknown']);
 const VERIFY_KINDS: ReadonlySet<string> = new Set(['url-contains', 'text-present', 'element-count', 'no-error-text']);
 
 /** The project's current state path for tasks. The caller may pass an explicit directory instead. */

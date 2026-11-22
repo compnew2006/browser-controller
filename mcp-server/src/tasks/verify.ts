@@ -24,9 +24,16 @@
  * `[attr]`, or anything with CSS syntax — fails naming itself as
  * unsupported instead of silently counting 0, so "no such element" and
  * "unsupported selector" are never confused.
+ *
+ * The snapshot readers live here too: `readSnapshotAfterStep` is the
+ * fresh page read verification runs against after a step, and
+ * `readFreshSnapshot` is the same read for reconciliation — the page
+ * re-read that confirms whether an unknown step's effect happened.
+ * Both are plain handler calls, not steps, so they need no P4 approval
+ * (the snapshot tool is an idempotent read).
  */
 import { rawResultOf } from '../tools/types.js';
-import type { ToolResult } from '../tools/types.js';
+import type { ToolDefinition, ToolHost, ToolResult } from '../tools/types.js';
 import type { TaskStep, VerifyRule } from './types.js';
 
 /** The page as it is after a step: URL, text, and where the snapshot came from. */
@@ -157,9 +164,78 @@ export function verifyStep(step: TaskStep, snapshot: PageSnapshot): VerifyOutcom
  * result already is the snapshot, so no second read is needed.
  */
 export function pageSnapshotFromResult(result: ToolResult, ref: string): PageSnapshot {
-  const first = result.content.find((item) => item.type === 'text');
-  const text = first && first.type === 'text' ? first.text : '';
+  const text = resultText(result);
   const raw = rawResultOf(result);
   const url = raw && typeof raw.url === 'string' ? raw.url : '';
   return { url, text, ref };
+}
+
+/** The first text a tool result carries, or '' when it carries none. */
+export function resultText(result: ToolResult): string {
+  const first = result.content.find((item) => item.type === 'text');
+  return first && first.type === 'text' ? first.text : '';
+}
+
+/**
+ * Read the page again, on the tab given: the fresh read verification — and
+ * reconciliation — runs against. The read is a plain handler call, not a
+ * step, so it needs no P4 approval (the snapshot tool is an idempotent
+ * read) and no param preparation beyond the tab to read and the widest
+ * snapshot the schema allows. When no snapshot tool or no host is
+ * available, or the read itself fails, it throws, so the caller fails the
+ * step as `verify-failed` — or leaves the outcome unknown — instead of
+ * passing it unread: a tool result alone is never evidence of success.
+ * `context` names the read in the failure (`after <tool>`, `to reconcile
+ * the step`), so the evidence says which read failed.
+ */
+export async function readFreshSnapshot(
+  tools: ReadonlyMap<string, ToolDefinition>,
+  host: ToolHost | undefined,
+  tabId: number | undefined,
+  context: string,
+): Promise<PageSnapshot> {
+  const snapshotDef = tools.get('browser_snapshot');
+  if (!snapshotDef) {
+    throw new Error(`snapshot unavailable ${context}: no browser_snapshot tool available to read the page`);
+  }
+  if (!host) {
+    throw new Error(`snapshot unavailable ${context}: no tool host available to read the page`);
+  }
+  const params: Record<string, unknown> = {};
+  if (tabId !== undefined && 'tabId' in snapshotDef.inputSchema.shape) params.tabId = tabId;
+  // Read the whole tree the schema allows: the 8000-char default truncates
+  // long accessibility trees, so content below the cut would falsely fail.
+  if ('maxChars' in snapshotDef.inputSchema.shape) params.maxChars = 50000;
+  let snapshotResult: ToolResult;
+  try {
+    snapshotResult = await snapshotDef.handler(host, params);
+  } catch (error) {
+    throw new Error(
+      `snapshot unavailable ${context}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (snapshotResult.isError) {
+    throw new Error(`snapshot unavailable ${context}: ${resultText(snapshotResult)}`);
+  }
+  return pageSnapshotFromResult(snapshotResult, `browser_snapshot${tabId !== undefined ? ` tab ${tabId}` : ''}`);
+}
+
+/**
+ * The page snapshot to verify a step against. A `browser_snapshot` step
+ * already read the page, so its own result is the snapshot. Any other step
+ * is followed by a fresh `browser_snapshot` read on the tab it acted on.
+ * When no snapshot tool or no host is available, or the read itself fails,
+ * it throws, so the caller fails the step as `verify-failed` instead of
+ * passing it unread: the step's own result is never a substitute snapshot.
+ */
+export async function readSnapshotAfterStep(
+  step: TaskStep,
+  result: ToolResult,
+  tools: ReadonlyMap<string, ToolDefinition>,
+  host: ToolHost | undefined,
+  tabId: number | undefined,
+): Promise<PageSnapshot> {
+  if (step.tool === 'browser_snapshot') return pageSnapshotFromResult(result, 'browser_snapshot result');
+  return readFreshSnapshot(tools, host, tabId, `after ${step.tool}`);
 }

@@ -22,8 +22,14 @@ export type VerifyRule =
   | { kind: 'element-count'; selector: string; count: number }
   | { kind: 'no-error-text'; value: string };
 
-/** The recorded outcome of one executed step. */
-export type StepStatus = 'ok' | 'failed' | 'verify-failed';
+/**
+ * The recorded outcome of one executed step. `unknown` is the outcome of a
+ * step that executed but was never verified — the session expired, or the
+ * call vanished with no reply — so a resume must reconcile it (re-read the
+ * page and confirm whether its effect happened) before re-running it,
+ * never blindly (Design §6 / Review Focus 5).
+ */
+export type StepStatus = 'ok' | 'failed' | 'verify-failed' | 'unknown';
 
 export interface StepResult {
   status: StepStatus;

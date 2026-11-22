@@ -372,8 +372,10 @@ describe('runner pauses and resumes on session expiry', () => {
       session: { knownLoginUrls: ['https://example.com/login'] },
     });
     expect(paused.state).toBe('paused-login');
-    // The redirected step never verified, so it stays unrun for the resume.
-    expect(paused.steps[0]?.result).toBeUndefined();
+    // The redirected step executed but never verified, so its outcome is
+    // recorded as unknown for the resume to reconcile (Task 7); the step
+    // after it never ran.
+    expect(paused.steps[0]?.result?.status).toBe('unknown');
     expect(paused.steps[1]?.result).toBeUndefined();
     expect(calls).toEqual(['browser_navigate', 'browser_snapshot']);
     expect(paused.evidence.join('\n')).toContain('step 1 of 2');
@@ -406,7 +408,9 @@ describe('runner pauses and resumes on session expiry', () => {
     });
     expect(paused.state).toBe('paused-login');
     expect(paused.steps[0]?.result?.status).toBe('ok');
-    expect(paused.steps[1]?.result).toBeUndefined();
+    // The snapshot step executed but never verified, so its outcome is
+    // recorded as unknown for the resume to reconcile (Task 7).
+    expect(paused.steps[1]?.result?.status).toBe('unknown');
     // The completed navigate step was skipped, so only the snapshot step ran —
     // and its expiry was still proven from the navigate's target.
     expect(calls).toEqual(['browser_snapshot']);
@@ -442,7 +446,9 @@ describe('runner pauses and resumes on session expiry', () => {
       session: { knownLoginUrls: ['https://example.com/login'] },
     });
     expect(paused.state).toBe('paused-login');
-    expect(paused.steps[1]?.result).toBeUndefined();
+    // The snapshot step executed but never verified, so its outcome is
+    // recorded as unknown for the resume to reconcile (Task 7).
+    expect(paused.steps[1]?.result?.status).toBe('unknown');
     expect(calls).toEqual(['browser_snapshot']);
   });
 
@@ -524,12 +530,13 @@ describe('runner pauses and resumes on session expiry', () => {
     expect(resumed.state).toBe('done');
     expect(resumed.steps[0]?.result?.status).toBe('ok');
     expect(resumed.steps[1]?.result?.status).toBe('ok');
-    // Run 1: navigate + the verification snapshot read. Run 2: navigate +
-    // its verification snapshot read, then the snapshot step itself.
+    // Run 1: navigate + the verification snapshot read. Run 2: the
+    // reconcile re-read of the paused navigate — its effect (being on the
+    // dashboard) is confirmed, so the navigate is not re-run — then the
+    // snapshot step itself.
     expect(calls).toEqual([
       'browser_navigate',
       'browser_snapshot',
-      'browser_navigate',
       'browser_snapshot',
       'browser_snapshot',
     ]);

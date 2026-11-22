@@ -157,7 +157,10 @@ describe('runner', () => {
   it('stops at a tool that returns an error result', async () => {
     const calls: string[] = [];
     const tools = new Map<string, ToolDefinition>([
-      ['fake-ok', fakeTool('fake-ok', calls, failureResult('NAVIGATION_FAILED: no network'))],
+      // INVALID_ARGUMENT is not retryable: Task 7 retries TIMEOUT and
+      // NAVIGATION_FAILED, so the stop-at-first-error case uses a code the
+      // policy stops on — retry coverage lives in recovery.test.ts.
+      ['fake-ok', fakeTool('fake-ok', calls, failureResult('INVALID_ARGUMENT: bad params'))],
       ['fake-next', fakeTool('fake-next', calls, textResult('next page'))],
     ]);
     await saveTask(twoStepTask(), dir);
@@ -170,14 +173,16 @@ describe('runner', () => {
 
     expect(done.state).toBe('failed');
     expect(done.steps[0]?.result?.status).toBe('failed');
-    expect(done.steps[0]?.result?.detail).toContain('NAVIGATION_FAILED');
+    expect(done.steps[0]?.result?.detail).toContain('INVALID_ARGUMENT');
     expect(calls).toEqual(['fake-ok']);
   });
 
   it('stops at a tool that throws', async () => {
     const calls: string[] = [];
     const tools = new Map<string, ToolDefinition>([
-      ['fake-ok', fakeTool('fake-ok', calls, new Error('TIMEOUT: tab did not respond'))],
+      // As above: TIMEOUT retries since Task 7, so the throwing case uses
+      // a non-retryable code.
+      ['fake-ok', fakeTool('fake-ok', calls, new Error('INTERNAL_ERROR: handler crashed'))],
       ['fake-next', fakeTool('fake-next', calls, textResult('next page'))],
     ]);
     await saveTask(twoStepTask(), dir);
@@ -185,7 +190,7 @@ describe('runner', () => {
     const done = await runTask('task-1', { tasksDir: dir, tools });
     expect(done.state).toBe('failed');
     expect(done.steps[0]?.result?.status).toBe('failed');
-    expect(done.steps[0]?.result?.detail).toContain('TIMEOUT');
+    expect(done.steps[0]?.result?.detail).toContain('INTERNAL_ERROR');
     expect(calls).toEqual(['fake-ok']);
   });
 
