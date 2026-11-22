@@ -25,6 +25,7 @@ import {
   verifyWebSocketDaemonProof,
 } from './daemon-auth.js';
 import { closeAllApprovalCards, closeStaleApprovalCards, restoreVaultRuntimeState } from './vault-actions.js';
+import { pendingTaskQuestions } from './task-questions.js';
 import { VaultConnectionChannel } from './vault-connection.js';
 import {
   DEFAULT_WS_PORT,
@@ -499,10 +500,9 @@ export function buildStatusPayload(message, tabs) {
     browserLabel: browserIdentity.browserLabel || '',
     activity: currentActivity,
     tabLocks: tabLocks.snapshot(),
-    // Open-tab snapshot so the popup can render a Pin dropdown per tab without
-    // a second round-trip. undefined when the caller didn't fetch tabs (the
-    // popup treats missing the same as empty — see updateUI).
+    // Open-tab snapshot so the popup renders a Pin dropdown per tab without a second round-trip (undefined = empty; see updateUI).
     tabs: tabs || [],
+    taskQuestions: pendingTaskQuestions(), // questions a task waits on (Design §5): the popup renders them as cards outside the shielded tab
     statusMessage: message || null,
   };
 }

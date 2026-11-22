@@ -29,6 +29,7 @@ import {
   sendVaultUiClosed,
   sendJson,
   sendVaultProtectionTabRemoved,
+  isWsConnected,
 } from "./lib/connection.js";
 import {
   closeApprovalCard,
@@ -43,6 +44,7 @@ import {
 } from "./lib/vault-actions.js";
 import { dropCard, takeCardDecision } from "./lib/vault-card.js";
 import { getActivityLog } from "./lib/activity-log.js";
+import { takeTaskQuestion } from "./lib/task-questions.js";
 
 function isPopupSender(sender) {
   return sender.id === chrome.runtime.id && sender.url === chrome.runtime.getURL("popup/popup.html");
@@ -128,6 +130,35 @@ export function registerEventListeners() {
     }
     if (msg.type === "setPort") {
       respond(applyPort(msg.port));
+      return false;
+    }
+    if (msg.type === "answerTaskQuestion") {
+      // The user's answer to a task question (Design §5), from the popup's
+      // question card. Only the popup may answer: a page content script
+      // must never be able to answer for the user. The answer goes to the
+      // daemon over the WebSocket as a `taskAnswer` frame, where the bridge
+      // routes it to `answerQuestion`; the question leaves the pending list
+      // at once, so the card disappears on the next status poll even before
+      // the daemon confirms.
+      if (!isPopupSender(sender)) return false;
+      if (typeof msg.questionId !== "string" || typeof msg.answer !== "string" || msg.answer.trim() === "") {
+        respond({ success: false, error: "A question id and a non-empty answer are required." });
+        return false;
+      }
+      // The daemon is unreachable: keep the question pending so the user
+      // can answer once it reconnects, instead of dropping the answer
+      // into a dead socket and losing the card.
+      if (!isWsConnected()) {
+        respond({ success: false, error: "Daemon not connected — try again once it reconnects." });
+        return false;
+      }
+      const question = takeTaskQuestion(msg.questionId);
+      if (!question) {
+        respond({ success: false, error: "That question is no longer pending." });
+        return false;
+      }
+      sendJson({ type: "taskAnswer", questionId: msg.questionId, answer: msg.answer });
+      respond({ success: true });
       return false;
     }
     if (msg.type === "setToken") {

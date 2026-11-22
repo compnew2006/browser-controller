@@ -28,6 +28,7 @@ import { handleVaultAction, isPrivateVaultTab } from '../lib/vault-actions.js';
 import { buildSiteContext, captureTabUrlBounded } from '../lib/site-context.js';
 import { handleMemoryContext } from '../handlers/memory-context.js';
 import { beginActivity, createInputActivity, finishActivity, finishActivityBatch } from '../lib/activity-log.js';
+import { isTaskQuestionMessage, recordTaskQuestion } from '../lib/task-questions.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -367,6 +368,19 @@ export async function handleMessage(msg) {
   if (msg.type === "ping") {
     // already handled in onmessage, but be defensive
     return;
+  }
+  if (msg.type === "taskQuestion") {
+    // A task paused for the user's answer (Design §5): record the question
+    // so the popup can render its card, then broadcast so the popup
+    // refreshes at once instead of waiting for its next poll. The card
+    // lives in the popup — outside the shielded tab — never in the page.
+    // A malformed question is dropped, not recorded: the task stays
+    // paused-question and answerable through the MCP tool instead.
+    if (isTaskQuestionMessage(msg)) {
+      recordTaskQuestion(msg.question);
+      broadcastStatus(`Task ${msg.question.taskId} is waiting for your answer`).catch(() => {});
+    }
+    return; // control message — no response expected
   }
 
   const { id, tool, params } = msg;

@@ -72,7 +72,13 @@
  * classification in `isMutatingTool` — NOT the retry-safety `idempotent`
  * flag, which only says whether re-running the tool is safe. A refused step
  * fails the task with the refusal in its evidence; it never executes
- * silently.
+ * silently. There are two approval paths: the `allow-mutations` constraint,
+ * and — when the caller wires `options.questions.ask` — a mutation-approval
+ * question (Design §5): the runner pauses in `paused-question` and asks the
+ * user whether to allow this mutation; a `yes` records a per-step approval
+ * and the resume continues from the same step, a `no` fails the task with
+ * the refusal as evidence. The question path adds an approval route; it
+ * never weakens the gate — without a wired ask, the refusal stands.
  */
 import { toolMap } from '../tools/registry.js';
 import type { ToolDefinition, ToolHost, ToolResult } from '../tools/types.js';
@@ -85,9 +91,20 @@ import type { PageSnapshot, VerifyOutcome } from './verify.js';
 import { pageSnapshotFromResult, verifyStep } from './verify.js';
 import type { DetectSessionFn, SessionPage, SessionState } from './session.js';
 import { detectSession, originOf, pauseForLogin } from './session.js';
+import type { Question, QuestionContext, QuestionKind } from './questions.js';
+import { mutationApprovalConstraint } from './questions.js';
 
 /** Verify one step against the page snapshot taken after it. */
 export type VerifyStepFn = (step: TaskStep, snapshot: PageSnapshot) => VerifyOutcome | Promise<VerifyOutcome>;
+
+/** Ask the user a question, pausing the task in `paused-question` — the question protocol (`questions.ts`). */
+export type AskQuestionFn = (input: {
+  taskId: string;
+  text: string;
+  options?: string[];
+  kind: QuestionKind;
+  context?: QuestionContext;
+}) => Promise<Question>;
 
 export interface RunTaskOptions {
   tasksDir?: string;
@@ -96,6 +113,17 @@ export interface RunTaskOptions {
   tools?: ReadonlyMap<string, ToolDefinition>;
   /** Verifier to apply after each step; defaults to `verifyStep`. */
   verify?: VerifyStepFn;
+  /**
+   * The human question protocol (Design §5): when a mutating step lacks
+   * approval and an ask is wired, the runner pauses in `paused-question`
+   * and asks the user whether to allow this mutation instead of failing
+   * outright. Without one the step is refused and the task fails, as
+   * before — the question path adds an approval route, it never weakens
+   * the gate.
+   */
+  questions?: {
+    ask?: AskQuestionFn;
+  };
   /**
    * Session checking (Design §2): after each step's snapshot read, the
    * runner asks the session agent what page the task is on. `profile` is
@@ -167,9 +195,15 @@ export function isMutatingTool(def: ToolDefinition, params: Record<string, unkno
   }
 }
 
-/** Whether the task carries explicit approval for mutating steps. */
-export function taskAllowsMutations(task: Task): boolean {
-  return task.constraints.includes(ALLOW_MUTATIONS);
+/**
+ * Whether the task carries explicit approval for mutating steps: the
+ * blanket `allow-mutations` constraint, or a per-step approval recorded by
+ * a `yes` answer to a mutation-approval question
+ * (`mutationApprovalConstraint`, `questions.ts`) — that step only.
+ */
+export function taskAllowsMutations(task: Task, stepIndex?: number): boolean {
+  if (task.constraints.includes(ALLOW_MUTATIONS)) return true;
+  return stepIndex !== undefined && task.constraints.includes(mutationApprovalConstraint(stepIndex));
 }
 
 function resultText(result: ToolResult): string {
@@ -327,6 +361,17 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     );
   }
 
+  // A task paused for a question resumes only through `answerQuestion`,
+  // which records the answer first: running it directly would execute the
+  // next step without the answer the task is waiting for — and, for a
+  // mutation-approval question, without the approval. Same rule as
+  // `paused-login` above, which resumes only through `resumeAfterLogin`.
+  if (task.state === 'paused-question') {
+    throw new Error(
+      `cannot run task ${id} directly: task is paused-question — answer it with answerQuestion, which resumes the task from the same step`,
+    );
+  }
+
   task.state = 'running';
   await saveTask(task, options.tasksDir);
 
@@ -383,7 +428,30 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       return task;
     }
 
-    if (isMutatingTool(def, validated) && !taskAllowsMutations(task)) {
+    if (isMutatingTool(def, validated) && !taskAllowsMutations(task, index)) {
+      if (options.questions?.ask) {
+        // Second approval path (Design §5): instead of failing outright,
+        // ask the user whether to allow this mutation. The question carries
+        // the tool and its params so the user can judge; a `yes` records a
+        // per-step approval on the task (see `answerQuestion`) and the
+        // resume continues from this same step, a `no` fails it with the
+        // refusal as evidence. The ask pauses the task — return it paused.
+        try {
+          await options.questions.ask({
+            taskId: id,
+            text: `Allow step ${index + 1} (${step.tool}) to change site data? ${JSON.stringify(validated)}`,
+            options: ['yes', 'no'],
+            kind: 'confirm',
+            context: { stepIndex: index, tool: step.tool, params: validated },
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await failStep(task, step, index, 'failed', detail, options.tasksDir);
+          return task;
+        }
+        const paused = await loadTask(id, options.tasksDir);
+        return paused ?? task;
+      }
       await failStep(
         task,
         step,

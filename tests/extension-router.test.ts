@@ -73,6 +73,7 @@ const dialogListeners: Array<(source: { tabId: number }, method: string, params?
 const { handleMessage, dispatch, dispatchedTools } = await import('../extension/dispatch/router.js');
 const { getActivityLog } = await import('../extension/lib/activity-log.js');
 const { tabLocks, tabMutex, tabControl, wedgedTabs } = await import('../extension/lib/state.js');
+const { pendingTaskQuestions, clearTaskQuestions } = await import('../extension/lib/task-questions.js');
 const { allTools } = await import('../mcp-server/src/tools/index.js');
 const overlay = await import('../extension/lib/overlay.js');
 
@@ -398,6 +399,29 @@ describe("extension router (handleMessage)", () => {
     expect(frame).toMatchObject({ success: false });
     expect(String(frame?.error)).toMatch(/^TAB_LOCKED: tab 3 is locked by Claude \(session owner-s\) since /);
     tabLocks.release(3);
+  });
+});
+
+describe('the router and task questions (Design §5)', () => {
+  beforeEach(() => {
+    clearTaskQuestions();
+  });
+  afterEach(() => {
+    clearTaskQuestions();
+  });
+
+  it('records a taskQuestion control message so the popup can render its card', async () => {
+    const question = { id: 'q-1', taskId: 'task-1', text: 'Which one?', options: ['A', 'B'], kind: 'choice' };
+    await handleMessage({ type: 'taskQuestion', question });
+    expect(pendingTaskQuestions()).toEqual([question]);
+    // A control message expects no reply frame.
+    expect(sent.filter((frame) => frame.type === 'taskQuestion')).toEqual([]);
+  });
+
+  it('drops a malformed taskQuestion instead of recording it', async () => {
+    await handleMessage({ type: 'taskQuestion', question: { id: 'q-1', taskId: 'task-1' } });
+    await handleMessage({ type: 'taskQuestion' });
+    expect(pendingTaskQuestions()).toEqual([]);
   });
 });
 

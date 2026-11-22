@@ -10,6 +10,7 @@ import { bindBooleanSetting, bindDebouncedInput } from './settings-input.js';
 import { AGENT_MOUSE_MOVEMENT_LOCK_KEY } from '../lib/overlay.js';
 import { authenticatedDaemonFetch, daemonFailureKind } from '../lib/daemon-auth.js';
 import { bindActionActivity } from './activity-view.js';
+import { bindTaskQuestions } from './question-view.js'; // Design §5: the question card, outside the shielded tab
 
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -30,6 +31,11 @@ const tabsCountEl = document.getElementById('tabsCount');
 const agentsCountEl = document.getElementById('agentsCount');
 const settingsTabBtn = document.getElementById('settingsTab');
 const actionActivity = bindActionActivity();
+const taskQuestions = bindTaskQuestions((questionId, answer) => {
+  chrome.runtime.sendMessage({ type: 'answerTaskQuestion', questionId, answer }, (resp) => {
+    if (resp?.success) { addLog('Answer sent', 'ok'); refreshStatus(); } else addLog(`Answer failed: ${resp?.error || 'unknown'}`, 'err');
+  });
+});
 
 const manifest = chrome.runtime.getManifest();
 versionEl.textContent = `v${manifest.version}`;
@@ -324,7 +330,7 @@ function updateUI(state) {
   // Open Tabs panel (driven by the background getStatus payload). Cache so a
   // later agents poll can re-render the Pin dropdowns with fresh agent names.
   lastTabs = Array.isArray(state.tabs) ? state.tabs : [];
-  renderOpenTabs();
+  renderOpenTabs(); taskQuestions.render(state.taskQuestions);
 }
 
 /** Fetch connection + tabs + locks state from the background worker. */
