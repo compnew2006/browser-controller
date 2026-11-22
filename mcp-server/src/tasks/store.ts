@@ -217,7 +217,7 @@ function validateEvidenceReport(raw: unknown): EvidenceReport {
 
 /** A parsed task, or an error when the record is not a task. Unknown fields are rejected, so a file written by a newer shape never loads as an old one. */
 export function validateTask(raw: unknown): Task {
-  if (!isRecord(raw) || !hasOnlyKeys(raw, ['id', 'goal', 'constraints', 'steps', 'state', 'evidence', 'report', 'sessionId'])) throw corrupt('a task needs id, goal, constraints, steps, state and evidence');
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ['id', 'goal', 'constraints', 'steps', 'state', 'evidence', 'report', 'sessionId', 'cancelled'])) throw corrupt('a task needs id, goal, constraints, steps, state and evidence');
   // A stored id that fails validation is file-content corruption, not a
   // caller error: `requireTaskId` throws 'invalid-argument' for a
   // caller-supplied id, so only this call site translates it to 'corrupt'.
@@ -236,6 +236,7 @@ export function validateTask(raw: unknown): Task {
   if (typeof raw.state !== 'string' || !TASK_STATES.has(raw.state)) throw corrupt('a task needs a known state');
   if (!isStringArray(raw.evidence)) throw corrupt('task evidence must be a list of strings');
   if (raw.sessionId !== undefined && typeof raw.sessionId !== 'string') throw corrupt('a task session id must be a string');
+  if (raw.cancelled !== undefined && typeof raw.cancelled !== 'boolean') throw corrupt('a task cancel marker must be a boolean');
   let report: Task['report'];
   if (raw.report !== undefined) {
     if (!isRecord(raw.report) || !hasOnlyKeys(raw.report, ['text', 'json'])) throw corrupt('a task report needs text and json');
@@ -252,6 +253,7 @@ export function validateTask(raw: unknown): Task {
   };
   if (report !== undefined) task.report = report;
   if (raw.sessionId !== undefined) task.sessionId = raw.sessionId as string;
+  if (raw.cancelled !== undefined) task.cancelled = raw.cancelled as boolean;
   return task;
 }
 

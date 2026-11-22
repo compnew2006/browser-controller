@@ -16,6 +16,7 @@ export * from './questions.js';
 export * from './question-store.js';
 export * from './recovery.js';
 export * from './reporting.js';
+export * from './cancel-guard.js';
 export * from './wiring.js';
 export * from './task-question-route.js';
 export * from './tools.js';

@@ -143,10 +143,12 @@ export const taskStatusTool: ToolDefinition = {
 
 /**
  * Cancel a planned or paused task: it fails with the cancellation as
- * evidence and its evidence report persisted. A finished task cannot be
- * cancelled, and a task this process is currently running cannot be
- * either — the runner would overwrite the cancelled record with its
- * next step save; wait for it to pause or finish, then cancel.
+ * evidence and its evidence report persisted, and marks the record
+ * cancelled (`Task.cancelled`) so a run in flight in another process
+ * aborts at its next save instead of overwriting the cancellation
+ * (`tasks/cancel-guard.ts`). A finished task cannot be cancelled, and
+ * a task this process is currently running cannot be either — wait for
+ * it to pause or finish, then cancel.
  */
 export const taskCancelTool: ToolDefinition = {
   name: 'browser_task_cancel',
@@ -169,6 +171,11 @@ export const taskCancelTool: ToolDefinition = {
     const index = task.steps.findIndex((step) => step.result?.status !== 'ok');
     const stepNumber = index === -1 ? task.steps.length : index + 1;
     task.state = 'failed';
+    // The marker is what a run in flight in another process sees: it
+    // aborts at its next save instead of overwriting this cancellation
+    // (`tasks/cancel-guard.ts`). It is cleared when the run's wrapper
+    // saves the terminal record.
+    task.cancelled = true;
     task.evidence.push(`cancelled by the user at step ${stepNumber} of ${task.steps.length} — the task stops here and never resumes`);
     // A pending question for a cancelled task must not come back: drop its
     // persisted files, so a daemon restart never re-asks them. The

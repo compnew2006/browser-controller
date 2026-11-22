@@ -29,13 +29,17 @@
  *
  * In-flight tracking: `runTaskWithReport` marks a task running while it
  * executes, in this process's module state. `browser_task_cancel` refuses
- * a task that is running here, because the runner would overwrite the
- * cancelled record with its next step save; a task that merely says
- * `running` in its file but is not running here (a stale record after a
- * restart) can still be cancelled. The set is per-process: a daemon-side
- * resume is invisible to the MCP process's cancel, and vice versa — a
- * cross-process cancel race remains, and is recorded as a known
- * limitation rather than pretended away.
+ * a task that is running here — wait for it to pause or finish, then
+ * cancel; a task that merely says `running` in its file but is not
+ * running here (a stale record after a restart) can still be cancelled.
+ * The set is per-process, so a daemon-side resume is invisible to the
+ * MCP process's cancel and vice versa — but a cross-process cancel is
+ * still durable: the cancel marks the stored record (`Task.cancelled`),
+ * and the runner re-checks the stored record before every save
+ * (`tasks/cancel-guard.ts`) and aborts at the next one, so the run
+ * never overwrites the cancellation. The marker is cleared when this
+ * wrapper saves the terminal record, so the stored record keeps the
+ * cancellation as evidence, not as a live signal.
  *
  * The runner itself is injectable (`configureTaskRunner`) for tests:
  * production never calls it, and it restores the real runner when called
@@ -130,8 +134,12 @@ export function configureTaskRunner(fn?: TaskRunnerFn): void {
  * Run a task and persist its evidence report on the settled record.
  * When the stored record was failed from outside while this run was in
  * flight — a cancel — the stored outcome wins: the run's result is
- * discarded and the stored task is reported instead, so a cancel is
- * never silently overwritten by the run it interrupted.
+ * discarded and the stored task is reported instead. That
+ * reconciliation covers only the window between the runner's final save
+ * and this load: a cancel landing earlier in the run is caught by the
+ * runner itself, which re-checks the stored record before every save
+ * and aborts on the cancel marker (`tasks/cancel-guard.ts`) instead of
+ * overwriting it.
  */
 export async function runTaskWithReport(id: string, options: RunTaskOptions = {}): Promise<Task> {
   runningTasks.add(id);
@@ -145,8 +153,12 @@ export async function runTaskWithReport(id: string, options: RunTaskOptions = {}
       // the save below writes over whatever is there.
     }
     if (stored && stored.state === 'failed' && task.state !== 'failed') {
+      // The marker did its job once the run returned; the terminal record
+      // keeps the cancellation as evidence, not as a live signal.
+      delete stored.cancelled;
       return saveTaskWithReport(stored, options.tasksDir);
     }
+    delete task.cancelled;
     return saveTaskWithReport(task, options.tasksDir);
   } finally {
     runningTasks.delete(id);

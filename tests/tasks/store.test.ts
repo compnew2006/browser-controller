@@ -156,6 +156,17 @@ describe('task store', () => {
     expect(plain?.sessionId).toBeUndefined();
   });
 
+  it('roundtrips the cancel marker, and rejects a non-boolean one', async () => {
+    const task: Task = { ...pausedLoginTask(), cancelled: true };
+    await saveTask(task, dir);
+    expect((await loadTask('task-1', dir))?.cancelled).toBe(true);
+    // A task without the marker still loads: the field stays optional.
+    await saveTask(pausedLoginTask(), dir);
+    expect((await loadTask('task-1', dir))?.cancelled).toBeUndefined();
+    const badMarker = { ...pausedLoginTask(), cancelled: 'yes' };
+    await expect(saveTask(badMarker as unknown as Task, dir)).rejects.toThrowError(/cancel marker must be a boolean/);
+  });
+
   it('rejects a report that is not an evidence report', async () => {
     const task = pausedLoginTask();
     const report = buildEvidenceReport(task);

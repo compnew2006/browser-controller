@@ -85,12 +85,21 @@
  * and the resume continues from the same step, a `no` fails the task with
  * the refusal as evidence. The question path adds an approval route; it
  * never weakens the gate — without a wired ask, the refusal stands.
+ *
+ * Cross-process cancel (Task 8, fix round 1): the MCP process and the
+ * daemon are different processes, so a cancel from one cannot see the
+ * other's in-flight set — the run re-checks the stored record before
+ * every save instead (`cancel-guard.ts`): a stored cancel marker means
+ * another process cancelled the task, so the run aborts at that save —
+ * no further step executes and no save overwrites the cancellation —
+ * and the stored cancelled record is the run's outcome.
  */
 import type { ToolDefinition, ToolHost, ToolResult } from '../tools/types.js';
 import { rawResultOf } from '../tools/types.js';
 import { NO_DEFAULT_TAB, TAB_OR_ORIGIN } from '../tools/batch-limits.js';
 import { prepareToolParams } from '../tools/params.js';
-import { loadTask, saveTask } from './store.js';
+import { loadTask } from './store.js';
+import { TaskCancelledExternally, saveTaskUnlessCancelled } from './cancel-guard.js';
 import type { Task, TaskStep } from './types.js';
 import type { PageSnapshot, VerifyOutcome } from './verify.js';
 import { readFreshSnapshot, readSnapshotAfterStep, verifyStep } from './verify.js';
@@ -240,7 +249,7 @@ async function failStep(
   step.result = { status, detail };
   task.evidence.push(`step ${index + 1} (${step.tool}): ${status} — ${detail}`);
   task.state = 'failed';
-  await saveTask(task, tasksDir);
+  await saveTaskUnlessCancelled(task, tasksDir);
 }
 
 /**
@@ -286,13 +295,44 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     );
   }
 
+  try {
+    return await runTaskSteps(task, id, tools, verify, hostRequired, options);
+  } catch (error) {
+    if (error instanceof TaskCancelledExternally) {
+      // Another process cancelled the task while this run was in
+      // flight: the run stopped at its next save instead of
+      // overwriting the cancellation, so the stored cancelled
+      // record is the run's outcome — return it, not the run's own
+      // in-memory task.
+      return error.stored;
+    }
+    throw error;
+  }
+}
+
+/**
+ * The run itself, split out of `runTask` so the wrapper above can
+ * turn an external cancel into the stored cancelled record: the
+ * saves below go through `saveTaskUnlessCancelled`, which throws
+ * `TaskCancelledExternally` when another process cancelled the
+ * task, and the throw unwinds the whole run — no further step
+ * executes and no save overwrites the cancellation.
+ */
+async function runTaskSteps(
+  task: Task,
+  id: string,
+  tools: ReadonlyMap<string, ToolDefinition>,
+  verify: VerifyStepFn,
+  hostRequired: boolean,
+  options: RunTaskOptions,
+): Promise<Task> {
   task.state = 'running';
   // The report describes the state the task settled in; this run leaves
   // that state, so the record carries no report until the run settles
   // again — a reader polling mid-run must never see a report that claims
   // the task is still paused (or done) when it is running.
   delete task.report;
-  await saveTask(task, options.tasksDir);
+  await saveTaskUnlessCancelled(task, options.tasksDir);
 
   // The tab the completed steps already bound (a resumed run rebinds to it).
   let boundTabId = boundTabFromCompletedSteps(task);
@@ -327,7 +367,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       const resumed = await reconcileUnknownStep(task, step, {
         readPage: reconcileReadPage,
         verify,
-        save: () => saveTask(task, options.tasksDir),
+        save: () => saveTaskUnlessCancelled(task, options.tasksDir),
         fail: (detail) => failStep(task, step, index, 'failed', detail, options.tasksDir),
       });
       if (resumed.url !== undefined) lastUrl = resumed.url;
@@ -433,7 +473,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       // Reconciliation confirmed the step after an uncoded failure: its
       // result is already ok — verification already ran, against the fresh
       // read, inside the reconciliation — so the step is done.
-      await saveTask(task, options.tasksDir);
+      await saveTaskUnlessCancelled(task, options.tasksDir);
       continue;
     }
     const result = attempt.result;
@@ -499,8 +539,18 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
         ),
       };
       task.evidence.push(`step ${index + 1} (${step.tool}): unknown — ${step.result.detail}`);
-      await saveTask(task, options.tasksDir);
-      return pauseForLogin(id, index, options.tasksDir);
+      await saveTaskUnlessCancelled(task, options.tasksDir);
+      try {
+        return await pauseForLogin(id, index, options.tasksDir);
+      } catch (error) {
+        // A cancel can land between the save above and `pauseForLogin`'s
+        // own load: it refuses a failed record, so the run returns the
+        // stored (cancelled) record instead of throwing — the cancel
+        // stands either way, but the run reports it instead of failing on it.
+        const stored = await loadTask(id, options.tasksDir).catch(() => null);
+        if (stored && stored.state === 'failed') return stored;
+        throw error;
+      }
     }
     if (sessionState === 'warning-page') {
       // A security warning is never a login page and never a successful
@@ -539,10 +589,10 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     const detail = notes.length > 0 ? `${outcome.evidence} (${notes.join('; ')})` : outcome.evidence;
     step.result = { status: 'ok', detail };
     task.evidence.push(`step ${index + 1} (${step.tool}): ok — ${detail}`);
-    await saveTask(task, options.tasksDir);
+    await saveTaskUnlessCancelled(task, options.tasksDir);
   }
 
   task.state = 'done';
-  await saveTask(task, options.tasksDir);
+  await saveTaskUnlessCancelled(task, options.tasksDir);
   return task;
 }

@@ -68,6 +68,13 @@ export interface TaskStep {
  *   refused TAB_LOCKED; a task with no session resumes with no session and
  *   can only act on unowned tabs. The store accepts it as an opaque string
  *   and never invents one.
+ * - `cancelled` is the cross-process cancel marker (Task 8, fix round 1):
+ *   set only by `browser_task_cancel`, alongside the `failed` state and
+ *   the cancellation evidence, so a run in flight in another process
+ *   aborts at its next save instead of overwriting the cancellation
+ *   (`tasks/cancel-guard.ts`). It is cleaned up when the run's wrapper
+ *   saves the terminal record, so a settled record never keeps it. The
+ *   store validates it as a boolean.
  *
  * The `EvidenceReport` import is type-only (erased at runtime): `evidence.ts`
  * defines the report shape and imports this file, so a value import here
@@ -82,4 +89,5 @@ export interface Task {
   evidence: string[];
   report?: { text: string; json: EvidenceReport };
   sessionId?: string;
+  cancelled?: boolean;
 }

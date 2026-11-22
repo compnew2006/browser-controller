@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
-import { saveTask } from '../../mcp-server/src/tasks/store.js';
+import { loadTask, saveTask } from '../../mcp-server/src/tasks/store.js';
+import { saveTaskWithReport } from '../../mcp-server/src/tasks/reporting.js';
+import { runTaskWithReport } from '../../mcp-server/src/tasks/wiring.js';
 import { planTask } from '../../mcp-server/src/tasks/planner.js';
 import { isMutatingTool, runTask } from '../../mcp-server/src/tasks/runner.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
@@ -152,6 +154,61 @@ describe('runner', () => {
     expect(snapshotCalls).toEqual(['browser_snapshot', 'browser_snapshot']);
     expect(done.steps.map((step) => step.result?.status)).toEqual(['ok', 'ok']);
     expect(done.evidence.length).toBe(2);
+  });
+
+  it('a cancel from another process aborts the run instead of being overwritten', async () => {
+    const calls: string[] = [];
+    const snapshotCalls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'fake-ok',
+        {
+          name: 'fake-ok',
+          summary: 'Fake fake-ok for the cross-process cancel test',
+          description: 'Test-only stand-in for fake-ok.',
+          inputSchema: z.object({}).strict(),
+          idempotent: true as const,
+          handler: async () => {
+            calls.push('fake-ok');
+            // The cancel from the other process: the MCP process cancels
+            // while the daemon runs this task, so its cancel tool never
+            // sees this run in its own in-flight set — it loads the
+            // stored record, fails it with the cancellation, and saves
+            // it, exactly as `browser_task_cancel` does.
+            const stored = await loadTask('task-cancel-race', dir);
+            if (!stored) throw new Error('task was never saved');
+            stored.state = 'failed';
+            stored.cancelled = true;
+            stored.evidence.push('cancelled by the user at step 1 of 2 — the task stops here and never resumes');
+            await saveTaskWithReport(stored, dir);
+            return textResult('page loaded');
+          },
+        },
+      ],
+      ['fake-next', fakeTool('fake-next', calls, textResult('next page'))],
+      ['browser_snapshot', snapshotTool(snapshotCalls, 'page loaded')],
+    ]);
+    await saveTask(twoStepTask('task-cancel-race'), dir);
+
+    const aborted = await runTaskWithReport('task-cancel-race', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(aborted.state).toBe('failed');
+    expect(aborted.evidence.some((line) => line.startsWith('cancelled by the user'))).toBe(true);
+    // The run stopped at the cancelled step's save: the second step never ran.
+    expect(calls).toEqual(['fake-ok']);
+    expect(aborted.steps[1]?.result).toBeUndefined();
+    // The stored record is the cancellation, not the run's own outcome.
+    const stored = await loadTask('task-cancel-race', dir);
+    expect(stored?.state).toBe('failed');
+    expect(stored?.evidence.some((line) => line.startsWith('cancelled by the user'))).toBe(true);
+    expect(stored?.report?.json.state).toBe('failed');
+    // The marker did its job and is cleaned up on the terminal record.
+    expect(stored?.cancelled).toBeUndefined();
   });
 
   it('stops at a tool that returns an error result', async () => {
