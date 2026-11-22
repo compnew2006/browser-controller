@@ -85,6 +85,30 @@ describe('task store', () => {
     expect(await listTasks(dir)).toEqual([good]);
   });
 
+  it('skips and quarantines a file whose stored id is invalid, instead of aborting the listing', async () => {
+    const good = pausedLoginTask();
+    await saveTask(good, dir);
+    // A hand-edited file whose stored id is invalid ('../x' could never be a
+    // task file name): file-content corruption, not a caller error.
+    const bad = path.join(dir, 'badid.json');
+    fs.writeFileSync(bad, `${JSON.stringify({ ...pausedLoginTask(), id: '../x' })}\n`);
+    fs.chmodSync(bad, 0o600);
+
+    let caught: unknown;
+    try {
+      await loadTask('badid', dir);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(TaskStoreError);
+    expect((caught as TaskStoreError).kind).toBe('corrupt');
+
+    expect(await listTasks(dir)).toEqual([good]);
+    expect(fs.existsSync(bad)).toBe(false);
+    expect(fs.readdirSync(dir).some((name) => /^badid\.json\.corrupt-\d+$/.test(name))).toBe(true);
+    expect(await listTasks(dir)).toEqual([good]);
+  });
+
   it('rethrows when a file is too large instead of skipping it', async () => {
     const big = path.join(dir, 'big.json');
     fs.writeFileSync(big, 'x'.repeat(MAX_TASK_BYTES + 1));

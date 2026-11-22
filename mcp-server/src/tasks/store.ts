@@ -148,7 +148,18 @@ function validateStep(raw: unknown): TaskStep {
 /** A parsed task, or an error when the record is not a task. Unknown fields are rejected, so a file written by a newer shape never loads as an old one. */
 export function validateTask(raw: unknown): Task {
   if (!isRecord(raw) || !hasOnlyKeys(raw, ['id', 'goal', 'constraints', 'steps', 'state', 'evidence'])) throw corrupt('a task needs id, goal, constraints, steps, state and evidence');
-  const id = requireTaskId(raw.id);
+  // A stored id that fails validation is file-content corruption, not a
+  // caller error: `requireTaskId` throws 'invalid-argument' for a
+  // caller-supplied id, so only this call site translates it to 'corrupt'.
+  // `loadTask`/`saveTask` still call `requireTaskId` directly on the id the
+  // caller passes, and that failure stays 'invalid-argument'.
+  let id: string;
+  try {
+    id = requireTaskId(raw.id);
+  } catch (error) {
+    if (error instanceof TaskStoreError) throw corrupt(error.message);
+    throw error;
+  }
   if (typeof raw.goal !== 'string' || raw.goal.length === 0) throw corrupt('a task needs a goal');
   if (!isStringArray(raw.constraints)) throw corrupt('task constraints must be a list of strings');
   if (!Array.isArray(raw.steps)) throw corrupt('task steps must be a list');
