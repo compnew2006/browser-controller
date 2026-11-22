@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 3.4.0
+
+Run `npm run build`, reload the extension at `chrome://extensions` and restart the daemon after updating.
+
+### Added
+- A professional task layer on top of the existing tools: a task engine (planner + runner) that plans multi-step browsing tasks, verifies each step after it runs, and keeps an evidence record for the whole task.
+- A session and login agent: when a task hits a login page it pauses, and a production `browser_task_resume` MCP tool resumes it after the user signs in, with the resume re-checking the expected site.
+- A human question protocol: a mutating step pauses and asks the user for approval first; the approval question carries tool and parameter key names only, never parameter values, so credentials can never leak into the question, the evidence, or the popup.
+- A recovery policy for failed steps (bounded retries with reconciliation before retrying a mutating step) and a durable cancel that takes effect.
+- New `browser_task_*` MCP tools (run, status, answer, cancel, resume) alongside the existing 23 tools (28 total).
+- A responsive popup with Tasks, Evidence, and Questions panels, with touch targets of at least 44px.
+
 ## 3.3.0
 
 Run `npm run build`, reload the extension at `chrome://extensions` and restart the daemon after updating.
