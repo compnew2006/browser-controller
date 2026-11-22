@@ -412,7 +412,7 @@ The site map remembers how a site is laid out for one Chrome profile: its struct
 
 ## Teach Your Agent
 
-The agent can use all 22 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
+The agent can use all 23 tools out of the box, but it works better when it knows the **tab-first** workflow. From the repo root:
 
 ```bash
 npm run setup:cursor   # or: node mcp-server/dist/index.js --setup cursor
@@ -442,7 +442,7 @@ See [`agent-config/`](agent-config/) for manual installation or to customize the
 
 ## What It Can Do
 
-22 tools. Every page tool takes a **`tabId`**; `browser_navigate` makes it optional (without it, the call opens a new background tab for the session), and `browser_batch` takes an optional default. The full parameters and behavior of each tool are in the [Tool reference](#tool-reference) below. The list is derived from the code, not written by hand: `mcp-server/src/protocol/tool-names.ts` is generated from the tool registry, and a test fails the build when the registry, that generated list and the AI-facing inventories ([`llms.txt`](llms.txt), [`.cursor/rules/project.mdc`](.cursor/rules/project.mdc)) drift apart.
+23 tools. Every page tool takes a **`tabId`**; `browser_navigate` makes it optional (without it, the call opens a new background tab for the session), and `browser_batch` takes an optional default. The full parameters and behavior of each tool are in the [Tool reference](#tool-reference) below. The list is derived from the code, not written by hand: `mcp-server/src/protocol/tool-names.ts` is generated from the tool registry, and a test fails the build when the registry, that generated list and the AI-facing inventories ([`llms.txt`](llms.txt), [`.cursor/rules/project.mdc`](.cursor/rules/project.mdc)) drift apart.
 
 | Tool | What it does |
 |------|-------------|
