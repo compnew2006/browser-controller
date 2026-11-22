@@ -3,10 +3,11 @@
  *
  * `runTask` loads a task, runs its steps in order through the MCP tools
  * registered in `tools/registry.ts`, and stops at the first failure: a tool
- * error, a failed verification, an unknown tool, or a refused mutating step
- * all end the task as `failed` with the evidence recorded, and the next step
- * never runs. Progress is saved after every step, so a paused task resumes
- * from its first unfinished step instead of starting over.
+ * error, a failed verification, an unknown tool, a refused mutating step, or
+ * a step whose params fail the tool's schema all end the task as `failed`
+ * with the evidence recorded, and the next step never runs. Progress is saved
+ * after every step, so a paused task resumes from its first unfinished step
+ * instead of starting over.
  *
  * Two seams, both explicit:
  * - Verification is a TEMPORARY placeholder until Task 3 lands `verify.ts`:
@@ -16,15 +17,35 @@
  *   map of fake tools instead. Registry tools need a `ToolHost` to invoke;
  *   injected tools run with whatever host the caller passes (fakes ignore it).
  *
- * Read-only default (FR-020, binding ruling P4): a step whose tool is not
- * idempotent is mutating — it can save, send or delete — and the runner
- * refuses it unless the task explicitly allows mutations. Navigation is the
- * one exception: `browser_navigate` changes the viewed page, not site data,
- * so a read-only audit task may navigate. A refused step fails the task with
- * the refusal in its evidence; it never executes silently.
+ * Params are validated before a step runs: `prepareToolParams` applies the
+ * tool's own schema (plus its `normalize`, for borrowed parameter names), so
+ * a step that cannot be executed fails here with an `INVALID_ARGUMENT`
+ * detail instead of reaching the handler — or the extension — unvalidated.
+ * Validation runs before the P4 gate, because the gate reads the params.
+ *
+ * Tab binding: several tools require `tabId`, which a plan cannot know up
+ * front. The runner keeps the current tab — the tab a step without `tabId`
+ * opened, or the first tab a `browser_tabs list` step returned (the
+ * session's own tab, else the user's focused tab) — and injects it into a
+ * later step that takes `tabId` and names none, mirroring the default-tab
+ * logic in `tools/batch.ts`. The tab a step acted on is recorded on that
+ * step's params, so a resumed run rebinds to it from the completed steps
+ * instead of losing it. A step that still has no tab to bind to fails
+ * validation with the evidence, never executes silently.
+ *
+ * Read-only default (FR-020, binding ruling P4): a step that can change site
+ * data (save/send/delete) is refused unless the task explicitly allows
+ * mutations. What counts as mutating is a per-tool, per-action
+ * classification in `isMutatingTool` — NOT the retry-safety `idempotent`
+ * flag, which only says whether re-running the tool is safe. A refused step
+ * fails the task with the refusal in its evidence; it never executes
+ * silently.
  */
 import { toolMap } from '../tools/registry.js';
 import type { ToolDefinition, ToolHost, ToolResult } from '../tools/types.js';
+import { rawResultOf } from '../tools/types.js';
+import { NO_DEFAULT_TAB, TAB_OR_ORIGIN } from '../tools/batch-limits.js';
+import { prepareToolParams } from '../tools/params.js';
 import { loadTask, saveTask } from './store.js';
 import type { Task, TaskStep } from './types.js';
 
@@ -49,16 +70,58 @@ export interface RunTaskOptions {
 /** The constraint that explicitly approves mutating steps in a task (FR-020). */
 export const ALLOW_MUTATIONS = 'allow-mutations';
 
-/** Tools the runner treats as reads even though the registry marks them non-idempotent. */
-const READ_DESPITE_NON_IDEMPOTENT = new Set(['browser_navigate']);
+/** `browser_navigate` forms that move history or reload instead of opening a URL. */
+const NAVIGATE_HISTORY_ACTIONS = new Set(['back', 'forward', 'reload']);
 
 /**
- * Whether a tool can change site data (save/send/delete). Derived from the
- * tool's own `idempotent` flag — the registry's single source of truth —
- * with navigation excepted: it changes the viewed page, not site data.
+ * Whether a plain-URL `browser_navigate` is the only read form: it changes
+ * the viewed page, not site data, so a read-only audit task may navigate.
+ * History moves and reloads can resubmit or revisit, and `incognito:true`
+ * opens a new private window, so those are mutating and need approval.
  */
-export function isMutatingTool(def: ToolDefinition): boolean {
-  return def.idempotent !== true && !READ_DESPITE_NON_IDEMPOTENT.has(def.name);
+function isMutatingNavigate(params: Record<string, unknown>): boolean {
+  if (params.incognito === true) return true;
+  return typeof params.url === 'string' && NAVIGATE_HISTORY_ACTIONS.has(params.url);
+}
+
+/**
+ * Whether a `browser_tabs` call changes anything: closing a tab, selecting
+ * a browser profile, or setting session policy does. Listing, listing
+ * profiles, focusing a tab (a view change, like navigating), and reading the
+ * session policy do not.
+ */
+function isMutatingTabs(params: Record<string, unknown>): boolean {
+  if (params.action === 'close') return true;
+  if (params.browser !== undefined) return true;
+  if (params.action === 'session' && (params.isolation !== undefined || params.access !== undefined)) return true;
+  return false;
+}
+
+/**
+ * Whether running this tool with these params can change site data
+ * (save/send/delete) — the FR-020 question — and so needs explicit approval.
+ *
+ * The classification is per tool and, for the mixed tools, per action; it is
+ * deliberately NOT derived from `idempotent`, which documents retry-safety
+ * ("re-running this tool with the same params has no side effects") rather
+ * than mutation. A tool that only reads is `idempotent: true` and so is
+ * never mutating here; a non-idempotent tool is mutating unless one of the
+ * mixed-tool rules below says its form is a read. Anything not listed is
+ * mutating: the gate fails closed on tools it does not know.
+ */
+export function isMutatingTool(def: ToolDefinition, params: Record<string, unknown> = {}): boolean {
+  if (def.idempotent === true) return false;
+  switch (def.name) {
+    case 'browser_navigate':
+      return isMutatingNavigate(params);
+    case 'browser_logs':
+      // `clear:true` empties the log buffer; reading the logs does not.
+      return params.clear === true;
+    case 'browser_tabs':
+      return isMutatingTabs(params);
+    default:
+      return true;
+  }
 }
 
 /** Whether the task carries explicit approval for mutating steps. */
@@ -79,6 +142,37 @@ function placeholderVerify(step: TaskStep, result: ToolResult): VerifyOutcome {
 function resultText(result: ToolResult): string {
   const first = result.content.find((item) => item.type === 'text');
   return first && first.type === 'text' ? first.text : '';
+}
+
+/**
+ * The tab a step's result names, if any: the `tabId` a navigate/snapshot
+ * result carries, or the first tab of a `browser_tabs list` result — the
+ * session's own tab, else the user's focused tab
+ * (`extension/handlers/tabs.js`, `listTabs`).
+ */
+function tabIdFromResult(result: ToolResult): number | undefined {
+  const raw = rawResultOf(result);
+  if (!raw) return undefined;
+  if (typeof raw.tabId === 'number') return raw.tabId;
+  const tabs = raw.tabs;
+  if (Array.isArray(tabs)) {
+    for (const entry of tabs) {
+      if (entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>).tabId === 'number') {
+        return (entry as Record<string, unknown>).tabId as number;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The tab the completed steps already bound, if any — the resume rebind. */
+function boundTabFromCompletedSteps(task: Task): number | undefined {
+  let bound: number | undefined;
+  for (const step of task.steps) {
+    if (step.result?.status !== 'ok') continue;
+    if (typeof step.params.tabId === 'number') bound = step.params.tabId;
+  }
+  return bound;
 }
 
 async function failStep(
@@ -111,6 +205,9 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   task.state = 'running';
   await saveTask(task, options.tasksDir);
 
+  // The tab the completed steps already bound (a resumed run rebinds to it).
+  let boundTabId = boundTabFromCompletedSteps(task);
+
   for (let index = 0; index < task.steps.length; index++) {
     const step = task.steps[index];
     // Resume: a step that already verified keeps its result and never re-runs.
@@ -121,7 +218,35 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       await failStep(task, step, index, 'failed', `unknown tool: ${step.tool}`, options.tasksDir);
       return task;
     }
-    if (isMutatingTool(def) && !taskAllowsMutations(task)) {
+
+    // Bind the current tab into a step that takes tabId and names none.
+    // Mirrors the default-tab logic in tools/batch.ts.
+    const effectiveParams: Record<string, unknown> = { ...step.params };
+    const namesOrigin = TAB_OR_ORIGIN.has(def.name) && effectiveParams.origin !== undefined;
+    if (
+      boundTabId !== undefined &&
+      effectiveParams.tabId === undefined &&
+      !NO_DEFAULT_TAB.has(def.name) &&
+      !namesOrigin &&
+      'tabId' in def.inputSchema.shape
+    ) {
+      effectiveParams.tabId = boundTabId;
+    }
+
+    // Validate against the tool's own schema before anything executes.
+    let validated: Record<string, unknown>;
+    let notes: string[];
+    try {
+      const prepared = prepareToolParams(def, effectiveParams);
+      validated = prepared.params;
+      notes = prepared.notes;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await failStep(task, step, index, 'failed', detail, options.tasksDir);
+      return task;
+    }
+
+    if (isMutatingTool(def, validated) && !taskAllowsMutations(task)) {
       await failStep(
         task,
         step,
@@ -140,7 +265,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     let result: ToolResult;
     try {
       // Registry tools need the host (checked above); injected tools ignore it.
-      result = await def.handler(options.host as ToolHost, step.params);
+      result = await def.handler(options.host as ToolHost, validated);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       await failStep(task, step, index, 'failed', detail, options.tasksDir);
@@ -156,8 +281,20 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       await failStep(task, step, index, 'verify-failed', outcome.evidence, options.tasksDir);
       return task;
     }
-    step.result = { status: 'ok', detail: outcome.evidence };
-    task.evidence.push(`step ${index + 1} (${step.tool}): ok — ${outcome.evidence}`);
+
+    // The tab this step acted on: a step without an explicit tabId that
+    // opened one (or listed one) binds it for the steps after it, and the
+    // binding is recorded on the step so a resumed run keeps it.
+    if (step.params.tabId === undefined) {
+      const openedTabId = tabIdFromResult(result);
+      if (openedTabId !== undefined) {
+        boundTabId = openedTabId;
+        if ('tabId' in def.inputSchema.shape) step.params = { ...step.params, tabId: openedTabId };
+      }
+    }
+    const detail = notes.length > 0 ? `${outcome.evidence} (${notes.join('; ')})` : outcome.evidence;
+    step.result = { status: 'ok', detail };
+    task.evidence.push(`step ${index + 1} (${step.tool}): ok — ${detail}`);
     await saveTask(task, options.tasksDir);
   }
 

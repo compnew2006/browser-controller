@@ -5,10 +5,11 @@ import path from 'node:path';
 import { z } from 'zod';
 import { saveTask } from '../../mcp-server/src/tasks/store.js';
 import { planTask } from '../../mcp-server/src/tasks/planner.js';
-import { runTask } from '../../mcp-server/src/tasks/runner.js';
+import { isMutatingTool, runTask } from '../../mcp-server/src/tasks/runner.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
-import type { ToolDefinition, ToolResult } from '../../mcp-server/src/tools/types.js';
+import type { ToolDefinition, ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
 import { failureResult, textResult } from '../../mcp-server/src/tools/types.js';
+import { toolMap } from '../../mcp-server/src/tools/registry.js';
 
 let dir: string;
 beforeEach(() => {
@@ -24,15 +25,18 @@ function fakeTool(
   calls: string[],
   result: ToolResult | Error,
   idempotent = true,
+  inputSchema: z.ZodObject<z.ZodRawShape> = z.object({}).strict(),
+  onCall?: (params: Record<string, unknown>) => void,
 ): ToolDefinition {
   return {
     name,
     summary: `Fake ${name} for runner tests`,
     description: `Test-only stand-in for ${name}.`,
-    inputSchema: z.object({}).strict(),
+    inputSchema,
     ...(idempotent ? { idempotent: true as const } : {}),
-    handler: async () => {
+    handler: async (_host, params) => {
       calls.push(name);
+      onCall?.(params);
       if (result instanceof Error) throw result;
       return result;
     },
@@ -68,9 +72,10 @@ describe('planner', () => {
     expect(task.steps[0]?.verify).toContainEqual({ kind: 'url-contains', value: 'example.com' });
   });
 
-  it('plans a snapshot step when the goal names no URL', () => {
+  it('plans a tabs-list step and then a snapshot when the goal names no URL', () => {
     const task = planTask('Check what the current page shows', []);
-    expect(task.steps.map((step) => step.tool)).toEqual(['browser_snapshot']);
+    expect(task.steps.map((step) => step.tool)).toEqual(['browser_tabs', 'browser_snapshot']);
+    expect(task.steps[0]?.params).toEqual({ action: 'list' });
     for (const step of task.steps) expect(step.verify.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -259,5 +264,255 @@ describe('runner', () => {
 
   it('rejects a task that was never saved', async () => {
     await expect(runTask('missing', { tasksDir: dir })).rejects.toThrowError(/not found/);
+  });
+});
+
+describe('isMutatingTool', () => {
+  const def = (name: string, idempotent?: boolean): ToolDefinition => ({
+    name,
+    summary: `Fake ${name}`,
+    description: `Test-only stand-in for ${name}.`,
+    inputSchema: z.object({}).strict(),
+    ...(idempotent === true ? { idempotent: true as const } : {}),
+    handler: async () => textResult('ok'),
+  });
+
+  it('treats an idempotent read as non-mutating', () => {
+    expect(isMutatingTool(def('browser_snapshot', true), {})).toBe(false);
+  });
+
+  it('treats an unknown non-idempotent tool as mutating (fail-closed)', () => {
+    expect(isMutatingTool(def('fake-click'), {})).toBe(true);
+  });
+
+  it('treats a plain-URL navigate as a read', () => {
+    expect(isMutatingTool(def('browser_navigate'), { url: 'https://example.com' })).toBe(false);
+  });
+
+  it('treats back/forward/reload navigations as mutating', () => {
+    for (const url of ['back', 'forward', 'reload']) {
+      expect(isMutatingTool(def('browser_navigate'), { url })).toBe(true);
+    }
+  });
+
+  it('treats an incognito navigate as mutating', () => {
+    expect(isMutatingTool(def('browser_navigate'), { url: 'https://example.com', incognito: true })).toBe(true);
+  });
+
+  it('treats reading logs as a read and clearing them as mutating', () => {
+    expect(isMutatingTool(def('browser_logs'), { tabId: 1 })).toBe(false);
+    expect(isMutatingTool(def('browser_logs'), { tabId: 1, clear: true })).toBe(true);
+  });
+
+  it('treats tabs list/profiles/focus/session-read as reads and close/session-set/browser-select as mutating', () => {
+    expect(isMutatingTool(def('browser_tabs'), {})).toBe(false);
+    expect(isMutatingTool(def('browser_tabs'), { action: 'list' })).toBe(false);
+    expect(isMutatingTool(def('browser_tabs'), { action: 'profiles' })).toBe(false);
+    expect(isMutatingTool(def('browser_tabs'), { action: 'focus', tabId: 1 })).toBe(false);
+    expect(isMutatingTool(def('browser_tabs'), { action: 'session' })).toBe(false);
+    expect(isMutatingTool(def('browser_tabs'), { action: 'close', tabId: 1 })).toBe(true);
+    expect(isMutatingTool(def('browser_tabs'), { action: 'session', isolation: 'isolated' })).toBe(true);
+    expect(isMutatingTool(def('browser_tabs'), { action: 'session', access: 'read-only' })).toBe(true);
+    expect(isMutatingTool(def('browser_tabs'), { browser: 'auto' })).toBe(true);
+  });
+});
+
+describe('P4 navigate exception', () => {
+  it('runs a plain-URL navigate without approval while refusing a mutating tool in the same task', async () => {
+    const calls: string[] = [];
+    const navigateSchema = z.object({ url: z.string(), incognito: z.boolean().optional() }).strict();
+    const tools = new Map<string, ToolDefinition>([
+      ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, navigateSchema)],
+      ['browser_click', fakeTool('browser_click', calls, textResult('clicked'), false)],
+    ]);
+    await saveTask(
+      {
+        id: 'task-1',
+        goal: 'Open the page, then click',
+        constraints: ['read-only'],
+        steps: [
+          { tool: 'browser_navigate', params: { url: 'https://example.com' }, verify: [{ kind: 'no-error-text', value: "isn't working" }] },
+          { tool: 'browser_click', params: {}, verify: [{ kind: 'no-error-text', value: "isn't working" }] },
+        ],
+        state: 'planned',
+        evidence: [],
+      },
+      dir,
+    );
+
+    const done = await runTask('task-1', { tasksDir: dir, tools });
+    expect(done.state).toBe('failed');
+    expect(calls).toEqual(['browser_navigate']);
+    expect(done.steps[1]?.result?.status).toBe('failed');
+    expect(done.steps[1]?.result?.detail).toMatch(/refused.*approval/i);
+  });
+
+  it('refuses a reload navigate without approval', async () => {
+    const calls: string[] = [];
+    const navigateSchema = z.object({ url: z.string(), incognito: z.boolean().optional() }).strict();
+    const tools = new Map<string, ToolDefinition>([
+      ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, navigateSchema)],
+    ]);
+    await saveTask(
+      {
+        id: 'task-1',
+        goal: 'Reload the page',
+        constraints: ['read-only'],
+        steps: [{ tool: 'browser_navigate', params: { url: 'reload' }, verify: [{ kind: 'no-error-text', value: "isn't working" }] }],
+        state: 'planned',
+        evidence: [],
+      },
+      dir,
+    );
+
+    const done = await runTask('task-1', { tasksDir: dir, tools });
+    expect(done.state).toBe('failed');
+    expect(calls).toEqual([]);
+    expect(done.steps[0]?.result?.detail).toMatch(/refused.*approval/i);
+  });
+});
+
+/** A fake extension host answering the real registry tools. */
+function registryHost(calls: Array<{ tool: string; params: Record<string, unknown> }>): ToolHost {
+  return {
+    callTool: async (tool, params) => {
+      calls.push({ tool, params });
+      if (tool === 'browser_navigate') return { success: true, tabId: 42, text: 'loaded', url: 'https://example.com' };
+      if (tool === 'browser_evaluate') return { success: true, result: '120:0', text: '120:0' };
+      if (tool === 'browser_tabs') {
+        return { success: true, text: '7 [own] Example https://example.com', tabs: [{ tabId: 7, role: 'own' }], openTabCount: 1 };
+      }
+      if (tool === 'browser_snapshot') {
+        return { success: true, tabId: typeof params.tabId === 'number' ? params.tabId : 42, text: 'page text', url: 'https://example.com' };
+      }
+      throw new Error(`unexpected tool call: ${tool}`);
+    },
+  };
+}
+
+describe('runner against the real registry', () => {
+  it('runs a planned URL task: the snapshot is bound to the tab the navigate opened', async () => {
+    const calls: Array<{ tool: string; params: Record<string, unknown> }> = [];
+    const task = planTask('Open https://example.com and confirm it loaded', ['read-only']);
+    await saveTask(task, dir);
+
+    const done = await runTask(task.id, { tasksDir: dir, host: registryHost(calls) });
+    expect(done.state).toBe('done');
+    expect(calls.find((call) => call.tool === 'browser_navigate')?.params).toEqual({ url: 'https://example.com' });
+    expect(calls.find((call) => call.tool === 'browser_snapshot')?.params).toEqual({ tabId: 42 });
+  });
+
+  it('runs a planned no-URL task: the snapshot is bound to the first listed tab', async () => {
+    const calls: Array<{ tool: string; params: Record<string, unknown> }> = [];
+    const task = planTask('Check what the current page shows', ['read-only']);
+    await saveTask(task, dir);
+
+    const done = await runTask(task.id, { tasksDir: dir, host: registryHost(calls) });
+    expect(done.state).toBe('done');
+    expect(calls.find((call) => call.tool === 'browser_tabs')?.params).toEqual({ action: 'list' });
+    expect(calls.find((call) => call.tool === 'browser_snapshot')?.params).toEqual({ tabId: 7 });
+  });
+
+  it('fails a snapshot with no tab to bind to, with evidence, and never calls the tool', async () => {
+    const calls: Array<{ tool: string; params: Record<string, unknown> }> = [];
+    await saveTask(
+      {
+        id: 'task-1',
+        goal: 'Read the page',
+        constraints: ['read-only'],
+        steps: [{ tool: 'browser_snapshot', params: {}, verify: [{ kind: 'no-error-text', value: "isn't working" }] }],
+        state: 'planned',
+        evidence: [],
+      },
+      dir,
+    );
+
+    const done = await runTask('task-1', { tasksDir: dir, host: registryHost(calls) });
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.status).toBe('failed');
+    expect(done.steps[0]?.result?.detail).toMatch(/tabId is required/);
+    expect(calls).toEqual([]);
+  });
+
+  it('resumes a planned task from the tab recorded on its completed navigate step', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const calls: string[] = [];
+    const tabSchema = z.object({ tabId: z.number().optional(), url: z.string().optional(), action: z.string().optional() }).strict();
+    const tools = new Map<string, ToolDefinition>([
+      ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, tabSchema)],
+      ['browser_snapshot', fakeTool('browser_snapshot', calls, textResult('page text'), true, tabSchema, (params) => seen.push(params))],
+    ]);
+    const task = planTask('Open https://example.com and confirm it loaded', ['read-only']);
+    // As if a previous run completed the navigate and recorded its tab.
+    task.steps[0]!.params = { url: 'https://example.com', tabId: 42 };
+    task.steps[0]!.result = { status: 'ok', detail: 'loaded' };
+    task.state = 'paused-login';
+    await saveTask(task, dir);
+
+    const done = await runTask(task.id, { tasksDir: dir, tools });
+    expect(done.state).toBe('done');
+    expect(calls).toEqual(['browser_snapshot']);
+    expect(seen).toEqual([{ tabId: 42 }]);
+  });
+});
+
+describe('registry mutation guard', () => {
+  // Tools whose `idempotent: true` is a read: the gate trusts the flag for
+  // these, so a new idempotent tool must be added here deliberately — a
+  // future idempotent-but-writing tool fails this test instead of sailing
+  // through the read-only gate.
+  const KNOWN_IDEMPOTENT_READS = new Set([
+    'browser_snapshot',
+    'browser_text',
+    'browser_screenshot',
+    'browser_inspect_element',
+    'browser_fetch_many',
+    'browser_memory',
+    'browser_site_map',
+  ]);
+  // Non-idempotent tools whose read/write depends on the action (see isMutatingTool).
+  const MIXED_TOOLS = new Set(['browser_navigate', 'browser_logs', 'browser_tabs']);
+  // Non-idempotent tools that always write (fail-closed default).
+  const KNOWN_WRITES = new Set([
+    'browser_click',
+    'browser_type',
+    'browser_fill',
+    'browser_scroll',
+    'browser_wait',
+    'browser_evaluate',
+    'browser_handle_dialog',
+    'browser_batch',
+    'browser_emulate',
+    'browser_mock',
+    'browser_safety',
+    'browser_vault',
+    'browser_memory_policy',
+  ]);
+
+  it('classifies every registered tool: idempotent reads, mixed, or writes', () => {
+    for (const name of KNOWN_IDEMPOTENT_READS) expect(toolMap.has(name)).toBe(true);
+    for (const name of MIXED_TOOLS) expect(toolMap.has(name)).toBe(true);
+    for (const name of KNOWN_WRITES) expect(toolMap.has(name)).toBe(true);
+    for (const tool of toolMap.values()) {
+      if (tool.idempotent === true) {
+        expect(KNOWN_IDEMPOTENT_READS.has(tool.name)).toBe(true);
+      } else {
+        expect(MIXED_TOOLS.has(tool.name) || KNOWN_WRITES.has(tool.name)).toBe(true);
+      }
+    }
+    expect(toolMap.size).toBe(KNOWN_IDEMPOTENT_READS.size + MIXED_TOOLS.size + KNOWN_WRITES.size);
+  });
+
+  it('applies the per-action rules to the real registry definitions', () => {
+    const navigate = toolMap.get('browser_navigate')!;
+    const logs = toolMap.get('browser_logs')!;
+    const tabs = toolMap.get('browser_tabs')!;
+    expect(isMutatingTool(navigate, { url: 'https://example.com' })).toBe(false);
+    expect(isMutatingTool(navigate, { url: 'reload' })).toBe(true);
+    expect(isMutatingTool(navigate, { url: 'https://example.com', incognito: true })).toBe(true);
+    expect(isMutatingTool(logs, { tabId: 1 })).toBe(false);
+    expect(isMutatingTool(logs, { tabId: 1, clear: true })).toBe(true);
+    expect(isMutatingTool(tabs, { action: 'list' })).toBe(false);
+    expect(isMutatingTool(tabs, { action: 'close', tabId: 1 })).toBe(true);
   });
 });

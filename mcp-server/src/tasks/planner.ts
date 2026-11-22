@@ -7,6 +7,13 @@
  * least one verify rule; the plan emits no mutating step at all, so a planned
  * task is read-only until a later step (or an explicit approval) adds one.
  * The planner is pure: it returns the task, and the caller saves it.
+ *
+ * Tab binding: `browser_snapshot` requires `tabId`, and the planner cannot
+ * know it at plan time, so a plan never emits a bare snapshot. A URL goal
+ * navigates first — the runner binds the tab the navigate opened and injects
+ * it into the snapshot. A goal with no URL lists tabs first — the runner
+ * binds the first listed tab (the session's own tab, else the user's focused
+ * tab) and injects it into the snapshot. See `runner.ts`.
  */
 import { randomUUID } from 'node:crypto';
 import type { Task, TaskStep, VerifyRule } from './types.js';
@@ -24,7 +31,9 @@ function noErrorText(): VerifyRule {
 /**
  * Split a goal into steps. A URL in the goal becomes a navigate step verified
  * against its host, followed by a snapshot step; a goal with no URL plans a
- * snapshot of the current tab. Throws on an empty goal.
+ * tabs-list step followed by a snapshot of the first listed tab. The runner
+ * binds the tab for the snapshot in both cases — the planner never emits a
+ * snapshot with no way to target a tab. Throws on an empty goal.
  */
 export function planTask(goal: string, constraints: string[] = []): Task {
   const trimmed = goal.trim();
@@ -44,6 +53,12 @@ export function planTask(goal: string, constraints: string[] = []): Task {
       tool: 'browser_navigate',
       params: { url },
       verify: [{ kind: 'url-contains', value: host }, noErrorText()],
+    });
+  } else {
+    steps.push({
+      tool: 'browser_tabs',
+      params: { action: 'list' },
+      verify: [noErrorText()],
     });
   }
   steps.push({ tool: 'browser_snapshot', params: {}, verify: [noErrorText()] });
