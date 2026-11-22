@@ -67,9 +67,10 @@
  * whatever page is showing.
  *
  * Recovery (Design §6, `recovery.ts`): retryable failures retry inside
- * the policy's attempt budget under the first attempt's approval, and an
- * unknown outcome is reconciled before any retry — so a paused-then-
- * resumed mutating step is never executed twice blind.
+ * the policy's retry budget under the first attempt's approval, and an
+ * unknown outcome is reconciled before any retry — a coded TIMEOUT on a
+ * mutating step is an unknown outcome too — so a paused-then-resumed
+ * mutating step is never executed twice blind.
  *
  * Read-only default (FR-020, binding ruling P4): a step that can change site
  * data (save/send/delete) is refused unless the task explicitly allows
@@ -462,7 +463,8 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     // The tool call runs under the recovery policy (`recovery.ts`):
     // attempts share the one validation and the one approval above, so a
     // retry runs under the same approval the first attempt had — it
-    // neither re-asks for approval nor executes without it.
+    // neither re-asks for approval nor executes without it — and a
+    // TIMEOUT on a mutating step is reconciled before any retry.
     const attempt = await executeStepWithRecovery(
       task,
       step,
@@ -470,6 +472,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       () => def.handler(options.host as ToolHost, validated),
       {
         policy: options.recovery?.policy,
+        mutating: isMutatingTool(def, validated),
         sleep: options.recovery?.sleep,
         readPage: reconcileReadPage,
         verify,

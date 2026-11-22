@@ -34,14 +34,28 @@
  * same answer, and `RetryPolicy.retryableCodes` keeps the Design values
  * verbatim.
  *
- * `attempt` is the 1-based count of attempts already made: the first
- * failure is attempt 1, and a retry is allowed while `attempt <
- * maxAttempts`, so a policy of 3 runs at most 3 attempts in total.
+ * `maxAttempts` counts retries, not attempts in total (controller ruling,
+ * fix round 1): the Design §6 policy pairs `maxAttempts: 3` with a
+ * 3-entry backoff table, and a policy author writes one backoff per
+ * retry — with 3 attempts in total only 2 backoffs would exist, so the
+ * third entry is decisive evidence the design intends 3 retries. A
+ * policy of 3 therefore runs at most 4 attempts in total: `attempt` is
+ * the 1-based count of attempts already made, the first failure is
+ * attempt 1, and a retry is allowed while `attempt <= maxAttempts`.
  * `backoffMs[attempt - 1]` is the wait before the next attempt (500ms
- * after the first failure, 1500ms after the second). The table's third
- * entry, 4000ms, is the wait that would precede a fourth attempt: at
- * `maxAttempts: 3` no fourth attempt runs, so it is configured but unused
- * — it is kept verbatim from Design §6 rather than silently dropped.
+ * after the first failure, 1500ms after the second, 4000ms after the
+ * third — the wait before the fourth attempt).
+ *
+ * A coded `TIMEOUT` on a mutating step is an unknown outcome, not a
+ * known failure: the action may have executed and only its reply was
+ * lost, so it is reconciled before any retry — exactly like an uncoded
+ * failure — and retries only when reconciliation says `not-happened`
+ * (controller ruling, fix round 1). A `TIMEOUT` on a read-only step
+ * retries without reconciling: there is no effect to double. The other
+ * retryable codes need no reconcile: `TAB_WEDGED` means the frozen tab
+ * never ran the call, and `NOT_CONNECTED` / `NAVIGATION_FAILED` mean
+ * the call never reached the page — in both cases there is no executed
+ * action to double.
  *
  * The runner-facing application of the policy lives here too, so the
  * runner stays orchestration: `executeStepWithRecovery` runs one step's
@@ -56,7 +70,7 @@ import { resultText, verifyStep } from './verify.js';
 
 /** The retry policy, with the Design §6 values verbatim. */
 export interface RetryPolicy {
-  /** Maximum attempts in total, first try included. */
+  /** Maximum retries — attempts after the first try. The policy runs at most `maxAttempts + 1` attempts in total. */
   maxAttempts: number;
   /** Wait before the next attempt, indexed by the attempt that just failed (1-based). */
   backoffMs: readonly number[];
@@ -64,7 +78,7 @@ export interface RetryPolicy {
   retryableCodes: readonly string[];
 }
 
-/** The Design §6 policy: 3 attempts, 500ms / 1500ms / 4000ms, transient codes only. */
+/** The Design §6 policy: 3 retries (4 attempts in total), 500ms / 1500ms / 4000ms, transient codes only. */
 export const RETRY_POLICY: RetryPolicy = Object.freeze({
   maxAttempts: 3,
   backoffMs: Object.freeze([500, 1500, 4000]),
@@ -93,21 +107,22 @@ function isRetryableCode(code: string): boolean {
 
 /**
  * Whether a failure with this code may be retried after `attempt` attempts
- * already made (1-based). True only for a retryable code inside the
- * attempt budget; a rate limit, a permission denial, a locked tab, any
- * other definite failure — and any attempt at or past `maxAttempts` —
- * never retries.
+ * already made (1-based). True only for a retryable code inside the retry
+ * budget: `maxAttempts` counts retries, so attempts 1 through
+ * `maxAttempts` may retry and attempt `maxAttempts + 1` may not. A rate
+ * limit, a permission denial, a locked tab, any other definite failure —
+ * and any attempt past `maxAttempts` — never retries.
  */
 export function shouldRetry(code: string, attempt: number, policy: RetryPolicy = RETRY_POLICY): boolean {
-  if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt >= policy.maxAttempts) return false;
+  if (!Number.isSafeInteger(attempt) || attempt < 1 || attempt > policy.maxAttempts) return false;
   return isRetryableCode(code);
 }
 
 /**
  * The wait before the next attempt after `attempt` attempts already made
- * (1-based): 500ms after the first failure, 1500ms after the second.
- * Clamped to the table, so an attempt past its end still waits the
- * longest configured backoff instead of failing.
+ * (1-based): 500ms after the first failure, 1500ms after the second,
+ * 4000ms after the third. Clamped to the table, so an attempt past its
+ * end still waits the longest configured backoff instead of failing.
  */
 export function backoffForAttempt(attempt: number, policy: RetryPolicy = RETRY_POLICY): number {
   if (policy.backoffMs.length === 0) return 0;
@@ -268,6 +283,14 @@ export type StepAttemptOutcome =
 /** How `executeStepWithRecovery` runs one step's tool call. */
 export interface ExecuteStepOptions {
   policy?: RetryPolicy;
+  /**
+   * Whether the step can change site data — the runner's P4 mutating
+   * classification (`isMutatingTool`). A coded TIMEOUT on such a step is
+   * reconciled before any retry: the action may have executed and only
+   * its reply was lost. A read-only step retries a TIMEOUT without
+   * reconciling, since there is no effect to double.
+   */
+  mutating: boolean;
   /** Wait between retries; defaults to a real timer. */
   sleep?: (ms: number) => Promise<void>;
   /**
@@ -290,8 +313,9 @@ export interface ExecuteStepOptions {
 /**
  * Execute one step's tool call under the recovery policy, and report what
  * happened: `result` carries the successful tool result; `reconciled`
- * means an uncoded failure was reconciled and the step's effect confirmed
- * present, so the step is already `ok` and must never run again; `failed`
+ * means an unknown outcome — an uncoded failure, or a TIMEOUT on a
+ * mutating step — was reconciled and the step's effect confirmed present,
+ * so the step is already `ok` and must never run again; `failed`
  * means the step was failed through `fail` (a definite failure, an
  * unreconcilable unknown, or no attempts left). `reconciledUrl` is the
  * page a reconciliation saw, when one ran — the caller uses it as the
@@ -314,14 +338,40 @@ export async function executeStepWithRecovery(
   let reconciledUrl: string | undefined;
 
   /**
+   * Reconcile before a retry, and report what the retry decision is:
+   * `'done'` — the effect is confirmed present, so the step is already
+   * `ok` and must never run again; `'failed'` — the outcome stayed
+   * unknown, so the step was failed through `fail` and nothing was
+   * retried blind; `'not-happened'` — the effect is absent on a readable
+   * page, so a retry cannot execute the action twice. The evidence is
+   * returned for the caller's message when no retry follows.
+   */
+  async function reconcileBeforeRetry(): Promise<{
+    decision: 'done' | 'failed' | 'not-happened';
+    evidence: string;
+  }> {
+    const reconciliation = await reconcileUnknown(task, step, { readPage: options.readPage, verify });
+    if (reconciliation.url !== undefined) reconciledUrl = reconciliation.url;
+    if (reconciliation.outcome === 'confirmed') return { decision: 'done', evidence: reconciliation.evidence };
+    if (reconciliation.outcome === 'unknown') {
+      await options.fail(reconciliation.evidence);
+      return { decision: 'failed', evidence: reconciliation.evidence };
+    }
+    return { decision: 'not-happened', evidence: reconciliation.evidence };
+  }
+
+  /**
    * Classify one failed attempt. Returns what happens next: `'retry'`
    * runs the next attempt after the policy backoff; `'done'` means
    * reconciliation confirmed the step; `'failed'` means the step was
-   * failed through `fail`. A coded retryable failure retries; any other
-   * coded failure — rate limit, permission denial, locked tab, or any
-   * definite failure — stops at once. An uncoded failure has no code to
-   * branch on, so its outcome is unknown: it is reconciled before any
-   * retry, and only a confirmed-absent effect retries.
+   * failed through `fail`. A coded retryable failure retries — except a
+   * TIMEOUT on a mutating step, which is an unknown outcome (the action
+   * may have executed and only its reply was lost) and is reconciled
+   * first, like an uncoded failure. Any other coded failure — rate
+   * limit, permission denial, locked tab, or any definite failure —
+   * stops at once. An uncoded failure has no code to branch on, so its
+   * outcome is unknown: it is reconciled before any retry, and only a
+   * confirmed-absent effect retries.
    */
   async function classify(
     code: string | undefined,
@@ -330,26 +380,26 @@ export async function executeStepWithRecovery(
   ): Promise<'retry' | 'done' | 'failed'> {
     if (code !== undefined) {
       if (shouldRetry(code, attempt, policy)) {
+        if (code === 'TIMEOUT' && options.mutating) {
+          const { decision } = await reconcileBeforeRetry();
+          if (decision !== 'not-happened') return decision;
+        }
         await sleep(backoffForAttempt(attempt, policy));
         return 'retry';
       }
       await options.fail(detail);
       return 'failed';
     }
-    const reconciliation = await reconcileUnknown(task, step, { readPage: options.readPage, verify });
-    if (reconciliation.url !== undefined) reconciledUrl = reconciliation.url;
-    if (reconciliation.outcome === 'confirmed') return 'done';
-    if (reconciliation.outcome === 'unknown') {
-      await options.fail(reconciliation.evidence);
-      return 'failed';
-    }
+    const { decision, evidence } = await reconcileBeforeRetry();
+    if (decision === 'done') return 'done';
+    if (decision === 'failed') return 'failed';
     // `not-happened`: the effect is absent, so a retry cannot execute the
-    // action twice — retry while attempts remain.
-    if (attempt < policy.maxAttempts) {
+    // action twice — retry while retries remain.
+    if (attempt <= policy.maxAttempts) {
       await sleep(backoffForAttempt(attempt, policy));
       return 'retry';
     }
-    await options.fail(`${reconciliation.evidence} — no attempts remain, so the step will not be retried`);
+    await options.fail(`${evidence} — no attempts remain, so the step will not be retried`);
     return 'failed';
   }
 

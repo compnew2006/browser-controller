@@ -111,11 +111,15 @@ describe('RetryPolicy', () => {
 });
 
 describe('shouldRetry', () => {
-  it('retries the retryable codes on attempts 1 and 2, never on attempt 3', () => {
+  it('retries the retryable codes on attempts 1, 2 and 3, never on attempt 4', () => {
+    // Fix round 1, Important 1: maxAttempts: 3 counts retries, not
+    // attempts in total — 3 retries means 4 attempts, so attempt 3 may
+    // still retry and only attempt 4 may not.
     for (const code of ['TIMEOUT', 'TAB_FROZEN', 'TAB_WEDGED', 'NETWORK', 'NOT_CONNECTED', 'NAVIGATION_FAILED']) {
       expect(shouldRetry(code, 1)).toBe(true);
       expect(shouldRetry(code, 2)).toBe(true);
-      expect(shouldRetry(code, 3)).toBe(false);
+      expect(shouldRetry(code, 3)).toBe(true);
+      expect(shouldRetry(code, 4)).toBe(false);
     }
   });
 
@@ -126,6 +130,7 @@ describe('shouldRetry', () => {
       expect(shouldRetry(code, 1)).toBe(false);
       expect(shouldRetry(code, 2)).toBe(false);
       expect(shouldRetry(code, 3)).toBe(false);
+      expect(shouldRetry(code, 4)).toBe(false);
     }
   });
 
@@ -327,6 +332,9 @@ describe('runner applies the recovery policy', () => {
     expect(done.state).toBe('done');
     expect(calls).toEqual(['fake-ok', 'fake-ok', 'fake-ok']);
     expect(slept).toEqual([500, 1500]);
+    // A read-only step retries a TIMEOUT without reconciling: the one
+    // snapshot read is the post-step verification, not a reconcile.
+    expect(snapshotCalls).toEqual(['browser_snapshot']);
     expect(done.steps[0]?.result?.status).toBe('ok');
   });
 
@@ -359,7 +367,7 @@ describe('runner applies the recovery policy', () => {
     expect(slept).toEqual([500]);
   });
 
-  it('gives up after the third attempt and fails with the last error', async () => {
+  it('gives up after the fourth attempt and fails with the last error', async () => {
     const calls: string[] = [];
     const slept: number[] = [];
     const tools = new Map<string, ToolDefinition>([
@@ -377,10 +385,45 @@ describe('runner applies the recovery policy', () => {
     });
 
     expect(done.state).toBe('failed');
-    expect(calls).toEqual(['fake-ok', 'fake-ok', 'fake-ok']);
-    expect(slept).toEqual([500, 1500]);
+    // 3 retries (4 attempts in total), backing off 500ms, 1500ms, 4000ms.
+    expect(calls).toEqual(['fake-ok', 'fake-ok', 'fake-ok', 'fake-ok']);
+    expect(slept).toEqual([500, 1500, 4000]);
     expect(done.steps[0]?.result?.status).toBe('failed');
     expect(done.steps[0]?.result?.detail).toContain('TIMEOUT');
+  });
+
+  it('the third retry actually runs, after the 4000ms backoff', async () => {
+    // Fix round 1, Important 1: backoffMs[2] = 4000 must be the wait
+    // before a real fourth attempt, not dead config — three TIMEOUTs then
+    // a success proves the third retry happens.
+    const calls: string[] = [];
+    const slept: number[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'fake-ok',
+        scriptedTool('fake-ok', calls, [
+          failureResult('TIMEOUT: tab did not respond'),
+          failureResult('TIMEOUT: tab did not respond'),
+          failureResult('TIMEOUT: tab did not respond'),
+          textResult('page loaded'),
+        ]),
+      ],
+      ['browser_snapshot', snapshotTool([], 'page loaded')],
+    ]);
+    await saveTask(oneStepTask(), dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+      recovery: { sleep: async (ms) => { slept.push(ms); } },
+    });
+
+    expect(done.state).toBe('done');
+    expect(calls).toEqual(['fake-ok', 'fake-ok', 'fake-ok', 'fake-ok']);
+    expect(slept).toEqual([500, 1500, 4000]);
+    expect(done.steps[0]?.result?.status).toBe('ok');
   });
 
   it('never retries a rate-limit failure, in either spelling', async () => {
@@ -523,10 +566,13 @@ describe('runner applies the recovery policy', () => {
   it('a retry runs under the same approval: no re-ask, and never without it', async () => {
     // The step is mutating with blanket approval, and an ask is wired: a
     // retry must neither ask again nor run unapproved — the gate was
-    // already passed once, for this step, before the first attempt.
+    // already passed once, for this step, before the first attempt. The
+    // TIMEOUT is on a mutating step, so the retry first reconciles: the
+    // re-read shows the effect absent, so the retry is safe.
     const calls: string[] = [];
     const asks: unknown[] = [];
     const slept: number[] = [];
+    const reads: PageSnapshot[] = [];
     const tools = new Map<string, ToolDefinition>([
       [
         'fake-submit',
@@ -561,13 +607,159 @@ describe('runner applies the recovery policy', () => {
           throw new Error('must not ask during a retry');
         },
       },
-      recovery: { sleep: async (ms) => { slept.push(ms); } },
+      recovery: {
+        sleep: async (ms) => { slept.push(ms); },
+        readPage: async () => {
+          const page: PageSnapshot = {
+            url: 'https://example.com/form',
+            text: 'the form, still blank',
+            ref: 'reconcile',
+          };
+          reads.push(page);
+          return page;
+        },
+      },
     });
 
     expect(done.state).toBe('done');
     expect(calls).toEqual(['fake-submit', 'fake-submit']);
     expect(slept).toEqual([500]);
+    expect(reads.length).toBe(1);
     expect(asks).toEqual([]);
+  });
+});
+
+describe('a coded TIMEOUT on a mutating step reconciles first', () => {
+  /**
+   * One mutating submit step: the fake executes the mutation on every
+   * call (counted in `executions`) and plays the scripted result — a
+   * TIMEOUT throw means the call executed but its reply was lost.
+   */
+  function mutatingTimeoutTask(): {
+    tools: Map<string, ToolDefinition>;
+    calls: string[];
+    executions: string[];
+  } {
+    const calls: string[] = [];
+    const executions: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'fake-submit',
+        scriptedTool(
+          'fake-submit',
+          calls,
+          [new Error('TIMEOUT: tab did not respond'), textResult('submitted')],
+          false,
+          z.object({}).strict(),
+          () => {
+            executions.push('fake-submit');
+          },
+        ),
+      ],
+      ['browser_snapshot', snapshotTool([], 'submitted')],
+    ]);
+    return { tools, calls, executions };
+  }
+
+  function submitTask(): Task {
+    return {
+      id: 'task-1',
+      goal: 'Submit the form',
+      constraints: ['allow-mutations'],
+      steps: [{ tool: 'fake-submit', params: {}, verify: [{ kind: 'text-present', value: 'submitted' }] }],
+      state: 'planned',
+      evidence: [],
+    };
+  }
+
+  it('a mutating TIMEOUT whose effect is already present is never executed twice', async () => {
+    // Fix round 1, Important 2: a TIMEOUT from a mutating tool is
+    // "action sent, no reply arrived" — the tool may have executed and
+    // only the reply was lost. The retry reconciles first; a confirmed
+    // effect means the step is done and the tool never runs again.
+    const { tools, calls, executions } = mutatingTimeoutTask();
+    const reads: PageSnapshot[] = [];
+    await saveTask(submitTask(), dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      recovery: {
+        readPage: async () => {
+          const page: PageSnapshot = { url: 'https://example.com/done', text: 'submitted', ref: 'reconcile' };
+          reads.push(page);
+          return page;
+        },
+      },
+    });
+
+    expect(done.state).toBe('done');
+    expect(done.steps[0]?.result?.status).toBe('ok');
+    expect(done.steps[0]?.result?.detail).toContain('reconciled');
+    // The mutation executed once — the timeout lost its reply — and the
+    // reconcile found the effect present, so the tool never ran again.
+    expect(executions).toEqual(['fake-submit']);
+    expect(calls).toEqual(['fake-submit']);
+    expect(reads.length).toBe(1);
+  });
+
+  it('a mutating TIMEOUT retries when reconciliation says the effect did not happen', async () => {
+    const { tools, calls, executions } = mutatingTimeoutTask();
+    const reads: PageSnapshot[] = [];
+    const slept: number[] = [];
+    await saveTask(submitTask(), dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      recovery: {
+        readPage: async () => {
+          const page: PageSnapshot = {
+            url: 'https://example.com/form',
+            text: 'the form, still blank',
+            ref: 'reconcile',
+          };
+          reads.push(page);
+          return page;
+        },
+        sleep: async (ms) => { slept.push(ms); },
+      },
+    });
+
+    expect(done.state).toBe('done');
+    expect(done.steps[0]?.result?.status).toBe('ok');
+    // The reconcile found no effect on the fresh read, so the retry was
+    // safe: the mutation ran twice in total — once lost, once retried.
+    expect(executions).toEqual(['fake-submit', 'fake-submit']);
+    expect(calls).toEqual(['fake-submit', 'fake-submit']);
+    expect(reads.length).toBe(1);
+    expect(slept).toEqual([500]);
+  });
+
+  it('a mutating TIMEOUT that cannot be reconciled fails instead of retrying blind', async () => {
+    const { tools, calls } = mutatingTimeoutTask();
+    const slept: number[] = [];
+    await saveTask(submitTask(), dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      recovery: {
+        readPage: async () => {
+          throw new Error('NOT_CONNECTED: extension went away');
+        },
+        sleep: async (ms) => { slept.push(ms); },
+      },
+    });
+
+    expect(calls).toEqual(['fake-submit']);
+    expect(slept).toEqual([]);
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.status).toBe('failed');
+    expect(done.steps[0]?.result?.detail).toContain('OUTCOME_UNKNOWN');
   });
 });
 
@@ -1025,5 +1217,51 @@ describe('unknown outcomes in the evidence report and the store', () => {
     };
     await saveTask(task, dir);
     expect(await loadTask('task-1', dir)).toEqual(task);
+  });
+
+  it('a reconciled-confirmed step contributes only its genuine fresh observation as a found value', async () => {
+    // Fix round 1, additional check: the reconcile line written into a
+    // confirmed step's result.detail carries the verifier's evidence from
+    // the fresh re-read — including its observed="..." excerpt — so the
+    // evidence report's found value is that genuine fresh observation,
+    // not a stale or unverified value. Nothing from the step's original
+    // unknown detail may leak in.
+    const task: Task = {
+      id: 'task-1',
+      goal: 'Submit the form',
+      constraints: ['allow-mutations'],
+      steps: [
+        {
+          tool: 'fake-submit',
+          params: {},
+          verify: [{ kind: 'text-present', value: 'submitted' }],
+          result: { status: 'unknown', detail: 'OUTCOME_UNKNOWN: sent, no reply arrived' },
+        },
+      ],
+      state: 'paused-login',
+      evidence: [],
+    };
+    const step = task.steps[0]!;
+    const outcome = await reconcileUnknown(task, step, {
+      readPage: async () => ({
+        url: 'https://example.com/done',
+        text: 'heading "Done"\n- text "submitted"',
+        ref: 'browser_snapshot',
+      }),
+      verify: verifyStep,
+    });
+    expect(outcome.outcome).toBe('confirmed');
+    expect(step.result?.status).toBe('ok');
+    task.state = 'done';
+
+    const report = buildEvidenceReport(task);
+    expect(report.json.values).toHaveLength(1);
+    // The found value is the fresh observation: the reconcile line carries
+    // the verifier's observed="..." excerpt from the re-read page.
+    expect(report.json.values[0]?.value).toContain('submitted');
+    expect(report.json.values[0]?.value).toContain('reconciled');
+    // And nothing from the stale unknown detail survives into the value.
+    expect(report.json.values[0]?.value).not.toContain('no reply arrived');
+    expect(report.json.unconfirmed).toEqual([]);
   });
 });
