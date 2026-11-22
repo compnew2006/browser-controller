@@ -9,11 +9,9 @@ import {
   tabLocks,
   tabControl,
   loadSessionState,
-  persistSessionState,
-  getAdoptedDaemonInstance,
-  setAdoptedDaemonInstance,
 } from './state.js';
-import { hideLockShield, clearAgentCursor } from './overlay.js';
+import { hideLockShield, clearAgentCursor, restoreTaskLockShields } from './overlay.js';
+import { adoptDaemonInstance as resetDaemonInstanceState } from './daemon-instance.js';
 import { buildExtensionHelloAck, OLDER_DAEMON_REASON, validateDaemonHello } from './protocol.js';
 import { daemonWebSocketUrl, isDaemonListening, withTimeout } from './connection-transport.js';
 import { browserIdentity, restoreBrowserIdentity, saveBrowserLabel } from './browser-identity.js';
@@ -217,6 +215,9 @@ export async function initConnection() {
   // Restore lock ownership + fallbacks BEFORE connecting: lock routing must see
   // the real ownership when the first call arrives (architecture: MV3 state persistence).
   await loadSessionState();
+  // Task shield leases survive worker suspension. Reinstall their page overlays
+  // before the daemon can send another step or the user can resume task control.
+  await restoreTaskLockShields();
 
   chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: KEEPALIVE_INTERVAL_MIN });
   chrome.alarms.onAlarm.addListener((alarm) => {
@@ -245,20 +246,7 @@ export async function initConnection() {
  * @returns {number}
  */
 export function adoptDaemonInstance(instanceId) {
-  if (typeof instanceId !== 'string' || !instanceId) return 0;
-  if (getAdoptedDaemonInstance() === instanceId) return 0;
-  setAdoptedDaemonInstance(instanceId);
-  const stale = tabLocks.snapshot();
-  const controlled = [...tabControl.entries.keys()];
-  tabLocks.unlockAll();
-  tabControl.clear();
-  persistSessionState();
-  for (const tabId of new Set([...stale.map((entry) => entry.tabId), ...controlled])) {
-    hideLockShield(tabId);
-    clearAgentCursor(tabId);
-  }
-  if (stale.length) broadcastStatus(`Released ${stale.length} tab lock(s) left by a previous daemon`);
-  return stale.length;
+  return resetDaemonInstanceState(instanceId, broadcastStatus);
 }
 
 /**

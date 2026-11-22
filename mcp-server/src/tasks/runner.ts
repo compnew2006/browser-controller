@@ -125,6 +125,8 @@ export type AskQuestionFn = (input: {
 export interface RunTaskOptions {
   tasksDir?: string;
   host?: ToolHost;
+  /** Release the extension's task-scoped input lock after this run settles. */
+  releaseTaskLock?: (taskId: string) => Promise<unknown>;
   /** Tool definitions to resolve steps against; defaults to the registry's `toolMap`. */
   tools?: ReadonlyMap<string, ToolDefinition>;
   /** Verifier to apply after each step; defaults to `verifyStep`. */

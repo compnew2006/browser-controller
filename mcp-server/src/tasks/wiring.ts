@@ -45,11 +45,12 @@
  * production never calls it, and it restores the real runner when called
  * with no argument.
  */
+import { randomUUID } from 'node:crypto';
 import { createLogger } from '../core/logger.js';
-import { TASK_QUESTION_WIRE_ACTION } from '../protocol/wire-tools.js';
+import { TASK_LOCK_RELEASE_WIRE_ACTION, TASK_QUESTION_WIRE_ACTION } from '../protocol/wire-tools.js';
 import type { ActivityContextFrame } from '../protocol/frames.js';
 import type { TaskAnswerHandler } from '../bridge-task-answers.js';
-import type { ToolActivity, ToolHost } from '../tools/types.js';
+import { createActivityContext, type ToolActivity, type ToolHost } from '../tools/types.js';
 import { answerQuestion, askQuestion, type QuestionSendFn } from './questions.js';
 import { runTask, type RunTaskOptions } from './runner.js';
 import { loadTask } from './store.js';
@@ -91,10 +92,23 @@ function toFrame(activity: ToolActivity | undefined): ActivityContextFrame | und
  * failing a mutating step outright, and the answer resumes from the same
  * step with the approval the answer recorded.
  */
-export function taskRunOptions(host: ToolHost, send: QuestionSendFn, tasksDir?: string): RunTaskOptions {
+export function taskRunOptions(host: ToolHost, send: QuestionSendFn, tasksDir?: string, taskId?: string): RunTaskOptions {
+  const taskHost: ToolHost = taskId ? {
+    ...(host.sessionId !== undefined ? { sessionId: host.sessionId } : {}),
+    callTool: (tool, params, activity) => {
+      if (tool === TASK_LOCK_RELEASE_WIRE_ACTION || tool === TASK_QUESTION_WIRE_ACTION) {
+        return host.callTool(tool, params, activity);
+      }
+      if (activity && 'kind' in activity) return host.callTool(tool, params, activity);
+      const needsTaskContext = tool.startsWith('browser_') && tool !== 'browser_batch' && !tool.startsWith('browser_task_');
+      const context = activity ?? createActivityContext(tool) ?? (needsTaskContext ? { eventId: randomUUID() } : undefined);
+      return host.callTool(tool, params, context ? { ...context, taskId } : activity);
+    },
+  } : host;
   return {
     ...(tasksDir !== undefined ? { tasksDir } : {}),
-    host,
+    host: taskHost,
+    ...(taskId ? { releaseTaskLock: (settledTaskId: string) => host.callTool(TASK_LOCK_RELEASE_WIRE_ACTION, { taskId: settledTaskId }) } : {}),
     questions: {
       ask: (input) =>
         askQuestion(input.taskId, input.text, input.options, {
@@ -169,6 +183,12 @@ export async function runTaskWithReport(id: string, options: RunTaskOptions = {}
     delete task.cancelled;
     return saveTaskWithReport(task, options.tasksDir);
   } finally {
+    try {
+      await options.releaseTaskLock?.(id);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      log.warn(`task ${id} input-lock release failed: ${detail}`);
+    }
     runningTasks.delete(id);
   }
 }
@@ -198,7 +218,7 @@ export function createTaskAnswerContinuation(bridge: TaskBridge): TaskAnswerHand
         const send: QuestionSendFn = (message) => {
           bridge.sendControl(message.type, { question: message.question });
         };
-        resumeTaskInBackground(task.id, taskRunOptions(host, send));
+        resumeTaskInBackground(task.id, taskRunOptions(host, send, undefined, task.id));
         return Promise.resolve(task);
       },
     });

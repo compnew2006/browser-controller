@@ -104,10 +104,11 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
 
 const { handleMessage } = await import('../extension/dispatch/router.js');
 const { handleScreenshot } = await import('../extension/handlers/screenshot.js');
-const { tabLocks, tabControl, wedgedTabs } = await import('../extension/lib/state.js');
+const { tabLocks, tabControl, taskLockShields, wedgedTabs } = await import('../extension/lib/state.js');
+const { hasTaskLockShield, releaseTaskLockShields, retainTaskLockShield } = await import('../extension/lib/task-locks.js');
 const { lockTabUi } = await import('../extension/lib/lock-ops.js');
 const { registerEventListeners } = await import('../extension/events.js');
-const { dispatchAgentInput, hideLockShield, refreshLockShield, showLockShield } = await import('../extension/lib/overlay.js');
+const { dispatchAgentInput, hideLockShield, refreshLockShield, restoreTaskLockShields, showLockShield } = await import('../extension/lib/overlay.js');
 
 const shieldInjections = () => injections.filter((i) => i.func.includes('__bc-lock-shield'));
 const overlayInjections = () => injections.filter((i) => i.func.includes('__bc-overlay'));
@@ -124,6 +125,7 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     injections.length = 0;
     tabStore.clear();
     tabLocks.unlockAll();
+    taskLockShields.clear();
     wedgedTabs.delete(3);
     tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
   });
@@ -159,6 +161,109 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     expect(shields[0]!.func).toContain("el.style.pointerEvents = blockMouse ? 'auto' : 'none'");
     expect(shields.at(-1)!.func).toContain('root.__bcShieldDocListeners');
     expect(sent.find((f) => f.id === 'mouse-lock')?.success).toBe(true);
+  });
+
+  it('keeps the movement shield installed between browser_task steps', async () => {
+    mouseMovementLockSetting.enabled = true;
+    const taskId = '00000000-0000-4000-8000-000000000002';
+    const actionContext = {
+      eventId: '00000000-0000-4000-8000-000000000001',
+      taskId,
+    };
+
+    await handleMessage({ id: 'task-step-1', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1', activityContext: actionContext });
+    await flush();
+    await handleMessage({ id: 'task-step-2', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1', activityContext: { ...actionContext, eventId: '00000000-0000-4000-8000-000000000003' } });
+    await flush();
+
+    // A task keeps the page shielded through the gap between MCP tool calls.
+    // Per-call cleanup has no args, so the final injection is a task release
+    // only after taskLockRelease arrives.
+    expect(shieldInjections().at(-1)?.args).toEqual(['agent controlling the tab', false, true]);
+
+    await handleMessage({ type: 'taskLockRelease', sessionId: 's1', taskId });
+    await flush();
+    expect(shieldInjections().at(-1)?.args).toEqual([]);
+  });
+
+  it('reinstalls persisted task shields after a worker recycle before reconnecting', async () => {
+    mouseMovementLockSetting.enabled = true;
+    const taskId = '00000000-0000-4000-8000-000000000071';
+    taskLockShields.set(3, new Map([[`s1\u0000${taskId}`, { sessionId: 's1', taskId }]]));
+
+    await expect(restoreTaskLockShields()).resolves.toBe(true);
+
+    expect(shieldInjections().at(-1)?.target).toEqual({ tabId: 3, allFrames: true });
+    expect(shieldInjections().at(-1)?.args).toEqual(['agent controlling the tab', false, true]);
+  });
+
+  it('drops persisted task leases when the movement-lock setting was turned off', async () => {
+    const taskId = '00000000-0000-4000-8000-000000000072';
+    taskLockShields.set(3, new Map([[`s1\u0000${taskId}`, { sessionId: 's1', taskId }]]));
+
+    await expect(restoreTaskLockShields()).resolves.toBe(true);
+
+    expect(taskLockShields.has(3)).toBe(false);
+    expect(shieldInjections()).toEqual([]);
+  });
+
+  it('shields the tab discovered by a task without a URL before returning the list', async () => {
+    mouseMovementLockSetting.enabled = true;
+    const taskId = '00000000-0000-4000-8000-000000000004';
+    await handleMessage({
+      id: 'task-tabs', tool: 'browser_tabs', params: { action: 'list' }, sessionId: 's1',
+      activityContext: { eventId: '00000000-0000-4000-8000-000000000005', taskId },
+    });
+    await flush();
+
+    expect(shieldInjections().at(-1)?.target).toEqual({ tabId: 3, allFrames: true });
+    expect(shieldInjections().at(-1)?.args).toEqual(['agent controlling the tab', false, true]);
+    await handleMessage({ type: 'taskLockRelease', sessionId: 's1', taskId });
+    expect(shieldInjections().at(-1)?.args).toEqual([]);
+  });
+
+  it('releases task shields when the owning MCP session disconnects', async () => {
+    mouseMovementLockSetting.enabled = true;
+    const taskId = '00000000-0000-4000-8000-000000000006';
+    await handleMessage({
+      id: 'task-disconnect', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1',
+      activityContext: { eventId: '00000000-0000-4000-8000-000000000007', taskId },
+    });
+    await flush();
+    expect(shieldInjections().at(-1)?.args).toEqual(['agent controlling the tab', false, true]);
+
+    await handleMessage({ type: 'releaseSession', sessionId: 's1' });
+    await flush();
+
+    expect(shieldInjections().at(-1)?.args).toEqual([]);
+  });
+
+  it('keeps another task session indicator when one task owner disconnects', async () => {
+    mouseMovementLockSetting.enabled = true;
+    const taskIdA = '00000000-0000-4000-8000-000000000008';
+    const taskIdB = '00000000-0000-4000-8000-000000000009';
+    await handleMessage({
+      id: 'task-owner-a', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1',
+      activityContext: { eventId: '00000000-0000-4000-8000-000000000010', taskId: taskIdA },
+    });
+    await handleMessage({
+      id: 'task-owner-b', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's2',
+      activityContext: { eventId: '00000000-0000-4000-8000-000000000011', taskId: taskIdB },
+    });
+    await flush();
+    // The short-lived control indicator can expire while the task lease remains.
+    tabControl.clear();
+    const cursorRemovalsBefore = injections.filter((i) => i.func.includes('cursor.remove()')).length;
+
+    try {
+      await handleMessage({ type: 'releaseSession', sessionId: 's1' });
+      await flush();
+
+      expect(shieldInjections().at(-1)?.args).toEqual(['agent controlling the tab', false, true]);
+      expect(injections.filter((i) => i.func.includes('cursor.remove()')).length).toBe(cursorRemovalsBefore);
+    } finally {
+      await handleMessage({ type: 'taskLockRelease', sessionId: 's2', taskId: taskIdB });
+    }
   });
 
   it('opens a short all-frame permit for each agent CDP input and closes it on failure', async () => {
@@ -284,6 +389,8 @@ describe('pinning a tab draws no frame (the frame is shown only during a tool ca
   it('moves active shield ownership with a replaced tab and resolves cleanup to the new id', async () => {
     mouseMovementLockSetting.enabled = true;
     await showLockShield(3, 'agent controlling the tab');
+    const taskId = '00000000-0000-4000-8000-000000000081';
+    expect(retainTaskLockShield(3, 's1', taskId)).toBe(true);
     tabStore.set(4, { id: 4, windowId: 1, url: 'https://example.com/replaced', title: 'Replaced', active: true });
     const before = injections.length;
     listeners.replaced.at(-1)!(4, 3);
@@ -292,7 +399,10 @@ describe('pinning a tab draws no frame (the frame is shown only during a tool ca
     await dispatchAgentInput(3, async () => undefined, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: 20, y: 30 });
 
     expect(injections.slice(before).every((item) => item.target.tabId === 4)).toBe(true);
+    expect(hasTaskLockShield(4, 's1', taskId)).toBe(true);
     await hideLockShield(3);
+    expect(injections.at(-1)!.target.tabId).toBe(4);
+    await releaseTaskLockShields(taskId, 's1', hideLockShield);
     expect(injections.at(-1)!.target.tabId).toBe(4);
   });
 

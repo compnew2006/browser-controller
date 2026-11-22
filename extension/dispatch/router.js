@@ -10,7 +10,13 @@ import {
   releaseSessionSettings, claimTabSetting, releaseBodyCapture, sessionSettingOwners, isSessionStateUnavailable,
 } from '../lib/state.js';
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from '../lib/connection.js';
-import { showLockShield, hideLockShield, discardLockShieldState, agentCursorEnabled, agentMouseMovementLockEnabled, clearAgentCursor } from '../lib/overlay.js';
+import {
+  showLockShield, hideLockShield, discardLockShieldState, agentCursorEnabled, agentMouseMovementLockEnabled, clearAgentCursor,
+  hasTaskLockShield, retainTaskLockShield,
+} from '../lib/overlay.js';
+import {
+  releaseTaskLockShields, releaseTaskLockShieldsForSession, taskShieldOwners,
+} from '../lib/task-locks.js';
 import { getOpenDialog, dialogLabel, takeFileChooser } from '../lib/cdp-session.js';
 import { handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType } from '../handlers/interaction.js';
@@ -93,7 +99,7 @@ export async function dispatch(tool, params, sessionId, agentName, signal, obser
   const inputActivity = createInputActivity(tool, params);
   let result;
   try {
-    result = await handler(params, sessionId, agentName, signal, inputActivity);
+    result = await handler(params, sessionId, agentName, signal, inputActivity, activityContext);
   } catch (error) {
     await finishActivity(activity, null, error, inputActivity);
     throw error;
@@ -292,6 +298,7 @@ function knownSessionOwners() {
   const owners = new Set(sessionAgentNames.keys());
   for (const { sessionId } of tabLocks.snapshot()) owners.add(sessionId);
   for (const owner of sessionSettingOwners()) owners.add(owner);
+  for (const owner of taskShieldOwners()) owners.add(owner);
   return owners;
 }
 
@@ -302,6 +309,7 @@ function releaseSessionOwner(owner) {
   // any shield calls below run — no async race (review NOTE 7a).
   const released = tabLocks.releaseByOwner(owner);
   const controlled = tabControl.releaseByOwner(owner); // a gone agent no longer "controls" anything
+  const taskShieldTabs = releaseTaskLockShieldsForSession(owner);
   // Tab settings it set (mock rules, emulation overrides, body capture) go with it (L1).
   for (const { tabId, kind } of releaseSessionSettings(owner)) clearTabSetting(tabId, kind);
   sessionAgentNames.delete(owner);
@@ -309,9 +317,9 @@ function releaseSessionOwner(owner) {
   // would restore the just-released lock from session storage and
   // resurrect stale exclusivity (spec-review finding).
   persistSessionState();
-  for (const tabId of new Set([...released, ...controlled])) {
+  for (const tabId of new Set([...released, ...controlled, ...taskShieldTabs])) {
     // Another live controller must keep its own indicator.
-    if (tabControl.controller(tabId)) continue;
+    if (tabControl.controller(tabId) || hasTaskLockShield(tabId)) continue;
     hideLockShield(tabId);
     clearAgentCursor(tabId);
   }
@@ -337,6 +345,12 @@ export async function handleMessage(msg) {
     // Session ids are unique even when two live clients share a display name.
     // Releasing one session therefore cannot unlock its sibling's tabs.
     releaseSessionOwner(msg.sessionId);
+    return; // control message — no response expected
+  }
+  if (msg.type === "taskLockRelease") {
+    if (typeof msg.sessionId === 'string' && typeof msg.taskId === 'string') {
+      await releaseTaskLockShields(msg.taskId, msg.sessionId, hideLockShield);
+    }
     return; // control message — no response expected
   }
   if (msg.type === "sessionRoster") {
@@ -393,6 +407,7 @@ export async function handleMessage(msg) {
 
   const { id, tool, params } = msg;
   const p = { ...(params || {}) };
+  const taskId = typeof msg.activityContext?.taskId === 'string' ? msg.activityContext.taskId : null;
   const sessionId = msg.sessionId || null;
   const agentName = msg.agentName || null;
   // Remember who a session is: a lock it takes is then shown to others by name.
@@ -501,6 +516,9 @@ export async function handleMessage(msg) {
         updateBadge('active');
         let movementLockEnabled = null;
         try { movementLockEnabled = await agentMouseMovementLockEnabled(); } catch { /* fail closed below */ }
+        if (taskId && sessionId && movementLockEnabled === false) {
+          await releaseTaskLockShields(taskId, sessionId, hideLockShield);
+        }
         let shieldPromise = null;
         let shieldInstalled = false;
         // Agent control shows the blue input-blocking spectrum for this call only;
@@ -513,6 +531,9 @@ export async function handleMessage(msg) {
           const showCursor = !!(await overlayStep(agentCursorEnabled()));
           shieldPromise = showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab', showCursor, movementLockEnabled === true);
           shieldInstalled = (await overlayStep(shieldPromise)) === true;
+          if (shieldInstalled && movementLockEnabled === true && taskId && sessionId) {
+            shieldInstalled = retainTaskLockShield(tabId, sessionId, taskId);
+          }
           if (!shieldInstalled) {
             // A timed-out injection cannot be cancelled. Remove a late shield
             // once its promise settles so it cannot outlive this call.

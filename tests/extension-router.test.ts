@@ -128,6 +128,23 @@ describe("extension router (handleMessage)", () => {
     expect(state.incompleteBatchRunIds).not.toContain(batchRunId);
   });
 
+  it('records batch activity while the same action carries a browser task lock', async () => {
+    const eventId = '00000000-0000-4000-8000-000000000051';
+    const batchRunId = '00000000-0000-4000-8000-000000000052';
+    const taskId = 'legacy_task-1';
+    await expect(dispatch('browser_click', { tabId: 3 }, 's-router', null, new AbortController().signal, false, {
+      eventId, batchRunId, batchStepIndex: 1, taskId,
+    })).rejects.toThrow(/target/i);
+
+    await vi.waitFor(async () => {
+      const state = await getActivityLog().get();
+      expect(state.events[0]?.executionStatus).toBe('failed');
+    });
+    const state = await getActivityLog().get();
+    expect(state.events).toHaveLength(1);
+    expect(state.events[0]).toMatchObject({ eventId, batchRunId, batchStepIndex: 1, executionStatus: 'failed' });
+  });
+
   it('keeps delayed storage off a batched response and preserves its finish marker', async () => {
     const storage = (globalThis as any).chrome.storage.session;
     const originalSet = storage.set;

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,11 +8,12 @@ import { askQuestion } from '../../mcp-server/src/tasks/questions.js';
 import { listPendingQuestions } from '../../mcp-server/src/tasks/question-store.js';
 import { runTaskWithReport, taskRunOptions, isTaskRunning, configureTaskRunner, createTaskAnswerContinuation } from '../../mcp-server/src/tasks/wiring.js';
 import { routeTaskQuestion } from '../../mcp-server/src/tasks/task-question-route.js';
+import { routeTaskLockRelease } from '../../mcp-server/src/tasks/task-lock-release-route.js';
 import { taskStartTool, taskStatusTool, taskCancelTool, taskAnswerTool, taskResumeTool } from '../../mcp-server/src/tasks/tools.js';
 import { toolMap } from '../../mcp-server/src/tools/registry.js';
-import { TASK_QUESTION_WIRE_ACTION } from '../../mcp-server/src/protocol/wire-tools.js';
+import { TASK_LOCK_RELEASE_WIRE_ACTION, TASK_QUESTION_WIRE_ACTION } from '../../mcp-server/src/protocol/wire-tools.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
-import type { ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
+import type { ToolActivity, ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
 
 let dir: string;
 let stateDir: string;
@@ -36,13 +37,13 @@ afterEach(() => {
 });
 
 /** A fake browser host: answers the tools the planner emits, and records every call. */
-function makeFakeHost(): ToolHost & { calls: Array<{ tool: string; params: Record<string, unknown> }>; sessionId: string } {
-  const calls: Array<{ tool: string; params: Record<string, unknown> }> = [];
+function makeFakeHost(): ToolHost & { calls: Array<{ tool: string; params: Record<string, unknown>; activity?: ToolActivity }>; sessionId: string } {
+  const calls: Array<{ tool: string; params: Record<string, unknown>; activity?: ToolActivity }> = [];
   return {
     calls,
     sessionId: 'test-session-1',
-    async callTool(tool: string, params: Record<string, unknown>) {
-      calls.push({ tool, params });
+    async callTool(tool: string, params: Record<string, unknown>, activity?: ToolActivity) {
+      calls.push({ tool, params, ...(activity ? { activity } : {}) });
       if (tool === 'browser_navigate') return { success: true, tabId: 42, text: 'loaded', url: 'https://example.com' };
       if (tool === 'browser_evaluate') return { success: true, text: 'stable' };
       if (tool === 'browser_snapshot') {
@@ -53,6 +54,7 @@ function makeFakeHost(): ToolHost & { calls: Array<{ tool: string; params: Recor
       }
       if (tool === 'browser_click') return { success: true, text: 'clicked' };
       if (tool === TASK_QUESTION_WIRE_ACTION) return { success: true, sent: true };
+      if (tool === TASK_LOCK_RELEASE_WIRE_ACTION) return { success: true, released: true };
       throw new Error(`unexpected tool call: ${tool}`);
     },
   };
@@ -80,6 +82,11 @@ async function waitForTask(id: string, check: (task: Task) => boolean, timeoutMs
 }
 
 describe('browser_task tools', () => {
+  it('recommends the task runner for multi-step browser goals', () => {
+    expect(taskStartTool.description).toMatch(/multi-step browser goals/i);
+    expect(taskStartTool.description).toMatch(/as a single task/i);
+  });
+
   it('test_task_start_returns_task_id', { timeout: 30_000 }, async () => {
     const host = makeFakeHost();
     const result = await taskStartTool.handler(host, {
@@ -100,6 +107,11 @@ describe('browser_task tools', () => {
     expect(done.report?.json.state).toBe('done');
     expect(host.calls.some((call) => call.tool === 'browser_navigate')).toBe(true);
     expect(host.calls.some((call) => call.tool === 'browser_snapshot')).toBe(true);
+    const taskId = String(payload.taskId);
+    const navigate = host.calls.find((call) => call.tool === 'browser_navigate');
+    expect(navigate?.activity).toMatchObject({ taskId });
+    const release = host.calls.find((call) => call.tool === TASK_LOCK_RELEASE_WIRE_ACTION);
+    expect(release?.params).toEqual({ taskId });
   });
 
   it('start refuses an empty goal', async () => {
@@ -166,10 +178,52 @@ describe('browser_task tools', () => {
     );
   });
 
+  it('carries task lock context through untracked and batched browser steps', async () => {
+    const calls: Array<{ tool: string; activity?: ToolActivity }> = [];
+    const host: ToolHost = {
+      sessionId: 'test-session-1',
+      async callTool(tool, _params, activity) {
+        calls.push({ tool, ...(activity ? { activity } : {}) });
+        return { success: true };
+      },
+    };
+    const taskId = 'legacy_task-1';
+    const options = taskRunOptions(host, async () => {}, undefined, taskId);
+    const taskHost = options.host;
+    if (!taskHost) throw new Error('task host was not configured');
+
+    await taskHost.callTool('browser_wait', { tabId: 42, ms: 1 });
+    await taskHost.callTool('browser_click', { tabId: 42, target: '#next' }, {
+      eventId: '00000000-0000-4000-8000-000000000031',
+      batchRunId: '00000000-0000-4000-8000-000000000032',
+      batchStepIndex: 1,
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
+      tool: 'browser_wait', activity: { eventId: expect.any(String), taskId },
+    });
+    expect(calls[1]).toMatchObject({
+      tool: 'browser_click', activity: {
+        eventId: '00000000-0000-4000-8000-000000000031',
+        batchRunId: '00000000-0000-4000-8000-000000000032', batchStepIndex: 1, taskId,
+      },
+    });
+  });
+
+  it('releases the task lock when the task runner throws', async () => {
+    const releaseTaskLock = vi.fn(async () => undefined);
+    configureTaskRunner(async () => { throw new Error('runner failed'); });
+
+    await expect(runTaskWithReport('failed-task', { releaseTaskLock })).rejects.toThrow('runner failed');
+
+    expect(releaseTaskLock).toHaveBeenCalledWith('failed-task');
+  });
+
   it('a mutating step asks through the internal wire action, and yes resumes it', { timeout: 30_000 }, async () => {
     const host = makeFakeHost();
     const task: Task = {
-      id: 'task-mutating',
+      id: '00000000-0000-4000-8000-000000000021',
       goal: 'Click the button',
       constraints: [],
       steps: [
@@ -183,7 +237,7 @@ describe('browser_task tools', () => {
     const send = async (message: { type: 'taskQuestion'; question: unknown }) => {
       await host.callTool(TASK_QUESTION_WIRE_ACTION, { question: message.question });
     };
-    const paused = await runTaskWithReport(task.id, taskRunOptions(host, send, dir));
+    const paused = await runTaskWithReport(task.id, taskRunOptions(host, send, dir, task.id));
     expect(paused.state).toBe('paused-question');
     // The question reached the daemon through the wire action, not a direct bridge call.
     const sent = host.calls.find((call) => call.tool === TASK_QUESTION_WIRE_ACTION);
@@ -192,6 +246,7 @@ describe('browser_task tools', () => {
     // The pause path persists a report too.
     expect(paused.report?.json.state).toBe('paused-question');
     expect(paused.report?.json.unconfirmed.length).toBeGreaterThan(0);
+    expect(host.calls.some((call) => call.tool === TASK_LOCK_RELEASE_WIRE_ACTION && call.params.taskId === task.id)).toBe(true);
     const pending = await listPendingQuestions(dir);
     expect(pending).toHaveLength(1);
     const answered = jsonOf(await taskAnswerTool.handler(host, { questionId: pending[0]!.id, answer: 'yes' }));
@@ -343,6 +398,26 @@ describe('browser_task tools', () => {
     expect(bad.success).toBe(false);
     expect(bad.error).toMatch(/INVALID_ARGUMENT/);
     expect(sent).toHaveLength(1);
+  });
+
+  it('the daemon task-lock route validates the task id and scopes release to the requesting session', () => {
+    const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const bridge = {
+      sendControl(type: string, payload: Record<string, unknown>) {
+        sent.push({ type, payload });
+      },
+    };
+    const taskId = '550e8400-e29b-41d4-a716-446655440000';
+
+    expect(routeTaskLockRelease(bridge, 'session-1', { taskId })).toEqual({
+      success: true,
+      result: { released: true },
+    });
+    expect(routeTaskLockRelease(bridge, 'session-1', { taskId: 'malformed/id' })).toMatchObject({
+      success: false,
+      error: expect.stringMatching(/INVALID_ARGUMENT/),
+    });
+    expect(sent).toEqual([{ type: 'taskLockRelease', payload: { sessionId: 'session-1', taskId } }]);
   });
 
   it('registers the four tools in the tool registry', () => {

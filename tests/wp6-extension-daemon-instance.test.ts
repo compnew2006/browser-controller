@@ -32,7 +32,8 @@ const shieldTabs = vi.hoisted(() => [] as number[]);
 };
 
 const { adoptDaemonInstance } = await import('../extension/lib/connection.js');
-const { tabLocks, tabControl, persistSessionState, loadSessionState, setAdoptedDaemonInstance } =
+const { hasTaskLockShield, retainTaskLockShield } = await import('../extension/lib/overlay.js');
+const { tabLocks, tabControl, taskLockShields, persistSessionState, loadSessionState, setAdoptedDaemonInstance } =
   await import('../extension/lib/state.js');
 // The worker's boot reads storage before it writes: persisting waits for that read.
 await loadSessionState();
@@ -45,6 +46,7 @@ describe('daemon instance adoption (stale locks after a daemon restart)', () => 
     shieldTabs.length = 0;
     tabLocks.unlockAll();
     tabControl.clear();
+    taskLockShields.clear();
     setAdoptedDaemonInstance(null);
   });
 
@@ -75,6 +77,31 @@ describe('daemon instance adoption (stale locks after a daemon restart)', () => 
     adoptDaemonInstance('inst-b');
     expect(() => tabLocks.lock(1, 's-inst-b-1')).not.toThrow();
     expect(tabLocks.owner(1)).toBe('s-inst-b-1');
+  });
+
+  it('a daemon restart clears a task-scoped page shield lease', async () => {
+    adoptDaemonInstance('inst-a');
+    const taskId = '00000000-0000-4000-8000-000000000031';
+    expect(retainTaskLockShield(4, 's-inst-a-1', taskId)).toBe(true);
+    expect(hasTaskLockShield(4, 's-inst-a-1', taskId)).toBe(true);
+
+    adoptDaemonInstance('inst-b');
+    await flush();
+
+    expect(hasTaskLockShield(4, 's-inst-a-1', taskId)).toBe(false);
+    expect(shieldTabs).toContain(4);
+  });
+
+  it('restores a task-scoped page shield after the service worker recycles', async () => {
+    adoptDaemonInstance('inst-a');
+    const taskId = '00000000-0000-4000-8000-000000000032';
+    expect(retainTaskLockShield(5, 's-inst-a-2', taskId)).toBe(true);
+    await flush();
+
+    taskLockShields.clear(); // simulate the service worker's in-memory state being recreated
+    await loadSessionState();
+
+    expect(hasTaskLockShield(5, 's-inst-a-2', taskId)).toBe(true);
   });
 
   it('a hello without an instance id (daemon from before instance ids) changes nothing', () => {

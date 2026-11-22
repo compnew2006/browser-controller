@@ -15,6 +15,8 @@ export interface ActivityContext {
   eventId: string;
   batchRunId?: string;
   batchStepIndex?: number;
+  /** The background task whose consecutive browser steps share one input lock. */
+  taskId?: string;
 }
 
 export interface BatchFinished {

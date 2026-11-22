@@ -52,9 +52,9 @@ import {
 import { ExtensionBridge } from './bridge.js';
 import { createDaemonBridge } from './daemon-bridge.js';
 import { isActivityContextFrame, isBatchFinishedFrame } from './protocol/frames.js';
-import { isKnownWireTool, TASK_QUESTION_WIRE_ACTION } from './protocol/wire-tools.js';
+import { isKnownWireTool } from './protocol/wire-tools.js';
 import { checkPresentedToken } from './daemon-auth.js';
-import { routeTaskQuestion } from './tasks/task-question-route.js';
+import { routeTaskInternalAction } from './tasks/internal-action-route.js';
 import { armIpcHelloTimer } from './ipc-hello-timer.js';
 import { isIpcClientMessage } from './ipc-frame-validation.js';
 import { VaultService, type VaultTransport } from './vault/service.js';
@@ -405,15 +405,9 @@ class Daemon {
       return;
     }
 
-    // A task question from the MCP process: it has no bridge, so it sends
-    // the question as the internal wire action and the daemon delivers it
-    // to the extension with `sendControl`. Intercepted here, before the
-    // rate limit and the memory/vault routing — it is daemon-internal
-    // signalling, not a browser tool call, so it consumes no call budget
-    // and leaves no memory observation behind.
-    if (msg.tool === TASK_QUESTION_WIRE_ACTION) {
-      const outcome = routeTaskQuestion(this.bridge, msg.params);
-      this.sendToClient(client, { kind: 'result', id: msg.id, cid: msg.cid, ...outcome });
+    const taskOutcome = routeTaskInternalAction(this.bridge, client.sessionId, msg.tool, msg.params);
+    if (taskOutcome) {
+      this.sendToClient(client, { kind: 'result', id: msg.id, cid: msg.cid, ...taskOutcome });
       return;
     }
 

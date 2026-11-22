@@ -8,7 +8,7 @@
  *     debug aids: Chrome can recycle the worker at any moment, and the agent
  *     can always re-read after the page makes new requests. (Console messages
  *     are not buffered here: Chrome keeps them, see lib/browser-log.js.)
- *   - tabLocks + fallbackByTab ARE durably persisted to chrome.storage.session
+ *   - tabLocks, task input shields + fallbackByTab ARE durably persisted to chrome.storage.session
  *     (MV3 lifetime): a recycle used to silently drop lock ownership (an
  *     agent's exclusivity guarantee) and smart-selector fallbacks. session
  *     storage is wiped when the browser closes, which is exactly the right
@@ -16,6 +16,7 @@
  */
 import { TabMutexMap, TabLockMap, TabControlMap } from './tab-concurrency.js';
 import { unpinCdp } from './cdp-session.js';
+import { TASK_ID_PATTERN } from './generated-contract.js';
 
 export const PER_TAB_CAP = 200;
 // Response cap for unbounded result tools (browser_evaluate). browser_text
@@ -83,6 +84,9 @@ export const tabLocks = new TabLockMap({ nameOf: (sessionId) => sessionAgentName
 // it is a live indicator for the popup, not a guarantee, so a worker recycle
 // may drop it harmlessly. Not exclusive — see TabControlMap.
 export const tabControl = new TabControlMap();
+/** Task-scoped page shields that must survive service-worker suspension. Map<tabId, Map<sessionId+taskId, lease>>. */
+export const taskLockShields = new Map();
+const TASK_ID_RE = new RegExp(`^${TASK_ID_PATTERN}$`, 'u');
 
 /**
  * Tabs replaced by another tab (Map<oldTabId, newTabId>): a frozen tab that browser_navigate
@@ -266,6 +270,7 @@ export function persistSessionState() {
     chrome.storage.session.set({
       [SESSION_STATE_KEY]: {
         locks: tabLocks.snapshot(),
+        taskShields: [...taskLockShields].map(([tabId, leases]) => [tabId, [...leases.values()]]),
         daemonInstance: adoptedDaemonInstance,
         fallbacks,
         refHighWater: Object.fromEntries(refHighWaterByTab),
@@ -352,6 +357,21 @@ function applyStoredState(state) {
   const storedInstance = typeof state.daemonInstance === 'string' ? state.daemonInstance : null;
   if (!liveInstanceAdopted && storedInstance) adoptedDaemonInstance = storedInstance;
   const staleLocks = locksClearedBeforeLoad || (liveInstanceAdopted && storedInstance !== adoptedDaemonInstance);
+  if (!staleLocks && Array.isArray(state.taskShields)) {
+    for (const entry of state.taskShields) {
+      if (!Array.isArray(entry) || entry.length !== 2) continue;
+      const [tabId, storedLeases] = entry;
+      if (!Number.isInteger(tabId) || closedBeforeLoad.has(tabId) || !Array.isArray(storedLeases)) continue;
+      const leases = new Map();
+      for (const lease of storedLeases) {
+        if (!lease || typeof lease.sessionId !== 'string' || !lease.sessionId
+          || typeof lease.taskId !== 'string' || !TASK_ID_RE.test(lease.taskId)
+          || sessionsReleasedBeforeLoad.has(lease.sessionId)) continue;
+        leases.set(`${lease.sessionId}\u0000${lease.taskId}`, { sessionId: lease.sessionId, taskId: lease.taskId });
+      }
+      if (leases.size) taskLockShields.set(tabId, leases);
+    }
+  }
   if (Array.isArray(state.locks) && !staleLocks) {
     for (const { tabId, sessionId, agentName, since } of state.locks) {
       // The tab closed, or was unlocked or released, before its lock was read.

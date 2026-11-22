@@ -1,10 +1,13 @@
 /** Session-only browser action history. No caller-provided params or results are persisted. */
+import { TASK_ID_PATTERN } from './generated-contract.js';
+
 export const ACTIVITY_STORAGE_KEY = 'bcChromeActionActivity';
 export const ACTIVITY_EVENT_CAP = 500;
 export const ACTIVITY_VISIT_CAP = 1_000;
 const ELEMENT_LABEL_POLICY_VERSION = 2;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TASK_ID_RE = new RegExp(`^${TASK_ID_PATTERN}$`, 'u');
 const TOOL_RE = /^browser_[a-z0-9_]{1,57}$/;
 const OPERATIONS = new Set(['click', 'type', 'fill', 'drag', 'navigate', 'snapshot', 'scroll', 'dialog', 'other']);
 const EXECUTION = new Set(['running', 'completed', 'failed', 'unknown']);
@@ -26,8 +29,9 @@ export const ACTIVITY_TOOL_NAMES = Object.freeze(Object.keys(ACTIVITY_OPERATIONS
 function validActivityContext(tool, value) {
   if (!ACTIVITY_OPERATIONS[tool] || !value || typeof value !== 'object' || Array.isArray(value)) return false;
   const keys = Object.keys(value);
-  return keys.every((key) => ['eventId', 'batchRunId', 'batchStepIndex'].includes(key))
+  return keys.every((key) => ['eventId', 'batchRunId', 'batchStepIndex', 'taskId'].includes(key))
     && validId(value.eventId)
+    && (value.taskId === undefined || (typeof value.taskId === 'string' && TASK_ID_RE.test(value.taskId)))
     && ((value.batchRunId === undefined && value.batchStepIndex === undefined)
       || (validId(value.batchRunId) && Number.isInteger(value.batchStepIndex)
         && value.batchStepIndex >= 1 && value.batchStepIndex <= 50));

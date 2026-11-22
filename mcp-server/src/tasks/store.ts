@@ -28,6 +28,7 @@ import {
   type SafeReadPolicy,
 } from '../core/json-store.js';
 import { isRecord } from '../core/guards.js';
+import { isTaskId, TASK_ID_PATTERN } from './task-id.js';
 import type { StepResult, Task, TaskState, TaskStep, VerifyRule } from './types.js';
 import type { CheckedStep, EvidenceReport, FoundValue, UnresolvedItem } from './evidence.js';
 
@@ -56,8 +57,7 @@ function corrupt(message: string): TaskStoreError {
 /** A task file is small — a goal, constraints, steps and evidence — so a file past this is corrupt, not a task. */
 export const MAX_TASK_BYTES = 256 * 1024;
 
-const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
-const TASK_FILE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}\.json$/u;
+const TASK_FILE = new RegExp(`^${TASK_ID_PATTERN}\\.json$`, 'u');
 
 const TASK_STATES: ReadonlySet<string> = new Set(['planned', 'running', 'paused-question', 'paused-login', 'done', 'failed']);
 const STEP_STATUSES: ReadonlySet<string> = new Set(['ok', 'failed', 'verify-failed', 'unknown']);
@@ -74,7 +74,7 @@ function taskFileName(id: string): string {
 }
 
 function requireTaskId(id: unknown): string {
-  if (typeof id !== 'string' || !TASK_ID.test(id)) throw new TaskStoreError('a task id starts with a letter or digit and holds only letters, digits, "-" and "_"', 'invalid-argument');
+  if (!isTaskId(id)) throw new TaskStoreError('a task id starts with a letter or digit and holds only letters, digits, "-" and "_"', 'invalid-argument');
   return id;
 }
 

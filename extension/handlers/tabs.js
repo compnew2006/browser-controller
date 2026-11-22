@@ -7,6 +7,7 @@ import { resolveTab } from '../lib/page-exec.js';
 import { tabLocks, tabControl } from '../lib/state.js';
 import { releaseTabUi } from '../lib/lock-ops.js';
 import { tabLockedMessage } from '../lib/tab-concurrency.js';
+import { ensureTaskLockShield } from '../lib/overlay.js';
 import { isPrivateVaultTab, isPrivateVaultUrl } from '../lib/vault-actions.js';
 
 /**
@@ -87,11 +88,21 @@ function requireTabId(tabId, action) {
   return tabId;
 }
 
-export async function handleTabs(params, sessionId) {
+export async function handleTabs(params, sessionId, agentName, _signal, _inputActivity, activityContext) {
   const { action = 'list', tabId } = params;
   switch (action) {
-    case 'list':
-      return listTabs(sessionId);
+    case 'list': {
+      const result = await listTabs(sessionId);
+      const taskId = typeof activityContext?.taskId === 'string' ? activityContext.taskId : null;
+      const selectedTabId = result.tabs?.[0]?.tabId;
+      if (taskId && sessionId && Number.isInteger(selectedTabId)) {
+        const label = agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab';
+        if (!await ensureTaskLockShield(selectedTabId, sessionId, taskId, label)) {
+          throw new Error('MOUSE_MOVEMENT_LOCK_UNAVAILABLE: could not install the task input shield before continuing, so the task did not continue.');
+        }
+      }
+      return result;
+    }
     case 'close': {
       const id = requireTabId(tabId, 'close');
       refuseLocked(id, sessionId);

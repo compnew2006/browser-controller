@@ -1,12 +1,18 @@
 /**
  * Page overlays (extracted from background.js). The lock shield is a
  * translucent full-viewport input-capture layer with a blue inner frame. The
- * router blocks user input only while an agent tool call runs on a tab. When
+ * router blocks user input during an agent call and keeps it blocked between
+ * steps while a browser task owns the tab. When
  * the cursor is enabled, the frame remains as a visual cue during the control
  * linger, without its input-blocking listeners. A tab lock draws no frame alone.
  * The agent cursor (drawn by the shared page runtime, lib/page-dom.js) is opt-in
  * (popup setting, see agentCursorEnabled) and only needs hiding from screenshots.
  */
+import { persistSessionState, taskLockShields } from './state.js';
+import {
+  discardTaskLockShields, forgetTaskLockShield, hasTaskLockShield as hasTaskLockLease, moveTaskLockShield,
+  releaseTaskLockShields, retainTaskLockShield as retainTaskLockLease,
+} from './task-locks.js';
 
 /** chrome.storage.local key of the popup's "Show agent cursor" switch. */
 export const AGENT_CURSOR_KEY = 'agentCursor';
@@ -46,6 +52,64 @@ function agentInputEventTypes(method, params) {
 
 function resolveShieldTabId(tabId) {
   return activeShieldAliases.get(tabId) ?? tabId;
+}
+
+/** Resolve a replaced tab id before looking up its task lease. */
+export function hasTaskLockShield(tabId, sessionId, taskId) {
+  return hasTaskLockLease(resolveShieldTabId(tabId), sessionId, taskId);
+}
+
+/** Add a task lease to the current tab id, even if navigation replaced its source tab. */
+export function retainTaskLockShield(tabId, sessionId, taskId) {
+  return retainTaskLockLease(resolveShieldTabId(tabId), sessionId, taskId);
+}
+
+/** Install a task lease on a newly-created or newly-selected tab before returning it to the task runner. */
+export async function ensureTaskLockShield(tabId, sessionId, taskId, label) {
+  let enabled;
+  try {
+    enabled = await agentMouseMovementLockEnabled();
+  } catch {
+    return false;
+  }
+  if (!enabled) {
+    await releaseTaskLockShields(taskId, sessionId, hideLockShield);
+    return true;
+  }
+  if (hasTaskLockShield(tabId, sessionId, taskId)) return true;
+  if (!await showLockShield(tabId, label, false, true)) return false;
+  return retainTaskLockShield(tabId, sessionId, taskId);
+}
+
+/** Reinstall persisted task shields after Chrome recycles the MV3 service worker. */
+export async function restoreTaskLockShields() {
+  if (taskLockShields.size === 0) return true;
+  let enabled = null;
+  try {
+    enabled = await agentMouseMovementLockEnabled();
+  } catch {
+    // A failed preference read must not reopen a page whose persisted task lease
+    // says the shield was active. The next routed call fails closed if unreadable.
+  }
+  if (enabled === false) {
+    taskLockShields.clear();
+    persistSessionState();
+    return true;
+  }
+
+  let restored = true;
+  let changed = false;
+  for (const [tabId, leases] of [...taskLockShields]) {
+    if (leases.size === 0 || !await chrome.tabs.get(tabId).catch(() => null)) {
+      taskLockShields.delete(tabId);
+      changed = true;
+      continue;
+    }
+    const installed = await showLockShield(tabId, 'agent controlling the tab', false, true);
+    if (!installed) restored = false;
+  }
+  if (changed) persistSessionState();
+  return restored;
 }
 
 async function clearAgentInputPermit(tabId, permitId, { restoreMouseTarget, frameIds = [] }) {
@@ -330,6 +394,7 @@ export function moveLockShield(fromTabId, toTabId) {
   if (!shieldState) return false;
   activeShields.delete(fromTabId);
   activeShields.set(toTabId, shieldState);
+  moveTaskLockShield(fromTabId, toTabId);
   for (const [alias, target] of activeShieldAliases) {
     if (target === fromTabId) activeShieldAliases.set(alias, toTabId);
   }
@@ -339,6 +404,7 @@ export function moveLockShield(fromTabId, toTabId) {
 
 export function forgetLockShield(tabId) {
   activeShields.delete(tabId);
+  forgetTaskLockShield(tabId);
   // A removed source tab may still be the id captured by an in-flight router
   // finally block. Keep that alias until hideLockShield resolves its replacement.
   for (const [alias, target] of activeShieldAliases) {
@@ -350,6 +416,7 @@ export function discardLockShieldState(tabId) {
   const targetTabId = resolveShieldTabId(tabId);
   activeShields.delete(tabId);
   activeShields.delete(targetTabId);
+  discardTaskLockShields(tabId, targetTabId);
   for (const [alias, target] of activeShieldAliases) {
     if (alias === tabId || target === targetTabId) activeShieldAliases.delete(alias);
   }
@@ -357,6 +424,9 @@ export function discardLockShieldState(tabId) {
 
 export async function hideLockShield(tabId, lingerMs = 0) {
   const targetTabId = resolveShieldTabId(tabId);
+  // A browser_task may issue several independent MCP calls. Per-call cleanup
+  // must not reopen the page between those steps while its task lease is live.
+  if (hasTaskLockShield(targetTabId)) return;
   discardLockShieldState(tabId);
   try {
     await chrome.scripting.executeScript({

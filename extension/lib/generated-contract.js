@@ -17,6 +17,7 @@ export const REQUIRED_DAEMON_CAPABILITIES = Object.freeze([
   "ping-pong",
   "tools-v3"
 ]);
+export const TASK_ID_PATTERN = "[A-Za-z0-9][A-Za-z0-9_-]{0,127}";
 export const ERROR_CODES = Object.freeze({
   "ACTION_BLOCKED": "ACTION_BLOCKED",
   "ACTION_NOT_CONFIRMED": "ACTION_NOT_CONFIRMED",

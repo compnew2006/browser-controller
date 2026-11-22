@@ -7,6 +7,7 @@
 import { resolveTab, safeExec, replaceFrozenTab } from '../lib/page-exec.js';
 import { sessionAgentNames } from '../lib/state.js';
 import { lockTabUi } from '../lib/lock-ops.js';
+import { ensureTaskLockShield } from '../lib/overlay.js';
 import { isHashOnlyChange, normalizeNavigationUrl } from '../utils/navigation.js';
 import { watchMainFrame } from '../lib/main-frame.js';
 import { handleSnapshot } from './inspection.js';
@@ -381,18 +382,18 @@ function replacementFailure(err, { from, to }) {
  * ends the wait at once. A network failure
  * fails with NAVIGATION_FAILED.
  */
-export async function handleNavigate(params, sessionId, _agentName, signal) {
+export async function handleNavigate(params, sessionId, agentName, signal, _inputActivity, activityContext) {
   // Set once a frozen tab is replaced, so a failure after that can name the replacement.
   const state = { replaced: null };
   try {
-    return await navigateTab(params, sessionId, signal, state);
+    return await navigateTab(params, sessionId, signal, state, activityContext, agentName);
   } catch (err) {
     if (!state.replaced) throw err;
     throw replacementFailure(err, state.replaced);
   }
 }
 
-async function navigateTab(params, sessionId, signal, state) {
+async function navigateTab(params, sessionId, signal, state, activityContext, agentName) {
   const { tabId, snapshot: wantSnapshot = false } = params;
   const step = params.url === 'back' || params.url === 'forward' ? params.url : null;
   const reload = params.url === 'reload';
@@ -406,6 +407,15 @@ async function navigateTab(params, sessionId, signal, state) {
   const opened = tabId == null;
   if (params.incognito && !opened) throw new Error('INVALID_ARGUMENT: incognito applies to a new tab only: leave out tabId.');
   let tab = opened ? await openSessionTab(sessionId, params.incognito === true) : await resolveTab(tabId);
+  const taskId = typeof activityContext?.taskId === 'string' ? activityContext.taskId : null;
+  if (opened && taskId && sessionId) {
+    const label = agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab';
+    const shielded = await ensureTaskLockShield(tab.id, sessionId, taskId, label);
+    if (!shielded) {
+      await chrome.tabs.remove(tab.id).catch(() => {});
+      throw new Error('MOUSE_MOVEMENT_LOCK_UNAVAILABLE: could not install the task input shield before navigation, so the task did not continue.');
+    }
+  }
   const before = tab.url;
 
   // A frozen page (TAB_WEDGED) would hold the navigation hostage: replace the tab.

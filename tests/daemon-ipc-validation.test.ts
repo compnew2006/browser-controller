@@ -54,6 +54,20 @@ describe('daemon validates IPC request lifecycle', () => {
     expect(isIpcClientMessage({ ...base, activityContext: { eventId: actionContext.eventId, batchStepIndex: 1 } })).toBe(false);
   });
 
+  it('accepts a bounded task id on browser actions and tab discovery', () => {
+    const taskContext = {
+      eventId: '00000000-0000-4000-8000-000000000001',
+      taskId: '00000000-0000-4000-8000-000000000002',
+    };
+    expect(isIpcClientMessage({ kind: 'call', id: 'task-action', tool: 'browser_snapshot', params: { tabId: 1 }, activityContext: taskContext })).toBe(true);
+    expect(isIpcClientMessage({ kind: 'call', id: 'task-tabs', tool: 'browser_tabs', params: { action: 'list' }, activityContext: taskContext })).toBe(true);
+    expect(isIpcClientMessage({ kind: 'call', id: 'task-wait', tool: 'browser_wait', params: { tabId: 1, ms: 1 }, activityContext: taskContext })).toBe(true);
+    expect(isIpcClientMessage({ kind: 'call', id: 'task-batch-step', tool: 'browser_click', params: { tabId: 1 }, activityContext: {
+      ...taskContext, batchRunId: '00000000-0000-4000-8000-000000000003', batchStepIndex: 1,
+    } })).toBe(true);
+    expect(isIpcClientMessage({ kind: 'call', id: 'task-bad', tool: 'browser_snapshot', params: { tabId: 1 }, activityContext: { ...taskContext, taskId: 'bad/id' } })).toBe(false);
+  });
+
   it.each([
     ['event id', { kind: 'call', id: 'bad', tool: 'browser_click', params: {}, activityContext: { eventId: { toString: null } } }],
     ['batch id', { kind: 'call', id: 'bad', tool: 'browser_batch', params: {}, activityContext: {

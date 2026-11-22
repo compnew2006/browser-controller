@@ -1,11 +1,14 @@
 import { isRecord } from './core/guards.js';
 import type { IpcClientMessage } from './daemon-config.js';
+import { TOOL_NAMES } from './protocol/tool-names.js';
+import { isTaskId } from './tasks/task-id.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ACTION_TOOLS = new Set([
   'browser_click', 'browser_type', 'browser_fill', 'browser_navigate', 'browser_snapshot',
   'browser_scroll', 'browser_handle_dialog', 'browser_evaluate',
 ]);
+const TASK_CONTEXT_TOOLS = new Set<string>(TOOL_NAMES.filter((tool) => tool !== 'browser_batch' && !tool.startsWith('browser_task_')));
 
 function validActivityContext(value: unknown, tool: string, params: Record<string, unknown>): boolean {
   if (!isRecord(value)) return false;
@@ -19,9 +22,11 @@ function validActivityContext(value: unknown, tool: string, params: Record<strin
       && ['completed', 'failed', 'aborted', 'unknown'].includes(value.executionStatus);
   }
   const keys = Object.keys(value);
-  return ACTION_TOOLS.has(tool)
-    && keys.every((key) => ['eventId', 'batchRunId', 'batchStepIndex'].includes(key))
+  const hasTaskId = value.taskId !== undefined;
+  return (ACTION_TOOLS.has(tool) || (hasTaskId && TASK_CONTEXT_TOOLS.has(tool)))
+    && keys.every((key) => ['eventId', 'batchRunId', 'batchStepIndex', 'taskId'].includes(key))
     && typeof value.eventId === 'string' && UUID_RE.test(value.eventId)
+    && (!hasTaskId || isTaskId(value.taskId))
     && ((value.batchRunId === undefined && value.batchStepIndex === undefined)
       || (typeof value.batchRunId === 'string' && UUID_RE.test(value.batchRunId)
         && typeof value.batchStepIndex === 'number' && Number.isInteger(value.batchStepIndex)
