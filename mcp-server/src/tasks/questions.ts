@@ -37,6 +37,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { defaultTasksDir, loadTask, saveTask } from './store.js';
+import { saveTaskWithReport } from './reporting.js';
 import { deletePendingQuestion, listPendingQuestions, loadPendingQuestion, savePendingQuestion } from './question-store.js';
 import type { Task } from './types.js';
 
@@ -289,7 +290,7 @@ export async function answerQuestion(
     if (step) step.result = { status: 'failed', detail };
     task.evidence.push(`answer to question ${id} at step ${index + 1} of ${task.steps.length}: ${answer} — ${detail}`);
     task.state = 'failed';
-    await saveTask(task, options.tasksDir);
+    await saveTaskWithReport(task, options.tasksDir);
     await forgetPersistedQuestion(id, options.tasksDir);
     return task;
   }
@@ -302,6 +303,9 @@ export async function answerQuestion(
     );
   }
   task.state = 'running';
+  // The report describes the paused state; the answer leaves it, so the
+  // record carries no report until the resumed run settles again.
+  delete task.report;
   task.evidence.push(
     `answer to question ${id} at step ${index + 1} of ${task.steps.length}: ${answer} — resuming from the same step`,
   );

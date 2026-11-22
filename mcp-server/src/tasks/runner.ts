@@ -86,7 +86,6 @@
  * the refusal as evidence. The question path adds an approval route; it
  * never weakens the gate — without a wired ask, the refusal stands.
  */
-import { toolMap } from '../tools/registry.js';
 import type { ToolDefinition, ToolHost, ToolResult } from '../tools/types.js';
 import { rawResultOf } from '../tools/types.js';
 import { NO_DEFAULT_TAB, TAB_OR_ORIGIN } from '../tools/batch-limits.js';
@@ -98,7 +97,6 @@ import { readFreshSnapshot, readSnapshotAfterStep, verifyStep } from './verify.j
 import type { DetectSessionFn, SessionPage, SessionState } from './session.js';
 import { detectSession, originOf, pauseForLogin } from './session.js';
 import type { Question, QuestionContext, QuestionKind } from './questions.js';
-import { mutationApprovalConstraint } from './questions.js';
 import type { RetryPolicy } from './recovery.js';
 import { executeStepWithRecovery, reconcileUnknownStep } from './recovery.js';
 import { ERROR_CODES, formatError } from '../core/error-codes.js';
@@ -160,73 +158,10 @@ export interface RunTaskOptions {
   };
 }
 
-/** The constraint that explicitly approves mutating steps in a task (FR-020). */
-export const ALLOW_MUTATIONS = 'allow-mutations';
-
-/** `browser_navigate` forms that move history or reload instead of opening a URL. */
-const NAVIGATE_HISTORY_ACTIONS = new Set(['back', 'forward', 'reload']);
-
-/**
- * Whether a plain-URL `browser_navigate` is the only read form: it changes
- * the viewed page, not site data, so a read-only audit task may navigate.
- * History moves and reloads can resubmit or revisit, and `incognito:true`
- * opens a new private window, so those are mutating and need approval.
- */
-function isMutatingNavigate(params: Record<string, unknown>): boolean {
-  if (params.incognito === true) return true;
-  return typeof params.url === 'string' && NAVIGATE_HISTORY_ACTIONS.has(params.url);
-}
-
-/**
- * Whether a `browser_tabs` call changes anything: closing a tab, selecting
- * a browser profile, or setting session policy does. Listing, listing
- * profiles, focusing a tab (a view change, like navigating), and reading the
- * session policy do not.
- */
-function isMutatingTabs(params: Record<string, unknown>): boolean {
-  if (params.action === 'close') return true;
-  if (params.browser !== undefined) return true;
-  if (params.action === 'session' && (params.isolation !== undefined || params.access !== undefined)) return true;
-  return false;
-}
-
-/**
- * Whether running this tool with these params can change site data
- * (save/send/delete) — the FR-020 question — and so needs explicit approval.
- *
- * The classification is per tool and, for the mixed tools, per action; it is
- * deliberately NOT derived from `idempotent`, which documents retry-safety
- * ("re-running this tool with the same params has no side effects") rather
- * than mutation. A tool that only reads is `idempotent: true` and so is
- * never mutating here; a non-idempotent tool is mutating unless one of the
- * mixed-tool rules below says its form is a read. Anything not listed is
- * mutating: the gate fails closed on tools it does not know.
- */
-export function isMutatingTool(def: ToolDefinition, params: Record<string, unknown> = {}): boolean {
-  if (def.idempotent === true) return false;
-  switch (def.name) {
-    case 'browser_navigate':
-      return isMutatingNavigate(params);
-    case 'browser_logs':
-      // `clear:true` empties the log buffer; reading the logs does not.
-      return params.clear === true;
-    case 'browser_tabs':
-      return isMutatingTabs(params);
-    default:
-      return true;
-  }
-}
-
-/**
- * Whether the task carries explicit approval for mutating steps: the
- * blanket `allow-mutations` constraint, or a per-step approval recorded by
- * a `yes` answer to a mutation-approval question
- * (`mutationApprovalConstraint`, `questions.ts`) — that step only.
- */
-export function taskAllowsMutations(task: Task, stepIndex?: number): boolean {
-  if (task.constraints.includes(ALLOW_MUTATIONS)) return true;
-  return stepIndex !== undefined && task.constraints.includes(mutationApprovalConstraint(stepIndex));
-}
+import { ALLOW_MUTATIONS, NAVIGATE_HISTORY_ACTIONS, isMutatingTool, taskAllowsMutations } from './mutations.js';
+// Re-exported so existing importers (`tests/tasks/runner.test.ts`) keep
+// importing the classification from the runner, where it used to live.
+export { ALLOW_MUTATIONS, isMutatingTool, taskAllowsMutations };
 
 /**
  * The tab a step's result names, if any: the `tabId` a navigate/snapshot
@@ -316,7 +251,15 @@ async function failStep(
  * which re-checks the page first.
  */
 export async function runTask(id: string, options: RunTaskOptions = {}): Promise<Task> {
-  const tools = options.tools ?? toolMap;
+  // The registry is loaded lazily, not imported at the top: the registry
+  // imports the task tools (`tasks/tools.ts`), and the task tools import
+  // this runner — a static import here would close the cycle
+  // `registry → tools → runner → registry`, and a test importing the
+  // task tools first would hit the registry reading their not-yet
+  // initialised definitions. By the time a run executes, every module is
+  // loaded, so the dynamic import is only a load-order seam, never a
+  // behaviour difference. Callers that pass `options.tools` never touch it.
+  const tools = options.tools ?? (await import('../tools/registry.js')).toolMap;
   const verify = options.verify ?? verifyStep;
   const hostRequired = options.tools === undefined;
 
@@ -344,6 +287,11 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   }
 
   task.state = 'running';
+  // The report describes the state the task settled in; this run leaves
+  // that state, so the record carries no report until the run settles
+  // again — a reader polling mid-run must never see a report that claims
+  // the task is still paused (or done) when it is running.
+  delete task.report;
   await saveTask(task, options.tasksDir);
 
   // The tab the completed steps already bound (a resumed run rebinds to it).

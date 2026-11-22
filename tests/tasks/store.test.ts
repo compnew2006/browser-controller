@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { listTasks, loadTask, saveTask, MAX_TASK_BYTES, TaskStoreError } from '../../mcp-server/src/tasks/store.js';
+import { buildEvidenceReport } from '../../mcp-server/src/tasks/evidence.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
 
 let dir: string;
@@ -140,5 +141,29 @@ describe('task store', () => {
     expect((caught as TaskStoreError).kind).toBe('unavailable');
     await expect(listTasks(dir)).rejects.toThrowError(TaskStoreError);
     expect(fs.existsSync(file)).toBe(true);
+  });
+
+  it('roundtrips the evidence report and the starting session id', async () => {
+    const task = pausedLoginTask();
+    const report = buildEvidenceReport(task);
+    const withReport: Task = { ...task, report, sessionId: 'sess-1' };
+    await saveTask(withReport, dir);
+    expect(await loadTask('task-1', dir)).toEqual(withReport);
+    // A task without them still loads: both fields stay optional.
+    await saveTask(task, dir);
+    const plain = await loadTask('task-1', dir);
+    expect(plain?.report).toBeUndefined();
+    expect(plain?.sessionId).toBeUndefined();
+  });
+
+  it('rejects a report that is not an evidence report', async () => {
+    const task = pausedLoginTask();
+    const report = buildEvidenceReport(task);
+    const badState = { ...task, report: { text: report.text, json: { ...report.json, state: 'sideways' } } };
+    await expect(saveTask(badState as unknown as Task, dir)).rejects.toThrowError(/known state/);
+    const badKey = { ...task, report: { text: report.text, json: report.json, extra: true } };
+    await expect(saveTask(badKey as unknown as Task, dir)).rejects.toThrowError(/needs text and json/);
+    const badSession = { ...task, sessionId: 42 };
+    await expect(saveTask(badSession as unknown as Task, dir)).rejects.toThrowError(/session id must be a string/);
   });
 });

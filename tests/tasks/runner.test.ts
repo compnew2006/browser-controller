@@ -665,6 +665,8 @@ describe('registry mutation guard', () => {
     'browser_fetch_many',
     'browser_memory',
     'browser_site_map',
+    // A task status read changes nothing; the other task tools write.
+    'browser_task_status',
   ]);
   // Non-idempotent tools whose read/write depends on the action (see isMutatingTool).
   const MIXED_TOOLS = new Set(['browser_navigate', 'browser_logs', 'browser_tabs']);
@@ -683,6 +685,9 @@ describe('registry mutation guard', () => {
     'browser_safety',
     'browser_vault',
     'browser_memory_policy',
+    'browser_task_start',
+    'browser_task_cancel',
+    'browser_task_answer',
   ]);
 
   it('classifies every registered tool: idempotent reads, mixed, or writes', () => {

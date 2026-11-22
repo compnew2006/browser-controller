@@ -22,7 +22,6 @@ import { createLogger, newCorrelationId, runWithCorrelationId } from './core/log
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
   APP_VERSION,
@@ -53,7 +52,9 @@ import {
 import { ExtensionBridge } from './bridge.js';
 import { createDaemonBridge } from './daemon-bridge.js';
 import { isActivityContextFrame, isBatchFinishedFrame } from './protocol/frames.js';
-import { isKnownWireTool } from './protocol/wire-tools.js';
+import { isKnownWireTool, TASK_QUESTION_WIRE_ACTION } from './protocol/wire-tools.js';
+import { checkPresentedToken } from './daemon-auth.js';
+import { routeTaskQuestion } from './tasks/task-question-route.js';
 import { armIpcHelloTimer } from './ipc-hello-timer.js';
 import { isIpcClientMessage } from './ipc-frame-validation.js';
 import { VaultService, type VaultTransport } from './vault/service.js';
@@ -274,7 +275,7 @@ class Daemon {
             socket.destroy();
             return;
           }
-          if (!this.checkToken(msg.token)) {
+          if (!checkPresentedToken(msg.token, this.token)) {
             safeSend({ kind: 'denied', ok: false, reason: 'invalid token' });
             socket.destroy();
             return;
@@ -393,20 +394,6 @@ class Daemon {
     }, HEARTBEAT_INTERVAL_MS);
   }
 
-  private checkToken(presented: string): boolean {
-    if (!presented || !this.token) return false;
-    // Constant-time compare with NO length early-return (audit timing leak):
-    // pad both to a fixed size so timingSafeEqual always runs on equal-length
-    // buffers and the comparison time doesn't reveal the token length. A length
-    // mismatch short-circuits after a full-length compare, which leaks nothing.
-    const FIXED = 128;
-    const a = Buffer.alloc(FIXED);
-    const b = Buffer.alloc(FIXED);
-    a.write(presented);
-    b.write(this.token);
-    return crypto.timingSafeEqual(a, b) && presented === this.token;
-  }
-
   private async routeCall(client: IpcClient, msg: IpcClientMessage & { kind: 'call' }): Promise<void> {
     if (msg.kind !== 'call') return;
     if (msg.activityContext && isBatchFinishedFrame(msg.activityContext)) {
@@ -415,6 +402,18 @@ class Daemon {
     }
     if (!isKnownWireTool(msg.tool)) {
       this.sendToClient(client, { kind: 'result', id: msg.id, cid: msg.cid, success: false, error: formatError(ERROR_CODES.UNKNOWN_TOOL, String(msg.tool).slice(0, 80)) });
+      return;
+    }
+
+    // A task question from the MCP process: it has no bridge, so it sends
+    // the question as the internal wire action and the daemon delivers it
+    // to the extension with `sendControl`. Intercepted here, before the
+    // rate limit and the memory/vault routing — it is daemon-internal
+    // signalling, not a browser tool call, so it consumes no call budget
+    // and leaves no memory observation behind.
+    if (msg.tool === TASK_QUESTION_WIRE_ACTION) {
+      const outcome = routeTaskQuestion(this.bridge, msg.params);
+      this.sendToClient(client, { kind: 'result', id: msg.id, cid: msg.cid, ...outcome });
       return;
     }
 

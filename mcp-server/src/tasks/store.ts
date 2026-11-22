@@ -29,6 +29,7 @@ import {
 } from '../core/json-store.js';
 import { isRecord } from '../core/guards.js';
 import type { StepResult, Task, TaskState, TaskStep, VerifyRule } from './types.js';
+import type { CheckedStep, EvidenceReport, FoundValue, UnresolvedItem } from './evidence.js';
 
 /**
  * The task store's own error: an invalid id, a corrupt file, or an unreadable
@@ -145,9 +146,78 @@ function validateStep(raw: unknown): TaskStep {
   return step;
 }
 
+function validateCheckedStep(raw: unknown): CheckedStep {
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ['step', 'tool', 'verify', 'status', 'detail'])) throw corrupt('an evidence report checked step needs step, tool, verify and status');
+  if (typeof raw.step !== 'number' || !Number.isSafeInteger(raw.step) || raw.step < 1) throw corrupt('an evidence report checked step needs a step number');
+  if (typeof raw.tool !== 'string') throw corrupt('an evidence report checked step needs a tool name');
+  if (!isStringArray(raw.verify)) throw corrupt('an evidence report checked step needs a list of verify rules');
+  if (typeof raw.status !== 'string' || !['ok', 'failed', 'verify-failed', 'unknown', 'not-run'].includes(raw.status)) {
+    throw corrupt('an evidence report checked step needs a known status');
+  }
+  if (raw.detail !== undefined && typeof raw.detail !== 'string') throw corrupt('an evidence report checked step detail must be a string');
+  const step: CheckedStep = { step: raw.step, tool: raw.tool, verify: [...raw.verify], status: raw.status as CheckedStep['status'] };
+  if (raw.detail !== undefined) step.detail = raw.detail;
+  return step;
+}
+
+function validateFoundValue(raw: unknown): FoundValue {
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ['step', 'tool', 'value', 'source'])) throw corrupt('an evidence report value needs step, tool and value');
+  if (typeof raw.step !== 'number' || !Number.isSafeInteger(raw.step) || raw.step < 1) throw corrupt('an evidence report value needs a step number');
+  if (typeof raw.tool !== 'string' || typeof raw.value !== 'string') throw corrupt('an evidence report value needs a tool name and a value');
+  const found: FoundValue = { step: raw.step, tool: raw.tool, value: raw.value };
+  if (raw.source !== undefined) {
+    if (typeof raw.source !== 'string') throw corrupt('an evidence report value source must be a string');
+    found.source = raw.source;
+  }
+  return found;
+}
+
+function validateUnresolvedItem(raw: unknown): UnresolvedItem {
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ['step', 'tool', 'reason'])) throw corrupt('an evidence report unresolved item needs a reason');
+  if (typeof raw.reason !== 'string') throw corrupt('an evidence report unresolved item needs a reason');
+  const item: UnresolvedItem = { reason: raw.reason };
+  if (raw.step !== undefined) {
+    if (typeof raw.step !== 'number' || !Number.isSafeInteger(raw.step) || raw.step < 1) throw corrupt('an evidence report unresolved item step must be a step number');
+    item.step = raw.step;
+  }
+  if (raw.tool !== undefined) {
+    if (typeof raw.tool !== 'string') throw corrupt('an evidence report unresolved item tool must be a string');
+    item.tool = raw.tool;
+  }
+  return item;
+}
+
+/**
+ * The evidence report stored on a task (`types.ts`): the same five sections
+ * `buildEvidenceReport` emits, validated the way steps are — known keys
+ * only, known states only — so a hand-edited report fails closed instead
+ * of loading as a task with a report nobody built.
+ */
+function validateEvidenceReport(raw: unknown): EvidenceReport {
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ['taskId', 'goal', 'state', 'checked', 'values', 'sources', 'unconfirmed', 'notVerified'])) {
+    throw corrupt('an evidence report needs taskId, goal, state, checked, values, sources, unconfirmed and notVerified');
+  }
+  if (typeof raw.taskId !== 'string' || typeof raw.goal !== 'string') throw corrupt('an evidence report needs a task id and a goal');
+  if (typeof raw.state !== 'string' || !TASK_STATES.has(raw.state)) throw corrupt('an evidence report needs a known state');
+  if (!Array.isArray(raw.checked) || !Array.isArray(raw.values) || !Array.isArray(raw.unconfirmed) || !Array.isArray(raw.notVerified)) {
+    throw corrupt('an evidence report needs lists of checked steps, values and unresolved items');
+  }
+  if (!isStringArray(raw.sources)) throw corrupt('an evidence report sources must be a list of strings');
+  return {
+    taskId: raw.taskId,
+    goal: raw.goal,
+    state: raw.state as TaskState,
+    checked: raw.checked.map(validateCheckedStep),
+    values: raw.values.map(validateFoundValue),
+    sources: [...raw.sources],
+    unconfirmed: raw.unconfirmed.map(validateUnresolvedItem),
+    notVerified: raw.notVerified.map(validateUnresolvedItem),
+  };
+}
+
 /** A parsed task, or an error when the record is not a task. Unknown fields are rejected, so a file written by a newer shape never loads as an old one. */
 export function validateTask(raw: unknown): Task {
-  if (!isRecord(raw) || !hasOnlyKeys(raw, ['id', 'goal', 'constraints', 'steps', 'state', 'evidence'])) throw corrupt('a task needs id, goal, constraints, steps, state and evidence');
+  if (!isRecord(raw) || !hasOnlyKeys(raw, ['id', 'goal', 'constraints', 'steps', 'state', 'evidence', 'report', 'sessionId'])) throw corrupt('a task needs id, goal, constraints, steps, state and evidence');
   // A stored id that fails validation is file-content corruption, not a
   // caller error: `requireTaskId` throws 'invalid-argument' for a
   // caller-supplied id, so only this call site translates it to 'corrupt'.
@@ -165,7 +235,14 @@ export function validateTask(raw: unknown): Task {
   if (!Array.isArray(raw.steps)) throw corrupt('task steps must be a list');
   if (typeof raw.state !== 'string' || !TASK_STATES.has(raw.state)) throw corrupt('a task needs a known state');
   if (!isStringArray(raw.evidence)) throw corrupt('task evidence must be a list of strings');
-  return {
+  if (raw.sessionId !== undefined && typeof raw.sessionId !== 'string') throw corrupt('a task session id must be a string');
+  let report: Task['report'];
+  if (raw.report !== undefined) {
+    if (!isRecord(raw.report) || !hasOnlyKeys(raw.report, ['text', 'json'])) throw corrupt('a task report needs text and json');
+    if (typeof raw.report.text !== 'string') throw corrupt('a task report text must be a string');
+    report = { text: raw.report.text, json: validateEvidenceReport(raw.report.json) };
+  }
+  const task: Task = {
     id,
     goal: raw.goal,
     constraints: [...raw.constraints],
@@ -173,6 +250,9 @@ export function validateTask(raw: unknown): Task {
     state: raw.state as TaskState,
     evidence: [...raw.evidence],
   };
+  if (report !== undefined) task.report = report;
+  if (raw.sessionId !== undefined) task.sessionId = raw.sessionId as string;
+  return task;
 }
 
 /** Save a task, replacing its file atomically. Saving the same id again replaces the previous record. */

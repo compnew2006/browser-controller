@@ -8,6 +8,8 @@
  * never from the start.
  */
 
+import type { EvidenceReport } from './evidence.js';
+
 /**
  * The lifecycle of a task. `paused-question` waits for the user's answer,
  * `paused-login` waits for the user to complete login by takeover; both
@@ -45,7 +47,32 @@ export interface TaskStep {
   result?: StepResult;
 }
 
-/** A task: a goal, the constraints it runs under, its ordered steps, its state, and its evidence. */
+/**
+ * A task: a goal, the constraints it runs under, its ordered steps, its state, and its evidence.
+ *
+ * Two optional fields, both set by the composition layer (Task 8), never by the planner:
+ * - `report` is the evidence report (`evidence.ts`) for the task's latest
+ *   settled state — terminal (`done` / `failed`) or paused (`paused-question`
+ *   / `paused-login`). It is `{ text, json }`: the same five sections as
+ *   compact Arabic text and as structured JSON, built by
+ *   `buildEvidenceReport` and persisted on the record by `saveTaskWithReport`
+ *   (`reporting.ts`), so the popup Evidence panel (Task 9) reads it from
+ *   the record instead of rebuilding it. A task that never settled has no
+ *   report; a report from an earlier state is replaced, never merged, when
+ *   the task settles again. The store validates the JSON shape on load, so a
+ *   hand-edited report file fails closed like any other corrupt field.
+ * - `sessionId` is the MCP session that started the task (the daemon's
+ *   per-client session id), recorded by `browser_task_start` from the tool
+ *   host. The daemon-side answer continuation (`wiring.ts`) resumes the task
+ *   as that session, so steps act on tabs the session owns instead of being
+ *   refused TAB_LOCKED; a task with no session resumes with no session and
+ *   can only act on unowned tabs. The store accepts it as an opaque string
+ *   and never invents one.
+ *
+ * The `EvidenceReport` import is type-only (erased at runtime): `evidence.ts`
+ * defines the report shape and imports this file, so a value import here
+ * would be a cycle, but a type import is not.
+ */
 export interface Task {
   id: string;
   goal: string;
@@ -53,4 +80,6 @@ export interface Task {
   steps: TaskStep[];
   state: TaskState;
   evidence: string[];
+  report?: { text: string; json: EvidenceReport };
+  sessionId?: string;
 }

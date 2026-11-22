@@ -11,6 +11,12 @@ describe('VaultRedactionRegistry', () => {
     expect(Object.keys(TRUSTED_TOOL_RESULT_FIELDS).sort()).toEqual(allTools.map((tool) => tool.name).sort());
   });
 
+  it('gives the task tools no trusted root field: they return textResult(JSON), like browser_fetch_many', () => {
+    for (const name of ['browser_task_start', 'browser_task_status', 'browser_task_cancel', 'browser_task_answer']) {
+      expect(TRUSTED_TOOL_RESULT_FIELDS[name]).toEqual([]);
+    }
+  });
+
   it('redacts nested text and errors recursively while keeping browser scopes separate', () => {
     const registry = new VaultRedactionRegistry();
     const secret = `sentinel-${crypto.randomBytes(16).toString('hex')}`;

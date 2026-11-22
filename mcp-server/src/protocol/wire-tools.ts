@@ -2,8 +2,17 @@ import { TOOL_NAMES } from './tool-names.js';
 
 /**
  * Wire actions the MCP server sends that are not tools in the registry.
+ * `browser_task_internal_question` is how the MCP process asks a task
+ * question: it has no bridge, so it sends the question over the IPC
+ * `call` path and the daemon delivers it to the extension with
+ * `sendControl` (`tasks/task-question-route.ts`). It is never a tool
+ * (no registry entry, no extension handler) and never forwarded to the
+ * extension as one — the daemon intercepts it in `routeCall`.
  */
-export const INTERNAL_WIRE_TOOLS: ReadonlySet<string> = new Set(['browser_classify_action']);
+export const INTERNAL_WIRE_TOOLS: ReadonlySet<string> = new Set(['browser_classify_action', 'browser_task_internal_question']);
+
+/** The internal wire action that carries a task question from the MCP process to the daemon. */
+export const TASK_QUESTION_WIRE_ACTION = 'browser_task_internal_question';
 
 /**
  * Wire actions only the daemon sends to the extension. No IPC client may ask for them, so

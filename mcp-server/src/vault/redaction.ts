@@ -99,6 +99,12 @@ export const TRUSTED_TOOL_RESULT_FIELDS: Readonly<Record<string, readonly string
   browser_memory: ['origin', 'items', 'next'],
   browser_memory_policy: ['action', 'origin', 'path', 'profile', 'profileLabel'],
   browser_site_map: ['origin', 'label', 'outline', 'knownPages', 'pages', 'next'],
+  // The task tools return textResult(JSON) like browser_fetch_many: the
+  // result object carries no trusted root field of its own.
+  browser_task_start: [],
+  browser_task_status: [],
+  browser_task_cancel: [],
+  browser_task_answer: [],
   browser_fetch_many: [],
   browser_vault: [
     'status', 'code', 'message', 'requestId', 'purpose', 'origin', 'handle', 'accounts',

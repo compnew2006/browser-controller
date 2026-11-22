@@ -16,9 +16,10 @@ describe("Tool Registry", () => {
     'browser_batch', 'browser_emulate', 'browser_logs', 'browser_mock',
     'browser_inspect_element', 'browser_safety', 'browser_vault', 'browser_memory', 'browser_memory_policy',
     'browser_site_map', 'browser_fetch_many',
+    'browser_task_start', 'browser_task_status', 'browser_task_cancel', 'browser_task_answer',
   ];
   // Runs in the MCP process and may compose other handlers; no extension frame.
-  const localTools = new Set(['browser_batch', 'browser_safety', 'browser_fetch_many']);
+  const localTools = new Set(['browser_batch', 'browser_safety', 'browser_fetch_many', 'browser_task_start', 'browser_task_status', 'browser_task_cancel', 'browser_task_answer']);
 
   it("registers the public tools, in contract order", () => {
     expect(allTools.map((t) => t.name)).toEqual(expectedTools);

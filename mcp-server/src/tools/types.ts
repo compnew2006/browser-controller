@@ -39,6 +39,14 @@ export function withActivityContext(params: Record<string, unknown>, activity: A
 
 export interface ToolHost {
   callTool(tool: string, params: Record<string, unknown>, activity?: ToolActivity): Promise<unknown>;
+  /**
+   * The daemon session this host speaks as, when it has one: the
+   * `DaemonClient` in `index.ts` is welcomed with one, and a task started
+   * through this host is recorded under it (`tasks/types.ts`) so a
+   * daemon-side resume can act on the tabs the session owns. Hosts
+   * without a session (tests, in-process fakes) leave it unset.
+   */
+  sessionId?: string | null;
 }
 
 const ACTIVITY_OPERATIONS: Readonly<Record<string, string>> = Object.freeze({

@@ -510,9 +510,11 @@ describe('the router and a file chooser that agent input opened', () => {
 describe('dispatch registry ↔ MCP tool registry (drift guard)', () => {
   // browser_batch, browser_safety and browser_fetch_many run in the MCP process;
   // fetch_many composes browser_evaluate instead of adding an extension action.
+  // The browser_task_* tools run in the MCP process too: they compose the other
+  // tools and the task store, and never send a frame to the extension.
   // browser_vault is daemon-owned and uses private frames rather than the generic dispatcher.
   // browser_memory, browser_memory_policy and browser_site_map are daemon-owned too: they reach the extension only through the internal context action.
-  const localTools = new Set(['browser_batch', 'browser_safety', 'browser_fetch_many']);
+  const localTools = new Set(['browser_batch', 'browser_safety', 'browser_fetch_many', 'browser_task_start', 'browser_task_status', 'browser_task_cancel', 'browser_task_answer']);
   const wireTools = allTools.filter((t) => !localTools.has(t.name));
   const extensionTools = wireTools.filter((t) => !['browser_vault', 'browser_memory', 'browser_memory_policy', 'browser_site_map'].includes(t.name));
 

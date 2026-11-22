@@ -9,10 +9,12 @@
  * by `msg.id`; a `taskAnswer` frame carries no request id, so it was
  * silently dropped and the popup's "Answer sent" was a lie. This module is
  * the receiver: it validates the frame, runs the injected handler (bound by
- * the daemon to `answerQuestion`, with no continuation — the task returns
- * to `running` and Task 8 binds the `runTask` resume), and acknowledges
+ * the daemon to `answerQuestion` with the `runTask` resume —
+ * `tasks/wiring.ts`, `createTaskAnswerContinuation`), and acknowledges
  * the frame back to the extension as `taskAnswerAck` so the popup reports
- * success only once the daemon actually accepted the answer.
+ * success only once the daemon actually accepted the answer. The resume
+ * itself runs in the background, so the ack settles once the answer is
+ * recorded, not once the resumed task finishes.
  *
  * The handler runs asynchronously and never throws into the socket loop:
  * a rejection is logged and acknowledged as `ok: false`, so the extension
@@ -23,7 +25,7 @@ import { isRecord } from './core/guards.js';
 
 const log = createLogger('Bridge');
 
-/** Consume a task answer: normally `answerQuestion` (no continuation — Task 8 binds the resume). Its promise settles the ack: the extension is told success only once the answer is recorded. */
+/** Consume a task answer: normally `answerQuestion` with its `runTask` resume. Its promise settles the ack: the extension is told success only once the answer is recorded. */
 export type TaskAnswerHandler = (questionId: string, answer: string) => void | Promise<unknown>;
 
 /** The acknowledgement sent back to the extension for one `taskAnswer` frame. */

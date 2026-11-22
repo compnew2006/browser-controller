@@ -176,11 +176,15 @@ describe('the wire contract: identifiers', () => {
 describe('the wire contract: the names a wire tool may have', () => {
   it('accepts every registered tool', () => {
     for (const tool of TOOL_NAMES) expect(isKnownWireTool(tool), tool).toBe(true);
-    expect(TOOL_NAMES.length).toBe(23);
+    expect(TOOL_NAMES.length).toBe(27);
   });
 
   it('accepts the internal wire action the daemon forwards', () => {
     expect(isKnownWireTool('browser_classify_action')).toBe(true);
+  });
+
+  it('accepts the internal wire action that carries a task question to the daemon', () => {
+    expect(isKnownWireTool('browser_task_internal_question')).toBe(true);
   });
 
   it('refuses the daemon-only name, so no client can ask for it', () => {

@@ -62,12 +62,16 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
   });
 
   /** Hello, then send each call and return the results by id. */
-  function callAll(tools: string[], cid?: string): Promise<Record<string, { kind: string; id: string; success: boolean; error?: string; cid?: string }>> {
+  function callAll(
+    tools: string[],
+    cid?: string,
+    paramsByTool: Record<string, Record<string, unknown>> = {},
+  ): Promise<Record<string, { kind: string; id: string; success: boolean; error?: string; result?: unknown; cid?: string }>> {
     const token = JSON.parse(fs.readFileSync(path.join(stateDir, 'token.json'), 'utf8')).token;
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(sock);
       socket.setEncoding('utf8');
-      const out: Record<string, { kind: string; id: string; success: boolean; error?: string; cid?: string }> = {};
+      const out: Record<string, { kind: string; id: string; success: boolean; error?: string; result?: unknown; cid?: string }> = {};
       const timer = setTimeout(() => { socket.destroy(); reject(new Error('timeout')); }, 8_000);
       let buf = '';
       socket.on('connect', () => socket.write(JSON.stringify(buildIpcHello(token, 'WireToolsTest')) + '\n'));
@@ -78,7 +82,7 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
           const msg = JSON.parse(buf.slice(0, nl));
           buf = buf.slice(nl + 1);
           if (msg.kind === 'welcome') {
-            tools.forEach((tool, i) => socket.write(JSON.stringify({ kind: 'call', id: `c${i}`, tool, params: {}, cid }) + '\n'));
+            tools.forEach((tool, i) => socket.write(JSON.stringify({ kind: 'call', id: `c${i}`, tool, params: paramsByTool[tool] ?? {}, cid }) + '\n'));
           } else if (msg.kind === 'ping') {
             socket.write(JSON.stringify({ kind: 'pong' }) + '\n');
           } else if (msg.kind === 'result') {
@@ -107,6 +111,19 @@ describe('daemon routeCall allow-list', { timeout: 30_000 }, () => {
     const result = (await callAll([name]))[name];
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/^UNKNOWN_TOOL:/u);
+  });
+
+  it('delivers a task question to the extension without a browser call, and refuses a malformed one', async () => {
+    const name = 'browser_task_internal_question';
+    const question = { id: '550e8400-e29b-41d4-a716-446655440000', taskId: 'task-1', text: 'Proceed?', options: ['yes', 'no'], kind: 'confirm' };
+    const res = await callAll([name], undefined, { [name]: { question } });
+    // No extension is paired here: the intercept answers from the daemon
+    // itself, so success does not depend on a browser being connected.
+    expect(res[name].success).toBe(true);
+    expect(res[name].result).toEqual({ sent: true, questionId: question.id });
+    const bad = (await callAll([name], undefined, { [name]: { question: { id: 'x', taskId: 'task-1', text: '' } } }))[name];
+    expect(bad.success).toBe(false);
+    expect(bad.error).toMatch(/^INVALID_ARGUMENT:/u);
   });
 
   it('echoes a valid correlation id and replaces malformed ids', async () => {

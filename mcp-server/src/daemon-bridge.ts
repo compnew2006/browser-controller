@@ -7,10 +7,12 @@
  * The wiring is the daemon side of the human question protocol (specs/
  * 011-professional-browsing-layer, Design §5):
  * - the popup's `taskAnswer` frames are routed to `answerQuestion` with
- *   no continuation: the answer is recorded and the task returns to
- *   `running`. The full resume — continuing with the daemon's `ToolHost`
- *   via `runTask` — is Task 8's binding; `continueWith` is optional, so
- *   the receiver does not invent a host here.
+ *   a `runTask` continuation on the daemon's bridge host
+ *   (`createTaskAnswerContinuation`, `tasks/wiring.ts`): the answer is
+ *   recorded and the task resumes from the same step, as the session
+ *   recorded on the task. The resume runs in the background, so the
+ *   popup's ack settles once the answer is recorded, not once the
+ *   resumed task finishes.
  * - pending questions are restored from disk before the bridge starts
  *   listening, so a daemon restart neither loses them nor wedges their
  *   tasks; a reconnecting extension is re-asked them when it becomes
@@ -18,7 +20,8 @@
  */
 import { ExtensionBridge } from './bridge.js';
 import { DEFAULT_WS_HOST, DEFAULT_WS_PORT } from './daemon-config.js';
-import { answerQuestion, pendingQuestions, restorePendingQuestions } from './tasks/questions.js';
+import { pendingQuestions, restorePendingQuestions } from './tasks/questions.js';
+import { createTaskAnswerContinuation } from './tasks/wiring.js';
 import { createLogger } from './core/logger.js';
 
 const log = createLogger('DaemonBridge');
@@ -43,7 +46,7 @@ export async function createDaemonBridge(options: DaemonBridgeOptions): Promise<
     reconnectWait: { ms: options.reconnectWaitMs },
   });
   bridge.setSessionRoster(options.sessionRoster);
-  bridge.setTaskAnswerHandler((questionId, answer) => answerQuestion(questionId, answer));
+  bridge.setTaskAnswerHandler(createTaskAnswerContinuation(bridge));
   bridge.setPendingTaskQuestionsProvider(() => pendingQuestions());
   try {
     await restorePendingQuestions();

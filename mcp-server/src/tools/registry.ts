@@ -22,6 +22,7 @@ import { vaultTool } from './vault.js';
 import { memoryTool } from './memory.js';
 import { memoryPolicyTool } from './memory-policy.js';
 import { siteMapTool } from './site-map.js';
+import { taskAnswerTool, taskCancelTool, taskStartTool, taskStatusTool } from '../tasks/tools.js';
 
 /**
  * The tools, in the order tools/list shows them. Extension-backed ones forward
@@ -55,6 +56,12 @@ export const allTools: ToolDefinition[] = [
   memoryPolicyTool,
   siteMapTool,
   fetchManyTool,
+  // The task tools run in the MCP process and compose the other tools;
+  // they are local tools (no extension frame), like browser_batch.
+  taskStartTool,
+  taskStatusTool,
+  taskCancelTool,
+  taskAnswerTool,
 ];
 
 export const toolMap = new Map<string, ToolDefinition>(

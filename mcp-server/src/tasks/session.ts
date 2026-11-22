@@ -48,6 +48,7 @@
  * importing the runner here would make runner and session import each other.
  */
 import { loadTask, saveTask } from './store.js';
+import { saveTaskWithReport } from './reporting.js';
 import type { Task } from './types.js';
 import type { PageSnapshot } from './verify.js';
 
@@ -332,17 +333,20 @@ export async function resumeAfterLogin(taskId: string, options: ResumeAfterLogin
     task.evidence.push(
       `login re-check: still ${state} at step ${index + 1} of ${task.steps.length} — the user has not completed login yet; staying paused`,
     );
-    await saveTask(task, options.tasksDir);
+    await saveTaskWithReport(task, options.tasksDir);
     return task;
   }
   if (state === 'warning-page') {
     task.evidence.push(
       `login re-check: security warning page at step ${index + 1} of ${task.steps.length} — dismiss the warning explicitly before continuing; staying paused`,
     );
-    await saveTask(task, options.tasksDir);
+    await saveTaskWithReport(task, options.tasksDir);
     return task;
   }
   task.state = 'running';
+  // The report describes the paused state; the resume leaves it, so the
+  // record carries no report until the resumed run settles again.
+  delete task.report;
   task.evidence.push(
     `login re-check passed (${state}) at step ${index + 1} of ${task.steps.length} — resuming from the same step`,
   );
