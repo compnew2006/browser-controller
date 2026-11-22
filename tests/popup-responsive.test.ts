@@ -57,6 +57,39 @@ function baseMinHeight(css: string, selector: string): number | null {
   return height ? Number(height[1]) : null;
 }
 
+/** Concatenated inner text of every @media block whose query contains `query` (e.g. 'min-width: 500px'). */
+function mediaBlocks(css: string, query: string): string {
+  const blocks: string[] = [];
+  let i = 0;
+  while (i < css.length) {
+    const at = css.indexOf('@media', i);
+    if (at === -1) break;
+    const open = css.indexOf('{', at);
+    if (open === -1) break;
+    const header = css.slice(at, open);
+    let depth = 0;
+    let j = open;
+    while (j < css.length) {
+      if (css[j] === '{') depth += 1;
+      else if (css[j] === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+      j += 1;
+    }
+    if (header.includes(query)) blocks.push(css.slice(open + 1, j));
+    i = j + 1;
+  }
+  return blocks.join('\n');
+}
+
+/** The declaration block of the rule for this exact selector inside a CSS fragment, or '' when absent. */
+function ruleBody(fragment: string, selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = fragment.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'u'));
+  return match ? match[1] : '';
+}
+
 describe('responsive popup layout', () => {
   it('test_touch_targets_min_44px', () => {
     // Every interactive button in the popup is at least 44px tall at 320px
@@ -80,6 +113,41 @@ describe('responsive popup layout', () => {
     // and the per-row agent picker.
     expect(baseMinHeight(popupCss, '.question-input'), '.question-input').toBeGreaterThanOrEqual(44);
     expect(baseMinHeight(popupCss, '.tab-pin select'), '.tab-pin select').toBeGreaterThanOrEqual(44);
+    // Fix round 1: the two controls the first version missed. The Activity
+    // "Clear" button's .btn-mini 44px was overridden to 30px by the more
+    // specific .activity-clear rule, and .field input (port / token /
+    // enrollment / profile name) declared no min-height at all (~37px).
+    expect(popupHtml).toContain('btn-mini activity-clear');
+    expect(baseMinHeight(popupCss, '.activity-panel .activity-clear'), '.activity-clear').toBeGreaterThanOrEqual(44);
+    expect(baseMinHeight(popupCss, '.field input'), '.field input').toBeGreaterThanOrEqual(44);
+    // The toggles' hit areas are their labels, not the 18px switch visuals:
+    // the Activity "Element details" label was a single ~17px line, and the
+    // Settings .switch-row labels clear 44px on title + hint already — both
+    // now state 44px so the claim above holds for them too.
+    expect(baseMinHeight(popupCss, '.activity-name-toggle'), '.activity-name-toggle').toBeGreaterThanOrEqual(44);
+    expect(baseMinHeight(popupCss, '.switch-row'), '.switch-row').toBeGreaterThanOrEqual(44);
+    // Deliberately NOT asserted: the .switch visuals themselves (18px) and
+    // the 16px .resizer grip — a toggle's hit area is its label and the grip
+    // is a drag handle, not a button (reviewer-judged exclusions, stand).
+  });
+
+  it('test_evidence_list_capped_at_500px', () => {
+    // Fix round 1: the 500px breakpoint used to lift the Evidence cap
+    // (max-height: none) while the shell never scrolls, so a long Evidence
+    // list grew unboundedly and squeezed the Tasks list to zero height.
+    // The cap (180px, as at base) and internal scrolling must survive 500px.
+    expect(baseMinHeight(popupCss, '.evidence-list'), '.evidence-list base cap').toBe(180);
+    const wide = mediaBlocks(popupCss, 'min-width: 500px');
+    expect(wide).toContain('.evidence-list');
+    const body = ruleBody(wide, '.evidence-list');
+    expect(body).toMatch(/max-height:\s*180px/u);
+    expect(body).not.toMatch(/max-height:\s*none/u);
+    expect(body).toMatch(/overflow-y:\s*auto/u);
+    // The row separators survive the two-column grid too: the sibling rule
+    // is still stripped (it would draw a stray line above the top-right
+    // cell), but visual rows 2+ get their separator back via nth-child.
+    const separators = ruleBody(wide, '.evidence-list .evidence-row:nth-child(n+3)');
+    expect(separators).toMatch(/border-top:\s*1px solid var\(--border\)/u);
   });
 
   it('test_breakpoints_320_380_500_640', () => {

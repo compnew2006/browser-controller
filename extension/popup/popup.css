@@ -244,7 +244,7 @@
     .activity-panel { text-align: start; }
     .activity-panel .panel-title { font-size: 11px; }
     .activity-toolbar { display: flex; align-items: center; gap: var(--space-sm); }
-    .activity-name-toggle { display: inline-flex; align-items: center; gap: var(--space-xs); color: var(--ink-2); font-size: 11px; white-space: nowrap; cursor: pointer; }
+    .activity-name-toggle { display: inline-flex; align-items: center; min-height: 44px; gap: var(--space-xs); color: var(--ink-2); font-size: 11px; white-space: nowrap; cursor: pointer; }
     .activity-name-toggle .switch { width: 28px; height: 16px; }
     .activity-name-toggle .switch::after {
       left: auto; right: auto; inset-inline-start: 2px;
@@ -252,7 +252,8 @@
       transition: inset-inline-start 150ms ease, background 150ms ease;
     }
     .activity-name-toggle .switch:checked::after { inset-inline-start: 14px; transform: none; }
-    .activity-panel .activity-clear { min-height: 30px; padding-inline: 10px; font-size: 11px; white-space: nowrap; }
+    /* 44px: the .btn-mini base is 44px; this override used to cut it to 30px. */
+    .activity-panel .activity-clear { min-height: 44px; padding-inline: 10px; font-size: 11px; white-space: nowrap; }
     .activity-list { padding: var(--space-sm) var(--space-md); scrollbar-color: var(--border-2) var(--surface); scrollbar-width: thin; }
     .activity-list::-webkit-scrollbar { width: 8px; }
     .activity-list::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
@@ -433,6 +434,7 @@
     }
     .field input {
       width: 100%;
+      min-height: 44px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
@@ -456,6 +458,7 @@
     .switch-row {
       display: flex; align-items: center; justify-content: space-between;
       gap: var(--space-md);
+      min-height: 44px; /* the label is the switch's hit area; its title + hint already clear 44px, this states it */
       padding-bottom: var(--space-md);
       margin-bottom: var(--space-md);
       border-bottom: 1px solid var(--border);
@@ -671,10 +674,19 @@
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 0 var(--space-md);
-        max-height: none;
+        /* The 180px cap stays at 500px too: without it the list grows
+           unboundedly inside the fixed shell (body never scrolls) and
+           squeezes the Tasks list to zero height. It scrolls internally
+           (overflow-y here; .list also sets it). */
+        max-height: 180px;
+        overflow-y: auto;
       }
       .evidence-list .empty { grid-column: 1 / -1; }
       .evidence-list .evidence-row + .evidence-row { border-top: none; }
+      /* Separators return on visual rows 2+ (nth-child 3+ starts row 2 in a
+         two-column grid). The sibling rule above stays: without it the
+         second item would draw a stray line above the first visual row. */
+      .evidence-list .evidence-row:nth-child(n+3) { border-top: 1px solid var(--border); }
     }
     @media (min-width: 640px) {
       .panel { padding: var(--space-md) 20px var(--space-sm); }
