@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { registerTools } from '../../mcp-server/src/register-tools.js';
 import { tabsTool } from '../../mcp-server/src/tools/tabs.js';
+import { rawResultOf } from '../../mcp-server/src/tools/types.js';
 import { sessionGate } from '../../mcp-server/src/tools/session-mode.js';
 import { batchTool } from '../../mcp-server/src/tools/batch.js';
 import type { ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
@@ -171,5 +172,41 @@ describe('a batch runs its steps through the same gate', () => {
     }) as Record<string, unknown>);
     expect(res.isError).toBe(true);
     expect(text(res)).toContain('TAB_NOT_OWNED');
+  });
+});
+
+describe('browser_tabs list keeps its machine fields on the returned copy', () => {
+  it('isolated list still exposes the listed tabs to rawResultOf', async () => {
+    const { host } = tabHost([7], [9]);
+    await tabsTool.handler(host, { action: 'session', isolation: 'isolated' });
+    const result = await tabsTool.handler(host, { action: 'list' });
+    // The visible text hides the user's tab, but the runner binds the
+    // session's own tab from the machine fields — they must survive the copy.
+    expect(text(result)).not.toContain('user tab');
+    expect(text(result)).toContain('own tab');
+    const raw = rawResultOf(result);
+    expect(raw).toBeDefined();
+    expect((raw?.tabs as Array<{ tabId: number }> | undefined)?.map((tab) => tab.tabId)).toEqual([7, 9]);
+  });
+
+  it('multi-browser list still exposes browsers to rawResultOf', async () => {
+    const host: ToolHost = {
+      async callTool(tool) {
+        if (tool === 'browser_tabs') {
+          return {
+            success: true,
+            text: '7 [own] "own tab" own.test',
+            tabs: [{ tabId: 7, role: 'own' }],
+            browsers: [{ id: 'b1', label: 'Chrome' }],
+            defaultBrowserId: 'b1',
+            selectedBrowserId: 'b1',
+          };
+        }
+        return { success: true, text: 'ok' };
+      },
+    };
+    const result = await tabsTool.handler(host, { action: 'list' });
+    expect(rawResultOf(result)?.browsers).toEqual([{ id: 'b1', label: 'Chrome' }]);
+    expect((rawResultOf(result)?.tabs as Array<{ tabId: number }> | undefined)?.map((tab) => tab.tabId)).toEqual([7]);
   });
 });

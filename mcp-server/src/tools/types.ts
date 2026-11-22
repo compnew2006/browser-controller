@@ -239,6 +239,17 @@ export function withNotes(result: ToolResult, notes: string[]): ToolResult {
 }
 
 /**
+ * A spread copy of a forwarded result, with the same machine fields
+ * attached: spreading a result makes a new object the WeakMap never saw,
+ * so `rawResultOf` on the copy reads nothing unless the raw is
+ * re-registered — the defect `tools/tabs.ts` had on both its branches.
+ */
+export function withSameRaw(source: ToolResult, copy: ToolResult): ToolResult {
+  if (rawResults.has(source)) rawResults.set(copy, rawResults.get(source));
+  return copy;
+}
+
+/**
  * Wire form of an extension result. Success: its `text` is the one text the
  * agent reads (JSON when there is no text), plus `image` when present.
  * Failure ({success:false}): isError, and the text is its `CODE: message`.

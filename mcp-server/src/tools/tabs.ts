@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDefinition, ToolHost, ToolResult } from './types.js';
-import { tabIdParam, forwardHandler, rawResultOf } from './types.js';
+import { tabIdParam, forwardHandler, rawResultOf, withSameRaw } from './types.js';
 import { getSessionPolicy, setSessionPolicy, isIsolated, isolateTabListing, type Access, type Isolation } from './session-mode.js';
 
 const forwardTabs = forwardHandler('browser_tabs');
@@ -28,7 +28,7 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
   const result = await forwardTabs(host, params);
   const raw = rawResultOf(result);
   const withBrowserMetadata = raw && Array.isArray(raw.browsers)
-    ? {
+    ? withSameRaw(result, {
       ...result,
       structuredContent: {
         success: raw.success !== false,
@@ -37,16 +37,16 @@ const handler = async (host: ToolHost, params: Record<string, unknown>): Promise
         selectedBrowserId: raw.selectedBrowserId ?? null,
         ...(raw.pinnedAuto === true ? { pinnedAuto: true } : {}),
       },
-    }
+    })
     : result;
   if (action !== 'list' || !isIsolated(host)) return withBrowserMetadata;
   // An isolated session sees its own tabs only: the user's are counted, not shown.
-  return {
+  return withSameRaw(withBrowserMetadata, {
     ...withBrowserMetadata,
     content: withBrowserMetadata.content.map((item, index) => (
       item.type === 'text' && index === 0 ? { ...item, text: isolateTabListing(item.text) } : item
     )),
-  };
+  });
 };
 (handler as { toolName?: string }).toolName = 'browser_tabs';
 
