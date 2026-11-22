@@ -1,0 +1,312 @@
+/**
+ * The session and login agent (specs/011-professional-browsing-layer, Design §2).
+ *
+ * One session state per (profile, origin): `unknown | logged-in | login-page |
+ * warning-page | expired`. Detection reads the page the task is actually on —
+ * never a guess about it — in this order, because the order is the safety:
+ *
+ * 1. A security-warning page is `warning-page`, checked before anything else:
+ *    a warning interstitial can name a login URL and can carry words a login
+ *    form also carries, so it must never be read as a login page, and it is
+ *    never a successful target page either. It has to be dismissed explicitly
+ *    first; this agent never dismisses it.
+ * 2. A landing on a login URL the task did not mean to be on is `expired`:
+ *    the session ended mid-task and the site bounced the task to login. The
+ *    proof of the redirect is `expectedUrl` — where the task meant to be —
+ *    which the caller (the runner) supplies from the step's target or the
+ *    page the task was on before the step. Without that proof a login URL is
+ *    only `login-page`.
+ * 3. A login form on the page (007: a visible password field, the same signal
+ *    `ui.login` is built from) is `login-page`.
+ * 4. An ordinary page on the expected origin is `logged-in`; anything else
+ *    the agent cannot place is `unknown`.
+ *
+ * The known login URLs come from site knowledge (008), passed in by the
+ * caller: there is no site-knowledge store in the code yet to read them from,
+ * so the caller supplies its per-(profile, origin) slice. Without one, the
+ * generic sign-in path pattern from specs/005 FR-005 — the same pattern
+ * `memory/map-capture.ts` uses — stands in.
+ *
+ * Pause and resume are this agent's job; the login itself is the user's. The
+ * agent NEVER fills credentials and NEVER clicks Submit: on `expired` the
+ * task pauses in `paused-login` and the user completes login by takeover.
+ * `pauseForLogin` records the step the task stopped at in the evidence — the
+ * task shape has no step-number field, so the number lives there and in the
+ * first step without an `ok` result, which is where a resume continues from.
+ * `resumeAfterLogin` re-checks the page first and only continues from that
+ * same step when the page is no longer a login, expired, or warning page.
+ * The continuation itself is injected (`continueWith`, normally `runTask`):
+ * importing the runner here would make runner and session import each other.
+ */
+import { loadTask, saveTask } from './store.js';
+import type { Task } from './types.js';
+import type { PageSnapshot } from './verify.js';
+
+/** The session state of one (profile, origin). */
+export type SessionState = 'unknown' | 'logged-in' | 'login-page' | 'warning-page' | 'expired';
+
+/** The page to detect a session from: a snapshot, plus where the task meant to be. */
+export interface SessionPage extends PageSnapshot {
+  /**
+   * The URL the task expected to be on — the step's target, or the page it
+   * was on before the step. A landing on a login URL only counts as a
+   * redirect (`expired`) when this is set and differs from `url`; without
+   * it, a login URL is only `login-page`.
+   */
+  expectedUrl?: string;
+}
+
+/** Detect one session state from one page. */
+export type DetectSessionFn = (
+  profile: string,
+  origin: string,
+  page: SessionPage,
+  knownLoginUrls?: readonly string[],
+) => SessionState;
+
+/** A path segment that names a sign-in page (specs/005 FR-005; `memory/map-capture.ts`). */
+const SIGN_IN_PATH = /(?:^|\/)(?:log-?in|sign-?in|auth|sso|oauth2?|session\/new|accounts?\/login)(?:[/._-]|$)/iu;
+
+/**
+ * Chrome/Edge security-interstitial phrasing. These are the words of the
+ * interstitial itself, not of a page about security: a normal page does not
+ * tell the reader its connection is not private.
+ */
+const WARNING_PHRASES = [
+  'your connection is not private',
+  'privacy error',
+  'attackers might be trying to steal',
+  'net::err_cert',
+  'err_cert_',
+  "this site isn't secure",
+  'certificate error',
+  'security warning',
+  'potential security risk',
+];
+
+/** Accessible names of a password field, in the snapshot's languages. */
+const PASSWORD_NAMES = ['password', 'كلمة المرور', 'كلمة السر'];
+
+/** Accessible names of a sign-in submit control. */
+const SIGN_IN_NAMES = ['sign in', 'log in', 'login', 'تسجيل الدخول', 'دخول'];
+
+/** Accessible names of the identifier field of a sign-in form. */
+const IDENTIFIER_NAMES = [
+  'email',
+  'e-mail',
+  'username',
+  'user name',
+  'phone',
+  'mobile',
+  'البريد الإلكتروني',
+  'اسم المستخدم',
+  'الجوال',
+  'الهاتف',
+];
+
+/** The origin of a URL, or '' when it does not parse. */
+export function originOf(url: string | undefined): string {
+  if (!url) return '';
+  try {
+    return new URL(url).origin;
+  } catch {
+    return '';
+  }
+}
+
+/** A URL without its query and fragment: login URLs carry `?next=` and the like. */
+function withoutQuery(url: string): string {
+  const cut = url.split(/[?#]/u, 1)[0];
+  return cut ?? '';
+}
+
+/** The path of a URL, or '' when it does not parse. */
+function pathOf(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return withoutQuery(url);
+  }
+}
+
+/** Whether the page URL is one of the site's known login URLs (query and fragment ignored). */
+function matchesKnownLoginUrl(pageUrl: string, knownLoginUrls: readonly string[]): boolean {
+  const page = withoutQuery(pageUrl).toLowerCase();
+  return knownLoginUrls.some((known) => withoutQuery(known).toLowerCase() === page);
+}
+
+/** Whether the page URL's path names a sign-in page, known list or not. */
+function matchesSignInPath(pageUrl: string): boolean {
+  return SIGN_IN_PATH.test(pathOf(pageUrl));
+}
+
+/** Whether the page URL is a login URL: known from site knowledge, or a sign-in path. */
+function isLoginUrl(pageUrl: string, knownLoginUrls: readonly string[]): boolean {
+  return matchesKnownLoginUrl(pageUrl, knownLoginUrls) || matchesSignInPath(pageUrl);
+}
+
+/**
+ * Whether landing on `pageUrl` while meaning to be on `expectedUrl` is a
+ * redirect: the two differ (query and fragment ignored), and the expected
+ * page was not itself a login page — navigating to login on purpose is not
+ * an expiry.
+ */
+function isRedirect(pageUrl: string, expectedUrl: string | undefined, knownLoginUrls: readonly string[]): boolean {
+  if (!expectedUrl) return false;
+  if (withoutQuery(pageUrl).toLowerCase() === withoutQuery(expectedUrl).toLowerCase()) return false;
+  if (isLoginUrl(expectedUrl, knownLoginUrls)) return false;
+  return true;
+}
+
+/**
+ * The accessible name quoted in one accessibility-tree line, e.g. `Password`
+ * in `- textbox "Password" [ref=e2]` — the same line format `verify.ts`
+ * reads. Undefined when the line is not an element line of that role.
+ */
+function nameOfRoleLine(line: string, role: string): string | undefined {
+  const match = new RegExp(`^\\s*(?:-\\s+)?${role}\\s+"([^"]*)"`, 'iu').exec(line);
+  return match?.[1];
+}
+
+function hasWord(name: string | undefined, words: readonly string[]): boolean {
+  if (name === undefined) return false;
+  const lowered = name.toLowerCase();
+  return words.some((word) => lowered.includes(word.toLowerCase()));
+}
+
+/**
+ * Whether the snapshot shows a login form (007): a visible password field —
+ * the same signal `ui.login` is built from — or a sign-in submit control
+ * next to an identifier field. The shape never says what the form is for
+ * beyond that; a password-change form reads the same way, and the runner
+ * treats `login-page` as "let verification judge", never as an expiry.
+ */
+function hasLoginForm(text: string): boolean {
+  const lines = text.split('\n');
+  let hasPasswordField = false;
+  let hasSignInControl = false;
+  let hasIdentifierField = false;
+  for (const line of lines) {
+    if (hasWord(nameOfRoleLine(line, 'textbox'), PASSWORD_NAMES)) hasPasswordField = true;
+    if (hasWord(nameOfRoleLine(line, 'button'), SIGN_IN_NAMES)) hasSignInControl = true;
+    if (hasWord(nameOfRoleLine(line, 'textbox'), IDENTIFIER_NAMES)) hasIdentifierField = true;
+  }
+  return hasPasswordField || (hasSignInControl && hasIdentifierField);
+}
+
+/**
+ * Detect the session state of the page. `profile` scopes the call — the
+ * known login URLs are the caller's per-(profile, origin) slice of site
+ * knowledge (008) — but the detection itself is pure: it reads only this
+ * page, and never fills credentials or clicks anything.
+ */
+export function detectSession(
+  profile: string,
+  origin: string,
+  page: SessionPage,
+  knownLoginUrls: readonly string[] = [],
+): SessionState {
+  void profile;
+  const lowered = page.text.toLowerCase();
+  // The warning first: it can name a login URL and carry login words, and
+  // it is neither a login page nor a successful target page.
+  if (WARNING_PHRASES.some((phrase) => lowered.includes(phrase))) return 'warning-page';
+  if (page.url !== '' && isLoginUrl(page.url, knownLoginUrls)) {
+    return isRedirect(page.url, page.expectedUrl, knownLoginUrls) ? 'expired' : 'login-page';
+  }
+  if (hasLoginForm(page.text)) return 'login-page';
+  if (page.url !== '' && origin !== '' && originOf(page.url) === origin) return 'logged-in';
+  return 'unknown';
+}
+
+/** The first step without an `ok` result — where a resume continues from — or the last step when all are done. */
+function firstUnfinishedStep(task: Task): number {
+  const index = task.steps.findIndex((step) => step.result?.status !== 'ok');
+  return index === -1 ? Math.max(0, task.steps.length - 1) : index;
+}
+
+/**
+ * Pause a task for login: state `paused-login`, the current step number in
+ * the evidence, saved. Throws when the task was never saved or is already
+ * finished; pausing a finished task would rewrite its outcome.
+ */
+export async function pauseForLogin(taskId: string, stepIndex?: number, tasksDir?: string): Promise<Task> {
+  const task = await loadTask(taskId, tasksDir);
+  if (!task) throw new Error(`task not found: ${taskId}`);
+  if (task.state === 'done' || task.state === 'failed') {
+    throw new Error(`cannot pause task ${taskId} for login: task is ${task.state}`);
+  }
+  if (stepIndex !== undefined && (!Number.isSafeInteger(stepIndex) || stepIndex < 0 || stepIndex >= task.steps.length)) {
+    throw new Error(`cannot pause task ${taskId} for login: step index ${stepIndex} is out of range`);
+  }
+  const index = stepIndex ?? firstUnfinishedStep(task);
+  task.state = 'paused-login';
+  task.evidence.push(
+    `paused for login at step ${index + 1} of ${task.steps.length} — waiting for the user to complete login by takeover (this agent never fills credentials or clicks Submit); resumes from the same step, never from the start`,
+  );
+  await saveTask(task, tasksDir);
+  return task;
+}
+
+/** How `resumeAfterLogin` re-checks the page and continues the task. */
+export interface ResumeAfterLoginOptions {
+  tasksDir?: string;
+  profile?: string;
+  /** The caller's per-(profile, origin) slice of site knowledge (008). */
+  knownLoginUrls?: readonly string[];
+  /**
+   * Read the current page for the re-check — normally a `browser_snapshot`
+   * on the tab the task's completed steps bound. Required: resuming without
+   * re-checking the page first is not a resume.
+   */
+  readPage: (task: Task) => Promise<SessionPage>;
+  /**
+   * Continue executing the task once the re-check passes — normally
+   * `runTask`, which resumes from the first unfinished step. When omitted
+   * the task is left `running` for the caller to continue.
+   */
+  continueWith?: (task: Task) => Promise<Task>;
+}
+
+/**
+ * Resume a task paused for login: re-check the page first, then continue
+ * from the same step. Still on a login page, still expired, or on a warning
+ * page, the task stays `paused-login` and the continuation never runs — the
+ * user has not finished logging in (or dismissing the warning) yet. Logged
+ * in — or unplaceable, which is no evidence of a login problem — the task
+ * returns to `running` and continues from its first unfinished step.
+ */
+export async function resumeAfterLogin(taskId: string, options: ResumeAfterLoginOptions): Promise<Task> {
+  const task = await loadTask(taskId, options.tasksDir);
+  if (!task) throw new Error(`task not found: ${taskId}`);
+  if (task.state !== 'paused-login') {
+    throw new Error(`cannot resume task ${taskId} after login: task is ${task.state}, not paused-login`);
+  }
+  if (typeof options.readPage !== 'function') {
+    throw new Error(`cannot resume task ${taskId} after login: no page reader supplied to re-check the page`);
+  }
+  const page = await options.readPage(task);
+  const state = detectSession(options.profile ?? 'default', originOf(page.url), page, options.knownLoginUrls ?? []);
+  const index = firstUnfinishedStep(task);
+  if (state === 'expired' || state === 'login-page') {
+    task.evidence.push(
+      `login re-check: still ${state} at step ${index + 1} of ${task.steps.length} — the user has not completed login yet; staying paused`,
+    );
+    await saveTask(task, options.tasksDir);
+    return task;
+  }
+  if (state === 'warning-page') {
+    task.evidence.push(
+      `login re-check: security warning page at step ${index + 1} of ${task.steps.length} — dismiss the warning explicitly before continuing; staying paused`,
+    );
+    await saveTask(task, options.tasksDir);
+    return task;
+  }
+  task.state = 'running';
+  task.evidence.push(
+    `login re-check passed (${state}) at step ${index + 1} of ${task.steps.length} — resuming from the same step`,
+  );
+  await saveTask(task, options.tasksDir);
+  if (options.continueWith) return options.continueWith(task);
+  return task;
+}

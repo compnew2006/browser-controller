@@ -48,6 +48,19 @@
  * instead of losing it. A step that still has no tab to bind to fails
  * validation with the evidence, never executes silently.
  *
+ * Session check (Design §2): after each step's snapshot read, and before
+ * its verification, the runner asks the session agent what page the task is
+ * on. A landing on a login URL the task did not mean to be on is an expiry:
+ * the task pauses in `paused-login` at that step — the step keeps no result,
+ * so the resume re-runs it — and the user completes login by takeover; the
+ * task is not failed. A security-warning page fails the step as
+ * `verify-failed`: it is never a login page and never a successful target
+ * page, and it has to be dismissed explicitly first. A login page without
+ * redirect proof is not an expiry, so verification judges it. Re-checking
+ * the page before continuing is `resumeAfterLogin`'s job in `session.ts`,
+ * not this runner's: a `paused-login` task handed to `runTask` directly
+ * resumes from its first unfinished step as before.
+ *
  * Read-only default (FR-020, binding ruling P4): a step that can change site
  * data (save/send/delete) is refused unless the task explicitly allows
  * mutations. What counts as mutating is a per-tool, per-action
@@ -65,6 +78,8 @@ import { loadTask, saveTask } from './store.js';
 import type { Task, TaskStep } from './types.js';
 import type { PageSnapshot, VerifyOutcome } from './verify.js';
 import { pageSnapshotFromResult, verifyStep } from './verify.js';
+import type { DetectSessionFn, SessionPage, SessionState } from './session.js';
+import { detectSession, originOf, pauseForLogin } from './session.js';
 
 /** Verify one step against the page snapshot taken after it. */
 export type VerifyStepFn = (step: TaskStep, snapshot: PageSnapshot) => VerifyOutcome | Promise<VerifyOutcome>;
@@ -76,6 +91,18 @@ export interface RunTaskOptions {
   tools?: ReadonlyMap<string, ToolDefinition>;
   /** Verifier to apply after each step; defaults to `verifyStep`. */
   verify?: VerifyStepFn;
+  /**
+   * Session checking (Design §2): after each step's snapshot read, the
+   * runner asks the session agent what page the task is on. `profile` is
+   * the browser profile the task runs in; `knownLoginUrls` is the caller's
+   * per-(profile, origin) slice of site knowledge (008). `detectSession`
+   * is injectable for tests; the default is the real `detectSession`.
+   */
+  session?: {
+    profile?: string;
+    knownLoginUrls?: readonly string[];
+    detectSession?: DetectSessionFn;
+  };
 }
 
 /** The constraint that explicitly approves mutating steps in a task (FR-020). */
@@ -255,6 +282,16 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   // The tab the completed steps already bound (a resumed run rebinds to it).
   let boundTabId = boundTabFromCompletedSteps(task);
 
+  // The session agent (Design §2): what page the task is on, and where it
+  // meant to be. The default is the real detector; tests inject a fake.
+  const sessionDetect = options.session?.detectSession ?? detectSession;
+  const sessionProfile = options.session?.profile ?? 'default';
+  const knownLoginUrls = options.session?.knownLoginUrls ?? [];
+  // The page the task was on before the current step — the redirect proof:
+  // a landing on a login URL only counts as an expiry when the task meant
+  // to be somewhere else. A navigate step's target is that proof instead.
+  let lastUrl: string | undefined;
+
   for (let index = 0; index < task.steps.length; index++) {
     const step = task.steps[index];
     // Resume: a step that already verified keeps its result and never re-runs.
@@ -340,8 +377,59 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       openedTabId ?? (typeof validated.tabId === 'number' ? validated.tabId : boundTabId);
 
     let outcome: VerifyOutcome;
+    let snapshot: PageSnapshot;
     try {
-      const snapshot = await readSnapshotAfterStep(step, result, tools, options.host, verifyTabId);
+      snapshot = await readSnapshotAfterStep(step, result, tools, options.host, verifyTabId);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await failStep(task, step, index, 'verify-failed', detail, options.tasksDir);
+      return task;
+    }
+
+    // Session check, on the same fresh snapshot verification uses — no
+    // extra read. Where the task meant to be is the navigate target for a
+    // navigate step, else the page it was on before this step.
+    const navigateTarget =
+      step.tool === 'browser_navigate' &&
+      typeof validated.url === 'string' &&
+      !NAVIGATE_HISTORY_ACTIONS.has(validated.url)
+        ? validated.url
+        : undefined;
+    const expectedUrl = navigateTarget ?? lastUrl;
+    const sessionPage: SessionPage = { ...snapshot, expectedUrl };
+    const sessionState: SessionState = sessionDetect(
+      sessionProfile,
+      originOf(expectedUrl ?? snapshot.url),
+      sessionPage,
+      knownLoginUrls,
+    );
+    if (sessionState === 'expired') {
+      // The session ended mid-task: pause in `paused-login` at this step —
+      // the step keeps no result, so the resume re-runs it — and hand the
+      // login to the user (takeover). The task is not failed: its progress
+      // stands, and `resumeAfterLogin` continues from this same step.
+      return pauseForLogin(id, index, options.tasksDir);
+    }
+    if (sessionState === 'warning-page') {
+      // A security warning is never a login page and never a successful
+      // target page: the step fails with the warning as its evidence, and
+      // the warning has to be dismissed explicitly before anything continues.
+      await failStep(
+        task,
+        step,
+        index,
+        'verify-failed',
+        `page is a security warning page (warning-page), not the target page — dismiss the warning explicitly before continuing; url=${snapshot.url}`,
+        options.tasksDir,
+      );
+      return task;
+    }
+    // `login-page` without redirect proof is not an expiry: the step may
+    // have meant to be there, so verification judges it. `logged-in` and
+    // `unknown` proceed the same way.
+    if (snapshot.url !== '') lastUrl = snapshot.url;
+
+    try {
       outcome = await verify(step, snapshot);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
