@@ -10,12 +10,25 @@
  * instead of starting over.
  *
  * Two seams, both explicit:
- * - Verification is a TEMPORARY placeholder until Task 3 lands `verify.ts`:
- *   it only rejects a tool result that already carries an error. Task 3
- *   replaces `VerifyStepFn` with `verifyStep(step, snapshot)`.
+ * - Verification is the real verifier from `verify.ts`: after a step's tool
+ *   call succeeds, the runner reads the page again and applies the step's
+ *   verify rules to that snapshot — the tool result alone is never evidence
+ *   of success. `runTask` takes an injectable `verify` with the same
+ *   `(step, snapshot)` signature for tests; the default is `verifyStep`.
  * - Tool resolution defaults to the registry's `toolMap`; tests pass a small
  *   map of fake tools instead. Registry tools need a `ToolHost` to invoke;
  *   injected tools run with whatever host the caller passes (fakes ignore it).
+ *
+ * How the runner obtains the snapshot for verification: after a step's tool
+ * call succeeds, it reads the page again with `browser_snapshot` on the
+ * tab the step acted on — unless the step itself was `browser_snapshot`,
+ * in which case its own result already is the snapshot. When no snapshot
+ * tool is available (a test map without one, or no host to call it with),
+ * the step's own result stands in as the snapshot. The snapshot read is
+ * an extra `browser_snapshot` call after most steps; that is the cost of
+ * verifying against the page instead of the tool result. A snapshot that
+ * cannot be read fails the step as `verify-failed` — verification must
+ * never pass on an unread page.
  *
  * Params are validated before a step runs: `prepareToolParams` applies the
  * tool's own schema (plus its `normalize`, for borrowed parameter names), so
@@ -48,22 +61,18 @@ import { NO_DEFAULT_TAB, TAB_OR_ORIGIN } from '../tools/batch-limits.js';
 import { prepareToolParams } from '../tools/params.js';
 import { loadTask, saveTask } from './store.js';
 import type { Task, TaskStep } from './types.js';
+import type { PageSnapshot, VerifyOutcome } from './verify.js';
+import { pageSnapshotFromResult, verifyStep } from './verify.js';
 
-/** The outcome of verifying one step. Temporary seam — see the header. */
-export interface VerifyOutcome {
-  ok: boolean;
-  evidence: string;
-}
-
-/** TEMPORARY: Task 3 replaces this with `verifyStep(step, snapshot)` from verify.ts. */
-export type VerifyStepFn = (step: TaskStep, result: ToolResult) => VerifyOutcome | Promise<VerifyOutcome>;
+/** Verify one step against the page snapshot taken after it. */
+export type VerifyStepFn = (step: TaskStep, snapshot: PageSnapshot) => VerifyOutcome | Promise<VerifyOutcome>;
 
 export interface RunTaskOptions {
   tasksDir?: string;
   host?: ToolHost;
   /** Tool definitions to resolve steps against; defaults to the registry's `toolMap`. */
   tools?: ReadonlyMap<string, ToolDefinition>;
-  /** Verifier to apply after each step; defaults to the placeholder below. */
+  /** Verifier to apply after each step; defaults to `verifyStep`. */
   verify?: VerifyStepFn;
 }
 
@@ -129,19 +138,48 @@ export function taskAllowsMutations(task: Task): boolean {
   return task.constraints.includes(ALLOW_MUTATIONS);
 }
 
-/**
- * TEMPORARY verifier (Task 3 replaces it with verify.ts): a step passes when
- * its tool result carries no error. It cannot apply the step's verify rules —
- * those need the page snapshot, which the real verifier reads.
- */
-function placeholderVerify(step: TaskStep, result: ToolResult): VerifyOutcome {
-  if (result.isError) return { ok: false, evidence: `tool ${step.tool} failed: ${resultText(result)}` };
-  return { ok: true, evidence: `tool ${step.tool} returned without error` };
-}
-
 function resultText(result: ToolResult): string {
   const first = result.content.find((item) => item.type === 'text');
   return first && first.type === 'text' ? first.text : '';
+}
+
+/**
+ * The page snapshot to verify a step against. A `browser_snapshot` step
+ * already read the page, so its own result is the snapshot. Any other step
+ * is followed by a fresh `browser_snapshot` read on the tab it acted on —
+ * the read is a plain handler call, not a step, so it needs no P4 approval
+ * (the snapshot tool is an idempotent read) and no param preparation beyond
+ * the tab to read. When no snapshot tool or no host is available, the
+ * step's own result stands in. Throws when the snapshot read fails, so the
+ * caller fails the step as `verify-failed` instead of passing it unread.
+ */
+async function readSnapshotAfterStep(
+  step: TaskStep,
+  result: ToolResult,
+  tools: ReadonlyMap<string, ToolDefinition>,
+  host: ToolHost | undefined,
+  tabId: number | undefined,
+): Promise<PageSnapshot> {
+  if (step.tool === 'browser_snapshot') return pageSnapshotFromResult(result, 'browser_snapshot result');
+  const snapshotDef = tools.get('browser_snapshot');
+  if (snapshotDef && host) {
+    const params: Record<string, unknown> = {};
+    if (tabId !== undefined && 'tabId' in snapshotDef.inputSchema.shape) params.tabId = tabId;
+    let snapshotResult: ToolResult;
+    try {
+      snapshotResult = await snapshotDef.handler(host, params);
+    } catch (error) {
+      throw new Error(
+        `snapshot unavailable after ${step.tool}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    if (snapshotResult.isError) {
+      throw new Error(`snapshot unavailable after ${step.tool}: ${resultText(snapshotResult)}`);
+    }
+    return pageSnapshotFromResult(snapshotResult, `browser_snapshot${tabId !== undefined ? ` tab ${tabId}` : ''}`);
+  }
+  return pageSnapshotFromResult(result, `result of ${step.tool}`);
 }
 
 /**
@@ -196,7 +234,7 @@ async function failStep(
  */
 export async function runTask(id: string, options: RunTaskOptions = {}): Promise<Task> {
   const tools = options.tools ?? toolMap;
-  const verify = options.verify ?? placeholderVerify;
+  const verify = options.verify ?? verifyStep;
   const hostRequired = options.tools === undefined;
 
   const task = await loadTask(id, options.tasksDir);
@@ -276,21 +314,30 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       return task;
     }
 
-    const outcome = await verify(step, result);
+    // The tab this step acted on, so the verification snapshot reads the
+    // same tab — and the binding is recorded on the step if it opened one.
+    let openedTabId: number | undefined;
+    if (step.params.tabId === undefined) {
+      openedTabId = tabIdFromResult(result);
+      if (openedTabId !== undefined) boundTabId = openedTabId;
+    }
+
+    let outcome: VerifyOutcome;
+    try {
+      const snapshot = await readSnapshotAfterStep(step, result, tools, options.host, boundTabId);
+      outcome = await verify(step, snapshot);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await failStep(task, step, index, 'verify-failed', detail, options.tasksDir);
+      return task;
+    }
     if (!outcome.ok) {
       await failStep(task, step, index, 'verify-failed', outcome.evidence, options.tasksDir);
       return task;
     }
 
-    // The tab this step acted on: a step without an explicit tabId that
-    // opened one (or listed one) binds it for the steps after it, and the
-    // binding is recorded on the step so a resumed run keeps it.
-    if (step.params.tabId === undefined) {
-      const openedTabId = tabIdFromResult(result);
-      if (openedTabId !== undefined) {
-        boundTabId = openedTabId;
-        if ('tabId' in def.inputSchema.shape) step.params = { ...step.params, tabId: openedTabId };
-      }
+    if (openedTabId !== undefined && 'tabId' in def.inputSchema.shape) {
+      step.params = { ...step.params, tabId: openedTabId };
     }
     const detail = notes.length > 0 ? `${outcome.evidence} (${notes.join('; ')})` : outcome.evidence;
     step.result = { status: 'ok', detail };

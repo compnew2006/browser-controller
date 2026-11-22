@@ -102,14 +102,14 @@ describe('runner', () => {
     const done = await runTask('task-1', {
       tasksDir: dir,
       tools,
-      verify: () => ({ ok: false, evidence: 'page shows an error' }),
+      verify: (_step, snapshot) => ({ ok: false, evidence: `page shows an error: ${snapshot.text}` }),
     });
 
     expect(done.state).toBe('failed');
     expect(done.steps[0]?.result?.status).toBe('verify-failed');
     expect(done.steps[1]?.result).toBeUndefined();
     expect(calls).toEqual(['fake-ok']);
-    expect(done.evidence.join('\n')).toContain('page shows an error');
+    expect(done.evidence.join('\n')).toContain('page shows an error: page loaded');
   });
 
   it('runs every step in order and finishes done when all verify', async () => {
@@ -264,6 +264,117 @@ describe('runner', () => {
 
   it('rejects a task that was never saved', async () => {
     await expect(runTask('missing', { tasksDir: dir })).rejects.toThrowError(/not found/);
+  });
+});
+
+describe('runner verification through the real verifier', () => {
+  /** A host fake tools ignore; its only job is to let the runner call the snapshot tool. */
+  const dummyHost: ToolHost = {
+    callTool: async () => {
+      throw new Error('no extension in test');
+    },
+  };
+
+  const navigateSchema = z.object({ url: z.string(), incognito: z.boolean().optional() }).strict();
+  const tabSchema = z.object({ tabId: z.number().optional() }).strict();
+  const navigateTask: Task = {
+    id: 'task-1',
+    goal: 'Open the example page',
+    constraints: ['read-only'],
+    steps: [
+      {
+        tool: 'browser_navigate',
+        params: { url: 'https://example.com' },
+        verify: [{ kind: 'no-error-text', value: "isn't working" }],
+      },
+    ],
+    state: 'planned',
+    evidence: [],
+  };
+
+  it('fails a navigation that landed on an error page, even though the navigate call succeeded', async () => {
+    const calls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, navigateSchema)],
+      [
+        'browser_snapshot',
+        fakeTool('browser_snapshot', calls, textResult("This page isn't working"), true, tabSchema),
+      ],
+    ]);
+    await saveTask(navigateTask, dir);
+
+    const done = await runTask('task-1', { tasksDir: dir, tools, host: dummyHost });
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.status).toBe('verify-failed');
+    expect(done.steps[0]?.result?.detail).toContain("isn't working");
+    expect(calls).toEqual(['browser_navigate', 'browser_snapshot']);
+  });
+
+  it('verifies a snapshot step against its own result without reading the page twice', async () => {
+    const calls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_snapshot',
+        fakeTool('browser_snapshot', calls, textResult("This page isn't working"), true, tabSchema),
+      ],
+    ]);
+    await saveTask(
+      {
+        id: 'task-1',
+        goal: 'Read the page',
+        constraints: ['read-only'],
+        steps: [{ tool: 'browser_snapshot', params: {}, verify: [{ kind: 'no-error-text', value: "isn't working" }] }],
+        state: 'planned',
+        evidence: [],
+      },
+      dir,
+    );
+
+    const done = await runTask('task-1', { tasksDir: dir, tools, host: dummyHost });
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.status).toBe('verify-failed');
+    expect(calls).toEqual(['browser_snapshot']);
+  });
+
+  it('fails verification when the snapshot read itself fails', async () => {
+    const calls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, navigateSchema)],
+      [
+        'browser_snapshot',
+        fakeTool('browser_snapshot', calls, new Error('TAB_FROZEN: tab did not respond'), true, tabSchema),
+      ],
+    ]);
+    await saveTask(navigateTask, dir);
+
+    const done = await runTask('task-1', { tasksDir: dir, tools, host: dummyHost });
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.status).toBe('verify-failed');
+    expect(done.steps[0]?.result?.detail).toContain('snapshot unavailable');
+  });
+
+  it('falls back to the step result when no snapshot tool is available', async () => {
+    const calls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      ['fake-ok', fakeTool('fake-ok', calls, textResult("This page isn't working"))],
+    ]);
+    await saveTask(
+      {
+        id: 'task-1',
+        goal: 'Open the page',
+        constraints: ['read-only'],
+        steps: [{ tool: 'fake-ok', params: {}, verify: [{ kind: 'no-error-text', value: "isn't working" }] }],
+        state: 'planned',
+        evidence: [],
+      },
+      dir,
+    );
+
+    const done = await runTask('task-1', { tasksDir: dir, tools });
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.status).toBe('verify-failed');
+    expect(done.steps[0]?.result?.detail).toContain("isn't working");
+    expect(calls).toEqual(['fake-ok']);
   });
 });
 
