@@ -11,6 +11,8 @@ import { AGENT_MOUSE_MOVEMENT_LOCK_KEY } from '../lib/overlay.js';
 import { authenticatedDaemonFetch, daemonFailureKind } from '../lib/daemon-auth.js';
 import { bindActionActivity } from './activity-view.js';
 import { bindTaskQuestions } from './question-view.js'; // Design §5: the question card, outside the shielded tab
+import { bindPopupResizer } from './popup-resize.js'; // Task 9: resize grip, split out so popup.js stays under the 600-line gate
+import { renderEvidenceRows, renderTaskRows, taskPanelsSignature, tasksFromQuestions } from './task-panels-view.js'; // Task 9: Tasks/Evidence panels
 
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -29,11 +31,20 @@ const agentsEl = document.getElementById('agents');
 const openTabsEl = document.getElementById('openTabs');
 const tabsCountEl = document.getElementById('tabsCount');
 const agentsCountEl = document.getElementById('agentsCount');
+const tasksCountEl = document.getElementById('tasksCount');
+const taskListEl = document.getElementById('taskList');
+const evidenceListEl = document.getElementById('evidenceList');
 const settingsTabBtn = document.getElementById('settingsTab');
 const actionActivity = bindActionActivity();
 const taskQuestions = bindTaskQuestions((questionId, answer) => {
   chrome.runtime.sendMessage({ type: 'answerTaskQuestion', questionId, answer }, (resp) => {
-    if (resp?.success) { addLog('Answer confirmed by daemon', 'ok'); refreshStatus(); } else addLog(`Answer failed: ${resp?.error || 'unknown'}`, 'err');
+    if (resp?.success) {
+      // Evidence (Design §7): the answer joins the confirmed list with its
+      // task, so the Evidence panel keeps it after the question leaves pending.
+      const asked = lastTaskQuestions.find((q) => q.id === questionId);
+      confirmedAnswers.push({ taskId: asked?.taskId || '', questionId, answer });
+      addLog('Answer confirmed by daemon', 'ok'); refreshStatus();
+    } else addLog(`Answer failed: ${resp?.error || 'unknown'}`, 'err');
   });
 });
 
@@ -45,6 +56,12 @@ versionEl.textContent = `v${manifest.version}`;
 // controls (the Pin dropdown lists agents). Keep the latest snapshot of both.
 let lastAgents = [];      // [{sessionId, name, connectedAt}]
 let lastTabs = [];        // [{id, url, title, active, lockedBy, controlledBy, otherWindow?}]
+// Task panels (Design §7): the popup sees tasks only while they wait on a
+// question (state.taskQuestions); confirmed answers are recorded here, in
+// this popup session only, for the Evidence panel — see task-panels-view.js.
+let lastTaskQuestions = [];
+const confirmedAnswers = [];
+let lastTaskPanelsSig = '';
 
 // ── Tabs shell ─────────────────────────────────────────────────────────────
 const tabButtons = Array.from(document.querySelectorAll('.tabbar button[data-tab]'));
@@ -289,6 +306,23 @@ function patchControlBadges(tabs) {
   }
 }
 
+// ── Tasks / Evidence panels ──────────────────────────────────────────────
+// Rendered from the status payload's pending questions plus the answers
+// confirmed in this popup session; signature-guarded like the tabs list so
+// the 2s poll does not rebuild the DOM when nothing changed.
+function renderTaskPanels(questions) {
+  const list = Array.isArray(questions) ? questions : [];
+  const waiting = tasksFromQuestions(list);
+  tasksCountEl.textContent = waiting.length ? String(waiting.length) : '';
+  const sig = taskPanelsSignature(list, confirmedAnswers);
+  if (sig === lastTaskPanelsSig) return;
+  lastTaskPanelsSig = sig;
+  const taskRows = renderTaskRows(list);
+  taskListEl.innerHTML = taskRows || '<div class="empty">No active task</div>';
+  const evidenceRows = renderEvidenceRows(list, confirmedAnswers);
+  evidenceListEl.innerHTML = evidenceRows || '<div class="empty">Nothing confirmed yet</div>';
+}
+
 // ── Status rendering ───────────────────────────────────────────────────────
 
 function updateUI(state) {
@@ -331,6 +365,8 @@ function updateUI(state) {
   // later agents poll can re-render the Pin dropdowns with fresh agent names.
   lastTabs = Array.isArray(state.tabs) ? state.tabs : [];
   renderOpenTabs(); taskQuestions.render(state.taskQuestions);
+  lastTaskQuestions = Array.isArray(state.taskQuestions) ? state.taskQuestions : [];
+  renderTaskPanels(lastTaskQuestions);
 }
 
 /** Fetch connection + tabs + locks state from the background worker. */
@@ -503,98 +539,4 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// ── Resizable popup ────────────────────────────────────────────────────────
-// Chrome extension popups are fixed-size; there's no native resize. We drive
-// the document size from a draggable corner handle and persist the chosen
-// width/height to chrome.storage.local so it's restored on every open.
-const resizerEl = document.getElementById('resizer');
-const MIN_W = 320;
-const MIN_H = 380;
-const MAX_W = 760;
-const MAX_H = 760;
-const SIZE_KEY = 'popupSize';
-
-function applySize(w, h) {
-  const cw = Math.min(MAX_W, Math.max(MIN_W, Math.round(w)));
-  const ch = Math.min(MAX_H, Math.max(MIN_H, Math.round(h)));
-  document.documentElement.style.width = `${cw}px`;
-  document.documentElement.style.height = `${ch}px`;
-  return { w: cw, h: ch };
-}
-
-// Restore last chosen size (fall back to the CSS default of 380x540).
-chrome.storage.local.get(SIZE_KEY, (saved) => {
-  if (saved && saved[SIZE_KEY]) {
-    applySize(saved[SIZE_KEY].w, saved[SIZE_KEY].h);
-  }
-});
-
-let dragging = false;
-// Anchor deltas in SCREEN coordinates. clientX/clientY are relative to the
-// popup viewport, and Chrome slides the whole viewport as the popup resizes
-// (it keeps the right edge pinned to the toolbar icon). Reading clientX during
-// a resize therefore feeds back into the width math and produces visible jitter
-// (grow → slide → clientX jumps → shrink → slide back → repeat). screenX is
-// anchored to the physical monitor and never moves, so it's jitter-free.
-let startScreenX = 0;
-let startScreenY = 0;
-let startW = 0;
-let startH = 0;
-let saveTimer = null;
-// Coalesce multiple mousemove events into one layout write per animation frame.
-let pendingTargetW = 0;
-let pendingTargetH = 0;
-let rafHandle = 0;
-
-function flushResize() {
-  rafHandle = 0;
-  applySize(pendingTargetW, pendingTargetH);
-}
-
-resizerEl.addEventListener('mousedown', (e) => {
-  dragging = true;
-  startScreenX = e.screenX;
-  startScreenY = e.screenY;
-  const cs = getComputedStyle(document.documentElement);
-  startW = parseInt(cs.width, ) || 380;
-  startH = parseInt(cs.height, ) || 540;
-  pendingTargetW = startW;
-  pendingTargetH = startH;
-  e.preventDefault();
-});
-
-document.addEventListener('mousemove', (e) => {
-  if (!dragging) return;
-  // The grip is at bottom-LEFT and Chrome anchors the popup to the top-right.
-  // Fixed edges are top + right. With the cursor in screen space:
-  //   - down  → height grows  (startH + Δy)
-  //   - right → width SHRINKS (startW - Δx) — cursor approaches the fixed right edge
-  //   - left  → width grows                    — cursor pulls the left edge out
-  pendingTargetW = startW - (e.screenX - startScreenX);
-  pendingTargetH = startH + (e.screenY - startScreenY);
-  // One write per frame: collapsing a burst of mousemove events avoids layout
-  // thrash and keeps the resize smooth under fast cursor movement.
-  if (!rafHandle) {
-    rafHandle = requestAnimationFrame(flushResize);
-  }
-});
-
-function endDrag() {
-  if (!dragging) return;
-  dragging = false;
-  // Apply the very last mousemove target synchronously so the persisted size
-  // matches what the user actually sees, even if a scheduled raf hadn't fired.
-  const final = applySize(pendingTargetW, pendingTargetH);
-  if (rafHandle) {
-    // cancel the now-redundant frame so it doesn't overwrite the final size
-    cancelAnimationFrame(rafHandle);
-    rafHandle = 0;
-  }
-  // debounce storage write in case the browser fires several mouseups
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    chrome.storage.local.set({ [SIZE_KEY]: { w: final.w, h: final.h } });
-  }, 150);
-}
-document.addEventListener('mouseup', endDrag);
-document.addEventListener('mouseleave', endDrag);
+bindPopupResizer();
