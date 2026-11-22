@@ -249,6 +249,46 @@ describe('resumeAfterLogin', () => {
     expect(stayed.evidence.join('\n')).toContain('warning');
   });
 
+  it('stays paused when the re-check page is on the wrong site, and never continues', async () => {
+    await pausedTask();
+    const continued: Task[] = [];
+    const stayed = await resumeAfterLogin('task-1', {
+      tasksDir: dir,
+      readPage: async () => ({
+        url: 'https://other.example/home',
+        text: 'heading "Welcome"',
+        ref: 'browser_snapshot tab 42',
+      }),
+      continueWith: async (task) => {
+        continued.push(task);
+        return task;
+      },
+    });
+    expect(stayed.state).toBe('paused-login');
+    expect(continued).toEqual([]);
+    expect(stayed.evidence.join('\n')).toContain('not recognisably the expected site');
+  });
+
+  it('stays paused when the re-check page cannot be placed, and never continues', async () => {
+    await pausedTask();
+    const continued: Task[] = [];
+    const stayed = await resumeAfterLogin('task-1', {
+      tasksDir: dir,
+      readPage: async () => ({
+        url: '',
+        text: '',
+        ref: 'browser_snapshot tab 42',
+      }),
+      continueWith: async (task) => {
+        continued.push(task);
+        return task;
+      },
+    });
+    expect(stayed.state).toBe('paused-login');
+    expect(continued).toEqual([]);
+    expect(stayed.evidence.join('\n')).toContain('could not place the page');
+  });
+
   it('re-checks the page first, then continues from the same step once logged in', async () => {
     const task = await pausedTask();
     const seen: SessionPage[] = [];

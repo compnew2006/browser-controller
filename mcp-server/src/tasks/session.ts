@@ -46,11 +46,19 @@
  * guard.
  * The continuation itself is injected (`continueWith`, normally `runTask`):
  * importing the runner here would make runner and session import each other.
+ *
+ * Known limitation (final review, 2026-11-22): hash-only SPA views cannot
+ * be told apart by the matcher — `withoutQuery` strips fragments, so two
+ * views of one hash-routed app share a matcher key. A resume re-check on
+ * such a task would stay `paused-login` (the re-check cannot confirm the
+ * expected view), which is diagnosable from the evidence — it names the
+ * URL — not silent corruption. Behaviour change is parked.
  */
 import { loadTask, saveTask } from './store.js';
 import { TaskCancelledExternally, saveTaskUnlessCancelled } from './cancel-guard.js';
 import { saveTaskWithReportUnlessCancelled } from './reporting.js';
-import type { Task } from './types.js';
+import { NAVIGATE_HISTORY_ACTIONS } from './mutations.js';
+import type { Task, TaskStep } from './types.js';
 import type { PageSnapshot } from './verify.js';
 
 /** The session state of one (profile, origin). */
@@ -267,6 +275,40 @@ function firstUnfinishedStep(task: Task): number {
   return index === -1 ? Math.max(0, task.steps.length - 1) : index;
 }
 
+/** The URL of the page a completed step verified against, from its recorded evidence (`verifyStep` writes `verified N rule(s) at <url>; ...`). */
+const VERIFIED_URL = /verified \d+ rule\(s\) at (\S+); snapshot=/u;
+
+function verifiedUrlOf(step: TaskStep): string | undefined {
+  if (step.result?.status !== 'ok' || !step.result.detail) return undefined;
+  return VERIFIED_URL.exec(step.result.detail)?.[1];
+}
+
+/**
+ * The page the task was last on — the redirect proof for a resume
+ * re-check, and the expected URL a resume tool's page reader supplies.
+ * Prefer the last executed navigate's target; otherwise the URL the last
+ * completed step verified against. A history navigate (`back` / `forward` /
+ * `reload`) names no URL, so it falls through to the verified URL instead.
+ * A step recorded `unknown` executed too, so its navigate target counts:
+ * it is the page the task was on when the session expired.
+ */
+export function lastKnownUrl(task: Task): string | undefined {
+  let last: string | undefined;
+  for (const step of task.steps) {
+    if (step.result?.status !== 'ok' && step.result?.status !== 'unknown') continue;
+    if (
+      step.tool === 'browser_navigate' &&
+      typeof step.params.url === 'string' &&
+      !NAVIGATE_HISTORY_ACTIONS.has(step.params.url)
+    ) {
+      last = step.params.url;
+    } else {
+      last = verifiedUrlOf(step) ?? last;
+    }
+  }
+  return last;
+}
+
 /**
  * Pause a task for login: state `paused-login`, the current step number in
  * the evidence, saved. Throws when the task was never saved or is already
@@ -319,9 +361,13 @@ export interface ResumeAfterLoginOptions {
  * Resume a task paused for login: re-check the page first, then continue
  * from the same step. Still on a login page, still expired, or on a warning
  * page, the task stays `paused-login` and the continuation never runs — the
- * user has not finished logging in (or dismissing the warning) yet. Logged
- * in — or unplaceable, which is no evidence of a login problem — the task
- * returns to `running` and continues from its first unfinished step.
+ * user has not finished logging in (or dismissing the warning) yet.
+ * Unplaceable (`unknown`) also stays paused: after takeover the user may be
+ * on a completely different site, and resuming blind would let a weak
+ * verify rule verify `ok` against the wrong page and record bogus
+ * evidence. Only a page on the task's expected origin — the origin of the
+ * page the task was last on (`lastKnownUrl`), or the re-check page's own
+ * `expectedUrl` when the reader supplies one — counts as logged in.
  *
  * Every save here goes through the cancel guard (`cancel-guard.ts`): a
  * cancel landing between the load above and any save below is not
@@ -343,7 +389,18 @@ export async function resumeAfterLogin(taskId: string, options: ResumeAfterLogin
   }
   try {
     const page = await options.readPage(task);
-    const state = detectSession(options.profile ?? 'default', originOf(page.url), page, options.knownLoginUrls ?? []);
+    // The expected origin is the task's own, not the re-check page's: the
+    // page the task was last on, or the reader's `expectedUrl` when it
+    // supplies one. Passing the page's own origin here would make the
+    // `logged-in` check tautological — any ordinary page would pass, even
+    // on a completely different site after takeover.
+    const expectedUrl = page.expectedUrl ?? lastKnownUrl(task);
+    const state = detectSession(
+      options.profile ?? 'default',
+      originOf(expectedUrl),
+      { ...page, expectedUrl },
+      options.knownLoginUrls ?? [],
+    );
     const index = firstUnfinishedStep(task);
     if (state === 'expired' || state === 'login-page') {
       task.evidence.push(
@@ -355,6 +412,13 @@ export async function resumeAfterLogin(taskId: string, options: ResumeAfterLogin
     if (state === 'warning-page') {
       task.evidence.push(
         `login re-check: security warning page at step ${index + 1} of ${task.steps.length} — dismiss the warning explicitly before continuing; staying paused`,
+      );
+      await saveTaskWithReportUnlessCancelled(task, options.tasksDir);
+      return task;
+    }
+    if (state === 'unknown') {
+      task.evidence.push(
+        `login re-check: could not place the page at step ${index + 1} of ${task.steps.length} (url=${page.url || '(unknown url)'}, expected ${expectedUrl ?? 'unknown'}) — not recognisably the expected site; staying paused`,
       );
       await saveTaskWithReportUnlessCancelled(task, options.tasksDir);
       return task;
