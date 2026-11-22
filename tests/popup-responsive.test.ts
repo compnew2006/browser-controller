@@ -7,7 +7,6 @@ const repoRoot = join(import.meta.dirname, '..');
 const popupHtmlPath = join(repoRoot, 'extension', 'popup', 'popup.html');
 const popupCssPath = join(repoRoot, 'extension', 'popup', 'popup.css');
 const popupJsPath = join(repoRoot, 'extension', 'popup', 'popup.js');
-const popupResizePath = join(repoRoot, 'extension', 'popup', 'popup-resize.js');
 const questionCardPath = join(repoRoot, 'extension', 'popup', 'question-card.js');
 const questionViewPath = join(repoRoot, 'extension', 'popup', 'question-view.js');
 const openTabsViewPath = join(repoRoot, 'extension', 'popup', 'open-tabs-view.js');
@@ -16,8 +15,6 @@ const popupHtml = readFileSync(popupHtmlPath, 'utf8');
 const popupJs = readFileSync(popupJsPath, 'utf8');
 /** The extracted stylesheet; '' before Task 9 extracts it, so every rule assertion fails (RED) instead of throwing. */
 const popupCss = existsSync(popupCssPath) ? readFileSync(popupCssPath, 'utf8') : '';
-/** The resizer lives in popup-resize.js after the Task 9 split; before that, in popup.js. */
-const resizeSource = existsSync(popupResizePath) ? readFileSync(popupResizePath, 'utf8') : popupJs;
 
 /** Drop every @media block (brace-counted) so only base rules — the ones live at 320px — remain. */
 function stripMediaBlocks(css: string): string {
@@ -126,9 +123,7 @@ describe('responsive popup layout', () => {
     // now state 44px so the claim above holds for them too.
     expect(baseMinHeight(popupCss, '.activity-name-toggle'), '.activity-name-toggle').toBeGreaterThanOrEqual(44);
     expect(baseMinHeight(popupCss, '.switch-row'), '.switch-row').toBeGreaterThanOrEqual(44);
-    // Deliberately NOT asserted: the .switch visuals themselves (18px) and
-    // the 16px .resizer grip — a toggle's hit area is its label and the grip
-    // is a drag handle, not a button (reviewer-judged exclusions, stand).
+    // The switches are visually smaller than their clickable labels.
   });
 
   it('test_evidence_list_capped_at_500px', () => {
@@ -150,17 +145,16 @@ describe('responsive popup layout', () => {
     expect(separators).toMatch(/border-top:\s*1px solid var\(--border\)/u);
   });
 
-  it('test_breakpoints_320_380_500_640', () => {
-    // Flexible shell, not the old fixed 380px: base floor 320px, default
-    // 380px, and min-width breakpoints at 380 / 500 / 640.
-    expect(popupCss).toMatch(/min-width:\s*320px/u);
-    expect(popupCss).toMatch(/@media\s*\(\s*min-width:\s*380px\s*\)/u);
-    expect(popupCss).toMatch(/@media\s*\(\s*min-width:\s*500px\s*\)/u);
-    expect(popupCss).toMatch(/@media\s*\(\s*min-width:\s*640px\s*\)/u);
-    // The resizer clamps to the same range: 320px floor, 640px ceiling.
-    expect(resizeSource).toMatch(/MIN_W\s*=\s*320/u);
-    expect(resizeSource).toMatch(/MAX_W\s*=\s*640/u);
-    expect(resizeSource).not.toMatch(/MAX_W\s*=\s*760/u);
+  it('uses the browser side panel and matches its tab orientation to the layout', () => {
+    const manifest = JSON.parse(readFileSync(join(repoRoot, 'extension', 'manifest.json'), 'utf8'));
+    expect(manifest.permissions).toContain('sidePanel');
+    expect(manifest.side_panel.default_path).toBe('popup/popup.html');
+    expect(manifest.action).not.toHaveProperty('default_popup');
+    expect(popupHtml).not.toContain('id="resizer"');
+    expect(ruleBody(popupCss, '.tabbar')).toContain('repeat(5, minmax(0, 1fr))');
+    const wide = mediaBlocks(popupCss, 'min-width: 560px');
+    expect(ruleBody(wide, '.tabbar')).toContain('flex-direction: column');
+    expect(popupJs).toContain("matchMedia('(min-width: 560px)')");
   });
 
   it('test_css_extracted_to_popup_css', () => {

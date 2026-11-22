@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/compnew2006/browser-controller/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/compnew2006/browser-controller/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" /></a>
-  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.4.0-blue?style=flat-square" alt="v3.4.0" /></a>
+  <a href="https://github.com/compnew2006/browser-controller/releases"><img src="https://img.shields.io/badge/version-3.5.0-blue?style=flat-square" alt="v3.5.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/node-22.18%2B%20%7C%2024.11%2B%20%7C%2026%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node 22.18+, 24.11+, or 26+" />
   <img src="https://img.shields.io/badge/TypeScript-strict-blue?style=flat-square" alt="TypeScript strict" />
@@ -38,7 +38,7 @@ Version 3.0 is a breaking release: 19 tools, one `target` locator, and text resu
 - **Per-tab isolation.** Element refs are per page, and logs and network buffers are per tab. A ref from tab 10 can never click something in tab 20.
 - **Per-tab concurrency.** Two actions on the _same_ tab serialize (no races); actions on _different_ tabs run in parallel.
 - **Agent-control shield.** While a tool runs on a tab, you see a translucent blue inner frame and your input on that tab is blocked (mouse, keyboard, wheel). It disappears when the action finishes.
-- **Visible agent cursor (optional).** Switch on *Show agent cursor* in the popup's Settings and agent mouse actions draw a pointer that glides to its target first. Off by default.
+- **Visible agent cursor (optional).** Switch on *Show agent cursor* in the side panel's Settings and agent mouse actions draw a pointer that glides to its target first. Off by default.
 - **Real, trusted input.** Clicks, typing, keys, wheel and drags go through the Chrome DevTools Protocol, so the page sees `isTrusted` events and focus, Tab, Enter and autocomplete behave as they do for a person. There is no synthetic-event fallback: if the debugger cannot attach, input fails with `DEBUGGER_UNAVAILABLE`. The yellow "being debugged" banner shows while the debugger is attached.
 - **One locator.** `target` takes a ref (`e12`), `text=Sign in`, viewport coordinates (`x,y`), a CSS selector, or an accessible `{ role, name, nth? }` object. Shadow roots and same-origin iframes are searched; cross-origin iframes are listed as not readable.
 - **Honest results.** A success is compact text. A failure is an `isError` result whose text is `CODE: message`, so the agent acts on the code instead of guessing.
@@ -362,13 +362,15 @@ Failure codes:
 4. Tab ids belong to a Chrome profile. Use `browser_tabs { action: "profiles" }` to see IDs and labels. `browser_tabs { browser: "<id>" }` selects one for the session; `auto` returns to the earliest-connected default. A profile check does not change the selection.
 5. A session that opens `browser_tabs {action:"session", isolation:"isolated"}` is fenced in: it may only touch the tabs it opened itself (any other tab fails `TAB_NOT_OWNED`), and the tab list shows its own tabs only. It is the mode to use when the agent should not see the user's other pages at all.
 
-### The popup is your control panel
+### The side panel is your control panel
 
-A fixed-height tabbed shell (the body never scrolls, only the lists do):
+Click the extension icon to open the control panel alongside the page. Drag Chrome's side panel divider to change its width.
 
 - **Tabs** — every open tab with its owner.
 - **Agents** — each connected agent with its name, session id, uptime, and a ✕ to disconnect it immediately (clears a zombie the heartbeat hasn't reaped yet). An agent that is still running connects again, as a new session.
-- **Settings** — Chrome profile label and ID, WebSocket port, Auth Token, Enrollment Secret, and the optional agent cursor.
+- **Activity** shows the session's recent agent actions by page visit.
+- **Tasks** shows tasks waiting for an answer and the evidence collected in this panel session. Pending questions appear above the current section.
+- **Settings** contains the browser connection, Credential Vault, and agent controls. Enable *Block mouse movement during agent actions* to block movement, hover, and dragging on the controlled page from the next action. The system pointer can still move.
 - **Activity bar** — a collapsible strip at the bottom showing the latest tool activity; expand it for the rolling log.
 
 ### Things to know
@@ -831,7 +833,7 @@ browser-controller/
 │   │                        inspection, evaluate, inspect, screenshot, tabs, emulate, logs, mock, cdp
 │   ├── utils/               navigation helpers
 │   ├── events.js            chrome.* listeners (popup, webRequest, lifecycle)
-│   └── popup/               Tabbed shell (Tabs · Agents · Settings) + collapsible activity bar
+│   └── popup/               Side panel (Tabs · Agents · Activity · Tasks · Settings)
 ├── agent-config/        Pre-built configs for Cursor + Claude Code
 │   ├── cursor/              Rules and commands
 │   ├── skills/              Browser automation skill

@@ -76,7 +76,7 @@ export function renderOpenTabRows(tabs, agents, picks = new Map()) {
         return `<div class="tab-row" data-tab="${t.id}">
           <span class="${cls}" title="${tip}">${title}</span>
           <span class="tab-pin">
-            <span class="lock-owner">🔒 ${escapeHtml(ownerName)}</span>
+            <span class="lock-owner" title="${escapeHtml(ownerName)}">🔒 ${escapeHtml(ownerName)}</span>
             <button class="icon-btn unpin" data-action="unlockTab" data-tab="${t.id}" title="Unpin this tab">✕</button>
           </span>
         </div>`;
@@ -103,7 +103,7 @@ export function renderOpenTabRows(tabs, agents, picks = new Map()) {
         <span class="${cls}" title="${tip}">${title}</span>
         <span class="tab-pin">
           ${badge}
-          <select data-action="pickAgent" data-tab="${t.id}">${opts}</select>
+          <select aria-label="Agent for ${title}" data-action="pickAgent" data-tab="${t.id}">${opts}</select>
           <button class="icon-btn" data-action="lockTab" data-tab="${t.id}" title="Pin to selected agent">📌</button>
         </span>
       </div>`;

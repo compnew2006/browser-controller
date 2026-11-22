@@ -2,13 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser Controller</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="shell">
     <header class="hdr">
-      <div class="dot" id="dot"></div>
-      <div>
+      <div class="dot" id="dot" aria-hidden="true"></div>
+      <div class="hdr-copy">
         <h1>Browser Controller</h1>
         <div class="status" id="status">Checking…</div>
       </div>
@@ -16,96 +18,100 @@
     </header>
     <div class="detail" id="detail"></div>
 
-    <nav class="tabbar" role="tablist" aria-label="Sections">
-      <button type="button" role="tab" data-tab="tabs" aria-selected="true">Tabs<span class="count" id="tabsCount"></span></button>
-      <button type="button" role="tab" data-tab="agents" aria-selected="false" tabindex="-1">Agents<span class="count" id="agentsCount"></span></button>
+    <nav class="tabbar" role="tablist" aria-label="Control sections">
+      <button type="button" role="tab" data-tab="tabs" aria-selected="true" id="tabsTab" aria-controls="tabsPanel">Tabs<span class="count" id="tabsCount"></span></button>
+      <button type="button" role="tab" data-tab="agents" aria-selected="false" tabindex="-1" id="agentsTab" aria-controls="agentsPanel">Agents<span class="count" id="agentsCount"></span></button>
       <button type="button" role="tab" data-tab="activity" aria-selected="false" tabindex="-1" id="activityTab" aria-controls="activityPanel">Activity<span class="count" id="activityCount"></span></button>
-      <button type="button" role="tab" data-tab="tasks" aria-selected="false" tabindex="-1" id="tasksTab">Tasks<span class="count" id="tasksCount"></span></button>
-      <button type="button" role="tab" data-tab="settings" aria-selected="false" tabindex="-1" id="settingsTab">Settings</button>
+      <button type="button" role="tab" data-tab="tasks" aria-selected="false" tabindex="-1" id="tasksTab" aria-controls="tasksPanel">Tasks<span class="count" id="tasksCount"></span></button>
+      <button type="button" role="tab" data-tab="settings" aria-selected="false" tabindex="-1" id="settingsTab" aria-controls="settingsPanel">Settings</button>
     </nav>
 
-    <section class="questions" id="taskQuestions" data-task-panel="questions" aria-label="Task questions" hidden></section>
+    <div class="workspace">
+      <section class="questions" id="taskQuestions" data-task-panel="questions" aria-label="Task questions" hidden></section>
 
-    <main class="panels">
-      <section class="panel" role="tabpanel" data-panel="tabs" aria-label="Open tabs">
-        <div class="panel-bar">
-          <span class="panel-title">Open Tabs</span>
-          <button type="button" class="btn-mini" id="unlockAll" disabled>Unlock all</button>
-        </div>
-        <div class="list grow" id="openTabs"><div class="empty">no tabs</div></div>
-      </section>
-
-      <section class="panel" role="tabpanel" data-panel="agents" aria-label="Connected agents" hidden>
-        <div class="panel-bar"><span class="panel-title">Connected Agents</span></div>
-        <div class="list grow" id="agents"><div class="empty">none</div></div>
-      </section>
-
-      <section class="panel activity-panel" id="activityPanel" role="tabpanel" data-panel="activity" aria-labelledby="activityTab" lang="en" dir="ltr" hidden>
-        <div class="panel-bar">
-          <span class="panel-title">Agent activity</span>
-          <div class="activity-toolbar">
-            <label class="activity-name-toggle" for="activityNames">
-              <span>Element details</span>
-              <input type="checkbox" class="switch" id="activityNames" role="switch" aria-label="Show element details">
-            </label>
-            <button type="button" class="btn-mini activity-clear" id="activityClear" disabled>Clear</button>
+      <main class="panels">
+        <section class="panel" role="tabpanel" data-panel="tabs" id="tabsPanel" aria-labelledby="tabsTab" tabindex="0">
+          <div class="panel-bar">
+            <span class="panel-title">Open Tabs</span>
+            <button type="button" class="btn-mini" id="unlockAll" disabled>Unlock all</button>
           </div>
-        </div>
-        <div class="list grow activity-list" id="activityList" aria-label="Agent activity log" aria-busy="true">
-          <div class="activity-state" role="status" aria-live="polite"><span class="activity-skeleton"></span><span class="activity-skeleton short"></span><span class="activity-loading">Loading activity…</span></div>
-        </div>
-      </section>
-
-      <section class="panel" role="tabpanel" data-panel="tasks" aria-label="Tasks and evidence" hidden>
-        <section data-task-panel="tasks" aria-label="Tasks" class="task-section task-section-grow">
-          <div class="panel-bar"><span class="panel-title">Tasks</span></div>
-          <div class="list grow" id="taskList"><div class="empty">No task waiting for an answer</div></div>
+          <div class="list grow" id="openTabs"><div class="empty">no tabs</div></div>
         </section>
-        <section data-task-panel="evidence" aria-label="Evidence" class="task-section">
-          <div class="panel-bar"><span class="panel-title">Evidence · this popup session</span></div>
-          <div class="list evidence-list" id="evidenceList"><div class="empty">No questions or answers in this popup session</div></div>
-        </section>
-      </section>
 
-      <section class="panel" role="tabpanel" data-panel="settings" aria-label="Settings" hidden>
-        <div class="vault-launch">
-          <span>Save, approve, and manage credentials privately.</span>
-          <button type="button" class="btn-mini" id="openVault">Open vault</button>
-        </div>
-        <label class="switch-row" for="agentCursor">
-          <span>
-            <span class="switch-title">Show agent cursor</span>
-            <span class="hint">Shows the pointer and blue frame between actions. Movement adds up to 0.65 s to mouse actions.</span>
-          </span>
-          <input type="checkbox" class="switch" id="agentCursor" role="switch">
-        </label>
-        <label class="switch-row" for="agentMouseMovementLock">
-          <span>
-            <span class="switch-title">Block mouse movement during agent actions</span>
-            <span class="hint mouse-movement-lock-hint">Adds hover and drag blocking to the existing click/scroll lock; the system cursor can still move.</span>
-          </span>
-          <input type="checkbox" class="switch" id="agentMouseMovementLock" role="switch">
-        </label>
-        <div class="field">
-          <label for="browserLabel">Chrome profile name</label>
-          <input type="text" id="browserLabel" maxlength="64" placeholder="Use the automatic name" autocomplete="off" spellcheck="false" aria-describedby="browserLabelHint">
-          <div class="hint" id="browserLabelHint">This local name appears in <code>browser_tabs</code>. Leave it blank to use the automatic name. Current profile: <strong id="browserLabelCurrent">Loading…</strong> · ID <code id="browserId">…</code></div>
-        </div>
-        <div class="field">
-          <label for="port">WebSocket Port</label>
-          <input type="number" id="port" value="7225" min="1" max="65535">
-        </div>
-        <div class="field">
-          <label for="token">Auth Token</label>
-          <input type="password" id="token" placeholder="auto-fetched from daemon" autocomplete="off">
-        </div>
-        <div class="field">
-          <label for="enrollment">Enrollment Secret</label>
-          <input type="password" id="enrollment" placeholder="not paired yet" autocomplete="off" aria-describedby="enrollmentHint">
-          <div class="hint" id="enrollmentHint">Fills in automatically after you run <code>npm run setup:pairing</code> once. To set it by hand, paste the <code>secret</code> from <code>~/.browser-controller/enrollment.json</code>.</div>
-        </div>
-      </section>
-    </main>
+        <section class="panel" role="tabpanel" data-panel="agents" id="agentsPanel" aria-labelledby="agentsTab" tabindex="0" hidden>
+          <div class="panel-bar"><span class="panel-title">Connected Agents</span></div>
+          <div class="list grow" id="agents"><div class="empty">none</div></div>
+        </section>
+
+        <section class="panel activity-panel" id="activityPanel" role="tabpanel" data-panel="activity" aria-labelledby="activityTab" tabindex="0" lang="en" dir="ltr" hidden>
+          <div class="panel-bar">
+            <span class="panel-title">Agent activity</span>
+            <div class="activity-toolbar">
+              <label class="activity-name-toggle" for="activityNames">
+                <span>Element details</span>
+                <input type="checkbox" class="switch" id="activityNames" role="switch" aria-label="Show element details">
+              </label>
+              <button type="button" class="btn-mini activity-clear" id="activityClear" disabled>Clear</button>
+            </div>
+          </div>
+          <div class="list grow activity-list" id="activityList" aria-label="Agent activity log" aria-busy="true">
+            <div class="activity-state" role="status" aria-live="polite"><span class="activity-skeleton"></span><span class="activity-skeleton short"></span><span class="activity-loading">Loading activity…</span></div>
+          </div>
+        </section>
+
+        <section class="panel" role="tabpanel" data-panel="tasks" id="tasksPanel" aria-labelledby="tasksTab" tabindex="0" hidden>
+          <section data-task-panel="tasks" aria-label="Tasks" class="task-section task-section-grow">
+            <div class="panel-bar"><span class="panel-title">Tasks</span></div>
+            <div class="list grow" id="taskList"><div class="empty">No task waiting for an answer</div></div>
+          </section>
+          <section data-task-panel="evidence" aria-label="Evidence" class="task-section">
+            <div class="panel-bar"><span class="panel-title">Evidence · this session</span></div>
+            <div class="list evidence-list" id="evidenceList"><div class="empty">No questions or answers in this session</div></div>
+          </section>
+        </section>
+
+        <section class="panel" role="tabpanel" data-panel="settings" id="settingsPanel" aria-labelledby="settingsTab" tabindex="0" hidden>
+          <div class="vault-launch">
+            <span>Save, approve, and manage credentials privately.</span>
+            <button type="button" class="btn-mini" id="openVault">Open vault</button>
+          </div>
+          <h2 class="panel-title settings-heading">Agent controls</h2>
+          <label class="switch-row" for="agentCursor">
+            <span>
+              <span class="switch-title" id="agentCursorLabel">Show agent cursor</span>
+              <span class="hint" id="agentCursorHint">Shows the pointer and blue frame between actions. Movement adds up to 0.65 s to mouse actions.</span>
+            </span>
+            <input type="checkbox" class="switch" id="agentCursor" role="switch" aria-labelledby="agentCursorLabel" aria-describedby="agentCursorHint">
+          </label>
+          <label class="switch-row" for="agentMouseMovementLock">
+            <span>
+              <span class="switch-title" id="agentMouseMovementLockLabel">Block mouse movement during agent actions</span>
+              <span class="hint" id="agentMouseMovementLockHint">Blocks pointer movement, hover, and dragging on the controlled page. Your system cursor can still move. Applies to the next agent action.</span>
+            </span>
+            <input type="checkbox" class="switch" id="agentMouseMovementLock" role="switch" aria-labelledby="agentMouseMovementLockLabel" aria-describedby="agentMouseMovementLockHint">
+          </label>
+          <h2 class="panel-title settings-heading">Browser connection</h2>
+          <div class="field">
+            <label for="browserLabel">Chrome profile name</label>
+            <input type="text" id="browserLabel" maxlength="64" placeholder="Use the automatic name" autocomplete="off" spellcheck="false" aria-describedby="browserLabelHint">
+            <div class="hint" id="browserLabelHint">This local name appears in <code>browser_tabs</code>. Leave it blank to use the automatic name. Current profile: <strong id="browserLabelCurrent">Loading…</strong> · ID <code id="browserId">…</code></div>
+          </div>
+          <div class="field">
+            <label for="port">WebSocket Port</label>
+            <input type="number" id="port" value="7225" min="1" max="65535">
+          </div>
+          <div class="field">
+            <label for="token">Auth Token</label>
+            <input type="password" id="token" placeholder="auto-fetched from daemon" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="enrollment">Enrollment Secret</label>
+            <input type="password" id="enrollment" placeholder="not paired yet" autocomplete="off" aria-describedby="enrollmentHint">
+            <div class="hint" id="enrollmentHint">Fills in automatically after you run <code>npm run setup:pairing</code> once. To set it by hand, paste the <code>secret</code> from <code>~/.browser-controller/enrollment.json</code>.</div>
+          </div>
+        </section>
+      </main>
+    </div>
 
     <footer class="logbar" id="logbar">
       <button type="button" class="logbar-toggle" id="logToggle" aria-expanded="false" aria-controls="logPanel">
@@ -117,8 +123,6 @@
         <div id="logEntries"></div>
       </div>
     </footer>
-
-    <div class="resizer" id="resizer" title="Drag to resize"></div>
   </div>
 
   <script type="module" src="popup.js"></script>

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 3.5.0
+
+Run `npm run build`, reload the extension at `chrome://extensions` and restart the daemon after updating.
+
+### Changed
+- The extension toolbar icon opens the Chrome side panel. The panel adapts to the available width, keeps pending questions above the active section, and supports keyboard navigation between sections.
+- Settings groups agent controls separately from connection settings and explains when the optional mouse movement shield takes effect.
+
 ## 3.4.0
 
 Run `npm run build`, reload the extension at `chrome://extensions` and restart the daemon after updating.

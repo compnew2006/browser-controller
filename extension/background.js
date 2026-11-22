@@ -23,6 +23,16 @@ import { setMessageHandler, initConnection } from './lib/connection.js';
 import { handleMessage } from './dispatch/router.js';
 import { registerEventListeners } from './events.js';
 
+if (chrome.sidePanel?.setPanelBehavior) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
+    console.error('Could not enable the Browser Controller side panel:', error);
+  });
+} else {
+  chrome.action.onClicked.addListener(() => {
+    void chrome.tabs.create({ url: chrome.runtime.getURL('popup/popup.html') });
+  });
+}
+
 setMessageHandler(handleMessage);
 registerEventListeners();
 initConnection();

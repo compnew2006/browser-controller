@@ -1,6 +1,6 @@
-// Browser Controller popup — fixed shell with three tabs (Tabs / Agents /
-// Settings) and a collapsible activity bar. Only list panels scroll; the body
-// never does. All background message types are preserved from the v1 column
+// Browser Controller side panel — task tabs and a collapsible activity bar.
+// Long lists scroll inside their panel while the shell remains in view. All
+// background message types are preserved from the v1 column
 // layout (getStatus / setPort / setToken / setEnrollment / lockTab / unlockTab
 // / unlockAll + daemon /pair /status /kill).
 import { escapeHtml, agentLabelFor, controlBadgeParts, openTabsSignature, renderOpenTabRows } from './open-tabs-view.js';
@@ -11,7 +11,6 @@ import { AGENT_MOUSE_MOVEMENT_LOCK_KEY } from '../lib/overlay.js';
 import { authenticatedDaemonFetch, daemonFailureKind } from '../lib/daemon-auth.js';
 import { bindActionActivity } from './activity-view.js';
 import { bindTaskQuestions } from './question-view.js'; // Design §5: the question card, outside the shielded tab
-import { bindPopupResizer } from './popup-resize.js'; // Task 9: resize grip, split out so popup.js stays under the 600-line gate
 import { renderEvidenceRows, renderTaskRows, taskPanelsSignature, tasksFromQuestions } from './task-panels-view.js'; // Task 9: Tasks/Evidence panels
 
 const dot = document.getElementById('dot');
@@ -21,7 +20,7 @@ const portInput = document.getElementById('port');
 const tokenInput = document.getElementById('token');
 const enrollmentInput = document.getElementById('enrollment');
 // Enrollment secret the daemon gates /pair, /status, /kill behind. Loaded from
-// chrome.storage.local so the popup remembers it across reopens (the user
+// chrome.storage.local so the panel remembers it across reopens (the user
 // pastes it once, or the background fills it from the native pairing host —
 // see SECURITY.md "First-contact TOFU window").
 let enrollment = '';
@@ -60,9 +59,9 @@ versionEl.textContent = `v${manifest.version}`;
 // controls (the Pin dropdown lists agents). Keep the latest snapshot of both.
 let lastAgents = [];      // [{sessionId, name, connectedAt}]
 let lastTabs = [];        // [{id, url, title, active, lockedBy, controlledBy, otherWindow?}]
-// Task panels (Design §7): the popup sees tasks only while they wait on a
+// Task panels (Design §7): the panel sees tasks only while they wait on a
 // question (state.taskQuestions); confirmed answers are recorded here, in
-// this popup session only, for the Evidence panel — see task-panels-view.js.
+// this panel session only, for the Evidence panel — see task-panels-view.js.
 let lastTaskQuestions = [];
 // Question id -> task id, captured when a poll arrives (see updateUI):
 // by answer time the next poll may already have refreshed
@@ -72,14 +71,21 @@ const confirmedAnswers = [];
 let lastTaskPanelsSig = '';
 
 // ── Tabs shell ─────────────────────────────────────────────────────────────
-const tabButtons = Array.from(document.querySelectorAll('.tabbar button[data-tab]'));
+const tabBar = document.querySelector('.tabbar');
+const tabButtons = Array.from(tabBar.querySelectorAll('button[data-tab]'));
+const widePanel = window.matchMedia('(min-width: 560px)');
 const panels = {};
 for (const p of document.querySelectorAll('[data-panel]')) panels[p.dataset.panel] = p;
+
+function updateTabOrientation() {
+  tabBar.setAttribute('aria-orientation', widePanel.matches ? 'vertical' : 'horizontal');
+}
+updateTabOrientation();
+widePanel.addEventListener('change', updateTabOrientation);
 
 function switchTab(name, persist = true) {
   for (const b of tabButtons) {
     const on = b.dataset.tab === name;
-    b.classList.toggle('active', on);
     b.setAttribute('aria-selected', on ? 'true' : 'false');
     b.tabIndex = on ? 0 : -1;
   }
@@ -88,12 +94,19 @@ function switchTab(name, persist = true) {
   if (name === 'activity') actionActivity.refresh();
 }
 tabButtons.forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
-// Roving-tabindex arrow-key navigation (tablist pattern).
-document.querySelector('.tabbar').addEventListener('keydown', (e) => {
-  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+tabBar.addEventListener('keydown', (e) => {
   const idx = tabButtons.indexOf(document.activeElement);
   if (idx === -1) return;
-  const next = tabButtons[(idx + (e.key === 'ArrowRight' ? 1 : tabButtons.length - 1)) % tabButtons.length];
+  const forward = widePanel.matches ? 'ArrowDown' : 'ArrowRight';
+  const backward = widePanel.matches ? 'ArrowUp' : 'ArrowLeft';
+  let nextIndex;
+  if (e.key === 'Home') nextIndex = 0;
+  else if (e.key === 'End') nextIndex = tabButtons.length - 1;
+  else if (e.key === forward) nextIndex = (idx + 1) % tabButtons.length;
+  else if (e.key === backward) nextIndex = (idx + tabButtons.length - 1) % tabButtons.length;
+  else return;
+  e.preventDefault();
+  const next = tabButtons[nextIndex];
   next.focus();
   switchTab(next.dataset.tab);
 });
@@ -140,7 +153,7 @@ function addLog(text, level) {
 bindVaultOpenButton(addLog);
 
 // ── Daemon HTTP (auto-pair, agents, disconnect) ────────────────────────────
-// The popup talks to the daemon's HTTP endpoints (same port as the WS) to
+// The side panel talks to the daemon's HTTP endpoints (same port as the WS) to
 // auto-pair the token (no fs access in MV3) and to list/kill agents.
 
 function daemonHttpBase() {
@@ -157,8 +170,8 @@ async function daemonFetch(pathAndQuery) {
 
 /**
  * Auto-pair: fetch the daemon's token over localhost and hand it to the
- * background worker, which proves it in the WS handshake. Runs once on popup
- * open; safe to re-run. Silent if the daemon isn't up yet (it'll retry).
+ * background worker, which proves it in the WS handshake. Runs when the panel
+ * opens; safe to re-run. Silent if the daemon isn't up yet (it'll retry).
  * Requires the enrollment secret — without it /pair returns 403.
  */
 async function autoPairToken() {
@@ -316,7 +329,7 @@ function patchControlBadges(tabs) {
 
 // ── Tasks / Evidence panels ──────────────────────────────────────────────
 // Rendered from the status payload's pending questions plus the answers
-// confirmed in this popup session; signature-guarded like the tabs list so
+// confirmed in this panel session; signature-guarded like the tabs list so
 // the 2s poll does not rebuild the DOM when nothing changed.
 function renderTaskPanels(questions) {
   const list = Array.isArray(questions) ? questions : [];
@@ -328,7 +341,7 @@ function renderTaskPanels(questions) {
   const taskRows = renderTaskRows(list);
   taskListEl.innerHTML = taskRows || '<div class="empty">No task waiting for an answer</div>';
   const evidenceRows = renderEvidenceRows(list, confirmedAnswers);
-  evidenceListEl.innerHTML = evidenceRows || '<div class="empty">No questions or answers in this popup session</div>';
+  evidenceListEl.innerHTML = evidenceRows || '<div class="empty">No questions or answers in this session</div>';
 }
 
 // ── Status rendering ───────────────────────────────────────────────────────
@@ -393,9 +406,9 @@ function refreshStatus() {
 }
 
 // ── Polling lifecycle ──────────────────────────────────────────────────────
-// PAUSE while the popup is hidden and RESUME when visible again. The v1 code
+// PAUSE while the panel is hidden and RESUME when visible again. The v1 code
 // cleared both intervals on hide but never restarted them — a hidden→visible
-// cycle left the popup permanently stale (audit finding).
+// cycle left the panel permanently stale (audit finding).
 let agentsTimer = null;
 let statusTimer = null;
 
@@ -430,7 +443,7 @@ refreshStatus();
 startPolling();
 
 // On open: recall the enrollment secret from storage before authenticating
-// popup requests to the local daemon.
+// side panel requests to the local daemon.
 chrome.storage.local.get(['enrollmentSecret'], (stored) => {
   if (typeof stored.enrollmentSecret === 'string') {
     enrollment = stored.enrollmentSecret;
@@ -473,7 +486,7 @@ bindDebouncedInput(tokenInput, 600, () => {
   });
 });
 
-// Enrollment secret: persists to chrome.storage.local so it survives popup
+// Enrollment secret: persists to chrome.storage.local so it survives panel
 // reopens. Changing it re-attempts authenticated /pair — this is how
 // the user recovers after pasting the wrong value or after rotating the
 // daemon's enrollment.json.
@@ -483,12 +496,12 @@ bindDebouncedInput(enrollmentInput, 400, () => {
   // Persist under the same key the background reads ('enrollmentSecret') so
   // its service-worker-recycle reload stays in sync, AND notify the background
   // via setEnrollment so it re-pairs /pair under the new secret and reconnects
-  // the WS (the popup's own autoPairToken only refreshes the token field —
+  // the WS (the panel's own autoPairToken only refreshes the token field —
   // the background owns the WS lifecycle).
   chrome.storage.local.set({ enrollmentSecret: enrollment }, () => {
     addLog(enrollment ? 'Enrollment updated, pairing…' : 'Enrollment cleared', 'warn');
     chrome.runtime.sendMessage({ type: 'setEnrollment', enrollment }, (resp) => {
-      // background re-paired + reconnected; refresh the popup's token view too.
+      // background re-paired + reconnected; refresh the panel's token view too.
       if (resp?.success && enrollment) autoPairToken();
     });
   });
@@ -552,5 +565,3 @@ document.addEventListener('click', (e) => {
     return;
   }
 });
-
-bindPopupResizer();
