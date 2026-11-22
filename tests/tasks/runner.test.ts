@@ -5,7 +5,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { loadTask, saveTask } from '../../mcp-server/src/tasks/store.js';
 import { saveTaskWithReport } from '../../mcp-server/src/tasks/reporting.js';
-import { runTaskWithReport } from '../../mcp-server/src/tasks/wiring.js';
+import { runTaskWithReport, configureTaskRunner } from '../../mcp-server/src/tasks/wiring.js';
 import { planTask } from '../../mcp-server/src/tasks/planner.js';
 import { isMutatingTool, runTask } from '../../mcp-server/src/tasks/runner.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
@@ -209,6 +209,51 @@ describe('runner', () => {
     expect(stored?.report?.json.state).toBe('failed');
     // The marker did its job and is cleaned up on the terminal record.
     expect(stored?.cancelled).toBeUndefined();
+  });
+
+  it('a cancel landing after the run failed a step on its own keeps the cancellation evidence', async () => {
+    const calls: string[] = [];
+    const snapshotCalls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      ['fake-ok', fakeTool('fake-ok', calls, failureResult('INVALID_ARGUMENT: bad params'))],
+      ['fake-next', fakeTool('fake-next', calls, textResult('next page'))],
+      ['browser_snapshot', snapshotTool(snapshotCalls, 'page loaded')],
+    ]);
+    await saveTask(twoStepTask('task-own-failure-cancel'), dir);
+    configureTaskRunner(async (id, options) => {
+      const failed = await runTask(id, options);
+      // The cancel from the other process lands after the runner's
+      // final save but before the wrapper's load: both records are
+      // `failed`, so only the marker tells the wrapper the stored one
+      // is the cancellation, not the run's own step failure.
+      const stored = await loadTask(id, dir);
+      if (!stored) throw new Error('task was never saved');
+      stored.state = 'failed';
+      stored.cancelled = true;
+      stored.evidence.push('cancelled by the user at step 1 of 2 — the task stops here and never resumes');
+      await saveTaskWithReport(stored, dir);
+      return failed;
+    });
+    try {
+      const result = await runTaskWithReport('task-own-failure-cancel', {
+        tasksDir: dir,
+        tools,
+        host: dummyHost,
+        verify: () => ({ ok: true, evidence: 'checked' }),
+      });
+      expect(result.state).toBe('failed');
+      expect(result.evidence.some((line) => line.startsWith('cancelled by the user'))).toBe(true);
+      // The run's own step failure is still in the evidence: the stored
+      // record keeps both, the wrapper did not replace it with the run's.
+      expect(result.evidence.some((line) => line.includes('INVALID_ARGUMENT'))).toBe(true);
+      const stored = await loadTask('task-own-failure-cancel', dir);
+      expect(stored?.evidence.some((line) => line.startsWith('cancelled by the user'))).toBe(true);
+      expect(stored?.report?.json.state).toBe('failed');
+      // The marker did its job and is cleaned up on the terminal record.
+      expect(stored?.cancelled).toBeUndefined();
+    } finally {
+      configureTaskRunner();
+    }
   });
 
   it('stops at a tool that returns an error result', async () => {

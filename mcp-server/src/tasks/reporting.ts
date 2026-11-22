@@ -10,7 +10,10 @@
  * so the composition wraps it instead (`runTaskWithReport`, `wiring.ts`),
  * and the other terminal/pause paths that save a task themselves
  * (`answerQuestion`'s `no` path, `resumeAfterLogin`'s still-paused
- * returns, `browser_task_cancel`) call `saveTaskWithReport` directly.
+ * returns, `browser_task_cancel`) call `saveTaskWithReport` directly —
+ * except `resumeAfterLogin`, whose saves go through
+ * `saveTaskWithReportUnlessCancelled` below: a cancel landing between
+ * its load and its save must not be overwritten with a fresh report.
  *
  * A report is replaced, never merged: it describes the task as it stands
  * when it settles, so a resume that settles the task again overwrites the
@@ -24,6 +27,7 @@
  * than a final save that throws and loses the settled state itself.
  */
 import { buildEvidenceReport } from './evidence.js';
+import { assertNotCancelled } from './cancel-guard.js';
 import { MAX_TASK_BYTES, defaultTasksDir, saveTask } from './store.js';
 import type { Task } from './types.js';
 
@@ -46,4 +50,19 @@ export async function saveTaskWithReport(task: Task, tasksDir: string = defaultT
   }
   await saveTask(task, tasksDir);
   return task;
+}
+
+/**
+ * Attach the report and save the task, unless another process cancelled
+ * it while this path was in flight: the re-check (`cancel-guard.ts`)
+ * runs before the report is built, so a cancel landing between the
+ * caller's load and this save is not overwritten with a fresh report —
+ * the throw carries the stored cancelled record instead.
+ */
+export async function saveTaskWithReportUnlessCancelled(
+  task: Task,
+  tasksDir: string = defaultTasksDir(),
+): Promise<Task> {
+  await assertNotCancelled(task.id, tasksDir);
+  return saveTaskWithReport(task, tasksDir);
 }

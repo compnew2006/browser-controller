@@ -48,7 +48,8 @@
  * importing the runner here would make runner and session import each other.
  */
 import { loadTask, saveTask } from './store.js';
-import { saveTaskWithReport } from './reporting.js';
+import { TaskCancelledExternally, saveTaskUnlessCancelled } from './cancel-guard.js';
+import { saveTaskWithReportUnlessCancelled } from './reporting.js';
 import type { Task } from './types.js';
 import type { PageSnapshot } from './verify.js';
 
@@ -269,7 +270,12 @@ function firstUnfinishedStep(task: Task): number {
 /**
  * Pause a task for login: state `paused-login`, the current step number in
  * the evidence, saved. Throws when the task was never saved or is already
- * finished; pausing a finished task would rewrite its outcome.
+ * finished; pausing a finished task would rewrite its outcome. The save
+ * goes through the cancel guard (`cancel-guard.ts`): a cancel landing
+ * between the load above and this save throws `TaskCancelledExternally`
+ * instead of overwriting the cancellation with `paused-login` — the
+ * runner's expired path returns the stored cancelled record from that
+ * throw, and a direct caller gets it on the error.
  */
 export async function pauseForLogin(taskId: string, stepIndex?: number, tasksDir?: string): Promise<Task> {
   const task = await loadTask(taskId, tasksDir);
@@ -285,7 +291,7 @@ export async function pauseForLogin(taskId: string, stepIndex?: number, tasksDir
   task.evidence.push(
     `paused for login at step ${index + 1} of ${task.steps.length} — waiting for the user to complete login by takeover (this agent never fills credentials or clicks Submit); resumes from the same step, never from the start`,
   );
-  await saveTask(task, tasksDir);
+  await saveTaskUnlessCancelled(task, tasksDir);
   return task;
 }
 
@@ -316,6 +322,15 @@ export interface ResumeAfterLoginOptions {
  * user has not finished logging in (or dismissing the warning) yet. Logged
  * in — or unplaceable, which is no evidence of a login problem — the task
  * returns to `running` and continues from its first unfinished step.
+ *
+ * Every save here goes through the cancel guard (`cancel-guard.ts`): a
+ * cancel landing between the load above and any save below is not
+ * overwritten — the still-paused saves use the guarded report save, the
+ * resume save uses the guarded plain save — and a cancelled task on the
+ * resume branch never continues: the stored cancelled record is returned
+ * instead, with the marker cleaned up on it as the wrapper does
+ * (`wiring.ts`), so the cancellation stays as evidence and state, not
+ * as a live signal.
  */
 export async function resumeAfterLogin(taskId: string, options: ResumeAfterLoginOptions): Promise<Task> {
   const task = await loadTask(taskId, options.tasksDir);
@@ -326,31 +341,51 @@ export async function resumeAfterLogin(taskId: string, options: ResumeAfterLogin
   if (typeof options.readPage !== 'function') {
     throw new Error(`cannot resume task ${taskId} after login: no page reader supplied to re-check the page`);
   }
-  const page = await options.readPage(task);
-  const state = detectSession(options.profile ?? 'default', originOf(page.url), page, options.knownLoginUrls ?? []);
-  const index = firstUnfinishedStep(task);
-  if (state === 'expired' || state === 'login-page') {
+  try {
+    const page = await options.readPage(task);
+    const state = detectSession(options.profile ?? 'default', originOf(page.url), page, options.knownLoginUrls ?? []);
+    const index = firstUnfinishedStep(task);
+    if (state === 'expired' || state === 'login-page') {
+      task.evidence.push(
+        `login re-check: still ${state} at step ${index + 1} of ${task.steps.length} — the user has not completed login yet; staying paused`,
+      );
+      await saveTaskWithReportUnlessCancelled(task, options.tasksDir);
+      return task;
+    }
+    if (state === 'warning-page') {
+      task.evidence.push(
+        `login re-check: security warning page at step ${index + 1} of ${task.steps.length} — dismiss the warning explicitly before continuing; staying paused`,
+      );
+      await saveTaskWithReportUnlessCancelled(task, options.tasksDir);
+      return task;
+    }
+    task.state = 'running';
+    // The report describes the paused state; the resume leaves it, so the
+    // record carries no report until the resumed run settles again.
+    delete task.report;
     task.evidence.push(
-      `login re-check: still ${state} at step ${index + 1} of ${task.steps.length} — the user has not completed login yet; staying paused`,
+      `login re-check passed (${state}) at step ${index + 1} of ${task.steps.length} — resuming from the same step`,
     );
-    await saveTaskWithReport(task, options.tasksDir);
-    return task;
+    await saveTaskUnlessCancelled(task, options.tasksDir);
+  } catch (error) {
+    if (error instanceof TaskCancelledExternally) {
+      // Another process cancelled the task while the resume was in
+      // flight: no save happened, so the stored cancelled record
+      // stands — return it instead of resuming. The marker is cleaned
+      // up on the terminal record, as the wrapper does: the
+      // cancellation stays as evidence and state, not as a live signal.
+      const stored = error.stored;
+      delete stored.cancelled;
+      try {
+        await saveTask(stored, options.tasksDir);
+      } catch {
+        // The cancellation itself is already durable on disk; a failed
+        // cleanup save must not hide it behind a throw.
+      }
+      return stored;
+    }
+    throw error;
   }
-  if (state === 'warning-page') {
-    task.evidence.push(
-      `login re-check: security warning page at step ${index + 1} of ${task.steps.length} — dismiss the warning explicitly before continuing; staying paused`,
-    );
-    await saveTaskWithReport(task, options.tasksDir);
-    return task;
-  }
-  task.state = 'running';
-  // The report describes the paused state; the resume leaves it, so the
-  // record carries no report until the resumed run settles again.
-  delete task.report;
-  task.evidence.push(
-    `login re-check passed (${state}) at step ${index + 1} of ${task.steps.length} — resuming from the same step`,
-  );
-  await saveTask(task, options.tasksDir);
   if (options.continueWith) return options.continueWith(task);
   return task;
 }

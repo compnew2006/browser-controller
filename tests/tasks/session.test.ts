@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { detectSession, pauseForLogin, resumeAfterLogin } from '../../mcp-server/src/tasks/session.js';
 import type { SessionPage } from '../../mcp-server/src/tasks/session.js';
 import { loadTask, saveTask } from '../../mcp-server/src/tasks/store.js';
+import { saveTaskWithReport } from '../../mcp-server/src/tasks/reporting.js';
 import { runTask } from '../../mcp-server/src/tasks/runner.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
@@ -279,6 +280,83 @@ describe('resumeAfterLogin', () => {
     expect(continued[0]?.state).toBe('running');
     const reloaded = await loadTask('task-1', dir);
     expect(reloaded?.evidence.join('\n')).toContain('resuming from the same step');
+  });
+
+  /**
+   * The cancel from the other process, exactly as `browser_task_cancel`
+   * does it: the stored record fails with the cancellation evidence and
+   * the marker, and its report is saved. Called from inside `readPage`,
+   * so it lands between `resumeAfterLogin`'s load and its save.
+   */
+  async function cancelFromAnotherProcess(id: string): Promise<void> {
+    const stored = await loadTask(id, dir);
+    if (!stored) throw new Error('task was never saved');
+    stored.state = 'failed';
+    stored.cancelled = true;
+    stored.evidence.push('cancelled by the user at step 2 of 2 — the task stops here and never resumes');
+    await saveTaskWithReport(stored, dir);
+  }
+
+  it('a cancel landing between the load and the resume save does not resume the task', async () => {
+    await pausedTask();
+    const continued: Task[] = [];
+    const resumed = await resumeAfterLogin('task-1', {
+      tasksDir: dir,
+      readPage: async () => {
+        await cancelFromAnotherProcess('task-1');
+        return {
+          url: 'https://example.com/dashboard',
+          text: 'heading "Dashboard"',
+          ref: 'browser_snapshot tab 42',
+        };
+      },
+      continueWith: async (task) => {
+        continued.push(task);
+        return task;
+      },
+    });
+    // The resume never ran: the returned record is the cancellation.
+    expect(resumed.state).toBe('failed');
+    expect(resumed.evidence.some((line) => line.startsWith('cancelled by the user'))).toBe(true);
+    expect(continued).toEqual([]);
+    const stored = await loadTask('task-1', dir);
+    expect(stored?.state).toBe('failed');
+    expect(stored?.evidence.some((line) => line.startsWith('cancelled by the user'))).toBe(true);
+    // The resume evidence was never saved over the cancellation, and the
+    // marker is cleaned up on the terminal record, as the wrapper does.
+    expect(stored?.evidence.some((line) => line.includes('resuming from the same step'))).toBe(false);
+    expect(stored?.cancelled).toBeUndefined();
+    expect(stored?.report?.json.state).toBe('failed');
+  });
+
+  it('a cancel landing between the load and the still-paused save is not overwritten with paused-login', async () => {
+    await pausedTask();
+    const continued: Task[] = [];
+    const stayed = await resumeAfterLogin('task-1', {
+      tasksDir: dir,
+      readPage: async () => {
+        await cancelFromAnotherProcess('task-1');
+        return {
+          url: 'https://example.com/login?next=%2Fdashboard',
+          text: LOGIN_FORM_TEXT,
+          ref: 'browser_snapshot tab 42',
+          expectedUrl: 'https://example.com/dashboard',
+        };
+      },
+      knownLoginUrls: ['https://example.com/login'],
+      continueWith: async (task) => {
+        continued.push(task);
+        return task;
+      },
+    });
+    expect(stayed.state).toBe('failed');
+    expect(stayed.evidence.some((line) => line.startsWith('cancelled by the user'))).toBe(true);
+    expect(continued).toEqual([]);
+    const stored = await loadTask('task-1', dir);
+    expect(stored?.state).toBe('failed');
+    expect(stored?.evidence.some((line) => line.startsWith('cancelled by the user'))).toBe(true);
+    expect(stored?.evidence.some((line) => line.includes('staying paused'))).toBe(false);
+    expect(stored?.cancelled).toBeUndefined();
   });
 
   it('returns the task running when no continuation is supplied', async () => {

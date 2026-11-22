@@ -50,18 +50,30 @@ export class TaskCancelledExternally extends Error {
 }
 
 /**
- * Save the task unless another process cancelled it while this run was
- * in flight: re-read the stored record first, and abort (throw) when
- * it carries the cancel marker instead of overwriting it.
+ * Re-read the stored record and abort when it carries the cancel marker:
+ * another process cancelled the task while this path was in flight. A
+ * stored record that cannot be read is no cancellation evidence. This is
+ * the re-check `saveTaskUnlessCancelled` runs, exposed on its own for
+ * saves that build something first — `saveTaskWithReportUnlessCancelled`
+ * (`reporting.ts`) runs it before attaching the report.
  */
-export async function saveTaskUnlessCancelled(task: Task, tasksDir?: string): Promise<void> {
+export async function assertNotCancelled(id: string, tasksDir?: string): Promise<void> {
   let stored: Task | null = null;
   try {
-    stored = await loadTask(task.id, tasksDir);
+    stored = await loadTask(id, tasksDir);
   } catch {
     // The stored record cannot be read: no cancellation to honour, so
     // the save goes ahead as before.
   }
   if (stored?.cancelled === true) throw new TaskCancelledExternally(stored);
+}
+
+/**
+ * Save the task unless another process cancelled it while this run was
+ * in flight: re-read the stored record first, and abort (throw) when
+ * it carries the cancel marker instead of overwriting it.
+ */
+export async function saveTaskUnlessCancelled(task: Task, tasksDir?: string): Promise<void> {
+  await assertNotCancelled(task.id, tasksDir);
   await saveTask(task, tasksDir);
 }

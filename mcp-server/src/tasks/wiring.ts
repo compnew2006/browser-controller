@@ -134,12 +134,15 @@ export function configureTaskRunner(fn?: TaskRunnerFn): void {
  * Run a task and persist its evidence report on the settled record.
  * When the stored record was failed from outside while this run was in
  * flight — a cancel — the stored outcome wins: the run's result is
- * discarded and the stored task is reported instead. That
- * reconciliation covers only the window between the runner's final save
- * and this load: a cancel landing earlier in the run is caught by the
- * runner itself, which re-checks the stored record before every save
- * and aborts on the cancel marker (`tasks/cancel-guard.ts`) instead of
- * overwriting it.
+ * discarded and the stored task is reported instead. The marker decides,
+ * not the state: a stored record carrying the cancel marker wins even
+ * when the run failed a step on its own, so both records are `failed`
+ * and the state comparison alone would let the run's record overwrite
+ * the cancellation evidence with the step failure. That reconciliation
+ * covers only the window between the runner's final save and this load:
+ * a cancel landing earlier in the run is caught by the runner itself,
+ * which re-checks the stored record before every save and aborts on
+ * the cancel marker (`tasks/cancel-guard.ts`) instead of overwriting it.
  */
 export async function runTaskWithReport(id: string, options: RunTaskOptions = {}): Promise<Task> {
   runningTasks.add(id);
@@ -152,9 +155,14 @@ export async function runTaskWithReport(id: string, options: RunTaskOptions = {}
       // The stored record cannot be read: keep the run's own result, which
       // the save below writes over whatever is there.
     }
-    if (stored && stored.state === 'failed' && task.state !== 'failed') {
-      // The marker did its job once the run returned; the terminal record
-      // keeps the cancellation as evidence, not as a live signal.
+    // The stored record wins when it carries the cancel marker — even
+    // when the run failed a step on its own, so both records are
+    // `failed` and the state comparison alone would let the run's
+    // record overwrite the cancellation evidence with the step failure
+    // — or when it was failed from outside while the run did not itself
+    // fail. The marker did its job once the run returned; the terminal
+    // record keeps the cancellation as evidence, not as a live signal.
+    if (stored && (stored.cancelled === true || (stored.state === 'failed' && task.state !== 'failed'))) {
       delete stored.cancelled;
       return saveTaskWithReport(stored, options.tasksDir);
     }
