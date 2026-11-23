@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // WP2b lock shield (G2): the frame must not steal hit tests, focus or hover from
 // the page, while the user's pointer/keyboard/wheel input is still cancelled and
@@ -177,5 +177,30 @@ describe('lock shield (WP2b, G2)', () => {
 
     expect(document.listeners).toEqual([]);
     expect(shield().removed).toBe(true);
+  });
+
+  it('keeps the page blocked through a renewed control window and releases every listener at expiry', async () => {
+    vi.useFakeTimers();
+    movementLockEnabled = true;
+    try {
+      await overlay.showLockShield(7);
+      await overlay.lingerLockShield(7, 30_000);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await overlay.showLockShield(7);
+      await overlay.lingerLockShield(7, 30_000);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      const click = inputEvent('click', true);
+      for (const listener of documentListeners('click')) listener.fn(click);
+      expect(click.defaultPrevented).toBe(true);
+      expect(shield().style.pointerEvents).toBe('auto');
+      expect(shield().removed).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(document.listeners).toEqual([]);
+      expect(shield().removed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

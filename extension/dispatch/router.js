@@ -12,7 +12,7 @@ import {
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from '../lib/connection.js';
 import {
   showLockShield, hideLockShield, discardLockShieldState, agentCursorEnabled, agentMouseMovementLockEnabled, clearAgentCursor,
-  hasTaskLockShield, retainTaskLockShield,
+  hasTaskLockShield, lingerLockShield, retainTaskLockShield,
 } from '../lib/overlay.js';
 import {
   releaseTaskLockShields, releaseTaskLockShieldsForSession, taskShieldOwners,
@@ -297,6 +297,7 @@ async function handleVaultMessage(msg) {
 function knownSessionOwners() {
   const owners = new Set(sessionAgentNames.keys());
   for (const { sessionId } of tabLocks.snapshot()) owners.add(sessionId);
+  for (const { sessionId } of tabControl.entries.values()) if (sessionId) owners.add(sessionId);
   for (const owner of sessionSettingOwners()) owners.add(owner);
   for (const owner of taskShieldOwners()) owners.add(owner);
   return owners;
@@ -521,7 +522,7 @@ export async function handleMessage(msg) {
         }
         let shieldPromise = null;
         let shieldInstalled = false;
-        // Agent control shows the blue input-blocking spectrum for this call only;
+        // Agent control shows the blue input shield;
         // the label names the AGENT (user request: "agent {name} controlling the tab"), not the
         // running tool. agentName is a top-level WS field (audit M1); fall back
         // to a generic label for anonymous direct-WS callers.
@@ -557,13 +558,16 @@ export async function handleMessage(msg) {
         } finally {
           setCurrentActivity(null);
           updateBadge(isWsConnected() ? 'connected' : 'disconnected');
-          // The input block ends with the call. With the visible cursor enabled,
-          // retain the frame as a non-interactive cue during the control linger.
+          // Keep blocking manual input while the tab still shows as controlled.
+          // Task shields have their own lifetime; an ordinary call gets the control linger.
           // A wedged renderer cannot run cleanup; discard its state so the next document is not re-locked.
           if (wedgedTabs.has(tabId)) {
             discardLockShieldState(tabId);
+          } else if (shieldInstalled && movementLockEnabled && !taskId && tabControl.canLinger(call)) {
+            const linger = lingerLockShield(tabId, CONTROL_LINGER_MS);
+            if (!getOpenDialog(tabId)) await overlayStep(linger);
           } else {
-            const visible = tabControl.controller(tabId) && await overlayStep(agentCursorEnabled());
+            const visible = tabControl.canLinger(call) && await overlayStep(agentCursorEnabled());
             // Owned tabs remain controlled until release; shared tabs use the normal activity linger.
             const linger = visible ? (sessionId && tabLocks.owner(tabId) === sessionId ? -1 : CONTROL_LINGER_MS) : 0;
             const removeShield = () => linger ? hideLockShield(tabId, linger) : hideLockShield(tabId);

@@ -292,8 +292,8 @@ export function registerEventListeners() {
 
   watchOpenedTabs();
 
-  // Loading drops per-document state. An in-flight tool call reinstalls its
-  // active shield at onCommitted below, then removes it when the call ends.
+  // Loading drops per-document state. onCommitted reinstalls any shield
+  // whose call, task, or control linger still holds the tab.
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (isPrivateVaultUrl(changeInfo.url || "")) registerPrivateVaultTab(tabId);
     if (changeInfo.status === "loading") {
@@ -304,7 +304,7 @@ export function registerEventListeners() {
 
   chrome.webNavigation.onCommitted.addListener(({ tabId, frameId, documentId, url }) => {
     // A document commit replaces the isolated-world listeners. Reinstall the
-    // shield only in that frame while its agent command is still active.
+    // shield only in that frame while agent input protection is still active.
     void refreshLockShield(tabId, frameId);
     if (frameId !== 0 || typeof documentId !== "string") return;
     const committedUrl = typeof url === 'string' ? url : null;

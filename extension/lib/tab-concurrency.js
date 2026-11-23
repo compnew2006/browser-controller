@@ -242,6 +242,13 @@ export class TabControlMap {
     }
   }
 
+  /** An in-flight call may keep control only if its tab and session still hold it. */
+  canLinger(call) {
+    const entry = call?.entry;
+    return !!entry && this.entries.get(entry.tabId) === entry
+      && entry.calls.has(call) && entry.linger && entry.sessionId === call.sessionId;
+  }
+
   /**
    * The current controller of `tabId`, or undefined when idle past the linger
    * window. `active` is true while a call is running, false during the linger.

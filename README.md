@@ -350,7 +350,7 @@ Failure codes:
 ### Input, the banner and the shield
 
 - Clicks, typing, keys, wheel and drags are real input through the debugger. Chrome shows a yellow "being debugged" banner while it is attached; it detaches after about 30 s without use.
-- While a tool runs on a tab, the user sees the blue shield and their input on that tab is blocked, so the agent's steps are not disturbed. Keep manual input out of a tab an agent is working in.
+- While a tool runs on a tab, the user sees the blue shield. With *Block manual page input during agent control* enabled, the shield also blocks clicks, hover and dragging between calls for up to 30 seconds after the latest call. A browser task keeps the shield between steps until it pauses or finishes.
 - Each click, hover and key is checked on arrival. Chrome's own dialogs over a tab (the password-breach warning after a login, a permission prompt) take the debugger's mouse and keys while the page still looks normal. An input the page never got fails `INPUT_BLOCKED` instead of reporting success. Typing that leaves the field's value unchanged fails `VALUE_NOT_SET`.
 - Each input must reach the page within 5 s, or the call fails `TAB_WEDGED`. A click, key or text that opens a JavaScript dialog returns at once and reports it in a `dialog:` line. Input, page reads (snapshot, text, wait, scroll, screenshot, inspect_element) and `browser_evaluate` on a tab with an open dialog fail `DIALOG_OPEN` at once, before anything is sent. Any other result on such a tab gets a `dialog:` line (for example a `browser_navigate` whose page calls `alert` on load).
 
@@ -370,7 +370,7 @@ Click the extension icon to open the control panel alongside the page. Drag Chro
 - **Agents** — each connected agent with its name, session id, uptime, and a ✕ to disconnect it immediately (clears a zombie the heartbeat hasn't reaped yet). An agent that is still running connects again, as a new session.
 - **Activity** shows the session's recent agent actions by page visit.
 - **Tasks** shows tasks waiting for an answer and the evidence collected in this panel session. Pending questions appear above the current section.
-- **Settings** contains the browser connection, Credential Vault, and agent controls. Enable *Block mouse movement during agent actions* to block movement, hover, and dragging on the controlled page from the next action. The system pointer can still move.
+- **Settings** contains the browser connection, Credential Vault, and agent controls. *Block manual page input during agent control* applies to the page. The system pointer and Chrome's own controls remain available.
 - **Activity bar** — a collapsible strip at the bottom showing the latest tool activity; expand it for the rolling log.
 
 ### Things to know

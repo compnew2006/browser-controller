@@ -3,9 +3,8 @@ import { vi, describe, it, expect, beforeAll, beforeEach } from 'vitest';
 /**
  * Agent-control shield (user request): while an agent is ACTIVELY controlling
  * a tab, the page shows the blue inner frame + input blocking (the lock
- * shield) with the running tool's name INSIDE the frame — replacing the old
- * small corner badge. The frame goes away when the action finishes, locked or
- * not: a tab lock holds ownership and draws no frame of its own.
+ * shield) with the agent's name inside the frame. The optional movement
+ * shield remains active while control lingers. A tab lock alone draws no frame.
  */
 
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
@@ -112,6 +111,7 @@ const { dispatchAgentInput, hideLockShield, refreshLockShield, restoreTaskLockSh
 
 const shieldInjections = () => injections.filter((i) => i.func.includes('__bc-lock-shield'));
 const overlayInjections = () => injections.filter((i) => i.func.includes('__bc-overlay'));
+const lingerInjections = () => injections.filter((i) => i.args.length === 1 && i.func.includes('.expireAt(deadline)'));
 const flush = (ms = 60) => new Promise((r) => setTimeout(r, ms));
 
 describe('agent-control shield (blue frame instead of corner badge)', () => {
@@ -125,6 +125,7 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     injections.length = 0;
     tabStore.clear();
     tabLocks.unlockAll();
+    tabControl.clear();
     taskLockShields.clear();
     wedgedTabs.delete(3);
     tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
@@ -149,7 +150,7 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     expect(shieldInjections()[0]!.args).toContain('agent controlling the tab');
   });
 
-  it('opts into movement and hover blocking across frames only during an agent command', async () => {
+  it('keeps movement and hover blocked after a normal command even with the agent cursor off', async () => {
     mouseMovementLockSetting.enabled = true;
     await handleMessage({ id: 'mouse-lock', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
     await flush();
@@ -159,8 +160,55 @@ describe('agent-control shield (blue frame instead of corner badge)', () => {
     expect(shields[0]!.target).toEqual({ tabId: 3, allFrames: true });
     expect(shields[0]!.func).toContain("'pointermove'");
     expect(shields[0]!.func).toContain("el.style.pointerEvents = blockMouse ? 'auto' : 'none'");
-    expect(shields.at(-1)!.func).toContain('root.__bcShieldDocListeners');
     expect(sent.find((f) => f.id === 'mouse-lock')?.success).toBe(true);
+    expect(tabControl.controller(3)).toMatchObject({ sessionId: 's1', active: false });
+    const before = injections.length;
+    await expect(refreshLockShield(3, 2)).resolves.toBe(true);
+    expect(injections.slice(before).at(-1)?.target).toEqual({ tabId: 3, frameIds: [2] });
+
+    await handleMessage({ type: 'releaseSession', sessionId: 's1' });
+    await flush();
+    await expect(refreshLockShield(3, 2)).resolves.toBe(false);
+  });
+
+  it('renews the input shield on the next command and does not rearm it past the renewed deadline', async () => {
+    vi.useFakeTimers();
+    mouseMovementLockSetting.enabled = true;
+    const call = (id: string) => handleMessage({ id, tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1' });
+    const deadline = () => lingerInjections().at(-1)?.args[0];
+    try {
+      await call('first');
+      await vi.advanceTimersByTimeAsync(5);
+      const first = deadline();
+      expect(first).toEqual(expect.any(Number));
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      await call('second');
+      await vi.advanceTimersByTimeAsync(5);
+      expect(deadline()).toBeGreaterThan(Number(first));
+
+      vi.setSystemTime(Number(first) + 1);
+      await expect(refreshLockShield(3, 2)).resolves.toBe(true);
+      expect(injections.at(-1)?.args.at(-1)).toBe(deadline());
+
+      vi.setSystemTime(Number(deadline()));
+      const before = injections.length;
+      await expect(refreshLockShield(3, 2)).resolves.toBe(false);
+      expect(injections).toHaveLength(before);
+    } finally {
+      await hideLockShield(3);
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not extend the shield after a session disconnects during a command', async () => {
+    mouseMovementLockSetting.enabled = true;
+    await handleMessage({ id: 'disconnect-in-flight', tool: 'browser_wait', params: { tabId: 3, ms: 80 }, sessionId: 's1' });
+    await vi.waitFor(() => expect(shieldInjections()).toHaveLength(1));
+    await handleMessage({ type: 'releaseSession', sessionId: 's1' });
+    await vi.waitFor(() => expect(sent.some((frame) => frame.id === 'disconnect-in-flight')).toBe(true));
+    expect(lingerInjections()).toHaveLength(0);
+    await expect(refreshLockShield(3, 2)).resolves.toBe(false);
   });
 
   it('keeps the movement shield installed between browser_task steps', async () => {
