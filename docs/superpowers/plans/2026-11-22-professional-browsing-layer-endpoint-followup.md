@@ -1,12 +1,12 @@
 # Daemon → popup task endpoint — follow-up design note
 
-Status: **parked** (final review, 2026-11-22). This note records the decided
-design so the endpoint can be built later without re-litigating it. Nothing
-in this note is implemented: the popup today shows only tasks waiting on a
-question and only what the popup session has seen (see
-`extension/popup/task-panels-view.js`), and FR-018 is recorded as a
-documented limitation in `specs/011-professional-browsing-layer/spec.md`
-until this endpoint lands.
+Status: **delivered** (2026-11-28). This note records the decided design;
+it is now implemented: the `taskStatus` push landed in `0327b1b`
+(feat(tasks): push taskStatus on pause, resume, settle and reconnect),
+and the panels render from it in `7cabc1a` (feat(popup): render
+Tasks/Evidence panels from taskStatus). FR-018's documented limitation
+in `specs/011-professional-browsing-layer/spec.md` is struck accordingly.
+The design below is the as-built wire.
 
 ## Problem
 

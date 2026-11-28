@@ -369,7 +369,7 @@ Click the extension icon to open the control panel alongside the page. Drag Chro
 - **Tabs** — every open tab with its owner.
 - **Agents** — each connected agent with its name, session id, uptime, and a ✕ to disconnect it immediately (clears a zombie the heartbeat hasn't reaped yet). An agent that is still running connects again, as a new session.
 - **Activity** shows the session's recent agent actions by page visit.
-- **Tasks** shows tasks waiting for an answer and the evidence collected in this panel session. Pending questions appear above the current section.
+- **Tasks** lists tasks with their state and steps; **Evidence** shows the selected task's report. Pending questions appear above the current section.
 - **Settings** contains the browser connection, Credential Vault, and agent controls. *Block manual page input during agent control* applies to the page. The system pointer and Chrome's own controls remain available.
 - **Activity bar** — a collapsible strip at the bottom showing the latest tool activity; expand it for the rolling log.
 
