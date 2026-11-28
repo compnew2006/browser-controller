@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prepare-element fixture</title>
+<!--
+  Local fixture for Gap A (plan §3; specs/011-professional-browsing-layer,
+  Task 2): the two pages a single click/type step must recover on its own
+  with the reactive prepare policy (scroll-into-view, then hover only when
+  the element is hover-revealed, then one retry) — no extra agent step.
+
+  - covered: a long page with a fixed header. The button lives low in
+    the document (a tall spacer above it), and the page is scrolled on
+    load so the button sits under the header — a real click then fails
+    ELEMENT_COVERED; a scroll-into-view with block:'center' (what
+    browser_scroll does) moves the button to the viewport centre, below
+    the header, and the retry clicks it. The staging matters: a button
+    at the top of the document cannot be scrolled below a fixed header
+    (there is no scroll room above it), so the cover has to be staged
+    with the page scrolled. This models the page state the prepare
+    policy recovers from, not the extension's own locate, which also
+    scrolls a target that is not in full view before it clicks.
+  - menu: a hover menu. The submenu item is visibility:hidden until the
+  - menu: a hover menu. The submenu item is visibility:hidden until the
+    menu is hovered — it keeps its layout box while hidden, so a mouse
+    move to its centre lands on the menu and :hover reveals it. That is
+    the case the prepare hover handles: display:none would have no box
+    to move to (the extension's hover fails ELEMENT_HIDDEN on a zero-size
+    element), and scroll-into-view refuses a hidden element with the same
+    code, so for a hidden element the prepare hovers FIRST and scrolls
+    after the hover reveals it.
+  - Each click writes its marker into #result, which the snapshot verifies.
+
+  Routing: the view comes from the pathname first, then the hash, then the
+  default (covered) — the same pattern as scripts/pages/task-fixture.html,
+  so it is served over http at /prepare-fixture/covered and
+  /prepare-fixture/menu (the session agent's login-URL matcher strips
+  query and fragment, so hash-only views cannot be told apart). Opening
+  the file directly still works through the hash fallback (#covered,
+  #menu).
+-->
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 16px; color: #222; background: #fff; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  p { margin: 4px 0 10px; color: #555; }
+  section { display: none; }
+  section.active { display: block; }
+  button { padding: 8px 12px; margin: 4px 4px 4px 0; cursor: pointer; }
+  #result { color: #222; font-weight: bold; }
+  /* Covered view: the fixed header sits over the button at scroll top
+     (the button's centre is ~94px down the page, inside the header). */
+  #fixed-header {
+    position: fixed; top: 0; left: 0; right: 0; height: 120px;
+    background: #333; color: #fff; line-height: 120px; padding: 0 16px;
+    z-index: 10;
+  }
+  #view-covered .spacer-top { height: 900px; }
+  #view-covered .spacer { height: 1200px; }
+  #covered-action { margin-top: 8px; }
+  /* Hover-menu view: the item keeps its box while hidden. */
+  #menu { display: inline-block; position: relative; }
+  #menu .submenu { visibility: hidden; }
+  #menu:hover .submenu, #menu:focus-within .submenu { visibility: visible; }
+  #menu .submenu button { display: block; }
+</style>
+</head>
+<body>
+<header id="fixed-header">Prepare fixture — fixed header (covers the button at scroll top)</header>
+
+<section id="view-covered">
+  <h1>Prepare fixture — Covered button</h1>
+  <p>The fixed header covers this button until it is scrolled into view.</p>
+  <div class="spacer-top"></div>
+  <button id="covered-action" type="button">Covered action</button>
+  <div class="spacer"></div>
+  <p id="result-covered"></p>
+</section>
+
+<section id="view-menu">
+  <h1>Prepare fixture — Hover menu</h1>
+  <p>Hover the menu to reveal its item, then click the item.</p>
+  <div id="menu">
+    <button id="menu-trigger" type="button" aria-haspopup="true">Menu</button>
+    <div class="submenu">
+      <button id="menu-item" type="button">Menu item</button>
+    </div>
+  </div>
+  <p id="result-menu"></p>
+</section>
+
+<script>
+(() => {
+  const views = { covered: 'view-covered', menu: 'view-menu' };
+  function showView(name) {
+    const wanted = views[name] || views.covered;
+    for (const id of Object.values(views)) document.getElementById(id).classList.remove('active');
+    document.getElementById(wanted).classList.add('active');
+    // Stage the covered state: scroll the page so the covered button
+    // sits under the fixed header (its centre ~102px down, inside the
+    // 120px header). Scroll-into-view with block:'center' then has room
+    // to move it to the viewport centre, below the header.
+    if (name === 'covered') {
+      const btn = document.getElementById('covered-action');
+      const top = btn.getBoundingClientRect().top + window.scrollY;
+      window.scrollTo(0, top - 85);
+    }
+  }
+  function viewFromLocation() {
+    // Served use: /prepare-fixture/menu (pathname first). File use:
+    // prepare-fixture.html#menu (hash fallback). Anything else: covered.
+    const segment = location.pathname.split('/').filter(Boolean).pop();
+    if (segment === 'covered' || segment === 'menu') return segment;
+    const hash = location.hash.replace(/^#/, '');
+    if (hash === 'covered' || hash === 'menu') return hash;
+    return 'covered';
+  }
+  function go(name) {
+    // Keep the URL in step with the view so a snapshot names where the
+    // task actually is: /prepare-fixture/menu when served, #menu when
+    // opened as a file.
+    if (location.pathname.indexOf('/prepare-fixture/') === 0) {
+      history.replaceState(null, '', `/prepare-fixture/${name}`);
+    } else {
+      history.replaceState(null, '', `#${name}`);
+    }
+    showView(name);
+  }
+  document.getElementById('covered-action').addEventListener('click', () => {
+    document.getElementById('result-covered').textContent = 'covered button clicked';
+  });
+  document.getElementById('menu-item').addEventListener('click', () => {
+    document.getElementById('result-menu').textContent = 'menu item clicked';
+  });
+  window.addEventListener('hashchange', () => showView(viewFromLocation()));
+  showView(viewFromLocation());
+})();
+</script>
+</body>
+</html>

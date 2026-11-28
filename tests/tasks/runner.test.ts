@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
@@ -1034,5 +1035,547 @@ describe('zero-step tasks', () => {
     expect(failed.evidence.join('\n')).toContain('no steps');
     const stored = await loadTask('task-1', dir);
     expect(stored?.state).toBe('failed');
+  });
+});
+
+describe('prepare-element-before-click (Gap A)', () => {
+  const repoRoot = path.join(import.meta.dirname, '..', '..');
+  const FIXTURE_PATH = path.join(repoRoot, 'scripts', 'pages', 'prepare-fixture.html');
+
+  const clickSchema = z
+    .object({ tabId: z.number().optional(), target: z.string().optional(), hover: z.boolean().optional() })
+    .strict();
+  const scrollSchema = z.object({ tabId: z.number().optional(), target: z.string().optional() }).strict();
+  const typeSchema = z
+    .object({ tabId: z.number().optional(), target: z.string().optional(), text: z.string().optional() })
+    .strict();
+
+  /** A tool whose answers are consumed in call order (a fixed result, or a thrown error). */
+  function scriptedTool(
+    name: string,
+    calls: string[],
+    seen: Array<Record<string, unknown>>,
+    answers: Array<ToolResult | Error>,
+    inputSchema: z.ZodObject<z.ZodRawShape>,
+  ): ToolDefinition {
+    let next = 0;
+    return {
+      name,
+      summary: `Fake ${name} for prepare tests`,
+      description: `Test-only stand-in for ${name}.`,
+      inputSchema,
+      handler: async (_host, params) => {
+        calls.push(name);
+        seen.push(params);
+        const answer = answers[Math.min(next, answers.length - 1)]!;
+        next += 1;
+        if (answer instanceof Error) throw answer;
+        return answer;
+      },
+    };
+  }
+
+  function prepareTask(steps: Task['steps']): Task {
+    return {
+      id: 'task-1',
+      goal: 'Click the prepared element',
+      constraints: ['allow-mutations'],
+      steps,
+      state: 'planned',
+      evidence: [],
+    };
+  }
+
+  it('clicks a covered button from one step: scroll-into-view, then one retry, no hover', async () => {
+    const calls: string[] = [];
+    const seenClick: Array<Record<string, unknown>> = [];
+    const seenScroll: Array<Record<string, unknown>> = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_click',
+        scriptedTool(
+          'browser_click',
+          calls,
+          seenClick,
+          [
+            failureResult('ELEMENT_COVERED: the click point of button "Covered action" is covered by the fixed header; the click would land there instead.'),
+            textResult('clicked'),
+          ],
+          clickSchema,
+        ),
+      ],
+      ['browser_scroll', scriptedTool('browser_scroll', calls, seenScroll, [textResult('scrolled into view')], scrollSchema)],
+      ['browser_snapshot', snapshotTool(calls, 'covered button clicked')],
+    ]);
+    await saveTask(
+      prepareTask([
+        {
+          tool: 'browser_click',
+          params: { target: 'e7' },
+          verify: [{ kind: 'text-present', value: 'covered button clicked' }],
+        },
+      ]),
+      dir,
+    );
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(done.state).toBe('done');
+    // Prepare adds no top-level steps: the task still has the one planned step.
+    expect(done.steps).toHaveLength(1);
+    expect(done.steps[0]?.result?.status).toBe('ok');
+    expect(calls).toEqual(['browser_click', 'browser_scroll', 'browser_click', 'browser_snapshot']);
+    expect(seenScroll).toEqual([{ target: 'e7' }]);
+    // The retry is a plain click, not a hover: nothing hovered on this path.
+    expect(seenClick).toEqual([{ target: 'e7' }, { target: 'e7' }]);
+    expect(done.evidence.join('\n')).toMatch(/prepare step 1 \(browser_click\)/);
+    expect(done.evidence.join('\n')).toContain('ELEMENT_COVERED');
+  });
+
+  it('clicks a hover-menu item from one step: scroll fails hidden, hover reveals, scroll, retry', async () => {
+    const calls: string[] = [];
+    const seenClick: Array<Record<string, unknown>> = [];
+    const seenScroll: Array<Record<string, unknown>> = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_click',
+        scriptedTool(
+          'browser_click',
+          calls,
+          seenClick,
+          [
+            failureResult('ELEMENT_HIDDEN: button "Menu item" is not displayed (display:none, visibility:hidden or zero size); nothing was clicked.'),
+            textResult('hovered Menu item'),
+            textResult('clicked'),
+          ],
+          clickSchema,
+        ),
+      ],
+      [
+        'browser_scroll',
+        scriptedTool(
+          'browser_scroll',
+          calls,
+          seenScroll,
+          [
+            failureResult('ELEMENT_HIDDEN: button "Menu item" is not displayed; it cannot be scrolled to'),
+            textResult('scrolled into view'),
+          ],
+          scrollSchema,
+        ),
+      ],
+      ['browser_snapshot', snapshotTool(calls, 'menu item clicked')],
+    ]);
+    await saveTask(
+      prepareTask([
+        {
+          tool: 'browser_click',
+          params: { target: 'e8' },
+          verify: [{ kind: 'text-present', value: 'menu item clicked' }],
+        },
+      ]),
+      dir,
+    );
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(done.state).toBe('done');
+    expect(done.steps).toHaveLength(1);
+    expect(done.steps[0]?.result?.status).toBe('ok');
+    expect(calls).toEqual([
+      'browser_click',
+      'browser_scroll',
+      'browser_click',
+      'browser_scroll',
+      'browser_click',
+      'browser_snapshot',
+    ]);
+    // Only the middle click is a hover; the first attempt and the retry are plain clicks.
+    expect(seenClick).toEqual([{ target: 'e8' }, { target: 'e8', hover: true }, { target: 'e8' }]);
+    expect(seenScroll).toEqual([{ target: 'e8' }, { target: 'e8' }]);
+    expect(done.evidence.join('\n')).toMatch(/prepare step 1 \(browser_click\)/);
+    expect(done.evidence.join('\n')).toContain('hover');
+    expect(done.evidence.join('\n')).toContain('ELEMENT_HIDDEN');
+  });
+
+  it('a failed scroll means no retry: the click ran once and the step fails with the prepare reason', async () => {
+    const calls: string[] = [];
+    const seenClick: Array<Record<string, unknown>> = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_click',
+        scriptedTool(
+          'browser_click',
+          calls,
+          seenClick,
+          [failureResult('ELEMENT_COVERED: the click point of button "Covered action" is covered by the fixed header; the click would land there instead.')],
+          clickSchema,
+        ),
+      ],
+      [
+        'browser_scroll',
+        scriptedTool('browser_scroll', calls, [], [failureResult('NOT_SCROLLABLE: nothing moved and the element is still out of view')], scrollSchema),
+      ],
+      ['browser_snapshot', snapshotTool(calls, 'page text')],
+    ]);
+    await saveTask(
+      prepareTask([{ tool: 'browser_click', params: { target: 'e7' }, verify: [{ kind: 'no-error-text', value: "isn't working" }] }]),
+      dir,
+    );
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.status).toBe('failed');
+    expect(done.steps[0]?.result?.detail).toContain('ELEMENT_COVERED');
+    expect(done.steps[0]?.result?.detail).toContain('prepare');
+    expect(done.steps[0]?.result?.detail).toContain('NOT_SCROLLABLE');
+    expect(calls).toEqual(['browser_click', 'browser_scroll']);
+    expect(seenClick).toHaveLength(1);
+  });
+
+  it('a failure no prepare can fix runs no prepare at all', async () => {
+    const calls: string[] = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_click',
+        scriptedTool(
+          'browser_click',
+          calls,
+          [],
+          [failureResult('ELEMENT_DISABLED: button "Covered action" is disabled; nothing was clicked.')],
+          clickSchema,
+        ),
+      ],
+      ['browser_snapshot', snapshotTool(calls, 'page text')],
+    ]);
+    await saveTask(
+      prepareTask([{ tool: 'browser_click', params: { target: 'e7' }, verify: [{ kind: 'no-error-text', value: "isn't working" }] }]),
+      dir,
+    );
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.detail).toContain('ELEMENT_DISABLED');
+    expect(calls).toEqual(['browser_click']);
+    expect(done.evidence.join('\n')).not.toContain('prepare');
+  });
+
+  it('a click that succeeds first try runs no prepare at all', async () => {
+    const calls: string[] = [];
+    const seenScroll: Array<Record<string, unknown>> = [];
+    const tools = new Map<string, ToolDefinition>([
+      ['browser_click', scriptedTool('browser_click', calls, [], [textResult('clicked')], clickSchema)],
+      ['browser_scroll', scriptedTool('browser_scroll', calls, seenScroll, [textResult('scrolled into view')], scrollSchema)],
+      ['browser_snapshot', snapshotTool(calls, 'clicked')],
+    ]);
+    await saveTask(
+      prepareTask([{ tool: 'browser_click', params: { target: 'e7' }, verify: [{ kind: 'no-error-text', value: "isn't working" }] }]),
+      dir,
+    );
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(done.state).toBe('done');
+    expect(calls).toEqual(['browser_click', 'browser_snapshot']);
+    expect(seenScroll).toEqual([]);
+    expect(done.evidence.join('\n')).not.toContain('prepare');
+  });
+
+  it('a retry that fails again stops: one prepare, one retry, no loop', async () => {
+    const calls: string[] = [];
+    const seenClick: Array<Record<string, unknown>> = [];
+    const seenScroll: Array<Record<string, unknown>> = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_click',
+        scriptedTool(
+          'browser_click',
+          calls,
+          seenClick,
+          [
+            failureResult('ELEMENT_COVERED: the click point of button "Covered action" is covered by the fixed header; the click would land there instead.'),
+            failureResult('ELEMENT_COVERED: the click point of button "Covered action" is still covered by the fixed header; the click would land there instead.'),
+          ],
+          clickSchema,
+        ),
+      ],
+      ['browser_scroll', scriptedTool('browser_scroll', calls, seenScroll, [textResult('scrolled into view')], scrollSchema)],
+      ['browser_snapshot', snapshotTool(calls, 'page text')],
+    ]);
+    await saveTask(
+      prepareTask([{ tool: 'browser_click', params: { target: 'e7' }, verify: [{ kind: 'no-error-text', value: "isn't working" }] }]),
+      dir,
+    );
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.status).toBe('failed');
+    expect(done.steps[0]?.result?.detail).toContain('prepare');
+    expect(calls).toEqual(['browser_click', 'browser_scroll', 'browser_click']);
+    expect(seenClick).toHaveLength(2);
+    expect(seenScroll).toHaveLength(1);
+  });
+
+  it('a covered field is typed from one step: scroll-into-view, then one retry', async () => {
+    const calls: string[] = [];
+    const seenScroll: Array<Record<string, unknown>> = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_type',
+        scriptedTool(
+          'browser_type',
+          calls,
+          [],
+          [
+            failureResult('ELEMENT_COVERED: the click point of textbox "Name" is covered by the fixed header; nothing was typed.'),
+            textResult('typed'),
+          ],
+          typeSchema,
+        ),
+      ],
+      ['browser_scroll', scriptedTool('browser_scroll', calls, seenScroll, [textResult('scrolled into view')], scrollSchema)],
+      ['browser_snapshot', snapshotTool(calls, 'typed')],
+    ]);
+    await saveTask(
+      prepareTask([
+        {
+          tool: 'browser_type',
+          params: { target: 'e9', text: 'hello' },
+          verify: [{ kind: 'no-error-text', value: "isn't working" }],
+        },
+      ]),
+      dir,
+    );
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(done.state).toBe('done');
+    expect(done.steps).toHaveLength(1);
+    expect(calls).toEqual(['browser_type', 'browser_scroll', 'browser_type', 'browser_snapshot']);
+    expect(seenScroll).toEqual([{ target: 'e9' }]);
+    expect(done.evidence.join('\n')).toMatch(/prepare step 1 \(browser_type\)/);
+  });
+
+  it('a hover step that fails covered is prepared like any click: scroll, then retry the hover', async () => {
+    const calls: string[] = [];
+    const seenClick: Array<Record<string, unknown>> = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_click',
+        scriptedTool(
+          'browser_click',
+          calls,
+          seenClick,
+          [
+            failureResult('ELEMENT_COVERED: the hover point of button "Menu" is covered by the fixed header; nothing was hovered.'),
+            textResult('hovered Menu'),
+          ],
+          clickSchema,
+        ),
+      ],
+      ['browser_scroll', scriptedTool('browser_scroll', calls, [], [textResult('scrolled into view')], scrollSchema)],
+      ['browser_snapshot', snapshotTool(calls, 'hovered')],
+    ]);
+    await saveTask(
+      prepareTask([
+        {
+          tool: 'browser_click',
+          params: { target: 'e8', hover: true },
+          verify: [{ kind: 'no-error-text', value: "isn't working" }],
+        },
+      ]),
+      dir,
+    );
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(done.state).toBe('done');
+    expect(done.steps).toHaveLength(1);
+    expect(calls).toEqual(['browser_click', 'browser_scroll', 'browser_click', 'browser_snapshot']);
+    expect(seenClick).toEqual([
+      { target: 'e8', hover: true },
+      { target: 'e8', hover: true },
+    ]);
+    expect(done.evidence.join('\n')).toMatch(/prepare step 1 \(browser_click\)/);
+  });
+
+  it('a point target cannot be prepared: the scroll refuses it and the click is not retried', async () => {
+    const calls: string[] = [];
+    const seenClick: Array<Record<string, unknown>> = [];
+    const tools = new Map<string, ToolDefinition>([
+      [
+        'browser_click',
+        scriptedTool(
+          'browser_click',
+          calls,
+          seenClick,
+          [failureResult('CLICK_MISSED: the click at 120,300 landed on the fixed header, not on the target: the target moved after it was measured. Take a new snapshot before acting again.')],
+          clickSchema,
+        ),
+      ],
+      [
+        'browser_scroll',
+        scriptedTool('browser_scroll', calls, [], [failureResult('INVALID_ARGUMENT: a point target needs dx or dy to scroll')], scrollSchema),
+      ],
+      ['browser_snapshot', snapshotTool(calls, 'page text')],
+    ]);
+    await saveTask(
+      prepareTask([{ tool: 'browser_click', params: { target: '120,300' }, verify: [{ kind: 'no-error-text', value: "isn't working" }] }]),
+      dir,
+    );
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      verify: () => ({ ok: true, evidence: 'checked' }),
+    });
+
+    expect(done.state).toBe('failed');
+    expect(done.steps[0]?.result?.detail).toContain('CLICK_MISSED');
+    expect(done.steps[0]?.result?.detail).toContain('prepare');
+    expect(calls).toEqual(['browser_click', 'browser_scroll']);
+    expect(seenClick).toHaveLength(1);
+  });
+
+  it('the prepare fixture serves both views the fakes mirror, and the menu case runs on it', async () => {
+    const server = http.createServer((req, res) => {
+      const url = req.url ?? '';
+      if (url === '/prepare-fixture/covered' || url === '/prepare-fixture/menu') {
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end(fs.readFileSync(FIXTURE_PATH, 'utf8'));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('fixture server did not bind');
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const covered = await (await fetch(`${baseUrl}/prepare-fixture/covered`)).text();
+      expect(covered).toContain('Prepare fixture — Covered button');
+      expect(covered).toContain('id="covered-action"');
+      expect(covered).toContain('covered button clicked');
+      const menu = await (await fetch(`${baseUrl}/prepare-fixture/menu`)).text();
+      expect(menu).toContain('Prepare fixture — Hover menu');
+      expect(menu).toContain('id="menu-item"');
+      // The menu item keeps its box while hidden (visibility, not display):
+      // that is what a hover can land on to reveal it.
+      expect(menu).toContain('visibility:hidden');
+      expect(menu).toContain('menu item clicked');
+
+      // The menu case, driven by fakes whose snapshot text mirrors the
+      // fixture's menu view line for line — the same seam the audit e2e
+      // test uses (tests/tasks/e2e-audit-task.test.ts).
+      const calls: string[] = [];
+      const tools = new Map<string, ToolDefinition>([
+        [
+          'browser_click',
+          scriptedTool(
+            'browser_click',
+            calls,
+            [],
+            [
+              failureResult('ELEMENT_HIDDEN: button "Menu item" is not displayed (display:none, visibility:hidden or zero size); nothing was clicked.'),
+              textResult('hovered Menu item'),
+              textResult('clicked'),
+            ],
+            clickSchema,
+          ),
+        ],
+        [
+          'browser_scroll',
+          scriptedTool(
+            'browser_scroll',
+            calls,
+            [],
+            [
+              failureResult('ELEMENT_HIDDEN: button "Menu item" is not displayed; it cannot be scrolled to'),
+              textResult('scrolled into view'),
+            ],
+            scrollSchema,
+          ),
+        ],
+        [
+          'browser_snapshot',
+          snapshotTool(
+            calls,
+            'heading "Prepare fixture — Hover menu"\n- button "Menu" [ref=e8]\n- button "Menu item" [ref=e9]\n- text "menu item clicked"',
+          ),
+        ],
+      ]);
+      await saveTask(
+        prepareTask([
+          {
+            tool: 'browser_click',
+            params: { target: 'e9' },
+            verify: [{ kind: 'text-present', value: 'menu item clicked' }],
+          },
+        ]),
+        dir,
+      );
+      const done = await runTask('task-1', {
+        tasksDir: dir,
+        tools,
+        host: dummyHost,
+        verify: () => ({ ok: true, evidence: 'checked' }),
+      });
+      expect(done.state).toBe('done');
+      expect(calls).toEqual([
+        'browser_click',
+        'browser_scroll',
+        'browser_click',
+        'browser_scroll',
+        'browser_click',
+        'browser_snapshot',
+      ]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

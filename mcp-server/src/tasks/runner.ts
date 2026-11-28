@@ -96,9 +96,12 @@
  *
  * Post-fill username check (plan §3, Gap B): the check lives in
  * `login-check.ts`, the gates in `login-gates.ts`.
+ *
+ * Prepare-element-before-click (plan §3, Gap A): the policy lives in
+ * `prepare.ts` — a failed click/type gets one scroll (+hover when hidden)
+ * and one retry, as sub-evidence on the step, never a new step.
  */
-import type { ToolDefinition, ToolHost, ToolResult } from '../tools/types.js';
-import { rawResultOf } from '../tools/types.js';
+import type { ToolDefinition, ToolHost } from '../tools/types.js';
 import { NO_DEFAULT_TAB, TAB_OR_ORIGIN } from '../tools/batch-limits.js';
 import { prepareToolParams } from '../tools/params.js';
 import { loadTask } from './store.js';
@@ -116,6 +119,8 @@ import { isVaultFillStep } from './login-check.js';
 import type { ListSavedLoginsFn } from './login-check.js';
 import { checkFillAfterReconcile, checkFillAndMaybePause, runPreStepGates } from './login-gates.js';
 import { failStep } from './fail.js';
+import { withElementPrepare } from './prepare.js';
+import { boundTabFromCompletedSteps, tabIdFromResult } from './tab-binding.js';
 
 /** Verify one step against the page snapshot taken after it. */
 export type VerifyStepFn = (step: TaskStep, snapshot: PageSnapshot) => VerifyOutcome | Promise<VerifyOutcome>;
@@ -184,37 +189,6 @@ import { ALLOW_MUTATIONS, NAVIGATE_HISTORY_ACTIONS, isMutatingTool, taskAllowsMu
 // Re-exported so existing importers (`tests/tasks/runner.test.ts`) keep
 // importing the classification from the runner, where it used to live.
 export { ALLOW_MUTATIONS, isMutatingTool, taskAllowsMutations };
-
-/**
- * The tab a step's result names, if any: the `tabId` a navigate/snapshot
- * result carries, or the first tab of a `browser_tabs list` result — the
- * session's own tab, else the user's focused tab
- * (`extension/handlers/tabs.js`, `listTabs`).
- */
-function tabIdFromResult(result: ToolResult): number | undefined {
-  const raw = rawResultOf(result);
-  if (!raw) return undefined;
-  if (typeof raw.tabId === 'number') return raw.tabId;
-  const tabs = raw.tabs;
-  if (Array.isArray(tabs)) {
-    for (const entry of tabs) {
-      if (entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>).tabId === 'number') {
-        return (entry as Record<string, unknown>).tabId as number;
-      }
-    }
-  }
-  return undefined;
-}
-
-/** The tab the completed steps already bound, if any — the resume rebind. A step recorded `unknown` executed too, so its tab counts: it is the tab the resume must reconcile — and re-run — on. */
-function boundTabFromCompletedSteps(task: Task): number | undefined {
-  let bound: number | undefined;
-  for (const step of task.steps) {
-    if (step.result?.status !== 'ok' && step.result?.status !== 'unknown') continue;
-    if (typeof step.params.tabId === 'number') bound = step.params.tabId;
-  }
-  return bound;
-}
 
 /**
  * Run a saved task from its first unfinished step. Returns the task in its
@@ -444,12 +418,19 @@ async function runTaskSteps(
     // attempts share the one validation and the one approval above, so a
     // retry runs under the same approval the first attempt had — it
     // neither re-asks for approval nor executes without it — and a
-    // TIMEOUT on a mutating step is reconciled before any retry.
+    // TIMEOUT on a mutating step is reconciled before any retry. The
+    // invoke is wrapped with the Gap A prepare policy (`prepare.ts`):
+    // a click/type that fails covered, hidden, offscreen or missed gets
+    // one scroll (+hover when hidden) and one retry, as sub-evidence.
     const attempt = await executeStepWithRecovery(
       task,
       step,
       // Registry tools need the host (checked above); injected tools ignore it.
-      () => def.handler(options.host as ToolHost, validated),
+      withElementPrepare(task, step, validated, () => def.handler(options.host as ToolHost, validated), {
+        tools,
+        host: options.host,
+        tabId: typeof validated.tabId === 'number' ? validated.tabId : boundTabId,
+      }),
       {
         policy: options.recovery?.policy,
         mutating: isMutatingTool(def, validated),
