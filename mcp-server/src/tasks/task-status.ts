@@ -72,9 +72,13 @@ export async function buildTaskStatus(tasksDir: string = defaultTasksDir()): Pro
   try {
     tasks = await listTasks(tasksDir);
   } catch (error) {
+    // A failed read is NOT an empty list: log it and let the caller decide.
+    // `listTasks` already returns [] for a missing dir (ENOENT), so a throw
+    // here means the dir exists but could not be read — pushing [] would
+    // blank the popup to "No tasks yet" instead of keeping the stale list.
     const detail = error instanceof Error ? error.message : String(error);
     log.warn(`task list could not be read from ${tasksDir}: ${detail}`);
-    return [];
+    throw error;
   }
   // Most-recent-first is file mtime: every pause/resume/settle saves the
   // record, so the newest file is the task the user last heard about.
@@ -105,8 +109,15 @@ export async function buildTaskStatus(tasksDir: string = defaultTasksDir()): Pro
 
 /** Re-read the task files and send the list down the daemon↔extension channel. Never throws. */
 export async function pushTaskStatus(bridge: TaskStatusBridge, tasksDir?: string): Promise<void> {
+  let tasks: TaskStatusEntry[];
   try {
-    const tasks = await buildTaskStatus(tasksDir);
+    tasks = await buildTaskStatus(tasksDir);
+  } catch {
+    // buildTaskStatus already logged the read failure; skip the push so the
+    // popup keeps its stale list instead of blanking to "No tasks yet".
+    return;
+  }
+  try {
     bridge.sendControl('taskStatus', { tasks });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

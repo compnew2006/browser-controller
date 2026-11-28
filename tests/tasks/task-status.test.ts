@@ -85,6 +85,12 @@ describe('buildTaskStatus (daemon → popup task list)', () => {
   it('returns an empty list for a missing tasks dir', async () => {
     await expect(buildTaskStatus(path.join(dir, 'no-such-dir'))).resolves.toEqual([]);
   });
+
+  it('throws on a failed read (a file where the tasks dir should be)', async () => {
+    const notADir = path.join(dir, 'not-a-dir');
+    fs.writeFileSync(notADir, 'not a directory');
+    await expect(buildTaskStatus(notADir)).rejects.toThrow('task directory could not be read');
+  });
 });
 
 describe('pushTaskStatus', () => {
@@ -106,7 +112,7 @@ describe('pushTaskStatus', () => {
     expect(tasks[0]).toMatchObject({ id: 'task-a', state: 'running', goal: 'Goal for task-a' });
   });
 
-  it('never throws when the tasks dir cannot be read', async () => {
+  it('sends one frame with an empty list for a missing tasks dir', async () => {
     const sent: Array<Record<string, unknown>> = [];
     const bridge = {
       sendControl(type: string, payload: Record<string, unknown> = {}) {
@@ -116,5 +122,20 @@ describe('pushTaskStatus', () => {
     await expect(pushTaskStatus(bridge, path.join(dir, 'no-such-dir'))).resolves.toBeUndefined();
     expect(sent).toHaveLength(1);
     expect(sent[0]?.tasks).toEqual([]);
+  });
+
+  it('never throws and sends no frame when the tasks dir cannot be read', async () => {
+    // A file where the tasks dir should be: readdir fails with ENOTDIR, so
+    // listTasks throws — unlike a missing dir (ENOENT), which yields [].
+    const notADir = path.join(dir, 'not-a-dir');
+    fs.writeFileSync(notADir, 'not a directory');
+    const sent: Array<Record<string, unknown>> = [];
+    const bridge = {
+      sendControl(type: string, payload: Record<string, unknown> = {}) {
+        sent.push({ type, ...payload });
+      },
+    };
+    await expect(pushTaskStatus(bridge, notADir)).resolves.toBeUndefined();
+    expect(sent).toHaveLength(0);
   });
 });
