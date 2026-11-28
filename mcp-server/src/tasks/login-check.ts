@@ -294,25 +294,47 @@ export function snapshotControlForRef(
  * JS), and its expression cannot prove it does not, so the submit gate
  * treats every evaluate after a fill as a submit; with no fill before
  * it the gate has nothing to hold, so a read-only evaluate elsewhere is
- * unaffected. A click target given as a bare string — a ref or a
- * selector — is resolved against the snapshot when one is given: the
- * ref's control name decides. Without a snapshot, or when the snapshot
- * names no control for the ref, the click fails safe as a submit: an
- * unresolvable string target could be the Sign in button, and the gate
- * exists to stop an unchecked submit, not to guess that it is harmless.
- * Anything else is not a submit step.
+ * unaffected. That over-reaches on a read-only evaluate after a fill
+ * (`document.title` pauses the task): accepted, because the expression
+ * cannot be proven read-only and the cost is one pause or, on a
+ * matching fill, one extra snapshot that passes silently. A click
+ * target given as a bare string — a ref or a selector — is resolved
+ * against the snapshot when one is given: the ref's control name
+ * decides. A click target given as an object (`{role, name}`) is
+ * resolved the same way, from the name it carries: with a snapshot the
+ * name decides, without one it fails safe as a submit — the name alone
+ * is not proof the control is harmless ("Continue" is a routine
+ * multi-step-login label outside SUBMIT_NAMES). An object target with
+ * no name (`{role, nth}`) names no control at all, so no snapshot can
+ * clear it and it always fails safe as a submit. Without a snapshot,
+ * or when the snapshot names no control for the ref, the click fails
+ * safe as a submit: an unresolvable target could be the Sign in
+ * button, and the gate exists to stop an unchecked submit, not to
+ * guess that it is harmless. Anything else is not a submit step.
  */
 export function isSubmitStep(step: TaskStep, snapshot?: PageSnapshot): boolean {
   if (step.tool === 'browser_type') {
     if (step.params.submit === true) return true;
     return typeof step.params.key === 'string' && keySubmits(step.params.key);
   }
+  // Every evaluate counts as a submit: a scripted step can submit the
+  // form, and its expression cannot prove it does not. The over-reach
+  // on a read-only evaluate after a fill is the accepted cost (see the
+  // doc comment above) — on a matching fill it passes silently.
   if (step.tool === 'browser_evaluate') return true;
   if (step.tool === 'browser_click') {
     if (step.params.hover === true) return false;
     const target = step.params.target;
-    if (target && typeof target === 'object' && typeof (target as Record<string, unknown>).name === 'string') {
-      return hasWord((target as Record<string, unknown>).name as string, SUBMIT_NAMES);
+    if (target && typeof target === 'object') {
+      const name = (target as Record<string, unknown>).name;
+      // No name: no control is named, so nothing can clear it.
+      if (typeof name !== 'string') return true;
+      // No snapshot: the name alone cannot clear a submit — a control
+      // named outside SUBMIT_NAMES still submits. With a snapshot the
+      // name decides, and the gate's inner check still runs the
+      // filled-account check while the login form is on the page.
+      if (snapshot === undefined) return true;
+      return hasWord(name, SUBMIT_NAMES);
     }
     if (typeof target === 'string') {
       if (snapshot === undefined) return true;

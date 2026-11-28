@@ -164,16 +164,17 @@ export async function checkFillAfterReconcile(
  *   following a fill — one extra snapshot read per submit — because a
  *   verification recorded after the fill is point-in-time: any step
  *   between the fill and the submit (typing, a fill, a script) may have
- *   rewritten the username field, and so may page script. A string click
- *   target is resolved against the snapshot just read: a control it
- *   names as a non-submit control skips the check only when the page
- *   shows no username field at all — the positive sign the login form
- *   is gone, so the click is post-login. A non-submit name alone cannot
- *   clear the check: a submit button labelled "Continue", "Next", or
- *   anything outside SUBMIT_NAMES still submits, so on a page that
- *   still shows a username field the check runs and the click is held
- *   until the filled account is confirmed. A target the snapshot does
- *   not name still fails safe as a submit. The normal
+ *   rewritten the username field, and so may page script. A click
+ *   target is resolved against the snapshot just read: a string ref it
+ *   names as a non-submit control, or an object target whose name is
+ *   outside SUBMIT_NAMES, skips the check only when the page shows no
+ *   username field at all — the positive sign the login form is gone,
+ *   so the click is post-login. A non-submit name alone cannot clear
+ *   the check: a submit button labelled "Continue", "Next", or anything
+ *   outside SUBMIT_NAMES still submits, so on a page that still shows
+ *   a username field the check runs and the click is held until the
+ *   filled account is confirmed. A target the snapshot does not name,
+ *   and an object target with no name, still fail safe as a submit. The normal
  *   path checks right after the fill, so this is the net for a fill
  *   that completed without a check (reconciled, or ok in an earlier
  *   run) and the re-check for a fill whose verification may since have
@@ -215,23 +216,25 @@ export async function runPreStepGates(
         await failStep(task, step, index, 'verify-failed', `cannot verify the filled account before submit: ${detail}`, options.tasksDir);
         return task;
       }
-      // A string click target the snapshot names as a non-submit control
-      // skips the check ONLY when the page shows no username field at
-      // all — the positive sign the login form is gone, so the click is
-      // post-login and there is no filled account left to check. The
-      // fail-safe `isSubmitStep(step)` call above has no snapshot to
-      // resolve the target against, but this gate just read one — so
-      // resolve the target against it, and then ask whether the form is
-      // still there, before holding the step. A name alone cannot clear
-      // a submit: "Continue" is a routine multi-step-login label
-      // outside SUBMIT_NAMES, and an icon-only button has no name at
-      // all. And a missing filled username cannot clear it either:
-      // `extractFilledUsername` returns undefined both when no field
-      // exists and when the field exists but its value cannot be read,
-      // so the skip tests field presence (`hasUsernameField`), not the
-      // filled value — a present-but-unreadable field still runs the
-      // check, which pauses on `unknown` as before. A target the
-      // snapshot does not name still fails safe as a submit.
+      // A click target the snapshot resolves as a non-submit control —
+      // a string ref it names, or an object target whose name is
+      // outside SUBMIT_NAMES — skips the check ONLY when the page shows
+      // no username field at all — the positive sign the login form is
+      // gone, so the click is post-login and there is no filled account
+      // left to check. The fail-safe `isSubmitStep(step)` call above
+      // has no snapshot to resolve the target against, but this gate
+      // just read one — so resolve the target against it, and then ask
+      // whether the form is still there, before holding the step. A
+      // name alone cannot clear a submit: "Continue" is a routine
+      // multi-step-login label outside SUBMIT_NAMES, and an icon-only
+      // button has no name at all. And a missing filled username cannot
+      // clear it either: `extractFilledUsername` returns undefined both
+      // when no field exists and when the field exists but its value
+      // cannot be read, so the skip tests field presence
+      // (`hasUsernameField`), not the filled value — a
+      // present-but-unreadable field still runs the check, which pauses
+      // on `unknown` as before. A target the snapshot does not name,
+      // and an object target with no name, still fail safe as a submit.
       if (isSubmitStep(step, gateSnapshot) || hasUsernameField(gateSnapshot)) {
         // A recorded approval covers the account it was given for, and
         // only that account: while the same account is still filled, the

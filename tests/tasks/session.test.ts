@@ -23,6 +23,7 @@ import {
   replaceApprovedConstraint,
 } from '../../mcp-server/src/tasks/login-check.js';
 import { runTask } from '../../mcp-server/src/tasks/runner.js';
+import { runPreStepGates } from '../../mcp-server/src/tasks/login-gates.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
 import { outcomeOf, targetParam, textResult } from '../../mcp-server/src/tools/types.js';
@@ -835,16 +836,38 @@ describe('login-check helpers', () => {
     expect(checkFilledAccount({ url: 'https://example.com/login', text: FILLED_NO_VALUE_TEXT }, 'owner@example.com').status).toBe('unknown');
   });
 
-  it('recognises submit steps: Enter / submit:true / a sign-in click — and nothing else', () => {
+  it('recognises submit steps, and fails safe on a click target it cannot resolve without a snapshot', () => {
+    const snapshot = { url: 'https://example.com/login', text: FILLED_WRONG_TEXT };
     expect(isSubmitStep({ tool: 'browser_type', params: { key: 'Enter' }, verify: [] })).toBe(true);
     expect(isSubmitStep({ tool: 'browser_type', params: { submit: true }, verify: [] })).toBe(true);
     expect(isSubmitStep({ tool: 'browser_type', params: { key: 'a' }, verify: [] })).toBe(false);
     expect(
       isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', name: 'Sign in' } }, verify: [] }),
     ).toBe(true);
+    // A named non-submit control is a potential submit until a snapshot
+    // resolves it: without one the gate must enter, not guess the click
+    // harmless — "Continue" is a routine multi-step-login label outside
+    // SUBMIT_NAMES, and a nameless target names no control at all.
+    // With a snapshot the name decides, and the gate's inner check
+    // still runs while the login form is on the page.
     expect(
       isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', name: 'Cancel' } }, verify: [] }),
+    ).toBe(true);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', name: 'Cancel' } }, verify: [] }, snapshot),
     ).toBe(false);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', name: 'Continue' } }, verify: [] }),
+    ).toBe(true);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', name: 'Continue' } }, verify: [] }, snapshot),
+    ).toBe(false);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', nth: 0 } }, verify: [] }),
+    ).toBe(true);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', nth: 0 } }, verify: [] }, snapshot),
+    ).toBe(true);
     expect(
       isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', name: 'Sign in' }, hover: true }, verify: [] }),
     ).toBe(false);
@@ -1352,6 +1375,173 @@ describe('runner post-fill username check', () => {
       questions: { ask: runnerAsk(sent) },
     });
     expect(paused.state).toBe('paused-question');
+    expect(calls).not.toContain('browser_click');
+    expect(calls).not.toContain('browser_vault:fill');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.question.context?.purpose).toBe('login-check');
+    expect(sent[0]!.question.text).toContain('wrong@example.com');
+    expect(sent[0]!.question.text).toContain('owner@example.com');
+  });
+
+  it('the submit gate stops an object-target "Continue" click after a reconciled fill — the structured target is not a bypass', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_CONTINUE_TEXT);
+    tools.set('browser_click', fakeTool('browser_click', calls, textResult('clicked'), false, clickSchema));
+    // Same shape as the string-target "Continue" test above, but the
+    // submit is a click by role/name ({role: 'button', name:
+    // 'Continue'}) — the spec-recommended structured target form — so
+    // the gate must enter on the name alone instead of letting the
+    // click through: "Continue" is outside SUBMIT_NAMES, and before
+    // the fix this test runs to done — the click submits unchecked.
+    const task = loginTask('owner@example.com');
+    task.steps[0]!.result = {
+      status: 'ok',
+      detail: 'verified 1 rule(s) at https://example.com/login; snapshot=browser_snapshot tab 42; observed="heading \\"Login\\""',
+    };
+    task.steps[1]!.result = { status: 'ok', detail: 'filled' };
+    task.steps[2] = {
+      tool: 'browser_click',
+      params: { target: { role: 'button', name: 'Continue' }, tabId: 42 },
+      verify: [{ kind: 'text-present', value: 'Continue' }],
+    };
+    await saveTask(task, dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(calls).not.toContain('browser_click');
+    expect(calls).not.toContain('browser_vault:fill');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.question.context?.purpose).toBe('login-check');
+    expect(sent[0]!.question.text).toContain('wrong@example.com');
+    expect(sent[0]!.question.text).toContain('owner@example.com');
+  });
+
+  it('an object-target click on a non-submit control after login does not re-trigger the login check', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    // Same post-login shape as the string-target test above — the page
+    // follows the login, the clicked control is named by role/name
+    // instead of by ref — but the gate must still skip it: the object
+    // target resolves as a non-submit control AND the dashboard shows
+    // no username field, so there is no filled account left to check.
+    // This test passes before the fix too — it guards the legitimate
+    // path, not the hole: the fail-safe outer call must not turn a
+    // routine post-login click into a pause.
+    const DASHBOARD_TEXT =
+      'heading "Dashboard"\n- text "Balance: 1,234.56"\n- button "Covered action" [ref=e7]';
+    const DASHBOARD_CLICKED_TEXT =
+      'heading "Dashboard"\n- text "Balance: 1,234.56"\n- button "Covered action" [ref=e7]\n- text "Covered action done"';
+    let currentText = FILLED_RIGHT_TEXT;
+    let submitted = false;
+    const tools = loginTaskTools(calls, FILLED_RIGHT_TEXT);
+    tools.set('browser_snapshot', {
+      name: 'browser_snapshot',
+      summary: 'Fake browser_snapshot for the post-login object-click test',
+      description: 'Test-only stand-in for browser_snapshot.',
+      inputSchema: tabSchema,
+      idempotent: true as const,
+      handler: async () => {
+        calls.push('browser_snapshot');
+        return outcomeOf({
+          success: true,
+          text: currentText,
+          url: submitted ? 'https://example.com/dashboard' : 'https://example.com/login',
+          tabId: 42,
+        });
+      },
+    });
+    tools.set('browser_type', {
+      name: 'browser_type',
+      summary: 'Fake browser_type for the post-login object-click test',
+      description: 'Test-only stand-in for browser_type.',
+      inputSchema: typeSchema,
+      handler: async (_host, params) => {
+        calls.push('browser_type');
+        if (typeof params.key === 'string') {
+          currentText = DASHBOARD_TEXT;
+          submitted = true;
+        }
+        return textResult('typed');
+      },
+    });
+    tools.set('browser_click', {
+      name: 'browser_click',
+      summary: 'Fake browser_click for the post-login object-click test',
+      description: 'Test-only stand-in for browser_click.',
+      inputSchema: clickSchema,
+      handler: async () => {
+        calls.push('browser_click');
+        currentText = DASHBOARD_CLICKED_TEXT;
+        return textResult('clicked');
+      },
+    });
+    const task = loginTask('owner@example.com');
+    task.steps.push({
+      tool: 'browser_click',
+      params: { target: { role: 'button', name: 'Covered action' }, tabId: 42 },
+      verify: [{ kind: 'text-present', value: 'Covered action done' }],
+    });
+    await saveTask(task, dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(done.state).toBe('done');
+    // The fill matched, the submit ran, and no second question was ever
+    // asked: the post-login click is not a submit step.
+    expect(sent).toEqual([]);
+    expect(done.constraints).toContain(loginVerifiedConstraint(1));
+    expect(calls.filter((call) => call === 'browser_click')).toHaveLength(1);
+    expect(done.steps.map((step) => step.result?.status)).toEqual(['ok', 'ok', 'ok', 'ok']);
+  });
+
+  it('the submit gate stops a nameless object-target click after a reconciled fill — {role, nth} cannot be resolved as harmless', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_CONTINUE_TEXT);
+    tools.set('browser_click', fakeTool('browser_click', calls, textResult('clicked'), false, clickSchema));
+    // A {role, nth} target names no control, so no snapshot can clear
+    // it — the gate must enter and check the filled account, pausing
+    // on the mismatch. This goes through runPreStepGates directly: the
+    // click tool's schema (targetParam) requires `name` on an object
+    // target, so a nameless object step cannot arrive through the
+    // runner's validation — the fail-safe lives in isSubmitStep
+    // itself, for the gate and any direct caller. Before the fix the
+    // gate returns null and the click is never held.
+    const task = loginTask('owner@example.com');
+    task.steps[0]!.result = {
+      status: 'ok',
+      detail: 'verified 1 rule(s) at https://example.com/login; snapshot=browser_snapshot tab 42; observed="heading \\"Login\\""',
+    };
+    task.steps[1]!.result = { status: 'ok', detail: 'filled' };
+    task.steps[2] = {
+      tool: 'browser_click',
+      params: { target: { role: 'button', nth: 0 }, tabId: 42 },
+      verify: [{ kind: 'text-present', value: 'Continue' }],
+    };
+    await saveTask(task, dir);
+
+    const held = await runPreStepGates(
+      task,
+      task.steps[2]!,
+      2,
+      { tabId: 42 },
+      42,
+      undefined,
+      { tasksDir: dir, host: dummyHost, questions: { ask: runnerAsk(sent) } },
+      tools,
+    );
+    expect(held).not.toBeNull();
+    expect(held!.state).toBe('paused-question');
     expect(calls).not.toContain('browser_click');
     expect(calls).not.toContain('browser_vault:fill');
     expect(sent).toHaveLength(1);
