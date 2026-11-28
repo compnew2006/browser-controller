@@ -39,7 +39,7 @@ import { randomUUID } from 'node:crypto';
 import { defaultTasksDir, loadTask, saveTask } from './store.js';
 import { saveTaskWithReport } from './reporting.js';
 import { deletePendingQuestion, listPendingQuestions, loadPendingQuestion, savePendingQuestion } from './question-store.js';
-import { loginApprovedConstraint, replaceApprovedConstraint } from './login-check.js';
+import { loginApprovedAccountConstraint, loginApprovedConstraint, replaceApprovedConstraint } from './login-check.js';
 import type { Task } from './types.js';
 
 /** The kind of a question: a choice between options, a yes/no confirmation, or a free-text answer. */
@@ -400,6 +400,13 @@ export async function answerQuestion(
       const fillIndex = question.context.fillStepIndex ?? index;
       const constraint = loginApprovedConstraint(fillIndex);
       if (!task.constraints.includes(constraint)) task.constraints.push(constraint);
+      // The approval covers the account that was filled when the question
+      // was asked — and only that account. The submit gate honours it
+      // while that same account is still filled, and re-checks when the
+      // field has since changed, so a stale approval can never carry a
+      // different account through to submit.
+      const accountConstraint = loginApprovedAccountConstraint(fillIndex, question.context.filledAccount);
+      if (!task.constraints.includes(accountConstraint)) task.constraints.push(accountConstraint);
       task.evidence.push(
         `user approved proceeding as ${question.context.filledAccount ?? '(unread filled account)'} at step ${index + 1} of ${task.steps.length} (question ${id}) — login approval recorded for fill step ${fillIndex + 1} only`,
       );

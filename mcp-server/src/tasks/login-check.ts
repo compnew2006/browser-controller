@@ -30,11 +30,16 @@
  *   check paused the task.
  * - `replace-approved:step:<n>` — the user approved saving over an
  *   already-saved login before save_login step <n>.
- * A submit step that follows a fill without either login constraint for
- * that fill does not execute: the runner re-checks the filled account
- * first (the submit gate), so a fill that completed without a check —
- * reconciled after an unknown outcome, or ok in an earlier run — is
- * still caught before anything submits.
+ * A submit step that follows a fill is re-checked at the submit itself:
+ * a runner verification (`login-verified`) is point-in-time — a step
+ * between the fill and the submit may have rewritten the username field,
+ * so the gate re-reads the page and checks again instead of trusting the
+ * constraint recorded after the fill. A user approval (`login-approved`)
+ * is different: it covers the account that was filled when the question
+ * was asked, recorded alongside it as `login-approved-account:step:<n>`,
+ * so the gate honours it only while that same account is still filled.
+ * A fill that completed without a check — reconciled after an unknown
+ * outcome, or ok in an earlier run — is caught the same way.
  *
  * The replace-login warning is the same shape for the other direction:
  * before `browser_vault {save_login}` on an origin that already has a
@@ -70,6 +75,39 @@ export function hasLoginCheck(task: Task, stepIndex: number): boolean {
     task.constraints.includes(loginVerifiedConstraint(stepIndex)) ||
     task.constraints.includes(loginApprovedConstraint(stepIndex))
   );
+}
+
+/** Whether the user approved proceeding after the check for fill step `stepIndex`. */
+export function hasLoginApproval(task: Task, stepIndex: number): boolean {
+  return task.constraints.includes(loginApprovedConstraint(stepIndex));
+}
+
+/**
+ * The account a `proceed` answer approved proceeding as, for fill step
+ * `stepIndex` — recorded next to the `login-approved` constraint when the
+ * question is answered (`questions.ts`). An empty account means the
+ * approval was given while the filled account was unreadable. The
+ * approval covers this account only: if the field holds a different
+ * account by submit time, the approval no longer applies.
+ */
+export function loginApprovedAccountConstraint(stepIndex: number, filledAccount: string | undefined): string {
+  return `login-approved-account:step:${stepIndex}:${filledAccount ?? ''}`;
+}
+
+/**
+ * The filled account a recorded `proceed` approval covered — the latest
+ * one, when the user approved more than once for the same fill step — or
+ * undefined when no approval recorded the account (an approval from
+ * before this record existed). An empty string means the approval was
+ * given while the filled account was unreadable.
+ */
+export function approvedAccountOf(task: Task, stepIndex: number): string | undefined {
+  const prefix = `login-approved-account:step:${stepIndex}:`;
+  let found: string | undefined;
+  for (const constraint of task.constraints) {
+    if (constraint.startsWith(prefix)) found = constraint;
+  }
+  return found === undefined ? undefined : found.slice(prefix.length);
 }
 
 /** Whether this step is a vault fill (`browser_vault {fill}`). */
@@ -189,31 +227,75 @@ export function loginCheckQuestionText(outcome: LoginCheckOutcome): string {
 /** Accessible names of a sign-in submit control — the same names `session.ts` uses, plus `submit` itself. */
 const SUBMIT_NAMES = ['sign in', 'log in', 'login', 'submit', 'تسجيل الدخول', 'دخول', 'إرسال'];
 
-/** Whether a `browser_type` key press submits: one Enter token in the key (a combo or a sequence may carry it). */
+/** Whether a `browser_type` key press submits: one Enter token in the key (a combo or a sequence may carry it) — `Return` is the same key on the other keyboard layout. */
 function keySubmits(key: string): boolean {
   return key
     .split(/[\s+]+/u)
-    .some((token) => token.toLowerCase() === 'enter');
+    .some((token) => {
+      const lowered = token.toLowerCase();
+      return lowered === 'enter' || lowered === 'return';
+    });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+/**
+ * The control a snapshot line names for one ref (`e3` in
+ * `- button "Sign in" [ref=e3]`, or the short `[e3]` form): its role and
+ * accessible name. Undefined when no line carries that ref — a string
+ * target can also be a selector or coordinates, which no snapshot line
+ * names. Exported for the gate's tests; the submit check below is its
+ * only production caller.
+ */
+export function snapshotControlForRef(
+  snapshot: PageSnapshot,
+  ref: string,
+): { role: string; name: string } | undefined {
+  const pattern = new RegExp(`\\[(?:ref=)?${escapeRegExp(ref)}\\]`, 'u');
+  for (const line of snapshot.text.split('\n')) {
+    if (!pattern.test(line)) continue;
+    const match = /^\s*(?:-\s+)?([A-Za-z]+)\s+"([^"]*)"/u.exec(line);
+    if (!match) return undefined;
+    return { role: match[1] ?? '', name: match[2] ?? '' };
+  }
+  return undefined;
 }
 
 /**
  * Whether this step submits a form: `browser_type` with `submit: true`
- * or an Enter key, or a `browser_click` on a sign-in/submit control (a
- * hover-only click never submits). A click target given as a bare string
- * — a ref or a selector — names no control, so it is not a submit; the
- * submit gate only fires on a target that says what it clicks. Anything
- * else is not a submit step.
+ * or an Enter/Return key, a `browser_click` on a sign-in/submit control
+ * (a hover-only click never submits), or a `browser_evaluate` — a
+ * scripted step can submit the form (`form.submit()`, a click through
+ * JS), and its expression cannot prove it does not, so the submit gate
+ * treats every evaluate after a fill as a submit; with no fill before
+ * it the gate has nothing to hold, so a read-only evaluate elsewhere is
+ * unaffected. A click target given as a bare string — a ref or a
+ * selector — is resolved against the snapshot when one is given: the
+ * ref's control name decides. Without a snapshot, or when the snapshot
+ * names no control for the ref, the click fails safe as a submit: an
+ * unresolvable string target could be the Sign in button, and the gate
+ * exists to stop an unchecked submit, not to guess that it is harmless.
+ * Anything else is not a submit step.
  */
-export function isSubmitStep(step: TaskStep): boolean {
+export function isSubmitStep(step: TaskStep, snapshot?: PageSnapshot): boolean {
   if (step.tool === 'browser_type') {
     if (step.params.submit === true) return true;
     return typeof step.params.key === 'string' && keySubmits(step.params.key);
   }
+  if (step.tool === 'browser_evaluate') return true;
   if (step.tool === 'browser_click') {
     if (step.params.hover === true) return false;
     const target = step.params.target;
     if (target && typeof target === 'object' && typeof (target as Record<string, unknown>).name === 'string') {
       return hasWord((target as Record<string, unknown>).name as string, SUBMIT_NAMES);
+    }
+    if (typeof target === 'string') {
+      if (snapshot === undefined) return true;
+      const control = snapshotControlForRef(snapshot, target);
+      if (control === undefined) return true;
+      return hasWord(control.name, SUBMIT_NAMES);
     }
     return false;
   }
@@ -236,6 +318,24 @@ export function latestUnverifiedFillIndex(task: Task, beforeIndex?: number): num
     if (!isVaultFillStep(step)) continue;
     if (step.result?.status !== 'ok') continue;
     if (hasLoginCheck(task, index)) continue;
+    latest = index;
+  }
+  return latest;
+}
+
+/**
+ * The latest vault-fill step that already ran (`ok`) before
+ * `beforeIndex` — verified or not. The submit gate re-checks this fill
+ * at every submit: a verification recorded after the fill is
+ * point-in-time, so it is not trusted from the fill onward.
+ */
+export function latestFillIndex(task: Task, beforeIndex?: number): number | undefined {
+  let latest: number | undefined;
+  const end = beforeIndex === undefined ? task.steps.length : Math.min(beforeIndex, task.steps.length);
+  for (let index = 0; index < end; index++) {
+    const step = task.steps[index]!;
+    if (!isVaultFillStep(step)) continue;
+    if (step.result?.status !== 'ok') continue;
     latest = index;
   }
   return latest;

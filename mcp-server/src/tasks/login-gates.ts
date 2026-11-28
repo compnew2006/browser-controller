@@ -28,20 +28,23 @@ import { originOf } from './session.js';
 import { readFreshSnapshot, type PageSnapshot } from './verify.js';
 import { redactParamsForQuestion } from './questions.js';
 import {
+  approvedAccountOf,
   checkFilledAccount,
   defaultListSavedLogins,
   expectedAccountOf,
   extractFilledUsername,
   findDifferentSavedLogin,
+  hasLoginApproval,
   isSubmitStep,
   isVaultFillStep,
   isVaultSaveLoginStep,
-  latestUnverifiedFillIndex,
+  latestFillIndex,
   loginCheckQuestionText,
   loginVerifiedConstraint,
   replaceApprovedConstraint,
   replaceQuestionText,
   replaceUnknownQuestionText,
+  usernamesMatch,
   type LoginCheckOutcome,
   type SavedLogin,
 } from './login-check.js';
@@ -154,15 +157,22 @@ export async function checkFillAfterReconcile(
 /**
  * The gates that run before a step executes, in order:
  *
- * - The submit gate: a submit step that follows a vault fill without a
- *   passing login check for that fill must not execute. The normal path
- *   checks right after the fill, so this usually finds the constraint
- *   already recorded and costs no read — it is the net for a fill that
- *   completed without a check (reconciled, or ok in an earlier run).
- *   The check re-reads the page, so a `proceed` answer to an earlier
- *   question is honoured through the recorded approval, not by re-asking.
- *   A snapshot that cannot be read fails the submit step as
- *   `verify-failed`: the step never runs on an unverified account.
+ * - The submit gate: a submit step that follows a vault fill must not
+ *   execute on an account that has not just been checked. The gate
+ *   re-reads the page and checks the filled account at every submit
+ *   following a fill — one extra snapshot read per submit — because a
+ *   verification recorded after the fill is point-in-time: any step
+ *   between the fill and the submit (typing, a fill, a script) may have
+ *   rewritten the username field, and so may page script. The normal
+ *   path checks right after the fill, so this is the net for a fill
+ *   that completed without a check (reconciled, or ok in an earlier
+ *   run) and the re-check for a fill whose verification may since have
+ *   gone stale. A recorded `proceed` approval is honoured only while
+ *   the account it was given for is still the filled one
+ *   (`login-approved-account`): the user approved proceeding as that
+ *   account, not as whatever the field holds now. A snapshot that
+ *   cannot be read fails the submit step as `verify-failed`: the step
+ *   never runs on an unverified account.
  * - The replace-login warning: before a save_login step runs, list the
  *   logins already saved for the page's origin. A different saved
  *   username means the save would replace that login, so the task asks
@@ -184,7 +194,7 @@ export async function runPreStepGates(
   tools: ReadonlyMap<string, ToolDefinition>,
 ): Promise<Task | null> {
   if (isSubmitStep(step)) {
-    const fillIndex = latestUnverifiedFillIndex(task, index);
+    const fillIndex = latestFillIndex(task, index);
     if (fillIndex !== undefined) {
       const gateTabId = typeof validated.tabId === 'number' ? validated.tabId : boundTabId;
       let gateSnapshot: PageSnapshot;
@@ -195,8 +205,25 @@ export async function runPreStepGates(
         await failStep(task, step, index, 'verify-failed', `cannot verify the filled account before submit: ${detail}`, options.tasksDir);
         return task;
       }
-      const held = await checkFillAndMaybePause(task, task.steps[fillIndex]!, fillIndex, gateSnapshot, index, options);
-      if (held) return held;
+      // A recorded approval covers the account it was given for, and
+      // only that account: while the same account is still filled, the
+      // submit runs without re-asking. Anything else — a runner
+      // verification from fill time, no check at all, or an approval
+      // whose account is no longer filled — is re-checked now, against
+      // the snapshot just read, before the submit runs.
+      let stillApproved = false;
+      if (hasLoginApproval(task, fillIndex)) {
+        const approved = approvedAccountOf(task, fillIndex);
+        const filled = extractFilledUsername(gateSnapshot);
+        stillApproved =
+          approved !== undefined &&
+          ((approved === '' && filled === undefined) ||
+            (approved !== '' && filled !== undefined && usernamesMatch(filled, approved)));
+      }
+      if (!stillApproved) {
+        const held = await checkFillAndMaybePause(task, task.steps[fillIndex]!, fillIndex, gateSnapshot, index, options);
+        if (held) return held;
+      }
     }
   }
 

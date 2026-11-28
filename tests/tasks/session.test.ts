@@ -9,10 +9,14 @@ import { loadTask, saveTask } from '../../mcp-server/src/tasks/store.js';
 import { saveTaskWithReport } from '../../mcp-server/src/tasks/reporting.js';
 import { answerQuestion, askQuestion, type Question, type QuestionContext } from '../../mcp-server/src/tasks/questions.js';
 import {
+  approvedAccountOf,
   checkFilledAccount,
   extractFilledUsername,
   findDifferentSavedLogin,
+  hasLoginApproval,
   isSubmitStep,
+  latestFillIndex,
+  loginApprovedAccountConstraint,
   loginApprovedConstraint,
   loginVerifiedConstraint,
   replaceApprovedConstraint,
@@ -20,7 +24,7 @@ import {
 import { runTask } from '../../mcp-server/src/tasks/runner.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
-import { outcomeOf, textResult } from '../../mcp-server/src/tools/types.js';
+import { outcomeOf, targetParam, textResult } from '../../mcp-server/src/tools/types.js';
 
 let dir: string;
 beforeEach(() => {
@@ -752,6 +756,10 @@ const FILLED_RIGHT_TEXT =
   '- button "Sign in" [ref=e3]';
 const FILLED_NO_VALUE_TEXT =
   '- textbox "Email" [ref=e1]\n- textbox "Password" [ref=e2]\n- button "Sign in" [ref=e3]';
+const FILLED_CHANGED_TEXT =
+  '- textbox "Email" [ref=e1] value="changed@example.com"\n' +
+  '- textbox "Password" [ref=e2] value="••••"\n' +
+  '- button "Sign in" [ref=e3]';
 
 describe('login-check helpers', () => {
   it('reads the username field value from the snapshot, never the password value', () => {
@@ -801,6 +809,53 @@ describe('login-check helpers', () => {
     expect(isSubmitStep({ tool: 'browser_snapshot', params: {}, verify: [] })).toBe(false);
   });
 
+  it('resolves a string click target against the snapshot, treats Return as Enter, and treats a scripted evaluate as a submit', () => {
+    const snapshot = { url: 'https://example.com/login', text: FILLED_WRONG_TEXT };
+    // "e3" is the Sign in button in this snapshot; "e1" is the Email textbox.
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: 'e3' }, verify: [] }, snapshot),
+    ).toBe(true);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: 'e1' }, verify: [] }, snapshot),
+    ).toBe(false);
+    // A ref the snapshot does not name could still be the submit control,
+    // so it fails safe as a submit — and so does a string target with no
+    // snapshot to resolve it against.
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: 'e9' }, verify: [] }, snapshot),
+    ).toBe(true);
+    expect(isSubmitStep({ tool: 'browser_click', params: { target: 'e3' }, verify: [] })).toBe(true);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: 'e3', hover: true }, verify: [] }, snapshot),
+    ).toBe(false);
+    // "Return" is the same key as Enter on the other keyboard layout, in a
+    // combo or on its own; a scripted step can submit the form too.
+    expect(isSubmitStep({ tool: 'browser_type', params: { key: 'Return' }, verify: [] })).toBe(true);
+    expect(isSubmitStep({ tool: 'browser_type', params: { key: 'Control+Return' }, verify: [] })).toBe(true);
+    expect(isSubmitStep({ tool: 'browser_evaluate', params: { expression: 'document.querySelector("form").submit()' }, verify: [] })).toBe(true);
+    expect(isSubmitStep({ tool: 'browser_evaluate', params: { expression: 'document.title' }, verify: [] })).toBe(true);
+  });
+
+  it('finds the latest completed fill before a submit, verified or not, and remembers which account an approval covered', () => {
+    const task = loginTask('owner@example.com');
+    task.steps[1]!.result = { status: 'ok', detail: 'filled' };
+    expect(latestFillIndex(task, 2)).toBe(1);
+    expect(latestFillIndex(task, 1)).toBeUndefined();
+    expect(latestFillIndex(task)).toBe(1);
+    expect(hasLoginApproval(task, 1)).toBe(false);
+    expect(approvedAccountOf(task, 1)).toBeUndefined();
+    task.constraints.push(loginApprovedConstraint(1), loginApprovedAccountConstraint(1, 'wrong@example.com'));
+    expect(hasLoginApproval(task, 1)).toBe(true);
+    expect(approvedAccountOf(task, 1)).toBe('wrong@example.com');
+    // A later approval for a different filled account supersedes the first.
+    task.constraints.push(loginApprovedAccountConstraint(1, 'changed@example.com'));
+    expect(approvedAccountOf(task, 1)).toBe('changed@example.com');
+    // An approval given while the filled account was unreadable records an empty account.
+    const unreadTask = loginTask('owner@example.com');
+    unreadTask.constraints.push(loginApprovedAccountConstraint(1, undefined));
+    expect(approvedAccountOf(unreadTask, 1)).toBe('');
+  });
+
   it('finds a saved login under a different username, and none for the same username', () => {
     const saved = [{ username: 'saved@example.com' }];
     expect(findDifferentSavedLogin(saved, 'saved@example.com')).toBeUndefined();
@@ -843,6 +898,13 @@ const typeSchema = z
     key: z.string().optional(),
     submit: z.boolean().optional(),
     text: z.string().optional(),
+  })
+  .strict();
+const clickSchema = z
+  .object({
+    tabId: z.number().optional(),
+    target: targetParam,
+    hover: z.boolean().optional(),
   })
   .strict();
 
@@ -1093,6 +1155,106 @@ describe('runner post-fill username check', () => {
     expect(calls).not.toContain('browser_vault:fill');
     expect(sent).toHaveLength(1);
     expect(sent[0]!.question.context?.purpose).toBe('login-check');
+  });
+
+  it('the submit gate stops a string-target Sign-in click after a reconciled fill — never submits unchecked', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    tools.set('browser_click', fakeTool('browser_click', calls, textResult('clicked'), false, clickSchema));
+    // The fill already ran ok in an earlier run, with no verified or
+    // approved constraint recorded for it — and the submit is a click by
+    // ref ("e3"), not by role/name, so the gate must resolve the ref
+    // against the snapshot instead of letting the click through.
+    const task = loginTask('owner@example.com');
+    task.steps[0]!.result = {
+      status: 'ok',
+      detail: 'verified 1 rule(s) at https://example.com/login; snapshot=browser_snapshot tab 42; observed="heading \\"Login\\""',
+    };
+    task.steps[1]!.result = { status: 'ok', detail: 'filled' };
+    task.steps[2] = {
+      tool: 'browser_click',
+      params: { target: 'e3', tabId: 42 },
+      verify: [{ kind: 'text-present', value: 'Sign in' }],
+    };
+    await saveTask(task, dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(calls).not.toContain('browser_click');
+    expect(calls).not.toContain('browser_vault:fill');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.question.context?.purpose).toBe('login-check');
+    expect(sent[0]!.question.text).toContain('wrong@example.com');
+    expect(sent[0]!.question.text).toContain('owner@example.com');
+  });
+
+  it('an intervening step that changes the username field after a verified check makes the submit gate re-check and pause', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    // The snapshot follows the page: it shows the matching account after
+    // the fill, and the changed account once a type step rewrites the
+    // username field — the submit gate must read the changed value, not
+    // trust the verified constraint recorded after the fill.
+    let currentText = FILLED_RIGHT_TEXT;
+    const tools = loginTaskTools(calls, FILLED_RIGHT_TEXT);
+    tools.set('browser_snapshot', {
+      name: 'browser_snapshot',
+      summary: 'Fake browser_snapshot for the intervening-change test',
+      description: 'Test-only stand-in for browser_snapshot.',
+      inputSchema: tabSchema,
+      idempotent: true as const,
+      handler: async () => {
+        calls.push('browser_snapshot');
+        return outcomeOf({ success: true, text: currentText, url: 'https://example.com/login', tabId: 42 });
+      },
+    });
+    tools.set('browser_type', {
+      name: 'browser_type',
+      summary: 'Fake browser_type for the intervening-change test',
+      description: 'Test-only stand-in for browser_type.',
+      inputSchema: typeSchema,
+      handler: async (_host, params) => {
+        calls.push('browser_type');
+        if (typeof params.text === 'string') currentText = FILLED_CHANGED_TEXT;
+        return textResult('typed');
+      },
+    });
+    const task = loginTask('owner@example.com');
+    task.steps[2] = {
+      tool: 'browser_type',
+      params: { text: 'changed@example.com', tabId: 42 },
+      verify: [{ kind: 'no-error-text', value: "isn't working" }],
+    };
+    task.steps.push({
+      tool: 'browser_type',
+      params: { key: 'Enter', tabId: 42 },
+      verify: [{ kind: 'no-error-text', value: "isn't working" }],
+    });
+    await saveTask(task, dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    // The post-fill check passed (the fill matched), and only the
+    // intervening type ran — the Enter submit never did.
+    expect(paused.constraints).toContain(loginVerifiedConstraint(1));
+    expect(paused.steps[1]?.result?.status).toBe('ok');
+    expect(calls.filter((call) => call === 'browser_type')).toHaveLength(1);
+    expect(paused.steps[3]?.result).toBeUndefined();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.question.context?.purpose).toBe('login-check');
+    expect(sent[0]!.question.text).toContain('changed@example.com');
+    expect(sent[0]!.question.text).toContain('owner@example.com');
   });
 
   it('a "stop" answer on a fill-last task fails it without rewriting the fill result', async () => {
