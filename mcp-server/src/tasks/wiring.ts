@@ -55,6 +55,7 @@ import { answerQuestion, askQuestion, type QuestionSendFn } from './questions.js
 import { runTask, type RunTaskOptions } from './runner.js';
 import { loadTask } from './store.js';
 import { saveTaskWithReport } from './reporting.js';
+import { pushTaskStatus } from './task-status.js';
 import type { Task } from './types.js';
 
 const log = createLogger('TaskWiring');
@@ -193,12 +194,15 @@ export async function runTaskWithReport(id: string, options: RunTaskOptions = {}
   }
 }
 
-/** Drive a task in the background: the caller returns at once, and a failed resume is logged, never thrown. */
-export function resumeTaskInBackground(id: string, options: RunTaskOptions): void {
-  void runTaskWithReport(id, options).catch((error: unknown) => {
-    const detail = error instanceof Error ? error.message : String(error);
-    log.warn(`background run of task ${id} failed: ${detail}`);
-  });
+/** Drive a task in the background: the caller returns at once, and a failed resume is logged, never thrown. Resolves when the run settles. */
+export function resumeTaskInBackground(id: string, options: RunTaskOptions): Promise<void> {
+  return runTaskWithReport(id, options).then(
+    () => undefined,
+    (error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      log.warn(`background run of task ${id} failed: ${detail}`);
+    },
+  );
 }
 
 /**
@@ -209,17 +213,34 @@ export function resumeTaskInBackground(id: string, options: RunTaskOptions): voi
  * answer is recorded, so the popup's `taskAnswerAck` is not held behind
  * the whole resumed run. Questions a resumed run asks go straight to
  * `bridge.sendControl`, which is the daemon's own channel.
+ *
+ * The task list is pushed at both moments the daemon owns here: the
+ * resume push is awaited inside the continuation — strictly before the
+ * background run starts, so the popup never sees the settle first — and
+ * the settle push rides the background run's promise, so a task that
+ * settles after the resume push is reflected in the next push. A declined
+ * answer never runs the continuation (the task fails instead), so the
+ * settled `failed` state is pushed after `answerQuestion` returns.
  */
-export function createTaskAnswerContinuation(bridge: TaskBridge): TaskAnswerHandler {
+export function createTaskAnswerContinuation(bridge: TaskBridge, tasksDir?: string): TaskAnswerHandler {
   return (questionId, answer) =>
     answerQuestion(questionId, answer, {
-      continueWith: (task) => {
+      ...(tasksDir !== undefined ? { tasksDir } : {}),
+      continueWith: async (task) => {
+        await pushTaskStatus(bridge, tasksDir);
         const host = daemonToolHost(bridge, task.sessionId);
         const send: QuestionSendFn = (message) => {
           bridge.sendControl(message.type, { question: message.question });
         };
-        resumeTaskInBackground(task.id, taskRunOptions(host, send, undefined, task.id));
-        return Promise.resolve(task);
+        const run = resumeTaskInBackground(task.id, taskRunOptions(host, send, tasksDir, task.id));
+        run.then(
+          () => pushTaskStatus(bridge, tasksDir),
+          () => pushTaskStatus(bridge, tasksDir),
+        );
+        return task;
       },
+    }).then(async (task) => {
+      if (task.state === 'failed') await pushTaskStatus(bridge, tasksDir);
+      return task;
     });
 }

@@ -127,7 +127,7 @@ export const taskStartTool: ToolDefinition = {
     const task = planTask(args.goal, args.constraints ?? []);
     if (typeof host.sessionId === 'string' && host.sessionId !== '') task.sessionId = host.sessionId;
     await saveTask(task, tasksDir);
-    resumeTaskInBackground(task.id, taskRunOptions(host, wireQuestionSend(host), tasksDir, task.id));
+    void resumeTaskInBackground(task.id, taskRunOptions(host, wireQuestionSend(host), tasksDir, task.id));
     return textResult(
       JSON.stringify({ taskId: task.id, state: task.state, goal: task.goal, steps: task.steps.length, constraints: task.constraints }),
     );
@@ -225,7 +225,7 @@ export const taskAnswerTool: ToolDefinition = {
     const task = await answerQuestion(args.questionId, args.answer, {
       tasksDir,
       continueWith: (answered) => {
-        resumeTaskInBackground(answered.id, taskRunOptions(host, wireQuestionSend(host), tasksDir, answered.id));
+        void resumeTaskInBackground(answered.id, taskRunOptions(host, wireQuestionSend(host), tasksDir, answered.id));
         return Promise.resolve(answered);
       },
     });
@@ -293,7 +293,7 @@ export const taskResumeTool: ToolDefinition = {
       tasksDir,
       readPage: (toRead) => readPageForResume(host, toRead),
       continueWith: (toContinue) => {
-        resumeTaskInBackground(toContinue.id, taskRunOptions(host, wireQuestionSend(host), tasksDir, toContinue.id));
+        void resumeTaskInBackground(toContinue.id, taskRunOptions(host, wireQuestionSend(host), tasksDir, toContinue.id));
         return Promise.resolve(toContinue);
       },
     });

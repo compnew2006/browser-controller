@@ -13,8 +13,9 @@ export function routeTaskInternalAction(
   sessionId: string,
   tool: string,
   params: Record<string, unknown>,
+  tasksDir?: string,
 ) {
-  if (tool === TASK_QUESTION_WIRE_ACTION) return routeTaskQuestion(bridge, params);
-  if (tool === TASK_LOCK_RELEASE_WIRE_ACTION) return routeTaskLockRelease(bridge, sessionId, params);
+  if (tool === TASK_QUESTION_WIRE_ACTION) return routeTaskQuestion(bridge, params, tasksDir);
+  if (tool === TASK_LOCK_RELEASE_WIRE_ACTION) return routeTaskLockRelease(bridge, sessionId, params, tasksDir);
   return undefined;
 }

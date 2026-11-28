@@ -19,6 +19,7 @@
 import { isRecord } from '../core/guards.js';
 import { ERROR_CODES, formatError } from '../core/error-codes.js';
 import { validatePendingQuestion } from './question-store.js';
+import { pushTaskStatus } from './task-status.js';
 
 /** The bridge's control channel, structurally — this module never imports the bridge itself. */
 export interface QuestionBridge {
@@ -29,6 +30,7 @@ export interface QuestionBridge {
 export function routeTaskQuestion(
   bridge: QuestionBridge,
   params: Record<string, unknown>,
+  tasksDir?: string,
 ): { success: true; result: { sent: boolean; questionId: string } } | { success: false; error: string } {
   if (!isRecord(params) || !('question' in params)) {
     return { success: false, error: formatError(ERROR_CODES.INVALID_ARGUMENT, 'a task question send needs a question') };
@@ -36,6 +38,9 @@ export function routeTaskQuestion(
   try {
     const question = validatePendingQuestion(params.question);
     bridge.sendControl('taskQuestion', { question });
+    // The ask paused the task before sending (questions.ts), so the task
+    // files already carry the pause: push the list at this pause moment.
+    void pushTaskStatus(bridge, tasksDir);
     return { success: true, result: { sent: true, questionId: question.id } };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

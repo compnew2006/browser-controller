@@ -21,6 +21,7 @@
 import { ExtensionBridge } from './bridge.js';
 import { DEFAULT_WS_HOST, DEFAULT_WS_PORT } from './daemon-config.js';
 import { pendingQuestions, restorePendingQuestions } from './tasks/questions.js';
+import { pushTaskStatus } from './tasks/task-status.js';
 import { createTaskAnswerContinuation } from './tasks/wiring.js';
 import { createLogger } from './core/logger.js';
 
@@ -47,7 +48,16 @@ export async function createDaemonBridge(options: DaemonBridgeOptions): Promise<
   });
   bridge.setSessionRoster(options.sessionRoster);
   bridge.setTaskAnswerHandler(createTaskAnswerContinuation(bridge));
-  bridge.setPendingTaskQuestionsProvider(() => pendingQuestions());
+  // The provider runs in the bridge's markExtensionReady on every
+  // (re)connect, so the task-list push rides the same moment: a
+  // reconnecting extension gets the list fresh from the task files, and
+  // the Tasks/Evidence panels rehydrate instead of showing what this
+  // session has seen. No second hook: bridge.ts sits at the 600-line
+  // maintenance gate, and a new setter would push it over.
+  bridge.setPendingTaskQuestionsProvider(() => {
+    void pushTaskStatus(bridge);
+    return pendingQuestions();
+  });
   try {
     await restorePendingQuestions();
   } catch (error) {
