@@ -60,7 +60,7 @@
  * `executeStepWithRecovery`.
  */
 import { ERROR_CODES } from '../core/error-codes.js';
-import { errorCodeOf } from './recovery.js';
+import { errorCodeOf, whereOf } from './recovery.js';
 import { resultText } from './verify.js';
 import { failureResult } from '../tools/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from '../tools/types.js';
@@ -102,12 +102,6 @@ export interface PrepareDeps {
   host: ToolHost | undefined;
   /** The tab the step ran on, when one is bound — the prepare runs on the same tab. */
   tabId?: number;
-}
-
-/** The step's place in its task, for the evidence line. */
-function whereOf(task: Task, step: TaskStep): string {
-  const index = task.steps.indexOf(step);
-  return index >= 0 ? `step ${index + 1} (${step.tool})` : step.tool;
 }
 
 /** One prepare tool call, as an outcome: a missing tool is a failure, not a throw. */

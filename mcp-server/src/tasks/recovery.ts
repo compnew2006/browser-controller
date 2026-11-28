@@ -188,8 +188,8 @@ export interface ReconcileUnknownOptions {
   verify?: (step: TaskStep, snapshot: PageSnapshot) => VerifyOutcome | Promise<VerifyOutcome>;
 }
 
-/** The step's place in its task, for the evidence line. */
-function whereOf(task: Task, step: TaskStep): string {
+/** The step's place in its task, for the evidence line. Shared with `prepare.ts` (Law 1: one definition, not a copy in each module). */
+export function whereOf(task: Task, step: TaskStep): string {
   const index = task.steps.indexOf(step);
   return index >= 0 ? `step ${index + 1} (${step.tool})` : step.tool;
 }
