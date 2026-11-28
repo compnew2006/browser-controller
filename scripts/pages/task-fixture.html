@@ -15,7 +15,18 @@
                records" control that reveals a fourth value (7), an
                "End session" button that returns to the login view
                (the session-expiry the audit task must survive), and a
-               link to the error view.
+               link to the error view. The dashboard also carries the
+               Gap A states (Task 5): a button a fixed banner covers
+               ("Covered action") and a hover-menu item ("Menu item") —
+               each writes its done marker when clicked. The staging
+               mirrors scripts/pages/prepare-fixture.html (a small
+               amount of duplication across two fixtures with different
+               purposes: the prepare fixture stages the two states on
+               their own views; this one stages them on the dashboard
+               the audit task is already on): a tall spacer above the
+               covered button and a scroll on showing the dashboard so
+               the button sits under the banner, and a submenu that is
+               visibility:hidden until its menu is hovered.
   - error:     a Chrome-style error page ("This page isn't working",
                ERR_CONNECTION_RESET) — verification must fail on it,
                never report success because navigation itself worked.
@@ -42,6 +53,21 @@
   input { display: block; margin-top: 2px; padding: 6px; }
   button { padding: 8px 12px; margin: 4px 4px 4px 0; cursor: pointer; }
   .values p { color: #222; }
+  #result-covered, #result-menu { color: #222; font-weight: bold; }
+  /* Gap A states: the fixed banner sits over the covered button until
+     it is scrolled into view (see the showView staging below). */
+  #audit-banner {
+    position: fixed; top: 0; left: 0; right: 0; height: 120px;
+    background: #333; color: #fff; line-height: 120px; padding: 0 16px;
+    z-index: 10;
+  }
+  #view-dashboard .spacer-top { height: 900px; }
+  #view-dashboard .spacer { height: 1200px; }
+  /* Hover-menu view: the item keeps its box while hidden. */
+  #menu { display: inline-block; position: relative; }
+  #menu .submenu { visibility: hidden; }
+  #menu:hover .submenu, #menu:focus-within .submenu { visibility: visible; }
+  #menu .submenu button { display: block; }
 </style>
 </head>
 <body>
@@ -66,6 +92,18 @@
   <button id="include-archived" type="button">Include archived records</button>
   <button id="end-session" type="button">End session</button>
   <p><a id="show-error" href="#error">Show the error page</a></p>
+  <div id="audit-banner">Audit fixture — banner (covers the button below until scrolled)</div>
+  <div class="spacer-top"></div>
+  <button id="covered-action" type="button">Covered action</button>
+  <div class="spacer"></div>
+  <p id="result-covered"></p>
+  <div id="menu">
+    <button id="menu-trigger" type="button" aria-haspopup="true">Menu</button>
+    <div class="submenu">
+      <button id="menu-item" type="button">Menu item</button>
+    </div>
+  </div>
+  <p id="result-menu"></p>
 </section>
 
 <section id="view-error">
@@ -82,6 +120,16 @@
     const wanted = views[name] || views.login;
     for (const id of Object.values(views)) document.getElementById(id).classList.remove('active');
     document.getElementById(wanted).classList.add('active');
+    // Stage the covered state: scroll the page so the covered button
+    // sits under the fixed banner (its centre ~102px down, inside the
+    // 120px banner). Scroll-into-view with block:'center' then has room
+    // to move it to the viewport centre, below the banner. Same staging
+    // as scripts/pages/prepare-fixture.html.
+    if (name === 'dashboard') {
+      const btn = document.getElementById('covered-action');
+      const top = btn.getBoundingClientRect().top + window.scrollY;
+      window.scrollTo(0, top - 85);
+    }
   }
   function viewFromLocation() {
     // Served use: /task-fixture/dashboard (pathname first). File use:
@@ -110,6 +158,12 @@
   document.getElementById('end-session').addEventListener('click', () => go('login'));
   document.getElementById('include-archived').addEventListener('click', () => {
     document.getElementById('archived').hidden = false;
+  });
+  document.getElementById('covered-action').addEventListener('click', () => {
+    document.getElementById('result-covered').textContent = 'Covered action done';
+  });
+  document.getElementById('menu-item').addEventListener('click', () => {
+    document.getElementById('result-menu').textContent = 'Menu item done';
   });
   document.getElementById('show-error').addEventListener('click', (e) => {
     e.preventDefault();
