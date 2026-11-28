@@ -348,27 +348,6 @@ export function isSubmitStep(step: TaskStep, snapshot?: PageSnapshot): boolean {
 }
 
 /**
- * The latest vault-fill step that already ran (`ok`) but has no passing
- * login check recorded for it — the fill a submit step must not follow
- * unchecked. Only fills before `beforeIndex` count: a fill listed after
- * the submit step has not happened yet from the submit's point of view.
- * Undefined when every completed fill was checked, or no fill ran: the
- * submit gate has nothing to hold.
- */
-export function latestUnverifiedFillIndex(task: Task, beforeIndex?: number): number | undefined {
-  let latest: number | undefined;
-  const end = beforeIndex === undefined ? task.steps.length : Math.min(beforeIndex, task.steps.length);
-  for (let index = 0; index < end; index++) {
-    const step = task.steps[index]!;
-    if (!isVaultFillStep(step)) continue;
-    if (step.result?.status !== 'ok') continue;
-    if (hasLoginCheck(task, index)) continue;
-    latest = index;
-  }
-  return latest;
-}
-
-/**
  * The latest vault-fill step that already ran (`ok`) before
  * `beforeIndex` — verified or not. The submit gate re-checks this fill
  * at every submit: a verification recorded after the fill is
