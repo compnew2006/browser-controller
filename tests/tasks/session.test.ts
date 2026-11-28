@@ -1194,6 +1194,89 @@ describe('runner post-fill username check', () => {
     expect(sent[0]!.question.text).toContain('owner@example.com');
   });
 
+  it('a string-target click on a non-submit control after login does not re-trigger the login check', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    // The page follows the login: the filled form before submit, the
+    // dashboard — no username field, but the clicked control named by
+    // its ref — after it. The submit gate must resolve the click's
+    // string target against that dashboard snapshot instead of failing
+    // safe as a submit: "Covered action" is not a sign-in control, so
+    // there is no submit to hold, and no username left on the page to
+    // check against. Before the fix this test pauses at step 4 with a
+    // second login-check question ("could not be read from the page")
+    // and the click never runs.
+    const DASHBOARD_TEXT =
+      'heading "Dashboard"\n- text "Balance: 1,234.56"\n- button "Covered action" [ref=e7]';
+    const DASHBOARD_CLICKED_TEXT =
+      'heading "Dashboard"\n- text "Balance: 1,234.56"\n- button "Covered action" [ref=e7]\n- text "Covered action done"';
+    let currentText = FILLED_RIGHT_TEXT;
+    let submitted = false;
+    const tools = loginTaskTools(calls, FILLED_RIGHT_TEXT);
+    tools.set('browser_snapshot', {
+      name: 'browser_snapshot',
+      summary: 'Fake browser_snapshot for the post-login click test',
+      description: 'Test-only stand-in for browser_snapshot.',
+      inputSchema: tabSchema,
+      idempotent: true as const,
+      handler: async () => {
+        calls.push('browser_snapshot');
+        return outcomeOf({
+          success: true,
+          text: currentText,
+          url: submitted ? 'https://example.com/dashboard' : 'https://example.com/login',
+          tabId: 42,
+        });
+      },
+    });
+    tools.set('browser_type', {
+      name: 'browser_type',
+      summary: 'Fake browser_type for the post-login click test',
+      description: 'Test-only stand-in for browser_type.',
+      inputSchema: typeSchema,
+      handler: async (_host, params) => {
+        calls.push('browser_type');
+        if (typeof params.key === 'string') {
+          currentText = DASHBOARD_TEXT;
+          submitted = true;
+        }
+        return textResult('typed');
+      },
+    });
+    tools.set('browser_click', {
+      name: 'browser_click',
+      summary: 'Fake browser_click for the post-login click test',
+      description: 'Test-only stand-in for browser_click.',
+      inputSchema: clickSchema,
+      handler: async () => {
+        calls.push('browser_click');
+        currentText = DASHBOARD_CLICKED_TEXT;
+        return textResult('clicked');
+      },
+    });
+    const task = loginTask('owner@example.com');
+    task.steps.push({
+      tool: 'browser_click',
+      params: { target: 'e7', tabId: 42 },
+      verify: [{ kind: 'text-present', value: 'Covered action done' }],
+    });
+    await saveTask(task, dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(done.state).toBe('done');
+    // The fill matched, the submit ran, and no second question was ever
+    // asked: the post-login click is not a submit step.
+    expect(sent).toEqual([]);
+    expect(done.constraints).toContain(loginVerifiedConstraint(1));
+    expect(calls.filter((call) => call === 'browser_click')).toHaveLength(1);
+    expect(done.steps.map((step) => step.result?.status)).toEqual(['ok', 'ok', 'ok', 'ok']);
+  });
+
   it('an intervening step that changes the username field after a verified check makes the submit gate re-check and pause', async () => {
     const calls: string[] = [];
     const sent: Array<{ type: string; question: Question }> = [];

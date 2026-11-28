@@ -163,7 +163,12 @@ export async function checkFillAfterReconcile(
  *   following a fill — one extra snapshot read per submit — because a
  *   verification recorded after the fill is point-in-time: any step
  *   between the fill and the submit (typing, a fill, a script) may have
- *   rewritten the username field, and so may page script. The normal
+ *   rewritten the username field, and so may page script. A string click
+ *   target is resolved against the snapshot just read: a control it
+ *   names as a non-submit control is not a submit step, so a post-login
+ *   click does not re-trigger the check on a page that no longer shows
+ *   the username field; a target the snapshot does not name still fails
+ *   safe as a submit. The normal
  *   path checks right after the fill, so this is the net for a fill
  *   that completed without a check (reconciled, or ok in an earlier
  *   run) and the re-check for a fill whose verification may since have
@@ -205,24 +210,34 @@ export async function runPreStepGates(
         await failStep(task, step, index, 'verify-failed', `cannot verify the filled account before submit: ${detail}`, options.tasksDir);
         return task;
       }
-      // A recorded approval covers the account it was given for, and
-      // only that account: while the same account is still filled, the
-      // submit runs without re-asking. Anything else — a runner
-      // verification from fill time, no check at all, or an approval
-      // whose account is no longer filled — is re-checked now, against
-      // the snapshot just read, before the submit runs.
-      let stillApproved = false;
-      if (hasLoginApproval(task, fillIndex)) {
-        const approved = approvedAccountOf(task, fillIndex);
-        const filled = extractFilledUsername(gateSnapshot);
-        stillApproved =
-          approved !== undefined &&
-          ((approved === '' && filled === undefined) ||
-            (approved !== '' && filled !== undefined && usernamesMatch(filled, approved)));
-      }
-      if (!stillApproved) {
-        const held = await checkFillAndMaybePause(task, task.steps[fillIndex]!, fillIndex, gateSnapshot, index, options);
-        if (held) return held;
+      // A string click target the snapshot names as a non-submit control
+      // is not a submit step: the fail-safe `isSubmitStep(step)` call
+      // above has no snapshot to resolve it against, but this gate just
+      // read one — so resolve the target against it before holding the
+      // step. After a login the page no longer shows the username field,
+      // so a held non-submit click would ask about an account that
+      // cannot be read, and the click would never run. A target the
+      // snapshot does not name still fails safe as a submit.
+      if (isSubmitStep(step, gateSnapshot)) {
+        // A recorded approval covers the account it was given for, and
+        // only that account: while the same account is still filled, the
+        // submit runs without re-asking. Anything else — a runner
+        // verification from fill time, no check at all, or an approval
+        // whose account is no longer filled — is re-checked now, against
+        // the snapshot just read, before the submit runs.
+        let stillApproved = false;
+        if (hasLoginApproval(task, fillIndex)) {
+          const approved = approvedAccountOf(task, fillIndex);
+          const filled = extractFilledUsername(gateSnapshot);
+          stillApproved =
+            approved !== undefined &&
+            ((approved === '' && filled === undefined) ||
+              (approved !== '' && filled !== undefined && usernamesMatch(filled, approved)));
+        }
+        if (!stillApproved) {
+          const held = await checkFillAndMaybePause(task, task.steps[fillIndex]!, fillIndex, gateSnapshot, index, options);
+          if (held) return held;
+        }
       }
     }
   }
