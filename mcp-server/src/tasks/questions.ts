@@ -39,10 +39,25 @@ import { randomUUID } from 'node:crypto';
 import { defaultTasksDir, loadTask, saveTask } from './store.js';
 import { saveTaskWithReport } from './reporting.js';
 import { deletePendingQuestion, listPendingQuestions, loadPendingQuestion, savePendingQuestion } from './question-store.js';
+import { loginApprovedConstraint, replaceApprovedConstraint } from './login-check.js';
 import type { Task } from './types.js';
 
 /** The kind of a question: a choice between options, a yes/no confirmation, or a free-text answer. */
 export type QuestionKind = 'choice' | 'confirm' | 'text';
+
+/**
+ * The purpose of a question: what a `yes`/`proceed` answer approves, and
+ * what a `no`/`stop` answer refuses. `mutation` is the original
+ * mutation-approval question (binding ruling P4); `login-check` is the
+ * post-fill username check (plan §3, Gap B) — its approval is recorded
+ * for the fill step it ran after, not for the step it holds; `replace-login`
+ * is the replace-login warning — its approval is recorded for the
+ * save_login step it holds. The purpose is what keeps the three answers
+ * from being confused: a `proceed` to a login check must never read as a
+ * mutation approval, and a `no` to a replace warning must fail with the
+ * replaced account named, not with a mutation refusal.
+ */
+export type QuestionPurpose = 'mutation' | 'login-check' | 'replace-login';
 
 /** The mutating step a question approves, when the question is a mutation approval. */
 export interface QuestionContext {
@@ -55,6 +70,27 @@ export interface QuestionContext {
    * question file; the key names are all the user needs to judge the step.
    */
   params: string[];
+  /**
+   * What this question is for; absent means `mutation` (the original
+   * shape, so older persisted questions still answer the old way).
+   */
+  purpose?: QuestionPurpose;
+  /**
+   * `login-check` only: the vault-fill step the check ran after. The
+   * approval constraint is recorded for this step; `stepIndex` is the
+   * step the question holds (the submit step, or the fill itself when it
+   * is the last step).
+   */
+  fillStepIndex?: number;
+  /**
+   * `login-check` only: the filled and expected usernames the question
+   * named. Usernames only — never a password — so they may be persisted
+   * in the question file and the task evidence.
+   */
+  filledAccount?: string;
+  expectedAccount?: string;
+  /** `replace-login` only: the already-saved username the save would replace. */
+  existingAccount?: string;
 }
 
 /** A question asked of the user: what to ask, what to answer with, and which task waits for it. */
@@ -335,22 +371,71 @@ export async function answerQuestion(
   const index = question.context?.stepIndex ?? firstUnfinishedStep(task);
   pending.delete(id);
 
-  if (question.context && !isApproval(answer)) {
-    // The user declined the mutation: fail exactly as the runner's refusal
-    // without a question does — the step never runs, the refusal is evidence.
+  /**
+   * Fail the task from a declined question, with the refusal as evidence.
+   * The held step is marked failed only when it has not run yet: a
+   * login-check `stop` after a fill-last task must not rewrite the fill
+   * step's `ok` result — the fill happened, only the submit was stopped.
+   */
+  const failFromAnswer = async (detail: string, markStep: boolean): Promise<Task> => {
     const step = task.steps[index];
-    const detail =
-      `refused: user declined to allow mutating tool ${question.context.tool} at step ${index + 1} ` +
-      `(needs explicit approval)`;
-    if (step) step.result = { status: 'failed', detail };
+    if (markStep && step && step.result === undefined) step.result = { status: 'failed', detail };
     task.evidence.push(`answer to question ${id} at step ${index + 1} of ${task.steps.length}: ${answer} — ${detail}`);
     task.state = 'failed';
     await saveTaskWithReport(task, options.tasksDir);
     await forgetPersistedQuestion(id, options.tasksDir);
     return task;
-  }
+  };
 
-  if (question.context && isApproval(answer)) {
+  const purpose = question.context?.purpose ?? 'mutation';
+
+  if (question.context && purpose === 'login-check') {
+    // The user decides whether the filled account is the right one. A
+    // `proceed` records the login approval for the fill step the check
+    // ran after — never a mutation approval — and the resume continues
+    // from the held step; a `stop` fails the task with the evidence
+    // naming the filled account and the expected account, and the submit
+    // never runs.
+    if (answer.trim().toLowerCase() === 'proceed') {
+      const fillIndex = question.context.fillStepIndex ?? index;
+      const constraint = loginApprovedConstraint(fillIndex);
+      if (!task.constraints.includes(constraint)) task.constraints.push(constraint);
+      task.evidence.push(
+        `user approved proceeding as ${question.context.filledAccount ?? '(unread filled account)'} at step ${index + 1} of ${task.steps.length} (question ${id}) — login approval recorded for fill step ${fillIndex + 1} only`,
+      );
+    } else {
+      const filled = question.context.filledAccount ?? '(unread filled account)';
+      const expected = question.context.expectedAccount ?? '(no expected account declared)';
+      return failFromAnswer(
+        `login check failed: the filled account ${filled} was not confirmed as the expected account ${expected} — the user stopped the task before submit`,
+        true,
+      );
+    }
+  } else if (question.context && purpose === 'replace-login') {
+    // A `yes` records the replace approval for the save_login step it
+    // holds; a `no` fails the task with the replaced account named, and
+    // the save never runs.
+    if (isApproval(answer)) {
+      const constraint = replaceApprovedConstraint(question.context.stepIndex);
+      if (!task.constraints.includes(constraint)) task.constraints.push(constraint);
+      task.evidence.push(
+        `user approved replacing the saved login for ${question.context.existingAccount ?? '(unverified saved logins)'} at step ${index + 1} of ${task.steps.length} (question ${id}) — replace approval recorded for that step only`,
+      );
+    } else {
+      return failFromAnswer(
+        `refused: user declined to replace the saved login for ${question.context.existingAccount ?? '(unverified saved logins)'} at step ${index + 1} — the save never ran`,
+        true,
+      );
+    }
+  } else if (question.context && !isApproval(answer)) {
+    // The user declined the mutation: fail exactly as the runner's refusal
+    // without a question does — the step never runs, the refusal is evidence.
+    return failFromAnswer(
+      `refused: user declined to allow mutating tool ${question.context.tool} at step ${index + 1} ` +
+        `(needs explicit approval)`,
+      true,
+    );
+  } else if (question.context && isApproval(answer)) {
     const constraint = mutationApprovalConstraint(question.context.stepIndex);
     if (!task.constraints.includes(constraint)) task.constraints.push(constraint);
     task.evidence.push(

@@ -93,6 +93,9 @@
  * another process cancelled the task, so the run aborts at that save —
  * no further step executes and no save overwrites the cancellation —
  * and the stored cancelled record is the run's outcome.
+ *
+ * Post-fill username check (plan §3, Gap B): the check lives in
+ * `login-check.ts`, the gates in `login-gates.ts`.
  */
 import type { ToolDefinition, ToolHost, ToolResult } from '../tools/types.js';
 import { rawResultOf } from '../tools/types.js';
@@ -109,6 +112,10 @@ import { mutationApprovalQuestionText, redactParamsForQuestion, type Question, t
 import type { RetryPolicy } from './recovery.js';
 import { executeStepWithRecovery, reconcileUnknownStep } from './recovery.js';
 import { ERROR_CODES, formatError } from '../core/error-codes.js';
+import { isVaultFillStep } from './login-check.js';
+import type { ListSavedLoginsFn } from './login-check.js';
+import { checkFillAfterReconcile, checkFillAndMaybePause, runPreStepGates } from './login-gates.js';
+import { failStep } from './fail.js';
 
 /** Verify one step against the page snapshot taken after it. */
 export type VerifyStepFn = (step: TaskStep, snapshot: PageSnapshot) => VerifyOutcome | Promise<VerifyOutcome>;
@@ -167,6 +174,10 @@ export interface RunTaskOptions {
     readPage?: () => Promise<PageSnapshot>;
     sleep?: (ms: number) => Promise<void>;
   };
+  /** The vault lister for the replace-login warning: the logins saved for one origin (default: `browser_vault {list}`; tests inject a fake). */
+  vault?: {
+    listAccounts?: ListSavedLoginsFn;
+  };
 }
 
 import { ALLOW_MUTATIONS, NAVIGATE_HISTORY_ACTIONS, isMutatingTool, taskAllowsMutations } from './mutations.js';
@@ -203,20 +214,6 @@ function boundTabFromCompletedSteps(task: Task): number | undefined {
     if (typeof step.params.tabId === 'number') bound = step.params.tabId;
   }
   return bound;
-}
-
-async function failStep(
-  task: Task,
-  step: TaskStep,
-  index: number,
-  status: 'failed' | 'verify-failed',
-  detail: string,
-  tasksDir?: string,
-): Promise<void> {
-  step.result = { status, detail };
-  task.evidence.push(`step ${index + 1} (${step.tool}): ${status} — ${detail}`);
-  task.state = 'failed';
-  await saveTaskUnlessCancelled(task, tasksDir);
 }
 
 /**
@@ -348,7 +345,12 @@ async function runTaskSteps(
         fail: (detail) => failStep(task, step, index, 'failed', detail, options.tasksDir),
       });
       if (resumed.url !== undefined) lastUrl = resumed.url;
-      if (resumed.outcome === 'confirmed') continue;
+      if (resumed.outcome === 'confirmed') {
+        // A reconciled fill was never username-checked: check it now.
+        const held = await checkFillAfterReconcile(task, step, index, typeof step.params.tabId === 'number' ? step.params.tabId : boundTabId, options, tools);
+        if (held) return held;
+        continue;
+      }
       if (resumed.outcome === 'unknown') return task;
       // `not-happened`: fall through to execute the step.
     }
@@ -374,6 +376,8 @@ async function runTaskSteps(
     }
 
     // Validate against the tool's own schema before anything executes.
+    // A fill step's declared account is read by the login check, never sent to the strict vault schema.
+    if (isVaultFillStep(step)) delete effectiveParams.expectedAccount;
     let validated: Record<string, unknown>;
     let notes: string[];
     try {
@@ -432,6 +436,10 @@ async function runTaskSteps(
       return task;
     }
 
+    // The pre-step gates (Gap B): submit gate + replace-login warning.
+    const heldBeforeStep = await runPreStepGates(task, step, index, validated, boundTabId, lastUrl, options, tools);
+    if (heldBeforeStep) return heldBeforeStep;
+
     // The tool call runs under the recovery policy (`recovery.ts`):
     // attempts share the one validation and the one approval above, so a
     // retry runs under the same approval the first attempt had — it
@@ -456,7 +464,10 @@ async function runTaskSteps(
     if (attempt.kind === 'reconciled') {
       // Reconciliation confirmed the step after an uncoded failure: its
       // result is already ok — verification already ran, against the fresh
-      // read, inside the reconciliation — so the step is done.
+      // read, inside the reconciliation — so the step is done. A
+      // reconciled fill was never username-checked: check it now.
+      const held = await checkFillAfterReconcile(task, step, index, typeof validated.tabId === 'number' ? validated.tabId : boundTabId, options, tools);
+      if (held) return held;
       await saveTaskUnlessCancelled(task, options.tasksDir);
       continue;
     }
@@ -574,6 +585,12 @@ async function runTaskSteps(
     step.result = { status: 'ok', detail };
     task.evidence.push(`step ${index + 1} (${step.tool}): ok — ${detail}`);
     await saveTaskUnlessCancelled(task, options.tasksDir);
+
+    // The post-fill username check (Gap B): the fill ran and verified — check it before the next step can submit.
+    if (isVaultFillStep(step)) {
+      const held = await checkFillAndMaybePause(task, step, index, snapshot, index + 1 < task.steps.length ? index + 1 : index, options);
+      if (held) return held;
+    }
   }
 
   task.state = 'done';

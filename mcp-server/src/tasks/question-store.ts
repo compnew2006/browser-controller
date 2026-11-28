@@ -83,10 +83,17 @@ function corrupt(message: string): TaskStoreError {
   return new TaskStoreError(message, 'corrupt');
 }
 
+const QUESTION_PURPOSES: ReadonlySet<string> = new Set(['mutation', 'login-check', 'replace-login']);
+
+/** A persisted account name: a username, never a password, at most the vault identifier length. */
+function isAccountName(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 320;
+}
+
 function validateQuestionContext(raw: unknown): QuestionContext {
   if (
     !isRecord(raw) ||
-    !hasOnlyKeys(raw, ['stepIndex', 'tool', 'params']) ||
+    !hasOnlyKeys(raw, ['stepIndex', 'tool', 'params', 'purpose', 'fillStepIndex', 'filledAccount', 'expectedAccount', 'existingAccount']) ||
     typeof raw.stepIndex !== 'number' ||
     !Number.isSafeInteger(raw.stepIndex) ||
     raw.stepIndex < 0 ||
@@ -97,11 +104,23 @@ function validateQuestionContext(raw: unknown): QuestionContext {
     // refuses a params object (or any non-string entry) instead of
     // persisting it.
     !Array.isArray(raw.params) ||
-    raw.params.some((param) => typeof param !== 'string' || param.length === 0)
+    raw.params.some((param) => typeof param !== 'string' || param.length === 0) ||
+    (raw.purpose !== undefined && (typeof raw.purpose !== 'string' || !QUESTION_PURPOSES.has(raw.purpose))) ||
+    (raw.fillStepIndex !== undefined &&
+      (typeof raw.fillStepIndex !== 'number' || !Number.isSafeInteger(raw.fillStepIndex) || raw.fillStepIndex < 0)) ||
+    (raw.filledAccount !== undefined && !isAccountName(raw.filledAccount)) ||
+    (raw.expectedAccount !== undefined && !isAccountName(raw.expectedAccount)) ||
+    (raw.existingAccount !== undefined && !isAccountName(raw.existingAccount))
   ) {
     throw corrupt('a question context needs a step index, a tool name and param key names');
   }
-  return { stepIndex: raw.stepIndex, tool: raw.tool, params: [...(raw.params as string[])] };
+  const context: QuestionContext = { stepIndex: raw.stepIndex, tool: raw.tool, params: [...(raw.params as string[])] };
+  if (raw.purpose !== undefined) context.purpose = raw.purpose as QuestionContext['purpose'];
+  if (raw.fillStepIndex !== undefined) context.fillStepIndex = raw.fillStepIndex as number;
+  if (raw.filledAccount !== undefined) context.filledAccount = raw.filledAccount as string;
+  if (raw.expectedAccount !== undefined) context.expectedAccount = raw.expectedAccount as string;
+  if (raw.existingAccount !== undefined) context.existingAccount = raw.existingAccount as string;
+  return context;
 }
 
 /** A parsed question, or an error when the record is not one. Unknown fields are rejected. */

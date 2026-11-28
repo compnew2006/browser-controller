@@ -135,14 +135,14 @@ function isWarningPage(text: string): boolean {
   );
 }
 
-/** Accessible names of a password field, in the snapshot's languages. */
-const PASSWORD_NAMES = ['password', 'كلمة المرور', 'كلمة السر'];
+/** Accessible names of a password field, in the snapshot's languages. Exported for the post-fill username check (`login-check.ts`), which skips the same field — one list, not two that can drift (lessons.md, law 1). */
+export const PASSWORD_NAMES = ['password', 'كلمة المرور', 'كلمة السر'];
 
 /** Accessible names of a sign-in submit control. */
 const SIGN_IN_NAMES = ['sign in', 'log in', 'login', 'تسجيل الدخول', 'دخول'];
 
-/** Accessible names of the identifier field of a sign-in form. */
-const IDENTIFIER_NAMES = [
+/** Accessible names of the identifier field of a sign-in form. Exported for the post-fill username check (`login-check.ts`), which reads the same field — one list, not two that can drift (lessons.md, law 1). */
+export const IDENTIFIER_NAMES = [
   'email',
   'e-mail',
   'username',

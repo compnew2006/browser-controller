@@ -7,6 +7,16 @@ import { detectSession, pauseForLogin, resumeAfterLogin } from '../../mcp-server
 import type { SessionPage } from '../../mcp-server/src/tasks/session.js';
 import { loadTask, saveTask } from '../../mcp-server/src/tasks/store.js';
 import { saveTaskWithReport } from '../../mcp-server/src/tasks/reporting.js';
+import { answerQuestion, askQuestion, type Question, type QuestionContext } from '../../mcp-server/src/tasks/questions.js';
+import {
+  checkFilledAccount,
+  extractFilledUsername,
+  findDifferentSavedLogin,
+  isSubmitStep,
+  loginApprovedConstraint,
+  loginVerifiedConstraint,
+  replaceApprovedConstraint,
+} from '../../mcp-server/src/tasks/login-check.js';
 import { runTask } from '../../mcp-server/src/tasks/runner.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
 import type { ToolDefinition, ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
@@ -722,5 +732,543 @@ describe('runner pauses and resumes on session expiry', () => {
     });
     expect(done.state).toBe('done');
     expect(calls).toEqual(['browser_navigate', 'browser_snapshot']);
+  });
+});
+
+/**
+ * Gap B (plan §3): post-fill username check before submit + replace-login
+ * warning. The snapshot lines below are the real accessibility-tree shape
+ * (`extension/handlers/snapshot-page.js`): a textbox line carries its
+ * filled value as `value="…"`, and the password value is redacted to `••••`
+ * by the snapshot itself — the check must never read it.
+ */
+const FILLED_WRONG_TEXT =
+  '- textbox "Email" [ref=e1] value="wrong@example.com"\n' +
+  '- textbox "Password" [ref=e2] value="••••"\n' +
+  '- button "Sign in" [ref=e3]';
+const FILLED_RIGHT_TEXT =
+  '- textbox "Email" [ref=e1] value="owner@example.com"\n' +
+  '- textbox "Password" [ref=e2] value="••••"\n' +
+  '- button "Sign in" [ref=e3]';
+const FILLED_NO_VALUE_TEXT =
+  '- textbox "Email" [ref=e1]\n- textbox "Password" [ref=e2]\n- button "Sign in" [ref=e3]';
+
+describe('login-check helpers', () => {
+  it('reads the username field value from the snapshot, never the password value', () => {
+    expect(extractFilledUsername({ url: 'https://example.com/login', text: FILLED_WRONG_TEXT })).toBe(
+      'wrong@example.com',
+    );
+    // A page with only a password field has no username to read — and the
+    // password value itself must never come back as the "filled account".
+    expect(
+      extractFilledUsername({
+        url: 'https://example.com/login',
+        text: '- textbox "Password" [ref=e2] value="hunter2"\n- button "Sign in" [ref=e3]',
+      }),
+    ).toBeUndefined();
+    expect(extractFilledUsername({ url: 'https://example.com/login', text: FILLED_NO_VALUE_TEXT })).toBeUndefined();
+    // Flags after the value, and the short `[e1]` ref form, do not hide it.
+    expect(
+      extractFilledUsername({
+        url: 'https://example.com/login',
+        text: '- textbox "Username" [e1] value="flagged@example.com" disabled',
+      }),
+    ).toBe('flagged@example.com');
+  });
+
+  it('compares the filled account against the expected account', () => {
+    const snapshot = { url: 'https://example.com/login', text: FILLED_WRONG_TEXT };
+    expect(checkFilledAccount(snapshot, 'owner@example.com').status).toBe('mismatch');
+    expect(checkFilledAccount(snapshot, 'wrong@example.com').status).toBe('match');
+    expect(checkFilledAccount(snapshot, '  Wrong@Example.com ').status).toBe('match');
+    expect(checkFilledAccount(snapshot, undefined).status).toBe('unknown');
+    expect(checkFilledAccount({ url: 'https://example.com/login', text: FILLED_NO_VALUE_TEXT }, 'owner@example.com').status).toBe('unknown');
+  });
+
+  it('recognises submit steps: Enter / submit:true / a sign-in click — and nothing else', () => {
+    expect(isSubmitStep({ tool: 'browser_type', params: { key: 'Enter' }, verify: [] })).toBe(true);
+    expect(isSubmitStep({ tool: 'browser_type', params: { submit: true }, verify: [] })).toBe(true);
+    expect(isSubmitStep({ tool: 'browser_type', params: { key: 'a' }, verify: [] })).toBe(false);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', name: 'Sign in' } }, verify: [] }),
+    ).toBe(true);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', name: 'Cancel' } }, verify: [] }),
+    ).toBe(false);
+    expect(
+      isSubmitStep({ tool: 'browser_click', params: { target: { role: 'button', name: 'Sign in' }, hover: true }, verify: [] }),
+    ).toBe(false);
+    expect(isSubmitStep({ tool: 'browser_snapshot', params: {}, verify: [] })).toBe(false);
+  });
+
+  it('finds a saved login under a different username, and none for the same username', () => {
+    const saved = [{ username: 'saved@example.com' }];
+    expect(findDifferentSavedLogin(saved, 'saved@example.com')).toBeUndefined();
+    expect(findDifferentSavedLogin(saved, 'other@example.com')).toBe('saved@example.com');
+    expect(findDifferentSavedLogin(saved, undefined)).toBe('saved@example.com');
+    expect(findDifferentSavedLogin([], 'other@example.com')).toBeUndefined();
+  });
+});
+
+/** The runner's injected ask: the real askQuestion, sending on a fake channel. */
+function runnerAsk(sent: Array<{ type: string; question: Question }>) {
+  return async (input: {
+    taskId: string;
+    text: string;
+    options?: string[];
+    kind: 'confirm' | 'choice' | 'text';
+    context?: QuestionContext;
+  }): Promise<Question> =>
+    askQuestion(input.taskId, input.text, input.options, {
+      tasksDir: dir,
+      kind: input.kind,
+      context: input.context,
+      send: async (message) => {
+        sent.push(message);
+      },
+    });
+}
+
+const vaultSchema = z
+  .object({
+    action: z.enum(['fill', 'save_login', 'list', 'status', 'unlock']),
+    tabId: z.number().optional(),
+    handle: z.string().optional(),
+    label: z.string().optional(),
+  })
+  .strict();
+const typeSchema = z
+  .object({
+    tabId: z.number().optional(),
+    key: z.string().optional(),
+    submit: z.boolean().optional(),
+    text: z.string().optional(),
+  })
+  .strict();
+
+/** Fake tools for a login task: navigate, snapshot (fixed filled-form text), vault, Enter-submit. */
+function loginTaskTools(calls: string[], snapshotText: string, saved: Array<{ username: string }> = []): Map<string, ToolDefinition> {
+  const vault: ToolDefinition = {
+    name: 'browser_vault',
+    summary: 'Fake browser_vault for login-check tests',
+    description: 'Test-only stand-in for browser_vault.',
+    inputSchema: vaultSchema,
+    handler: async (_host, params) => {
+      calls.push(`browser_vault:${String(params.action)}`);
+      if (params.action === 'list') {
+        return outcomeOf({
+          success: true,
+          origin: 'https://example.com',
+          accounts: saved.map((entry) => ({ identifier: entry.username, handle: 'cred_handle', origin: 'https://example.com' })),
+        });
+      }
+      return textResult('vault ok');
+    },
+  };
+  return new Map<string, ToolDefinition>([
+    ['browser_navigate', fakeTool('browser_navigate', calls, textResult('loaded'), false, navigateSchema)],
+    [
+      'browser_snapshot',
+      fakeTool(
+        'browser_snapshot',
+        calls,
+        outcomeOf({ success: true, text: snapshotText, url: 'https://example.com/login', tabId: 42 }),
+        true,
+        tabSchema,
+      ),
+    ],
+    ['browser_vault', vault],
+    ['browser_type', fakeTool('browser_type', calls, textResult('typed'), false, typeSchema)],
+  ]);
+}
+
+function loginTask(expectedAccount?: string): Task {
+  return {
+    id: 'task-1',
+    goal: 'Log in as the owner and open the dashboard',
+    constraints: ['allow-mutations'],
+    steps: [
+      { tool: 'browser_navigate', params: { url: 'https://example.com/login' }, verify: [{ kind: 'url-contains', value: 'example.com/login' }] },
+      {
+        tool: 'browser_vault',
+        params: {
+          action: 'fill',
+          handle: 'cred_handle',
+          tabId: 42,
+          ...(expectedAccount !== undefined ? { expectedAccount } : {}),
+        },
+        verify: [{ kind: 'text-present', value: 'Sign in' }],
+      },
+      { tool: 'browser_type', params: { key: 'Enter', tabId: 42 }, verify: [{ kind: 'no-error-text', value: "isn't working" }] },
+    ],
+    state: 'planned',
+    evidence: [],
+  };
+}
+
+describe('runner post-fill username check', () => {
+  it('pauses before submit when the vault filled a different account than the task expected', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    await saveTask(loginTask('owner@example.com'), dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    // The fill ran, the submit never did.
+    expect(calls).toContain('browser_vault:fill');
+    expect(calls).not.toContain('browser_type');
+    expect(paused.steps[1]?.result?.status).toBe('ok');
+    expect(paused.steps[2]?.result).toBeUndefined();
+    expect(sent).toHaveLength(1);
+    const question = sent[0]!.question;
+    expect(question.kind).toBe('confirm');
+    expect(question.options).toEqual(['proceed', 'stop']);
+    expect(question.text).toContain('wrong@example.com');
+    expect(question.text).toContain('owner@example.com');
+    expect(question.context?.purpose).toBe('login-check');
+    expect(question.context?.filledAccount).toBe('wrong@example.com');
+    expect(question.context?.expectedAccount).toBe('owner@example.com');
+    expect(question.context?.fillStepIndex).toBe(1);
+  });
+
+  it('lets a matching fill through to submit and records the verified constraint', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_RIGHT_TEXT);
+    await saveTask(loginTask('owner@example.com'), dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(done.state).toBe('done');
+    expect(calls).toContain('browser_type');
+    expect(sent).toEqual([]);
+    expect(done.constraints).toContain(loginVerifiedConstraint(1));
+  });
+
+  it('pauses and asks to confirm the filled account when the task declares no expected account', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    await saveTask(loginTask(), dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(calls).not.toContain('browser_type');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.question.text).toContain('wrong@example.com');
+    expect(sent[0]!.question.context?.purpose).toBe('login-check');
+  });
+
+  it('pauses when the filled username cannot be read from the snapshot', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_NO_VALUE_TEXT);
+    await saveTask(loginTask('owner@example.com'), dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(calls).not.toContain('browser_type');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.question.text).toContain('owner@example.com');
+  });
+
+  it('a "proceed" answer resumes from the submit step without re-running the fill', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    await saveTask(loginTask('owner@example.com'), dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+
+    const done = await answerQuestion(sent[0]!.question.id, 'proceed', {
+      tasksDir: dir,
+      continueWith: async (task) =>
+        runTask(task.id, {
+          tasksDir: dir,
+          tools,
+          host: dummyHost,
+          questions: { ask: runnerAsk(sent) },
+        }),
+    });
+    expect(done.state).toBe('done');
+    expect(calls.filter((call) => call === 'browser_vault:fill')).toHaveLength(1);
+    expect(calls.filter((call) => call === 'browser_type')).toHaveLength(1);
+    expect(sent).toHaveLength(1);
+    expect(done.constraints).toContain(loginApprovedConstraint(1));
+  });
+
+  it('a "stop" answer fails the task with evidence naming both accounts, and the fill result stays ok', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    await saveTask(loginTask('owner@example.com'), dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+
+    const continued: Task[] = [];
+    const failed = await answerQuestion(sent[0]!.question.id, 'stop', {
+      tasksDir: dir,
+      continueWith: async (task) => {
+        continued.push(task);
+        return task;
+      },
+    });
+    expect(failed.state).toBe('failed');
+    expect(continued).toEqual([]);
+    expect(calls).not.toContain('browser_type');
+    // The fill itself happened — only the submit was stopped — so its
+    // recorded result is not rewritten as a failure.
+    expect(failed.steps[1]?.result?.status).toBe('ok');
+    expect(failed.evidence.join('\n')).toContain('wrong@example.com');
+    expect(failed.evidence.join('\n')).toContain('owner@example.com');
+  });
+
+  it('fails closed instead of submitting when no question channel is wired', async () => {
+    const calls: string[] = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    await saveTask(loginTask('owner@example.com'), dir);
+
+    const failed = await runTask('task-1', { tasksDir: dir, tools, host: dummyHost });
+    expect(failed.state).toBe('failed');
+    expect(calls).not.toContain('browser_type');
+    expect(failed.evidence.join('\n')).toContain('wrong@example.com');
+    expect(failed.evidence.join('\n')).toContain('owner@example.com');
+  });
+
+  it('the submit gate re-checks a fill that completed without a check (e.g. reconciled) before submitting', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    // The fill already ran ok in an earlier run, with no verified or
+    // approved constraint recorded for it — the submit must still not run
+    // until the filled account is checked.
+    const task = loginTask('owner@example.com');
+    task.steps[0]!.result = {
+      status: 'ok',
+      detail: 'verified 1 rule(s) at https://example.com/login; snapshot=browser_snapshot tab 42; observed="heading \\"Login\\""',
+    };
+    task.steps[1]!.result = { status: 'ok', detail: 'filled' };
+    await saveTask(task, dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(calls).not.toContain('browser_type');
+    expect(calls).not.toContain('browser_vault:fill');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.question.context?.purpose).toBe('login-check');
+  });
+
+  it('a "stop" answer on a fill-last task fails it without rewriting the fill result', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    const task = loginTask('owner@example.com');
+    task.steps = task.steps.slice(0, 2);
+    await saveTask(task, dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+
+    const failed = await answerQuestion(sent[0]!.question.id, 'stop', { tasksDir: dir });
+    expect(failed.state).toBe('failed');
+    expect(failed.steps[1]?.result?.status).toBe('ok');
+    expect(failed.evidence.join('\n')).toContain('wrong@example.com');
+    expect(failed.evidence.join('\n')).toContain('owner@example.com');
+  });
+});
+
+function saveLoginTask(): Task {
+  return {
+    id: 'task-1',
+    goal: 'Save the login for this site',
+    constraints: ['allow-mutations'],
+    steps: [
+      { tool: 'browser_navigate', params: { url: 'https://example.com/login' }, verify: [{ kind: 'url-contains', value: 'example.com/login' }] },
+      { tool: 'browser_vault', params: { action: 'save_login', tabId: 42 }, verify: [{ kind: 'text-present', value: 'Sign in' }] },
+    ],
+    state: 'planned',
+    evidence: [],
+  };
+}
+
+describe('runner replace-login warning', () => {
+  it('pauses before saving over a different saved account, names it, and never saves until answered', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    await saveTask(saveLoginTask(), dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+      vault: { listAccounts: async () => [{ username: 'saved@example.com' }] },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(calls).not.toContain('browser_vault:save_login');
+    expect(sent).toHaveLength(1);
+    const question = sent[0]!.question;
+    expect(question.kind).toBe('confirm');
+    expect(question.options).toEqual(['yes', 'no']);
+    expect(question.text).toContain('saved@example.com');
+    expect(question.context?.purpose).toBe('replace-login');
+    expect(question.context?.existingAccount).toBe('saved@example.com');
+  });
+
+  it('a "yes" answer resumes and saves exactly once; a "no" fails without saving', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    await saveTask(saveLoginTask(), dir);
+    const listAccounts = async () => [{ username: 'saved@example.com' }];
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+      vault: { listAccounts },
+    });
+    expect(paused.state).toBe('paused-question');
+
+    const done = await answerQuestion(sent[0]!.question.id, 'yes', {
+      tasksDir: dir,
+      continueWith: async (task) =>
+        runTask(task.id, {
+          tasksDir: dir,
+          tools,
+          host: dummyHost,
+          questions: { ask: runnerAsk(sent) },
+          vault: { listAccounts },
+        }),
+    });
+    expect(done.state).toBe('done');
+    expect(calls.filter((call) => call === 'browser_vault:save_login')).toHaveLength(1);
+    expect(sent).toHaveLength(1);
+    expect(done.constraints).toContain(replaceApprovedConstraint(1));
+
+    // The "no" branch, on a fresh task: the save never runs.
+    const calls2: string[] = [];
+    const sent2: Array<{ type: string; question: Question }> = [];
+    const task2 = saveLoginTask();
+    task2.id = 'task-2';
+    await saveTask(task2, dir);
+    const paused2 = await runTask('task-2', {
+      tasksDir: dir,
+      tools: loginTaskTools(calls2, FILLED_WRONG_TEXT),
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent2) },
+      vault: { listAccounts },
+    });
+    expect(paused2.state).toBe('paused-question');
+    const continued: Task[] = [];
+    const failed = await answerQuestion(sent2[0]!.question.id, 'no', {
+      tasksDir: dir,
+      continueWith: async (task) => {
+        continued.push(task);
+        return task;
+      },
+    });
+    expect(failed.state).toBe('failed');
+    expect(continued).toEqual([]);
+    expect(calls2).not.toContain('browser_vault:save_login');
+    expect(failed.evidence.join('\n')).toContain('saved@example.com');
+  });
+
+  it('saves without asking when the saved login is the same username', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    await saveTask(saveLoginTask(), dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+      vault: { listAccounts: async () => [{ username: 'wrong@example.com' }] },
+    });
+    expect(done.state).toBe('done');
+    expect(calls).toContain('browser_vault:save_login');
+    expect(sent).toEqual([]);
+  });
+
+  it('saves without asking when nothing is saved for the origin', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT);
+    await saveTask(saveLoginTask(), dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+      vault: { listAccounts: async () => [] },
+    });
+    expect(done.state).toBe('done');
+    expect(calls).toContain('browser_vault:save_login');
+    expect(sent).toEqual([]);
+  });
+
+  it('lists the saved logins through the vault tool itself when no lister is injected', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_TEXT, [{ username: 'saved@example.com' }]);
+    await saveTask(saveLoginTask(), dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(calls).toContain('browser_vault:list');
+    expect(calls).not.toContain('browser_vault:save_login');
+    expect(sent[0]!.question.text).toContain('saved@example.com');
   });
 });
