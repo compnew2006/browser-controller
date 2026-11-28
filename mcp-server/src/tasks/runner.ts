@@ -105,7 +105,7 @@ import type { ToolDefinition, ToolHost } from '../tools/types.js';
 import { NO_DEFAULT_TAB, TAB_OR_ORIGIN } from '../tools/batch-limits.js';
 import { prepareToolParams } from '../tools/params.js';
 import { loadTask } from './store.js';
-import { TaskCancelledExternally, saveTaskUnlessCancelled } from './cancel-guard.js';
+import { saveTaskUnlessCancelled } from './cancel-guard.js';
 import type { Task, TaskStep } from './types.js';
 import type { PageSnapshot, VerifyOutcome } from './verify.js';
 import { readFreshSnapshot, readSnapshotAfterStep, verifyStep } from './verify.js';
@@ -119,7 +119,7 @@ import { isVaultFillStep } from './login-check.js';
 import type { ListSavedLoginsFn } from './login-check.js';
 import { checkFillAfterReconcile, checkFillAndMaybePause, runPreStepGates } from './login-gates.js';
 import { failStep } from './fail.js';
-import { disableTaskCursorIfSettled, enableTaskCursor, type SetTaskCursorFn } from './task-cursor.js';
+import { disableTaskCursorIfSettled, enableTaskCursor, settleCursorOnAbort, type SetTaskCursorFn } from './task-cursor.js';
 import { withElementPrepare } from './prepare.js';
 import { boundTabFromCompletedSteps, tabIdFromResult } from './tab-binding.js';
 
@@ -256,16 +256,9 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
     await disableTaskCursorIfSettled(options.setTaskCursor, settled);
     return settled;
   } catch (error) {
-    if (error instanceof TaskCancelledExternally) {
-      // Another process cancelled the task while this run was in
-      // flight: the run stopped at its next save instead of
-      // overwriting the cancellation, so the stored cancelled
-      // record is the run's outcome — return it, not the run's own
-      // in-memory task.
-      await disableTaskCursorIfSettled(options.setTaskCursor, error.stored);
-      return error.stored;
-    }
-    throw error;
+    // A throw after the enable must still disable: the abort path is
+    // the only exit `runTaskSteps` has that no settle follows.
+    return settleCursorOnAbort(options.setTaskCursor, id, error);
   }
 }
 

@@ -242,7 +242,9 @@ describe('taskStatus over the bridge (daemon → popup task list + evidence)', (
     const question = await askQuestion('task-resume', 'Which report should I open?', ['Sales', 'Stock'], { tasksDir: dir });
     const { bridge, port } = await createBridge(true);
     // The daemon-side answer continuation drives the resumed run; the
-    // runner is faked (no browser) and the lock release resolves at once.
+    // runner is faked (no browser) and the lock release resolves at once
+    // over the control channel — it must never go out as a tool call,
+    // which the bridge would reject as unknown.
     configureTaskRunner(async (id, options) => {
       const task = await loadTask(id, options.tasksDir);
       if (!task) throw new Error(`task not found: ${id}`);
@@ -252,7 +254,8 @@ describe('taskStatus over the bridge (daemon → popup task list + evidence)', (
     try {
       const fakeBridge = {
         callTool: async (tool: string) => {
-          if (tool === TASK_LOCK_RELEASE_WIRE_ACTION) return { released: true };
+          if (tool === TASK_LOCK_RELEASE_WIRE_ACTION) throw new Error('lock release must not go out as a tool call');
+          if (tool === TASK_CURSOR_WIRE_ACTION) throw new Error('cursor signal must not go out as a tool call');
           throw new Error(`unexpected tool in test: ${tool}`);
         },
         sendControl: (type: string, payload: Record<string, unknown> = {}) => {
@@ -273,6 +276,54 @@ describe('taskStatus over the bridge (daemon → popup task list + evidence)', (
       expect(entry?.state).toBe('done');
       expect(typeof (entry?.report as Record<string, unknown>)?.text).toBe('string');
       expect((await loadTask('task-resume', dir))?.state).toBe('done');
+    } finally {
+      configureTaskRunner();
+    }
+  });
+
+  // The wait below is bounded at 5 s, so the test timeout must exceed it:
+  // otherwise a missing frame times the whole test out in Vitest first,
+  // and this test's `finally` (which restores the real runner) lands
+  // after the next test has started, breaking its background run.
+  it('releases the task input lock over the control channel on a daemon-side resume, never as a tool call', { timeout: 15_000 }, async () => {
+    const task = taskWithSteps('task-lock-resume');
+    task.sessionId = 'session-1';
+    await saveTask(task, dir);
+    const question = await askQuestion('task-lock-resume', 'Which report should I open?', ['Sales', 'Stock'], { tasksDir: dir });
+    const { bridge, port } = await createBridge(true);
+    // The daemon-side answer continuation drives the resumed run; the
+    // runner is faked (no browser) and settles at once, so the release
+    // rides `runTaskWithReport`'s finally — the only place it is sent.
+    configureTaskRunner(async (id, options) => {
+      const task = await loadTask(id, options.tasksDir);
+      if (!task) throw new Error(`task not found: ${id}`);
+      task.state = 'done';
+      return task;
+    });
+    try {
+      const fakeBridge = {
+        callTool: async (tool: string) => {
+          if (tool === TASK_LOCK_RELEASE_WIRE_ACTION) throw new Error('lock release must not go out as a tool call');
+          if (tool === TASK_CURSOR_WIRE_ACTION) throw new Error('cursor signal must not go out as a tool call');
+          throw new Error(`unexpected tool in test: ${tool}`);
+        },
+        sendControl: (type: string, payload: Record<string, unknown> = {}) => {
+          bridge.sendControl(type, payload);
+        },
+      };
+      bridge.setTaskAnswerHandler(createTaskAnswerContinuation(fakeBridge, dir));
+      const { client, frames } = await connectClient(port);
+
+      client.send(JSON.stringify({ type: 'taskAnswer', questionId: question.id, answer: 'Sales' }));
+      const ack = await waitForFrame(frames, (f) => f.type === 'taskAnswerAck' && f.questionId === question.id);
+      expect(ack.ok).toBe(true);
+
+      // The release reaches the extension as a control frame — scoped to
+      // the session that owns the lock — so the task input shield
+      // releases at settle on the popup-answer path too.
+      const release = await waitForFrame(frames, (f) => f.type === 'taskLockRelease' && f.taskId === 'task-lock-resume');
+      expect(release).toEqual({ type: 'taskLockRelease', sessionId: 'session-1', taskId: 'task-lock-resume' });
+      expect((await loadTask('task-lock-resume', dir))?.state).toBe('done');
     } finally {
       configureTaskRunner();
     }

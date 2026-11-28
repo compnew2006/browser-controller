@@ -709,6 +709,18 @@ describe('task-mode agent cursor (Gap D: on by default during a task only)', () 
     // the next task step re-shows it. Nothing here shortens linger.
     expect(shields.at(-1)!.args).toEqual([30_000]);
     expect(sent.find((f) => f.id === 'task-cursor-step')?.success).toBe(true);
+
+    // The linger hide is not the end of the story: the next task step
+    // re-shows the cursor — the router marks the call before the shield
+    // show, so the override survives the linger, not just the first step.
+    const secondStepShields = shieldInjections().length;
+    await handleMessage({ id: 'task-cursor-step-2', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1', activityContext: { ...actionContext, eventId: '00000000-0000-4000-8000-000000000105' } });
+    await flush();
+    const second = shieldInjections().slice(secondStepShields);
+    expect(second[0]!.args).toEqual(['agent controlling the tab', true, false]);
+    // And the linger still applies after the second step too.
+    expect(second.at(-1)!.args).toEqual([30_000]);
+    expect(sent.find((f) => f.id === 'task-cursor-step-2')?.success).toBe(true);
   });
 
   it('respects an explicit opt-out on a task step: no cursor even after the enable signal', async () => {

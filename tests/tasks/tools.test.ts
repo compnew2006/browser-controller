@@ -11,7 +11,7 @@ import { routeTaskQuestion } from '../../mcp-server/src/tasks/task-question-rout
 import { routeTaskLockRelease } from '../../mcp-server/src/tasks/task-lock-release-route.js';
 import { taskStartTool, taskStatusTool, taskCancelTool, taskAnswerTool, taskResumeTool } from '../../mcp-server/src/tasks/tools.js';
 import { toolMap } from '../../mcp-server/src/tools/registry.js';
-import { TASK_LOCK_RELEASE_WIRE_ACTION, TASK_QUESTION_WIRE_ACTION } from '../../mcp-server/src/protocol/wire-tools.js';
+import { TASK_CURSOR_WIRE_ACTION, TASK_LOCK_RELEASE_WIRE_ACTION, TASK_QUESTION_WIRE_ACTION } from '../../mcp-server/src/protocol/wire-tools.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
 import type { ToolActivity, ToolHost, ToolResult } from '../../mcp-server/src/tools/types.js';
 
@@ -55,6 +55,7 @@ function makeFakeHost(): ToolHost & { calls: Array<{ tool: string; params: Recor
       if (tool === 'browser_click') return { success: true, text: 'clicked' };
       if (tool === TASK_QUESTION_WIRE_ACTION) return { success: true, sent: true };
       if (tool === TASK_LOCK_RELEASE_WIRE_ACTION) return { success: true, released: true };
+      if (tool === TASK_CURSOR_WIRE_ACTION) return { success: true, enabled: params.enabled };
       throw new Error(`unexpected tool call: ${tool}`);
     },
   };
@@ -138,6 +139,13 @@ describe('browser_task tools', () => {
     expect((await listPendingQuestions(dir)).map((entry) => entry.id)).toContain(question.id);
     const cancelled = jsonOf(await taskCancelTool.handler(host, { taskId: task.id }));
     expect(cancelled.state).toBe('failed');
+    // Cancel is the settle for a paused task: the cursor stays on through
+    // a pause, so the cancel tool itself must send the disable — the
+    // runner's settle paths never run for a task cancelled from pause.
+    expect(host.calls.some((call) => call.tool === TASK_CURSOR_WIRE_ACTION && call.params.taskId === task.id && call.params.enabled === false)).toBe(true);
+    // No lock release from cancel: the pause already released the input
+    // lock (`runTaskWithReport`'s finally), so there is nothing to release.
+    expect(host.calls.some((call) => call.tool === TASK_LOCK_RELEASE_WIRE_ACTION)).toBe(false);
     const stored = await loadTask(task.id, dir);
     expect(stored?.evidence.some((line) => line.startsWith('cancelled by the user'))).toBe(true);
     expect(stored?.report?.json.state).toBe('failed');

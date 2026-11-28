@@ -208,6 +208,35 @@ describe('task-mode agent cursor (Gap D)', () => {
     expect(calls).toContain('fake-ok');
   });
 
+  it('disables the cursor when the run throws unexpectedly after enabling', async () => {
+    const calls: string[] = [];
+    const cursorCalls: Array<[string, boolean]> = [];
+    await saveTask(twoStepTask(), dir);
+
+    await expect(
+      runTask('task-1', {
+        tasksDir: dir,
+        tools: toolsFor(calls),
+        host: dummyHost,
+        session: {
+          detectSession: () => {
+            throw new Error('session check exploded');
+          },
+        },
+        setTaskCursor: async (taskId, enabled) => {
+          cursorCalls.push([taskId, enabled]);
+        },
+      }),
+    ).rejects.toThrowError(/session check exploded/);
+    // Enabled at run start, disabled on the abort — no later settle
+    // will clean it up, so the throw path must disable, not just the
+    // settled and externally-cancelled paths.
+    expect(cursorCalls).toEqual([
+      ['task-1', true],
+      ['task-1', false],
+    ]);
+  });
+
   it('disables the cursor when another process cancelled the task mid-run', async () => {
     const calls: string[] = [];
     const cursorCalls: Array<[string, boolean]> = [];

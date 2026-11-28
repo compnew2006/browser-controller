@@ -53,6 +53,8 @@ import { saveTaskWithReport } from './reporting.js';
 import { lastKnownUrl, resumeAfterLogin, type SessionPage } from './session.js';
 import { pageSnapshotFromResult, resultText } from './verify.js';
 import { isTaskRunning, resumeTaskInBackground, taskRunOptions, wireQuestionSend } from './wiring.js';
+import { disableTaskCursorIfSettled } from './task-cursor.js';
+import { TASK_CURSOR_WIRE_ACTION } from '../protocol/wire-tools.js';
 import type { Task } from './types.js';
 
 /** The task as an agent reads it: state, step outcomes, evidence, pending questions, and the report when one exists. */
@@ -160,7 +162,13 @@ export const taskStatusTool: ToolDefinition = {
  * aborts at its next save instead of overwriting the cancellation
  * (`tasks/cancel-guard.ts`). A finished task cannot be cancelled, and
  * a task this process is currently running cannot be either — wait for
- * it to pause or finish, then cancel.
+ * it to pause or finish, then cancel. A paused task keeps the
+ * task-mode cursor on, so cancel is the settle that turns it off: the
+ * disable goes out here, best-effort, because the runner's settle
+ * paths never run for a task cancelled from pause. The input lock
+ * needs no release here — the pause already released it
+ * (`runTaskWithReport`'s finally runs on every return from `runTask`,
+ * pause included).
  */
 export const taskCancelTool: ToolDefinition = {
   name: 'browser_task_cancel',
@@ -168,7 +176,7 @@ export const taskCancelTool: ToolDefinition = {
   description: 'Cancel a planned or paused task and save its report. A finished task, or one currently running, cannot be cancelled.',
   inputSchema: taskIdSchema,
   timeoutMs: 10_000,
-  handler: async (_host: ToolHost, params: Record<string, unknown>): Promise<ToolResult> => {
+  handler: async (host: ToolHost, params: Record<string, unknown>): Promise<ToolResult> => {
     const args = parseParams(taskIdSchema, params, 'browser_task_cancel');
     const tasksDir = defaultTasksDir();
     const task = await requireTask(args.taskId, tasksDir);
@@ -202,6 +210,14 @@ export const taskCancelTool: ToolDefinition = {
       }
     }
     await saveTaskWithReport(task, tasksDir);
+    // The cursor disable is best-effort and swallowed inside: the
+    // cancel stands even if the extension is gone, and the extension
+    // drops a disable for a task it never enabled, so cancelling a
+    // planned (never-run) task is a harmless no-op.
+    await disableTaskCursorIfSettled(
+      (cursorTaskId, enabled) => host.callTool(TASK_CURSOR_WIRE_ACTION, { taskId: cursorTaskId, enabled }),
+      task,
+    );
     return textResult(JSON.stringify(taskSummary(task, [])));
   },
 };

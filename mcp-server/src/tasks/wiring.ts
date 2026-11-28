@@ -233,13 +233,23 @@ export function createTaskAnswerContinuation(bridge: TaskBridge, tasksDir?: stri
           bridge.sendControl(message.type, { question: message.question });
         };
         const runOptions = taskRunOptions(host, send, tasksDir, task.id);
-        // The daemon has no IPC routeCall to intercept the cursor wire
-        // action, so a daemon-side resume sends it straight over the
-        // control channel instead of out as an unknown tool call (which
-        // the bridge would reject). The lock release still takes the
-        // call path — pre-existing, out of scope here.
+        // The daemon has no IPC routeCall to intercept the internal wire
+        // actions, so a daemon-side resume sends them straight over the
+        // control channel instead of out as unknown tool calls (which
+        // the bridge would reject). The cursor first: `routeCall`
+        // interception exists only for IPC clients, and a daemon-side
+        // resume drives the run through `bridge.callTool` directly. The
+        // lock release takes the same path for the same reason — before
+        // this it went out as an unknown tool call, was rejected by the
+        // extension, and was swallowed by `runTaskWithReport`'s finally,
+        // so the task input shield never released at settle on the
+        // popup-answer path. The MCP-side path is untouched: it still
+        // goes through the wire actions and `routeCall` interception.
         runOptions.setTaskCursor = async (cursorTaskId, enabled) => {
           bridge.sendControl('taskCursor', { sessionId: task.sessionId, taskId: cursorTaskId, enabled });
+        };
+        runOptions.releaseTaskLock = async (settledTaskId) => {
+          bridge.sendControl('taskLockRelease', { sessionId: task.sessionId, taskId: settledTaskId });
         };
         const run = resumeTaskInBackground(task.id, runOptions);
         run.then(
