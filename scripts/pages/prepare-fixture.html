@@ -22,14 +22,14 @@
     policy recovers from, not the extension's own locate, which also
     scrolls a target that is not in full view before it clicks.
   - menu: a hover menu. The submenu item is visibility:hidden until the
-  - menu: a hover menu. The submenu item is visibility:hidden until the
     menu is hovered — it keeps its layout box while hidden, so a mouse
     move to its centre lands on the menu and :hover reveals it. That is
     the case the prepare hover handles: display:none would have no box
     to move to (the extension's hover fails ELEMENT_HIDDEN on a zero-size
     element), and scroll-into-view refuses a hidden element with the same
-    code, so for a hidden element the prepare hovers FIRST and scrolls
-    after the hover reveals it.
+    code, so for a hidden element the prepare scrolls first, hovers only
+    when that scroll fails ELEMENT_HIDDEN, then scrolls again after the
+    hover reveals it, and only then retries the click.
   - Each click writes its marker into #result, which the snapshot verifies.
 
   Routing: the view comes from the pathname first, then the hash, then the
