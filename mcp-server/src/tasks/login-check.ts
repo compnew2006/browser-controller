@@ -183,6 +183,29 @@ export function extractFilledUsername(snapshot: PageSnapshot): string | undefine
   return undefined;
 }
 
+/**
+ * Whether the snapshot shows a username/identifier field at all — present
+ * whether or not its value can be read. Presence is not value: a field
+ * with no value, an empty value, or a redacted value still counts, and a
+ * password-only page does not. The submit gate needs this distinction
+ * because `extractFilledUsername` returns `undefined` for two different
+ * situations — no username field on the page (past the login form, where
+ * skipping the check is correct) and a field whose value cannot be read
+ * (still on the login form, where skipping would re-open the bypass
+ * through the `unknown` path) — and only the first may clear a
+ * non-submit-named click.
+ */
+export function hasUsernameField(snapshot: PageSnapshot): boolean {
+  for (const line of snapshot.text.split('\n')) {
+    const field = textboxFieldOf(line);
+    if (!field) continue;
+    if (hasWord(field.name, PASSWORD_NAMES)) continue;
+    if (!hasWord(field.name, IDENTIFIER_NAMES)) continue;
+    return true;
+  }
+  return false;
+}
+
 /** Whether two usernames name the same account: trimmed, case-insensitive — an email's case never distinguishes its account. */
 export function usernamesMatch(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();

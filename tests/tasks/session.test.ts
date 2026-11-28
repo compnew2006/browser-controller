@@ -14,6 +14,7 @@ import {
   extractFilledUsername,
   findDifferentSavedLogin,
   hasLoginApproval,
+  hasUsernameField,
   isSubmitStep,
   latestFillIndex,
   loginApprovedAccountConstraint,
@@ -760,6 +761,18 @@ const FILLED_CHANGED_TEXT =
   '- textbox "Email" [ref=e1] value="changed@example.com"\n' +
   '- textbox "Password" [ref=e2] value="••••"\n' +
   '- button "Sign in" [ref=e3]';
+/** The same filled form, but the submit control is labelled "Continue" — a routine multi-step-login label outside SUBMIT_NAMES. */
+const FILLED_WRONG_CONTINUE_TEXT =
+  '- textbox "Email" [ref=e1] value="wrong@example.com"\n' +
+  '- textbox "Password" [ref=e2] value="••••"\n' +
+  '- button "Continue" [ref=e3]';
+const FILLED_RIGHT_CONTINUE_TEXT =
+  '- textbox "Email" [ref=e1] value="owner@example.com"\n' +
+  '- textbox "Password" [ref=e2] value="••••"\n' +
+  '- button "Continue" [ref=e3]';
+/** The "Continue" form with the username field present but its value unreadable — field presence, not a filled value. */
+const FILLED_NO_VALUE_CONTINUE_TEXT =
+  '- textbox "Email" [ref=e1]\n- textbox "Password" [ref=e2]\n- button "Continue" [ref=e3]';
 
 describe('login-check helpers', () => {
   it('reads the username field value from the snapshot, never the password value', () => {
@@ -782,6 +795,35 @@ describe('login-check helpers', () => {
         text: '- textbox "Username" [e1] value="flagged@example.com" disabled',
       }),
     ).toBe('flagged@example.com');
+  });
+
+  it('reports whether a username field exists, regardless of whether its value can be read', () => {
+    // Presence is not value: the field counts even with no value at all.
+    expect(hasUsernameField({ url: 'https://example.com/login', text: FILLED_WRONG_TEXT })).toBe(true);
+    expect(hasUsernameField({ url: 'https://example.com/login', text: FILLED_NO_VALUE_TEXT })).toBe(true);
+    expect(
+      hasUsernameField({
+        url: 'https://example.com/login',
+        text: '- textbox "Username" [e1] value=""\n- textbox "Password" [ref=e2] value="••••"',
+      }),
+    ).toBe(true);
+    // A dashboard with no textbox, and a page with only a password
+    // field, have no username field — the gate may treat them as past
+    // the login form. `extractFilledUsername` returns undefined for all
+    // three of these; only `hasUsernameField` tells them apart from the
+    // unreadable-value case above.
+    expect(
+      hasUsernameField({
+        url: 'https://example.com/dashboard',
+        text: 'heading "Dashboard"\n- button "Covered action" [ref=e7]',
+      }),
+    ).toBe(false);
+    expect(
+      hasUsernameField({
+        url: 'https://example.com/login',
+        text: '- textbox "Password" [ref=e2] value="••••"\n- button "Sign in" [ref=e3]',
+      }),
+    ).toBe(false);
   });
 
   it('compares the filled account against the expected account', () => {
@@ -1275,6 +1317,117 @@ describe('runner post-fill username check', () => {
     expect(done.constraints).toContain(loginVerifiedConstraint(1));
     expect(calls.filter((call) => call === 'browser_click')).toHaveLength(1);
     expect(done.steps.map((step) => step.result?.status)).toEqual(['ok', 'ok', 'ok', 'ok']);
+  });
+
+  it('the submit gate stops a string-target "Continue" click after a reconciled fill — a non-listed submit label is still a submit', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_WRONG_CONTINUE_TEXT);
+    tools.set('browser_click', fakeTool('browser_click', calls, textResult('clicked'), false, clickSchema));
+    // The fill already ran ok in an earlier run, with no verified or
+    // approved constraint recorded for it — and the submit is a click by
+    // ref ("e3") on a button labelled "Continue", which is outside
+    // SUBMIT_NAMES. The snapshot names it as a non-submit control, but
+    // the page still shows the filled login form, so the name alone must
+    // not clear it: the gate must still check the filled account before
+    // the click can submit as the wrong account. Before the fix this
+    // test runs to done — the click submits unchecked.
+    const task = loginTask('owner@example.com');
+    task.steps[0]!.result = {
+      status: 'ok',
+      detail: 'verified 1 rule(s) at https://example.com/login; snapshot=browser_snapshot tab 42; observed="heading \\"Login\\""',
+    };
+    task.steps[1]!.result = { status: 'ok', detail: 'filled' };
+    task.steps[2] = {
+      tool: 'browser_click',
+      params: { target: 'e3', tabId: 42 },
+      verify: [{ kind: 'text-present', value: 'Continue' }],
+    };
+    await saveTask(task, dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(calls).not.toContain('browser_click');
+    expect(calls).not.toContain('browser_vault:fill');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.question.context?.purpose).toBe('login-check');
+    expect(sent[0]!.question.text).toContain('wrong@example.com');
+    expect(sent[0]!.question.text).toContain('owner@example.com');
+  });
+
+  it('the submit gate stops a "Continue" click when the username field exists but its value cannot be read', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_NO_VALUE_CONTINUE_TEXT);
+    tools.set('browser_click', fakeTool('browser_click', calls, textResult('clicked'), false, clickSchema));
+    // Same shape as the "Continue" test above, but the Email field
+    // carries no readable value: the filled username is unreadable, not
+    // absent. Field presence alone must keep the gate closed — "no
+    // filled username" must not be read as "past the login form", or
+    // the bypass re-opens through the unknown path. Before the fix this
+    // test runs to done — the click submits unchecked.
+    const task = loginTask('owner@example.com');
+    task.steps[0]!.result = {
+      status: 'ok',
+      detail: 'verified 1 rule(s) at https://example.com/login; snapshot=browser_snapshot tab 42; observed="heading \\"Login\\""',
+    };
+    task.steps[1]!.result = { status: 'ok', detail: 'filled' };
+    task.steps[2] = {
+      tool: 'browser_click',
+      params: { target: 'e3', tabId: 42 },
+      verify: [{ kind: 'text-present', value: 'Continue' }],
+    };
+    await saveTask(task, dir);
+
+    const paused = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(paused.state).toBe('paused-question');
+    expect(calls).not.toContain('browser_click');
+    expect(calls).not.toContain('browser_vault:fill');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.question.context?.purpose).toBe('login-check');
+    expect(sent[0]!.question.text).toContain('owner@example.com');
+  });
+
+  it('a "Continue" click after a matching fill runs the check and proceeds — the narrowed skip does not block a real multi-step login', async () => {
+    const calls: string[] = [];
+    const sent: Array<{ type: string; question: Question }> = [];
+    const tools = loginTaskTools(calls, FILLED_RIGHT_CONTINUE_TEXT);
+    tools.set('browser_click', fakeTool('browser_click', calls, textResult('clicked'), false, clickSchema));
+    // The fill matched, so the gate's re-check on the still-visible
+    // login form passes and the "Continue" click runs: narrowing the
+    // skip must close the bypass without turning a routine multi-step
+    // submit into a pause. This test passes before the fix too — it
+    // guards the legitimate path, not the hole.
+    const task = loginTask('owner@example.com');
+    task.steps[1]!.verify = [{ kind: 'text-present', value: 'Continue' }];
+    task.steps[2] = {
+      tool: 'browser_click',
+      params: { target: 'e3', tabId: 42 },
+      verify: [{ kind: 'text-present', value: 'Continue' }],
+    };
+    await saveTask(task, dir);
+
+    const done = await runTask('task-1', {
+      tasksDir: dir,
+      tools,
+      host: dummyHost,
+      questions: { ask: runnerAsk(sent) },
+    });
+    expect(done.state).toBe('done');
+    expect(sent).toEqual([]);
+    expect(done.constraints).toContain(loginVerifiedConstraint(1));
+    expect(calls.filter((call) => call === 'browser_click')).toHaveLength(1);
+    expect(done.steps.map((step) => step.result?.status)).toEqual(['ok', 'ok', 'ok']);
   });
 
   it('an intervening step that changes the username field after a verified check makes the submit gate re-check and pause', async () => {
