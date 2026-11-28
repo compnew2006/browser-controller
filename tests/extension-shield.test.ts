@@ -10,7 +10,7 @@ import { vi, describe, it, expect, beforeAll, beforeEach } from 'vitest';
 const sent = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const injections = vi.hoisted(() => [] as Array<{ target: { tabId: number; allFrames?: boolean; frameIds?: number[] }; func: string; args: unknown[] }>);
 const faults = vi.hoisted(() => ({ activeBadgeThrows: false, shieldInjectionThrows: false, storageReadThrows: false }));
-const cursorSetting = vi.hoisted(() => ({ enabled: false }));
+const cursorSetting = vi.hoisted(() => ({ enabled: false, unset: false }));
 const mouseMovementLockSetting = vi.hoisted(() => ({ enabled: false }));
 const profileLabel = vi.hoisted(() => ({ apply: vi.fn(async (label: unknown) => ({ success: true, browserLabel: String(label) })) }));
 const listeners = vi.hoisted(() => ({
@@ -72,7 +72,13 @@ const tabStore = new Map<number, { id: number; windowId: number; url: string; ti
     local: {
       get: async () => {
         if (faults.storageReadThrows) throw new Error('storage unavailable');
-        return { agentCursor: cursorSetting.enabled, agentMouseMovementLock: mouseMovementLockSetting.enabled };
+        // `unset` models a profile that never touched the switch: the key
+        // is absent, which the task-mode override must tell apart from an
+        // explicit `false` (the user turned the cursor off).
+        return {
+          ...(cursorSetting.unset ? {} : { agentCursor: cursorSetting.enabled }),
+          agentMouseMovementLock: mouseMovementLockSetting.enabled,
+        };
       },
       set: async () => {},
     },
@@ -108,6 +114,7 @@ const { hasTaskLockShield, releaseTaskLockShields, retainTaskLockShield } = awai
 const { lockTabUi } = await import('../extension/lib/lock-ops.js');
 const { registerEventListeners } = await import('../extension/events.js');
 const { dispatchAgentInput, hideLockShield, refreshLockShield, restoreTaskLockShields, showLockShield } = await import('../extension/lib/overlay.js');
+const { agentCursorEnabled, beginTaskCursorCall, endTaskCursorCall, isTaskCursorEnabled, setTaskCursorEnabled } = await import('../extension/lib/overlay.js');
 
 const shieldInjections = () => injections.filter((i) => i.func.includes('__bc-lock-shield'));
 const overlayInjections = () => injections.filter((i) => i.func.includes('__bc-overlay'));
@@ -117,6 +124,7 @@ const flush = (ms = 60) => new Promise((r) => setTimeout(r, ms));
 describe('agent-control shield (blue frame instead of corner badge)', () => {
   beforeEach(() => {
     cursorSetting.enabled = false;
+    cursorSetting.unset = false;
     mouseMovementLockSetting.enabled = false;
     faults.activeBadgeThrows = false;
     faults.shieldInjectionThrows = false;
@@ -633,5 +641,129 @@ describe('tab control tracking (popup Open Tabs must not say "free")', () => {
     const textFor = (id: string) => (sent.find((f) => f.id === id)?.result as { text: string }).text;
     expect(textFor('c10')).toBe('+1 tab used by other agents');
     expect(textFor('c11')).toBe('3 [user, focused] "Page" example.com/page'); // your own activity is not news
+  });
+});
+
+describe('task-mode agent cursor (Gap D: on by default during a task only)', () => {
+  const taskId = '00000000-0000-4000-8000-000000000101';
+  const actionContext = { eventId: '00000000-0000-4000-8000-000000000102', taskId };
+
+  beforeEach(async () => {
+    // A leftover enable from a previous test must not leak into this one.
+    await setTaskCursorEnabled(taskId, false);
+    cursorSetting.enabled = false;
+    cursorSetting.unset = false;
+    mouseMovementLockSetting.enabled = false;
+    faults.storageReadThrows = false;
+    sent.length = 0;
+    injections.length = 0;
+    tabStore.clear();
+    tabLocks.unlockAll();
+    tabControl.clear();
+    taskLockShields.clear();
+    tabStore.set(3, { id: 3, windowId: 1, url: 'https://example.com/page', title: 'Page', active: true });
+  });
+
+  it('is off outside a task when the setting was never touched', async () => {
+    cursorSetting.unset = true;
+    await expect(agentCursorEnabled(3)).resolves.toBe(false);
+  });
+
+  it('is on during a task call when the setting was never touched, and off again after the call', async () => {
+    cursorSetting.unset = true;
+    await setTaskCursorEnabled(taskId, true);
+    expect(isTaskCursorEnabled(taskId)).toBe(true);
+
+    beginTaskCursorCall(3, taskId);
+    await expect(agentCursorEnabled(3)).resolves.toBe(true);
+    endTaskCursorCall(3, taskId);
+    await expect(agentCursorEnabled(3)).resolves.toBe(false);
+  });
+
+  it('never overrides an explicit opt-out: stored false stays off even during a task call', async () => {
+    // Stored `false` is the popup switch after the user turned it off —
+    // the only write path is that switch, so false means explicit.
+    cursorSetting.enabled = false;
+    await setTaskCursorEnabled(taskId, true);
+
+    beginTaskCursorCall(3, taskId);
+    await expect(agentCursorEnabled(3)).resolves.toBe(false);
+    endTaskCursorCall(3, taskId);
+  });
+
+  it('an explicit opt-in stays on with no task at all', async () => {
+    cursorSetting.enabled = true;
+    await expect(agentCursorEnabled(3)).resolves.toBe(true);
+  });
+
+  it('shows the cursor on a task step when the setting was never touched, and keeps the linger (does not fight it)', async () => {
+    cursorSetting.unset = true;
+    await handleMessage({ type: 'taskCursor', sessionId: 's1', taskId, enabled: true });
+    await handleMessage({ id: 'task-cursor-step', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1', activityContext: actionContext });
+    await flush();
+
+    const shields = shieldInjections();
+    expect(shields[0]!.args).toEqual(['agent controlling the tab', true, false]);
+    // The frame lingers 30 s after the step exactly as the cursor-on
+    // non-task path does: the linger timer still hides the cursor, and
+    // the next task step re-shows it. Nothing here shortens linger.
+    expect(shields.at(-1)!.args).toEqual([30_000]);
+    expect(sent.find((f) => f.id === 'task-cursor-step')?.success).toBe(true);
+  });
+
+  it('respects an explicit opt-out on a task step: no cursor even after the enable signal', async () => {
+    cursorSetting.enabled = false;
+    await handleMessage({ type: 'taskCursor', sessionId: 's1', taskId, enabled: true });
+    await handleMessage({ id: 'task-cursor-optout', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1', activityContext: actionContext });
+    await flush();
+
+    expect(shieldInjections()[0]!.args).toEqual(['agent controlling the tab', false, false]);
+  });
+
+  it('does not leak the override into a plain (non-task) call while a task is running', async () => {
+    cursorSetting.unset = true;
+    await handleMessage({ type: 'taskCursor', sessionId: 's1', taskId, enabled: true });
+    await handleMessage({ id: 'plain-while-task', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's2' });
+    await flush();
+
+    expect(shieldInjections()[0]!.args).toEqual(['agent controlling the tab', false, false]);
+  });
+
+  it('keeps the cursor on across a pause (task lock release) and turns it off only on settle', async () => {
+    cursorSetting.unset = true;
+    await handleMessage({ type: 'taskCursor', sessionId: 's1', taskId, enabled: true });
+    await handleMessage({ id: 'task-cursor-pause-1', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1', activityContext: actionContext });
+    await flush();
+    expect(shieldInjections()[0]!.args).toEqual(['agent controlling the tab', true, false]);
+
+    // A pause releases the task input lock — the cursor override is a
+    // separate signal and must survive it: the task is still live.
+    await handleMessage({ type: 'taskLockRelease', sessionId: 's1', taskId });
+    await flush();
+    await handleMessage({ id: 'task-cursor-pause-2', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1', activityContext: { ...actionContext, eventId: '00000000-0000-4000-8000-000000000103' } });
+    await flush();
+    const shows = shieldInjections().filter((item) => item.args[0] === 'agent controlling the tab');
+    expect(shows.at(-1)!.args).toEqual(['agent controlling the tab', true, false]);
+
+    // Settle: the disable signal removes the cursor from the tab at once
+    // instead of leaving it to the 30 s idle fade.
+    const removalsBefore = injections.filter((i) => i.func.includes('cursor.remove()')).length;
+    await handleMessage({ type: 'taskCursor', sessionId: 's1', taskId, enabled: false });
+    await flush();
+    expect(isTaskCursorEnabled(taskId)).toBe(false);
+    expect(injections.filter((i) => i.func.includes('cursor.remove()')).length).toBeGreaterThan(removalsBefore);
+
+    await handleMessage({ id: 'task-cursor-settled', tool: 'browser_wait', params: { tabId: 3, ms: 1 }, sessionId: 's1', activityContext: { ...actionContext, eventId: '00000000-0000-4000-8000-000000000104' } });
+    await flush();
+    const settledShows = shieldInjections().filter((item) => item.args[0] === 'agent controlling the tab');
+    expect(settledShows.at(-1)!.args).toEqual(['agent controlling the tab', false, false]);
+  });
+
+  it('drops a malformed taskCursor control message instead of enabling anything', async () => {
+    cursorSetting.unset = true;
+    await handleMessage({ type: 'taskCursor', sessionId: 's1', taskId, enabled: 'yes' });
+    await handleMessage({ type: 'taskCursor', sessionId: 's1', enabled: true });
+    expect(isTaskCursorEnabled(taskId)).toBe(false);
+    await expect(agentCursorEnabled(3)).resolves.toBe(false);
   });
 });

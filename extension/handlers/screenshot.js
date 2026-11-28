@@ -352,7 +352,7 @@ function checkRequest(params) {
 
 export async function handleScreenshot(params) {
   // The agent cursor stays out of the picture: it would cover what was just clicked.
-  const cursor = !wedgedTabs.has(params.tabId) && await agentCursorEnabled();
+  const cursor = !wedgedTabs.has(params.tabId) && await agentCursorEnabled(params.tabId);
   if (cursor) await setAgentCursorHidden(params.tabId, true);
   try {
     return await captureScreenshot(params);

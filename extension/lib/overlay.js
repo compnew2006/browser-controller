@@ -6,8 +6,12 @@
  * frame. A tab lock draws no frame alone.
  * The agent cursor (drawn by the shared page runtime, lib/page-dom.js) is opt-in
  * (popup setting, see agentCursorEnabled) and only needs hiding from screenshots.
+ * A running task turns it on for its own calls when the setting was never
+ * touched (lib/task-cursor.js) — an explicit opt-out is never overridden.
  */
 import { persistSessionState, taskLockShields } from './state.js';
+import { disableTaskCursor, enableTaskCursor, taskCursorActiveForTab } from './task-cursor.js';
+export { beginTaskCursorCall, endTaskCursorCall, isTaskCursorEnabled } from './task-cursor.js';
 import {
   discardTaskLockShields, forgetTaskLockShield, hasTaskLockShield as hasTaskLockLease, moveTaskLockShield,
   releaseTaskLockShields, retainTaskLockShield as retainTaskLockLease,
@@ -130,13 +134,46 @@ async function clearAgentInputPermit(tabId, permitId, { restoreMouseTarget, fram
  * The agent cursor is opt-in (popup → Settings): its glide holds mouse
  * actions up to 650 ms on a visible tab. Read per action, so the switch applies
  * at once; off when the setting can't be read.
+ *
+ * The stored value is tri-state, and the three states mean different things.
+ * The popup switch is the only writer (it writes only on a change), so a
+ * stored `false` is an explicit opt-out and a missing key is "never touched":
+ * - `true`: on everywhere, as before.
+ * - `false`: the user turned it off — task mode must not override that.
+ * - missing: never set — a running task turns it on for its own calls only
+ *   (Gap D), through the router's per-call task context; a plain call stays off.
  */
-export async function agentCursorEnabled() {
+export async function agentCursorEnabled(tabId) {
+  let stored;
   try {
-    return (await chrome.storage.local.get(AGENT_CURSOR_KEY))?.[AGENT_CURSOR_KEY] === true;
+    stored = (await chrome.storage.local.get(AGENT_CURSOR_KEY))?.[AGENT_CURSOR_KEY];
   } catch {
     return false;
   }
+  if (stored === true) return true;
+  if (stored === false) return false;
+  return taskCursorActiveForTab(tabId);
+}
+
+/**
+ * Task-mode cursor override (Gap D): the runner enables the cursor when a
+ * task starts and disables it only when the task settles (done/failed) or is
+ * cancelled — a pause (taskLockRelease) never reaches here, so the cursor
+ * stays visible while the task waits for the user. Disabling removes the
+ * cursor element from every tab the task drove, at once, instead of leaving
+ * it to the page's 30 s idle fade. It never fights the linger timer: after a
+ * step the linger path may hide the cursor, and the next task step re-shows it.
+ */
+export async function setTaskCursorEnabled(taskId, enabled) {
+  if (typeof taskId !== 'string' || typeof enabled !== 'boolean') return false;
+  if (enabled) return enableTaskCursor(taskId);
+  const tabIds = disableTaskCursor(taskId);
+  for (const tabId of tabIds) {
+    // Never throws (clearAgentCursor swallows page errors); awaited so a
+    // settle that follows immediately sees the cursor gone.
+    await clearAgentCursor(tabId);
+  }
+  return true;
 }
 
 /** The optional pointer-movement shield, read once when each tool call starts. */

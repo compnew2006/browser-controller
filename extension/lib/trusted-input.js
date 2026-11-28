@@ -293,7 +293,7 @@ function pagePointInfo(x, y, effect, count) {
  * input lands under it.
  */
 export async function pointInfo(tabId, x, y, effect = 'move', count = 1) {
-  const cursor = (await agentCursorEnabled()) ? effect : null;
+  const cursor = (await agentCursorEnabled(tabId)) ? effect : null;
   let info = {};
   try { info = (await execDom(tabId, pagePointInfo, [x, y, cursor, count])) || {}; } catch { /* protected page: input still works */ }
   if (info.cursorMs > 0) await sleep(info.cursorMs);
@@ -398,7 +398,7 @@ async function untilStill(measure, first) {
 export async function locatePointer(tabId, target, effect, count = 1) {
   // A click is only sent to a target that can take it (hidden/disabled/covered: fails).
   const aim = effect === 'click' ? { ...target, check: 'click' } : target;
-  if (!(await agentCursorEnabled())) return locateTarget(tabId, aim);
+  if (!(await agentCursorEnabled(tabId))) return locateTarget(tabId, aim);
   const loc = await locateTarget(tabId, { ...aim, cursor: { effect, count } });
   if (!loc?.success || !(loc.cursorMs > 0)) return loc;
   await sleep(loc.cursorMs);
@@ -594,6 +594,6 @@ function pageCursor(x, y, effect, count) {
  * Cosmetic, never throws.
  */
 export async function cursorTo(tabId, x, y, effect = 'move', count = 1) {
-  if (!(await agentCursorEnabled())) return 0;
+  if (!(await agentCursorEnabled(tabId))) return 0;
   try { return (await execDom(tabId, pageCursor, [x, y, effect, count]))?.ms || 0; } catch { return 0; }
 }

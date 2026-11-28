@@ -119,6 +119,7 @@ import { isVaultFillStep } from './login-check.js';
 import type { ListSavedLoginsFn } from './login-check.js';
 import { checkFillAfterReconcile, checkFillAndMaybePause, runPreStepGates } from './login-gates.js';
 import { failStep } from './fail.js';
+import { disableTaskCursorIfSettled, enableTaskCursor, type SetTaskCursorFn } from './task-cursor.js';
 import { withElementPrepare } from './prepare.js';
 import { boundTabFromCompletedSteps, tabIdFromResult } from './tab-binding.js';
 
@@ -139,6 +140,13 @@ export interface RunTaskOptions {
   host?: ToolHost;
   /** Release the extension's task-scoped input lock after this run settles. */
   releaseTaskLock?: (taskId: string) => Promise<unknown>;
+  /**
+   * Task-mode agent cursor (Gap D): enabled when the run starts, disabled
+   * only when the task settles — a pause keeps it on. Cosmetic and
+   * best-effort; wired by `taskRunOptions` to the `taskCursor` control
+   * message, so a failed signal never fails the run.
+   */
+  setTaskCursor?: SetTaskCursorFn;
   /** Tool definitions to resolve steps against; defaults to the registry's `toolMap`. */
   tools?: ReadonlyMap<string, ToolDefinition>;
   /** Verifier to apply after each step; defaults to `verifyStep`. */
@@ -244,7 +252,9 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
   }
 
   try {
-    return await runTaskSteps(task, id, tools, verify, hostRequired, options);
+    const settled = await runTaskSteps(task, id, tools, verify, hostRequired, options);
+    await disableTaskCursorIfSettled(options.setTaskCursor, settled);
+    return settled;
   } catch (error) {
     if (error instanceof TaskCancelledExternally) {
       // Another process cancelled the task while this run was in
@@ -252,6 +262,7 @@ export async function runTask(id: string, options: RunTaskOptions = {}): Promise
       // overwriting the cancellation, so the stored cancelled
       // record is the run's outcome — return it, not the run's own
       // in-memory task.
+      await disableTaskCursorIfSettled(options.setTaskCursor, error.stored);
       return error.stored;
     }
     throw error;
@@ -281,6 +292,10 @@ async function runTaskSteps(
   // the task is still paused (or done) when it is running.
   delete task.report;
   await saveTaskUnlessCancelled(task, options.tasksDir);
+  // Task-mode cursor (Gap D): on from the first step. It is disabled only
+  // when the run settles — `runTask` above disables on done/failed — so a
+  // pause keeps it visible while the user watches the live task.
+  await enableTaskCursor(options.setTaskCursor, id);
 
   // The tab the completed steps already bound (a resumed run rebinds to it).
   let boundTabId = boundTabFromCompletedSteps(task);

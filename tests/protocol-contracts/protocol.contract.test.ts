@@ -187,6 +187,10 @@ describe('the wire contract: the names a wire tool may have', () => {
     expect(isKnownWireTool('browser_task_internal_question')).toBe(true);
   });
 
+  it('accepts the internal wire action that carries a task cursor signal to the daemon', () => {
+    expect(isKnownWireTool('browser_task_internal_cursor')).toBe(true);
+  });
+
   it('refuses the daemon-only name, so no client can ask for it', () => {
     expect(isKnownWireTool('browser_memory_internal_context')).toBe(false);
   });

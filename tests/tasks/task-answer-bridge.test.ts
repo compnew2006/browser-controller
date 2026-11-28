@@ -16,7 +16,7 @@ import {
   configureTaskRunner,
   createTaskAnswerContinuation,
 } from '../../mcp-server/src/tasks/wiring.js';
-import { TASK_LOCK_RELEASE_WIRE_ACTION } from '../../mcp-server/src/protocol/wire-tools.js';
+import { TASK_CURSOR_WIRE_ACTION, TASK_LOCK_RELEASE_WIRE_ACTION } from '../../mcp-server/src/protocol/wire-tools.js';
 import type { Task } from '../../mcp-server/src/tasks/types.js';
 
 let dir: string;
@@ -273,6 +273,47 @@ describe('taskStatus over the bridge (daemon → popup task list + evidence)', (
       expect(entry?.state).toBe('done');
       expect(typeof (entry?.report as Record<string, unknown>)?.text).toBe('string');
       expect((await loadTask('task-resume', dir))?.state).toBe('done');
+    } finally {
+      configureTaskRunner();
+    }
+  });
+
+  it('sends the task cursor signal over the control channel on a daemon-side resume, never as a tool call', async () => {
+    await saveTask(taskWithSteps('task-cursor-resume'), dir);
+    const question = await askQuestion('task-cursor-resume', 'Which report should I open?', ['Sales', 'Stock'], { tasksDir: dir });
+    const { bridge, port } = await createBridge(true);
+    // The daemon-side answer continuation drives the resumed run; the
+    // runner is faked (no browser) and drives the cursor signal itself.
+    configureTaskRunner(async (id, options) => {
+      await options.setTaskCursor?.(id, true);
+      const task = await loadTask(id, options.tasksDir);
+      if (!task) throw new Error(`task not found: ${id}`);
+      task.state = 'done';
+      await options.setTaskCursor?.(id, false);
+      return task;
+    });
+    try {
+      const fakeBridge = {
+        callTool: async (tool: string) => {
+          if (tool === TASK_LOCK_RELEASE_WIRE_ACTION) return { released: true };
+          if (tool === TASK_CURSOR_WIRE_ACTION) throw new Error('cursor signal must not go out as a tool call');
+          throw new Error(`unexpected tool in test: ${tool}`);
+        },
+        sendControl: (type: string, payload: Record<string, unknown> = {}) => {
+          bridge.sendControl(type, payload);
+        },
+      };
+      bridge.setTaskAnswerHandler(createTaskAnswerContinuation(fakeBridge, dir));
+      const { client, frames } = await connectClient(port);
+
+      client.send(JSON.stringify({ type: 'taskAnswer', questionId: question.id, answer: 'Sales' }));
+      const ack = await waitForFrame(frames, (f) => f.type === 'taskAnswerAck' && f.questionId === question.id);
+      expect(ack.ok).toBe(true);
+
+      const enabled = await waitForFrame(frames, (f) => f.type === 'taskCursor' && f.taskId === 'task-cursor-resume' && f.enabled === true);
+      const disabled = await waitForFrame(frames, (f) => f.type === 'taskCursor' && f.taskId === 'task-cursor-resume' && f.enabled === false);
+      expect(frames.indexOf(enabled)).toBeLessThan(frames.indexOf(disabled));
+      expect((await loadTask('task-cursor-resume', dir))?.state).toBe('done');
     } finally {
       configureTaskRunner();
     }

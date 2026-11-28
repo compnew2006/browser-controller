@@ -47,7 +47,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { createLogger } from '../core/logger.js';
-import { TASK_LOCK_RELEASE_WIRE_ACTION, TASK_QUESTION_WIRE_ACTION } from '../protocol/wire-tools.js';
+import { TASK_CURSOR_WIRE_ACTION, TASK_LOCK_RELEASE_WIRE_ACTION, TASK_QUESTION_WIRE_ACTION } from '../protocol/wire-tools.js';
 import type { ActivityContextFrame } from '../protocol/frames.js';
 import type { TaskAnswerHandler } from '../bridge-task-answers.js';
 import { createActivityContext, type ToolActivity, type ToolHost } from '../tools/types.js';
@@ -109,7 +109,7 @@ export function taskRunOptions(host: ToolHost, send: QuestionSendFn, tasksDir?: 
   return {
     ...(tasksDir !== undefined ? { tasksDir } : {}),
     host: taskHost,
-    ...(taskId ? { releaseTaskLock: (settledTaskId: string) => host.callTool(TASK_LOCK_RELEASE_WIRE_ACTION, { taskId: settledTaskId }) } : {}),
+    ...(taskId ? { releaseTaskLock: (settledTaskId: string) => host.callTool(TASK_LOCK_RELEASE_WIRE_ACTION, { taskId: settledTaskId }), setTaskCursor: (cursorTaskId: string, enabled: boolean) => host.callTool(TASK_CURSOR_WIRE_ACTION, { taskId: cursorTaskId, enabled }) } : {}),
     questions: {
       ask: (input) =>
         askQuestion(input.taskId, input.text, input.options, {
@@ -232,7 +232,16 @@ export function createTaskAnswerContinuation(bridge: TaskBridge, tasksDir?: stri
         const send: QuestionSendFn = (message) => {
           bridge.sendControl(message.type, { question: message.question });
         };
-        const run = resumeTaskInBackground(task.id, taskRunOptions(host, send, tasksDir, task.id));
+        const runOptions = taskRunOptions(host, send, tasksDir, task.id);
+        // The daemon has no IPC routeCall to intercept the cursor wire
+        // action, so a daemon-side resume sends it straight over the
+        // control channel instead of out as an unknown tool call (which
+        // the bridge would reject). The lock release still takes the
+        // call path — pre-existing, out of scope here.
+        runOptions.setTaskCursor = async (cursorTaskId, enabled) => {
+          bridge.sendControl('taskCursor', { sessionId: task.sessionId, taskId: cursorTaskId, enabled });
+        };
+        const run = resumeTaskInBackground(task.id, runOptions);
         run.then(
           () => pushTaskStatus(bridge, tasksDir),
           () => pushTaskStatus(bridge, tasksDir),

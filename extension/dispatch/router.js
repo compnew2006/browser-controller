@@ -12,12 +12,12 @@ import {
 import { sendJson, updateBadge, broadcastStatus, isWsConnected, setCurrentActivity } from '../lib/connection.js';
 import {
   showLockShield, hideLockShield, discardLockShieldState, agentCursorEnabled, agentMouseMovementLockEnabled, clearAgentCursor,
-  hasTaskLockShield, lingerLockShield, retainTaskLockShield,
+  hasTaskLockShield, lingerLockShield, retainTaskLockShield, setTaskCursorEnabled, beginTaskCursorCall, endTaskCursorCall,
 } from '../lib/overlay.js';
 import {
   releaseTaskLockShields, releaseTaskLockShieldsForSession, taskShieldOwners,
 } from '../lib/task-locks.js';
-import { getOpenDialog, dialogLabel, takeFileChooser } from '../lib/cdp-session.js';
+import { getOpenDialog } from '../lib/cdp-session.js';
 import { handleNavigate } from '../handlers/navigation.js';
 import { handleClick, handleType } from '../handlers/interaction.js';
 import { handleFill, handleDialog } from '../handlers/interaction-advanced.js';
@@ -35,6 +35,7 @@ import { buildSiteContext, captureTabUrlBounded } from '../lib/site-context.js';
 import { handleMemoryContext } from '../handlers/memory-context.js';
 import { beginActivity, createInputActivity, finishActivity, finishActivityBatch } from '../lib/activity-log.js';
 import { isTaskQuestionMessage, recordTaskQuestion, resolveTaskAnswerAck } from '../lib/task-questions.js';
+import { withDialogLine, withFileChooserLine } from './result-lines.js';
 import { isTaskStatusMessage, recordTaskStatus } from '../lib/task-status.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
@@ -130,32 +131,6 @@ async function withSiteContext(tool, params, urlBefore, result) {
   const before = tabId === params?.tabId ? urlBefore : null;
   const siteContext = await buildSiteContext(tabId, { urlBefore: before, navigated: tool === 'browser_navigate', light: tool === 'browser_click' });
   return { ...result, siteContext };
-}
-
-/**
- * A success on a tab whose JavaScript dialog is open gets the `dialog:` line the input tools
- * give (a navigate whose page calls alert on load, say), unless its text already names the dialog.
- */
-function withDialogLine(tabId, result) {
-  const open = tabId == null ? null : getOpenDialog(tabId);
-  const text = typeof result?.text === 'string' ? result.text : '';
-  if (!open || !result || result.success === false || /^dialog: /m.test(text)) return result;
-  const line = `dialog: ${dialogLabel(open)}`;
-  return { ...result, text: text ? `${text}\n${line}` : line, dialog: open };
-}
-
-/**
- * A file chooser that agent input opened was intercepted, not shown (cdp-session
- * holdFileChooser). The next success on the tab says so, once, and how to upload instead.
- */
-function withFileChooserLine(tabId, result) {
-  if (tabId == null || !result || result.success === false) return result;
-  const chooser = takeFileChooser(tabId);
-  if (!chooser) return result;
-  const files = chooser.mode === 'selectMultiple' ? 'several files' : 'one file';
-  const line = `fileChooser: the page opened a file chooser (${files}); it was not shown. To upload, browser_fill the file input, its label or the upload button with absolute paths.`;
-  const text = typeof result.text === 'string' ? result.text : '';
-  return { ...result, text: text ? `${text}\n${line}` : line, fileChooser: { mode: chooser.mode } };
 }
 
 const OVERLAY_MS = 1_500;
@@ -355,6 +330,13 @@ export async function handleMessage(msg) {
     }
     return; // control message — no response expected
   }
+  if (msg.type === "taskCursor") {
+    // Gap D: the runner enables the cursor at run start and disables it only at settle/cancel (a pause is a taskLockRelease, not this). Malformed: dropped.
+    if (typeof msg.taskId === 'string' && typeof msg.enabled === 'boolean') {
+      await setTaskCursorEnabled(msg.taskId, msg.enabled);
+    }
+    return; // control message — no response expected
+  }
   if (msg.type === "sessionRoster") {
     // The daemon's live sessions, sent when this connection became ready. A release the daemon
     // sent while this worker was disconnected was lost: free what absent sessions still own (F4-2).
@@ -521,6 +503,7 @@ export async function handleMessage(msg) {
       // lock). Started only once the call really runs, not while it queues;
       // the outer finally ends it whatever the rest of this task throws.
       const call = tabControl.begin(tabId, sessionId, agentName);
+      beginTaskCursorCall(tabId, taskId);
       try {
         setCurrentActivity(tool);
         updateBadge('active');
@@ -538,7 +521,7 @@ export async function handleMessage(msg) {
         // A disabled movement lock keeps the historical best-effort shield. When
         // the user enabled it, the action must not run unless the shield is active.
         if (canDrawShield(tabId)) {
-          const showCursor = !!(await overlayStep(agentCursorEnabled()));
+          const showCursor = !!(await overlayStep(agentCursorEnabled(tabId)));
           shieldPromise = showLockShield(tabId, agentName ? `agent ${agentName} controlling the tab` : 'agent controlling the tab', showCursor, movementLockEnabled === true);
           shieldInstalled = (await overlayStep(shieldPromise)) === true;
           if (shieldInstalled && movementLockEnabled === true && taskId && sessionId) {
@@ -576,7 +559,7 @@ export async function handleMessage(msg) {
             const linger = lingerLockShield(tabId, CONTROL_LINGER_MS);
             if (!getOpenDialog(tabId)) await overlayStep(linger);
           } else {
-            const visible = tabControl.canLinger(call) && await overlayStep(agentCursorEnabled());
+            const visible = tabControl.canLinger(call) && await overlayStep(agentCursorEnabled(tabId));
             // Owned tabs remain controlled until release; shared tabs use the normal activity linger.
             const linger = visible ? (sessionId && tabLocks.owner(tabId) === sessionId ? -1 : CONTROL_LINGER_MS) : 0;
             const removeShield = () => linger ? hideLockShield(tabId, linger) : hideLockShield(tabId);
@@ -588,6 +571,7 @@ export async function handleMessage(msg) {
         }
       } finally {
         tabControl.end(call);
+        endTaskCursorCall(tabId, taskId);
       }
     },
   )
