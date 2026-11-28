@@ -591,10 +591,11 @@
       }
     }
 
-    /* ── Tasks / Evidence panels (Design §7, Task 9) ───────────────────
+    /* ── Tasks / Evidence panels (Design §7, Task 9; FR-018) ─────────────
        Narrow side panels keep task rows stacked; wider panels align them
-       into two columns. Nothing here invents data — see
-       task-panels-view.js for what the panel can honestly show. */
+       into two columns. Rows are buttons (select the task whose report
+       the Evidence panel shows); the report block carries the persisted
+       report summary, the session Q&A rows below it keep their own kinds. */
     .task-section {
       display: flex;
       flex-direction: column;
@@ -609,7 +610,18 @@
       gap: 2px var(--space-sm);
       padding: var(--space-sm);
       border-radius: var(--radius-sm);
+      width: 100%;
+      min-height: 44px;
+      appearance: none;
+      background: transparent;
+      border: 0;
+      text-align: left;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
     }
+    .task-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .task-row[aria-current="true"] { outline: 2px solid var(--accent); outline-offset: -2px; }
     .task-row + .task-row { border-top: 1px solid var(--border); }
     .task-state {
       justify-self: start;
@@ -627,11 +639,18 @@
       color: var(--ink);
       overflow-wrap: anywhere;
     }
-    .task-waiting {
+    .task-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
       font-size: 12px;
       color: var(--ink-2);
       overflow-wrap: anywhere;
     }
+    .task-step { display: block; }
+    .task-step[data-status="ok"] { color: var(--ok); }
+    .task-step[data-status="failed"] { color: var(--err); }
+    .task-step[data-status="verify-failed"] { color: var(--warn); }
     .evidence-row {
       display: flex;
       align-items: baseline;
@@ -649,6 +668,16 @@
     }
     .evidence-kind[data-kind="waiting"] { color: var(--warn); }
     .evidence-kind[data-kind="confirmed"] { color: var(--ok); }
+    .evidence-kind[data-kind="report"] { color: var(--accent); }
+    .evidence-report { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); }
+    .evidence-report + .evidence-row { border-top: 1px solid var(--border); }
+    .evidence-report-text {
+      margin-top: 2px;
+      font-size: 12px;
+      color: var(--ink-2);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
     .evidence-text {
       min-width: 0;
       font-size: 12px;
@@ -674,7 +703,7 @@
       .task-row { grid-template-columns: minmax(0, 1fr) auto; }
       .task-row .task-name { grid-column: 1; grid-row: 1; }
       .task-row .task-state { grid-column: 2; grid-row: 1; }
-      .task-row .task-waiting { grid-column: 1 / -1; grid-row: 2; }
+      .task-row .task-steps { grid-column: 1 / -1; grid-row: 2; }
       .evidence-list {
         display: grid;
         grid-template-columns: 1fr 1fr;
@@ -683,6 +712,7 @@
         overflow-y: auto;
       }
       .evidence-list .empty { grid-column: 1 / -1; }
+      .evidence-list .evidence-report { grid-column: 1 / -1; }
       .evidence-list .evidence-row + .evidence-row { border-top: none; }
       /* Separators return on visual rows 2+ (nth-child 3+ starts row 2 in a
          two-column grid). The sibling rule above stays: without it the

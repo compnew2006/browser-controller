@@ -35,6 +35,7 @@ import { buildSiteContext, captureTabUrlBounded } from '../lib/site-context.js';
 import { handleMemoryContext } from '../handlers/memory-context.js';
 import { beginActivity, createInputActivity, finishActivity, finishActivityBatch } from '../lib/activity-log.js';
 import { isTaskQuestionMessage, recordTaskQuestion, resolveTaskAnswerAck } from '../lib/task-questions.js';
+import { isTaskStatusMessage, recordTaskStatus } from '../lib/task-status.js';
 
 // sessionId arrives as a first-class top-level field on the WS message (audit
 // M1) — the daemon no longer injects it into params. We read it here so the
@@ -403,6 +404,14 @@ export async function handleMessage(msg) {
     // is told success only once the daemon actually accepted the answer.
     // An ack with no waiter (late, or for another browser) is ignored.
     resolveTaskAnswerAck(msg);
+    return; // control message — no response expected
+  }
+  if (msg.type === "taskStatus") {
+    // The daemon's task list (FR-018): record it for the Tasks/Evidence panels
+    // and broadcast so the popup refreshes at once. A malformed payload is dropped.
+    if (!isTaskStatusMessage(msg)) return; // control message — no response expected
+    recordTaskStatus(msg.tasks);
+    broadcastStatus('Task list updated').catch(() => {});
     return; // control message — no response expected
   }
 

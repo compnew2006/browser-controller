@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderQuestionCard, renderQuestionCards } from '../extension/popup/question-card.js';
+import { renderTaskRows } from '../extension/popup/task-panels-view.js';
 import {
   clearTaskQuestions,
   isTaskQuestionMessage,
@@ -184,5 +185,38 @@ describe('task answer acknowledgement (taskAnswerAck)', () => {
   it('the popup reports an answer only once the daemon confirms it', () => {
     expect(popupJs).toContain('Answer confirmed by daemon');
     expect(popupJs).not.toContain("addLog('Answer sent'");
+  });
+});
+
+describe('question card while the shield lingers (08ad889)', () => {
+  it('test_task_status_card_clickable_while_shield_lingers', () => {
+    // The shield (overlay.js) may still be retaining its input block on
+    // the tab when the question is asked — the linger keeps the block
+    // after the call ends. The test asserts the card is clickable IN THE
+    // POPUP, not that the tab is unblocked: the popup is a separate
+    // browser UI surface, never shielded, and the taskStatus-driven task
+    // row is rendered there too.
+    const taskPanelsSource = readFileSync(join(repoRoot, 'extension', 'popup', 'task-panels-view.js'), 'utf8');
+    expect(taskPanelsSource).not.toMatch(/import\s+[^;]*overlay\.js/);
+    expect(taskPanelsSource).not.toMatch(/chrome\.tabs\.[a-z]/);
+
+    const rows = renderTaskRows([{
+      id: 'task-1',
+      goal: 'Open the dashboard and confirm it loaded',
+      state: 'paused-question',
+      steps: [{ step: 1, tool: 'browser_snapshot', status: 'ok' }],
+    }]);
+    expect(rows).toContain('Waiting for answer');
+    expect(rows).toContain('data-action="selectTask"');
+    expect(rows).not.toMatch(/disabled/);
+    expect(rows).not.toMatch(/pointer-events:\s*none/);
+    expect(rows).not.toMatch(/<[^>]*\binert\b/);
+
+    const card = renderQuestionCard(choiceQuestion);
+    expect(card).toContain('data-action="answerQuestion"');
+    expect(card).toContain('data-answer="Sales"');
+    expect(card).not.toMatch(/disabled/);
+    expect(card).not.toMatch(/pointer-events:\s*none/);
+    expect(card).not.toMatch(/<[^>]*\binert\b/);
   });
 });

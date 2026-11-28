@@ -11,7 +11,7 @@ import { AGENT_MOUSE_MOVEMENT_LOCK_KEY } from '../lib/overlay.js';
 import { authenticatedDaemonFetch, daemonFailureKind } from '../lib/daemon-auth.js';
 import { bindActionActivity } from './activity-view.js';
 import { bindTaskQuestions } from './question-view.js'; // Design §5: the question card, outside the shielded tab
-import { renderEvidenceRows, renderTaskRows, taskPanelsSignature, tasksFromQuestions } from './task-panels-view.js'; // Task 9: Tasks/Evidence panels
+import { renderEvidenceRows, renderTaskRows, taskPanelsSignature } from './task-panels-view.js'; // Task 9: Tasks/Evidence panels (FR-018: taskStatus list + report)
 
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
@@ -59,10 +59,15 @@ versionEl.textContent = `v${manifest.version}`;
 // controls (the Pin dropdown lists agents). Keep the latest snapshot of both.
 let lastAgents = [];      // [{sessionId, name, connectedAt}]
 let lastTabs = [];        // [{id, url, title, active, lockedBy, controlledBy, otherWindow?}]
-// Task panels (Design §7): the panel sees tasks only while they wait on a
-// question (state.taskQuestions); confirmed answers are recorded here, in
-// this panel session only, for the Evidence panel — see task-panels-view.js.
+// Task panels (Design §7 / FR-018): the panel renders the daemon's latest
+// task list (state.taskStatus) with state AND steps, and the Evidence panel
+// shows the selected task's persisted report. Confirmed answers are recorded
+// here, in this panel session only, as the Evidence panel's secondary view —
+// see task-panels-view.js. The selected task defaults to the most recent
+// task with a report (the view decides); tapping a task row selects it.
 let lastTaskQuestions = [];
+let lastTaskStatus = [];
+let selectedEvidenceTaskId = null;
 // Question id -> task id, captured when a poll arrives (see updateUI):
 // by answer time the next poll may already have refreshed
 // lastTaskQuestions, so the id must be captured, not looked up then.
@@ -328,20 +333,21 @@ function patchControlBadges(tabs) {
 }
 
 // ── Tasks / Evidence panels ──────────────────────────────────────────────
-// Rendered from the status payload's pending questions plus the answers
-// confirmed in this panel session; signature-guarded like the tabs list so
-// the 2s poll does not rebuild the DOM when nothing changed.
-function renderTaskPanels(questions) {
-  const list = Array.isArray(questions) ? questions : [];
-  const waiting = tasksFromQuestions(list);
-  tasksCountEl.textContent = waiting.length ? String(waiting.length) : '';
-  const sig = taskPanelsSignature(list, confirmedAnswers);
+// Rendered from the status payload's task list plus the pending questions
+// and the answers confirmed in this panel session; signature-guarded like
+// the tabs list so the 2s poll does not rebuild the DOM when nothing
+// changed. The selection is part of the signature, so tapping a task row
+// re-renders the Evidence panel for that task.
+function renderTaskPanels(tasks, questions) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  tasksCountEl.textContent = list.length ? String(list.length) : '';
+  const sig = taskPanelsSignature(questions, confirmedAnswers, list, selectedEvidenceTaskId);
   if (sig === lastTaskPanelsSig) return;
   lastTaskPanelsSig = sig;
-  const taskRows = renderTaskRows(list);
-  taskListEl.innerHTML = taskRows || '<div class="empty">No task waiting for an answer</div>';
-  const evidenceRows = renderEvidenceRows(list, confirmedAnswers);
-  evidenceListEl.innerHTML = evidenceRows || '<div class="empty">No questions or answers in this session</div>';
+  const taskRows = renderTaskRows(list, selectedEvidenceTaskId);
+  taskListEl.innerHTML = taskRows || '<div class="empty">No tasks yet</div>';
+  const evidenceRows = renderEvidenceRows(list, selectedEvidenceTaskId, questions, confirmedAnswers);
+  evidenceListEl.innerHTML = evidenceRows || '<div class="empty">No report yet</div>';
 }
 
 // ── Status rendering ───────────────────────────────────────────────────────
@@ -393,7 +399,10 @@ function updateUI(state) {
       questionTaskById.set(question.id, question.taskId);
     }
   }
-  renderTaskPanels(lastTaskQuestions);
+  // Tasks / Evidence panels (FR-018): the daemon's latest task list, the
+  // pending questions, and the answers confirmed in this panel session.
+  lastTaskStatus = Array.isArray(state.taskStatus) ? state.taskStatus : [];
+  renderTaskPanels(lastTaskStatus, lastTaskQuestions);
 }
 
 /** Fetch connection + tabs + locks state from the background worker. */
@@ -524,6 +533,14 @@ document.addEventListener('click', (e) => {
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
   const action = btn.dataset.action;
+
+  if (action === 'selectTask') {
+    // Show this task's report in the Evidence panel (FR-018). The
+    // signature guard re-renders because the selection is part of it.
+    selectedEvidenceTaskId = btn.dataset.taskId || null;
+    renderTaskPanels(lastTaskStatus, lastTaskQuestions);
+    return;
+  }
 
   if (action === 'disconnect') {
     const sid = btn.dataset.sid;

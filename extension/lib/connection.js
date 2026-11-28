@@ -24,6 +24,7 @@ import {
 } from './daemon-auth.js';
 import { closeAllApprovalCards, closeStaleApprovalCards, restoreVaultRuntimeState } from './vault-actions.js';
 import { pendingTaskQuestions } from './task-questions.js';
+import { taskStatusList } from './task-status.js';
 import { VaultConnectionChannel } from './vault-connection.js';
 import {
   DEFAULT_WS_PORT,
@@ -491,6 +492,7 @@ export function buildStatusPayload(message, tabs) {
     // Open-tab snapshot so the popup renders a Pin dropdown per tab without a second round-trip (undefined = empty; see updateUI).
     tabs: tabs || [],
     taskQuestions: pendingTaskQuestions(), // questions a task waits on (Design §5): the popup renders them as cards outside the shielded tab
+    taskStatus: taskStatusList(), // the daemon's latest task list (FR-018): the popup renders Tasks/Evidence from it
     statusMessage: message || null,
   };
 }
